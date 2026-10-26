@@ -81,7 +81,7 @@ func (s *Server) handleSystemServices(w http.ResponseWriter, r *http.Request) {
 		script = fmt.Sprintf("systemctl %s %q && systemctl is-active %q\n", req.Action, req.Service, req.Service)
 	}
 
-	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, "service_"+req.Action)
+	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, "service_"+req.Action, true)
 	if err != nil {
 		writeInternalError(r.Context(), w, "system.service.control", err)
 		return

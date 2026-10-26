@@ -26,6 +26,8 @@ import (
 	"net/http"
 	"strings"
 
+	"google.golang.org/protobuf/types/known/emptypb"
+
 	authv1 "github.com/Levango7/OpsMesh/services/auth-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/cache"
@@ -276,7 +278,7 @@ func (g *Gateway) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "no refresh token")
 		return
 	}
-	resp, err := g.svc.RefreshTokenWithFP(r.Context(), rt, collectDeviceFP(r))
+	resp, err := g.svc.RefreshTokenWithFP(r.Context(), rt, collectDeviceFP(r), "")
 	if err != nil {
 		// 刷新失败清 Cookie（与 controlplane 同语义：会话终局，防残 Cookie 误导）。
 		g.clearCookies(w)
@@ -315,6 +317,7 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		Email    string `json:"email"`
+		TenantId string `json:"tenant_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" || body.Password == "" {
 		writeError(w, http.StatusBadRequest, "username and password are required")
@@ -344,6 +347,7 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Password: body.Password,
 		Email:    body.Email,
 		RoleIds:  []string{"role-viewer"},
+		TenantId: body.TenantId,
 	})
 	if err != nil {
 		if err == service.ErrUserExists {
@@ -601,7 +605,7 @@ func (g *Gateway) effectivePermissions(roleIDs []string) []string {
 func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		resp, err := g.svc.ListUsers(r.Context(), nil)
+		resp, err := g.svc.ListUsers(r.Context(), &emptypb.Empty{})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -641,6 +645,7 @@ func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 			RoleIDs            []string `json:"role_ids"`
 			RoleIDsCamel       []string `json:"roleIDs"`
 			MustChangePassword bool     `json:"mustChangePassword"`
+			TenantId           string   `json:"tenant_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" || body.Password == "" {
 			writeError(w, http.StatusBadRequest, "username and password are required")
@@ -668,6 +673,7 @@ func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 			Email:              body.Email,
 			RoleIds:            roles,
 			MustChangePassword: body.MustChangePassword,
+			TenantId:           body.TenantId,
 		}); err != nil {
 			if err == service.ErrUserExists {
 				writeError(w, http.StatusConflict, "username already exists")
@@ -1009,6 +1015,7 @@ func (g *Gateway) toPublicUser(u *authv1.User) map[string]any {
 		"id":                 u.Id,
 		"username":           u.Username,
 		"email":              u.Email,
+		"tenantId":           u.TenantId,
 		"status":             u.Status,
 		"roleIDs":            u.RoleIds,
 		"roleIds":            u.RoleIds,

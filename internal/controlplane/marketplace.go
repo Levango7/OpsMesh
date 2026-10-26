@@ -188,7 +188,8 @@ func (s *Server) handleDeletePlugin(w http.ResponseWriter, r *http.Request, id s
 	if !ok {
 		return
 	}
-	if !s.store.DeletePlugin(id) {
+	// 插件为平台级资源，tenantID 传 default 保持兼容。
+	if !s.store.DeletePlugin(id, "default") {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "plugin not found"})
 		return
 	}

@@ -243,4 +243,10 @@ onMounted(async () => {
   background: var(--bg-soft); border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
+.row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
 </style>

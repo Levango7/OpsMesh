@@ -192,12 +192,30 @@ func (m *MultiSchemaStore) ListSecrets(tenantID string) []*SecretMeta {
 }
 
 // RotateSecret 轮换密钥：用 tenantID 路由。
-func (m *MultiSchemaStore) RotateSecret(tenantID, key, newValue string) *SecretMeta {
+func (m *MultiSchemaStore) RotateSecret(tenantID, key, newValue, keyType, rotatedBy string) (*SecretMeta, error) {
 	s, err := m.storeFor(tenantID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return s.RotateSecret(tenantID, key, newValue)
+	return s.RotateSecret(tenantID, key, newValue, keyType, rotatedBy)
+}
+
+// AddSecretAccessLog 记录访问审计：用 tenantID 路由。
+func (m *MultiSchemaStore) AddSecretAccessLog(tenantID, key, accessedBy, action string) error {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return err
+	}
+	return s.AddSecretAccessLog(tenantID, key, accessedBy, action)
+}
+
+// GetSecretAccessLog 查询访问审计日志：用 tenantID 路由。
+func (m *MultiSchemaStore) GetSecretAccessLog(tenantID, key string, offset, limit int) ([]*SecretAccessLog, int, error) {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.GetSecretAccessLog(tenantID, key, offset, limit)
 }
 
 // SecretVersions 返回密钥全部版本元信息：用 tenantID 路由。

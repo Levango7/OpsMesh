@@ -26,7 +26,7 @@ type Service struct {
 
 // NewService creates a new Service.
 func NewService(nodeMgr *node.Manager, sched *scheduler.Scheduler, wlMgr *workload.Manager, oc *ollama.Client, qMgr *quota.Manager, collector *metrics.Collector) *Service {
-	return &Service{
+	svc := &Service{
 		nodes:     nodeMgr,
 		scheduler: sched,
 		workloads: wlMgr,
@@ -34,6 +34,9 @@ func NewService(nodeMgr *node.Manager, sched *scheduler.Scheduler, wlMgr *worklo
 		quotas:    qMgr,
 		metrics:   collector,
 	}
+	// Wire workload provider to scheduler for queue management.
+	sched.SetWorkloadProvider(wlMgr)
+	return svc
 }
 
 // RegisterNode registers a new GPU node.
@@ -167,6 +170,18 @@ func (s *Service) CancelWorkload(id string) error {
 		return err
 	}
 
+	// Release node VRAM allocation
+	vramPerWorkload := wl.GPURequest.MinVRAMMB
+	if vramPerWorkload <= 0 {
+		vramPerWorkload = 4096
+	}
+	for _, nodeID := range wl.NodeIDs {
+		if n, err := s.nodes.Get(nodeID); err == nil {
+			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
+			_ = s.nodes.Update(n)
+		}
+	}
+
 	// Release quota
 	if err := s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
 		log.Printf("[service] release quota for workload %s: %v", wl.ID, err)
@@ -177,6 +192,66 @@ func (s *Service) CancelWorkload(id string) error {
 // ScaleWorkload scales a workload's replicas.
 func (s *Service) ScaleWorkload(id string, replicas int) error {
 	return s.workloads.Scale(id, replicas)
+}
+
+// CompleteWorkload marks a workload as completed and releases resources.
+func (s *Service) CompleteWorkload(id string) error {
+	wl, err := s.workloads.Get(id)
+	if err != nil {
+		return err
+	}
+
+	if err := s.workloads.MarkCompleted(id); err != nil {
+		return err
+	}
+
+	// Release node VRAM allocation
+	vramPerWorkload := wl.GPURequest.MinVRAMMB
+	if vramPerWorkload <= 0 {
+		vramPerWorkload = 4096
+	}
+	for _, nodeID := range wl.NodeIDs {
+		if n, err := s.nodes.Get(nodeID); err == nil {
+			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
+			_ = s.nodes.Update(n)
+		}
+	}
+
+	// Release quota
+	if err := s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
+		log.Printf("[service] release quota for workload %s: %v", wl.ID, err)
+	}
+	return nil
+}
+
+// FailWorkload marks a workload as failed and releases resources.
+func (s *Service) FailWorkload(id, errMsg string) error {
+	wl, err := s.workloads.Get(id)
+	if err != nil {
+		return err
+	}
+
+	if err := s.workloads.MarkFailed(id, errMsg); err != nil {
+		return err
+	}
+
+	// Release node VRAM allocation
+	vramPerWorkload := wl.GPURequest.MinVRAMMB
+	if vramPerWorkload <= 0 {
+		vramPerWorkload = 4096
+	}
+	for _, nodeID := range wl.NodeIDs {
+		if n, err := s.nodes.Get(nodeID); err == nil {
+			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
+			_ = s.nodes.Update(n)
+		}
+	}
+
+	// Release quota
+	if err := s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
+		log.Printf("[service] release quota for workload %s: %v", wl.ID, err)
+	}
+	return nil
 }
 
 // TriggerScheduling attempts to schedule all pending workloads.
@@ -192,14 +267,25 @@ func (s *Service) TriggerScheduling() []*models.ScheduleResult {
 		if result == nil {
 			continue
 		}
-		if result.Assigned {
-			if err := s.workloads.AssignNode(wl.ID, result.NodeIDs); err != nil {
-				log.Printf("[service] assign node for workload %s: %v", wl.ID, err)
-			}
-			if err := s.quotas.RecordAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
-				log.Printf("[service] record quota for workload %s: %v", wl.ID, err)
+	if result.Assigned {
+		if err := s.workloads.AssignNode(wl.ID, result.NodeIDs); err != nil {
+			log.Printf("[service] assign node for workload %s: %v", wl.ID, err)
+		}
+		// Update node VRAM allocation
+		vramPerWorkload := wl.GPURequest.MinVRAMMB
+		if vramPerWorkload <= 0 {
+			vramPerWorkload = 4096 // default 4GB per workload
+		}
+		for _, nodeID := range result.NodeIDs {
+			if n, err := s.nodes.Get(nodeID); err == nil {
+				s.scheduler.AssignNodeResources(n, vramPerWorkload)
+				_ = s.nodes.Update(n)
 			}
 		}
+		if err := s.quotas.RecordAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
+			log.Printf("[service] record quota for workload %s: %v", wl.ID, err)
+		}
+	}
 		results = append(results, result)
 	}
 	return results

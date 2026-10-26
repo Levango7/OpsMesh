@@ -43,6 +43,39 @@ type MiddlewareTemplate struct {
 	Scripts     map[string]MiddlewareScript `json:"scripts"` // key: "docker"/"systemd"
 	Risk        string                      `json:"risk"`    // low/medium/high
 	Tags        []string                    `json:"tags"`
+	// Versions 可选版本目录；为空表示该模板不支持版本选择（用 Version 字段）
+	Versions []MiddlewareVersion `json:"versions,omitempty"`
+}
+
+// MiddlewareVersionCatalog 版本目录：templateID → 可选版本列表。
+// 在 init() 中从 MiddlewareTemplates 构建，作为单一事实源的派生视图，
+// 供 middlewareTemplateFromStore 在旧模板（无 versions 字段）时回退使用。
+var MiddlewareVersionCatalog map[string][]MiddlewareVersion
+
+func init() {
+	MiddlewareVersionCatalog = make(map[string][]MiddlewareVersion, len(MiddlewareTemplates))
+	for i := range MiddlewareTemplates {
+		tpl := &MiddlewareTemplates[i]
+		if len(tpl.Versions) > 0 {
+			MiddlewareVersionCatalog[tpl.ID] = tpl.Versions
+		}
+	}
+}
+
+// MiddlewareVersion 中间件版本条目。
+type MiddlewareVersion struct {
+	// Version 版本号，如 "8.0"
+	Version string `json:"version"`
+	// Label 展示名，如 "8.0（推荐）"；为空时前端回落到 Version
+	Label string `json:"label,omitempty"`
+	// DockerImage 该版本对应的完整镜像引用，如 "mysql:8.4"；用于替换 docker 脚本中的镜像
+	DockerImage string `json:"dockerImage,omitempty"`
+	// Scripts 该版本专属脚本（可选）。非空时整体覆盖模板的 Scripts。
+	Scripts map[string]MiddlewareScript `json:"scripts,omitempty"`
+	// Params 该版本特有参数（可选）。追加到模板 Params 之后；同名以本项为准。
+	Params []MiddlewareParam `json:"params,omitempty"`
+	// Default 是否为默认选中版本
+	Default bool `json:"default"`
 }
 
 // MiddlewareParam 中间件部署参数定义。

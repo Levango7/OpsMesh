@@ -136,7 +136,14 @@ func (s *Server) handleSystemUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, action)
+	// userdel 是高风险操作，需审批通过后才下发。
+	var task *proto.Task
+	var err error
+	if r.Method == http.MethodDelete {
+		task, err = s.createSystemTask(actx.TenantID, req.AgentID, script, action, true)
+	} else {
+		task, err = s.createSystemTask(actx.TenantID, req.AgentID, script, action)
+	}
 	if err != nil {
 		writeInternalError(r.Context(), w, "system.user", err)
 		return
@@ -206,7 +213,14 @@ func (s *Server) handleSystemGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, action)
+	// groupdel 是高风险操作，需审批通过后才下发。
+	var task *proto.Task
+	var err error
+	if r.Method == http.MethodDelete {
+		task, err = s.createSystemTask(actx.TenantID, req.AgentID, script, action, true)
+	} else {
+		task, err = s.createSystemTask(actx.TenantID, req.AgentID, script, action)
+	}
 	if err != nil {
 		writeInternalError(r.Context(), w, "system.group", err)
 		return
@@ -265,7 +279,7 @@ func (s *Server) handleSystemFirewall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, action)
+	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, action, true)
 	if err != nil {
 		writeInternalError(r.Context(), w, "system.firewall", err)
 		return
@@ -275,6 +289,49 @@ func (s *Server) handleSystemFirewall(w http.ResponseWriter, r *http.Request) {
 		Detail: sanitizeAuditDetail("agentID=" + req.AgentID + " source=" + req.Source),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
+}
+
+// handleListFirewallRules 处理 GET /api/v1/system/firewall/rules：结构化查询防火墙规则。
+// 数据来源：agent 采集的 DeviceMetrics.System.Firewall（iptables/firewalld 统一视图）。
+// 租户隔离：仅返回本租户 agent 的防火墙规则；agent 必须属于调用方租户（requireTenantAgent）。
+func (s *Server) handleListFirewallRules(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+		return
+	}
+	agentID := r.URL.Query().Get("agentID")
+	if agentID == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID is required"})
+		return
+	}
+	// 校验 agent 存在且属于调用方租户（防止跨租户查询防火墙规则）。
+	if _, ok := s.requireTenantAgent(w, agentID, actx.TenantID); !ok {
+		return
+	}
+	// 从设备监控指标中读取防火墙规则（MVP agent 即设备，deviceID=agentID）。
+	metrics := s.store.DeviceMetrics(agentID)
+	if metrics == nil || metrics.System == nil {
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"agentID":     agentID,
+			"firewall":    []proto.FirewallRule{},
+			"backend":     "",
+			"collectedAt": time.Time{},
+		})
+		return
+	}
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"agentID":     agentID,
+		"firewall":    metrics.System.Firewall,
+		"backend":     metrics.System.FirewallBackend,
+		"collectedAt": metrics.System.CollectedAt,
+	})
 }
 
 // buildFirewallScript 构造防火墙规则增删脚本（firewalld 优先，回退 iptables）。
@@ -378,7 +435,7 @@ func (s *Server) handleSystemPackages(w http.ResponseWriter, r *http.Request) {
 	script := buildPackageScript(req)
 	action := "pkg_" + req.Action
 
-	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, action)
+	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, action, true)
 	if err != nil {
 		writeInternalError(r.Context(), w, "system.package", err)
 		return
@@ -432,7 +489,8 @@ func buildPackageScript(req packageOpRequest) string {
 }
 
 // createSystemTask 下发 shell 任务到指定 agent（复用 store.CreateTask）。
-func (s *Server) createSystemTask(tenantID, agentID, script, action string) (*proto.Task, error) {
+// approvalRequired 为 true 时任务下发前需管理员审批（进入 pending_approval 状态）。
+func (s *Server) createSystemTask(tenantID, agentID, script, action string, approvalRequired ...bool) (*proto.Task, error) {
 	task := &proto.Task{
 		AgentID:    agentID,
 		TenantID:   tenantID,
@@ -442,6 +500,9 @@ func (s *Server) createSystemTask(tenantID, agentID, script, action string) (*pr
 		Timeout:    120, // 2 分钟超时
 		MaxRetries: 1,
 		CreatedAt:  time.Now(),
+	}
+	if len(approvalRequired) > 0 && approvalRequired[0] {
+		task.ApprovalRequired = true
 	}
 	return s.store.CreateTask(task)
 }

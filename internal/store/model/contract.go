@@ -15,6 +15,7 @@
 package model
 
 import (
+	"context"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/proto"
@@ -113,6 +114,21 @@ type TaskStore interface {
 	// 记录审批人/审批时间。被驳回任务永不进入 ClaimTask 队列。仅 pending_approval 状态可驳回。
 	// tenantID 非空时校验任务归属，越权返回 false。
 	RejectTask(id, tenantID, approvedBy string) bool
+	// RetryDeadLetterTask 重新入队死信任务：DeadLetter=false, status=pending, retry_count=0，
+	// 清除 ClaimedBy/ClaimedAt，使任务可再次被 ClaimTask 领取。仅 DeadLetter=true 且 status=failed 的
+	// 任务且 tenant 匹配时生效，返回是否更新。
+	RetryDeadLetterTask(id, tenantID string) bool
+	// DeleteTask 删除任务（死信清理等）：仅 tenant 匹配时生效，返回是否删除。
+	DeleteTask(id, tenantID string) bool
+	// CreateTaskWithIdempotency 下发任务并做 (tenantID, idempotencyKey) 去重（Wave 4-B）。
+	// IdempotencyKey 为空时退化为 CreateTask；有值且（tenantID, key）已存在则返回已有任务，
+	// 不重复下发（调用方据此返回 200 而非 201）。幂等键映射 TTL 24h（具体清理由后端实现）。
+	CreateTaskWithIdempotency(ctx context.Context, t *proto.Task) (*proto.Task, error)
+	// GetTaskByIdempotencyKey 按 (tenantID, idempotencyKey) 查已存在任务（不存在返回 nil）。
+	GetTaskByIdempotencyKey(tenantID, key string) *proto.Task
+	// ListTasksByPriority 按优先级降序分页列出任务（tenantID 非空时按租户过滤；
+	// offset/limit 为分页，返回任务列表与总数）。
+	ListTasksByPriority(tenantID string, offset, limit int) ([]*proto.Task, int, error)
 }
 
 // AlertStore 告警领域（M7）：列表、记录、单查、确认、静默。
@@ -133,8 +149,8 @@ type AlertStore interface {
 	CreateAlertRule(*AlertRule) *AlertRule
 	// ListAlertRules 返回告警规则；tenantID 非空时按租户过滤。
 	ListAlertRules(tenantID string) []*AlertRule
-	// DeleteAlertRule 删除告警规则，返回是否删除成功（不存在返回 false）。
-	DeleteAlertRule(id string) bool
+	// DeleteAlertRule 删除告警规则，按 tenantID 校验归属，不存在或越权返回 false。
+	DeleteAlertRule(id, tenantID string) bool
 	// GetAlertRule 按 ID 返回单个告警规则（M2 持久化补全；不存在返回 nil）。
 	GetAlertRule(id string) *AlertRule
 	// UpdateAlertRule 更新告警规则（M2 持久化补全）。不存在返回 false。
@@ -150,6 +166,10 @@ type AuditStore interface {
 	// QueryAudits 按租户/动作/时间窗过滤审计事件（审计可查；等保三级留痕必须可检索）。
 	// limit<=0 表示不限制（默认建议 100）。
 	QueryAudits(tenant, action string, since, until time.Time, limit int) []*proto.AuditEvent
+	// QueryHighRiskAudits 返回指定租户的高风险审计事件（action 命中 highRiskActions 集合），
+	// 供 GET /api/v1/audit/high-risk 专项查询；tenant 为空时返回全部租户（平台级）。
+	// limit<=0 表示不限制。返回按时间倒序。
+	QueryHighRiskAudits(tenant string, since, until time.Time, limit int) []*proto.AuditEvent
 	// VerifyAuditChain 校验审计哈希链完整性（P1-3 防篡改），limit 为校验窗口行数。
 	// tenant 非空时只校验该租户的可见窗口（多租户隔离，结果不含其他租户信息）；
 	// 传空串表示平台级校验（仅服务端内部调用）。结果 Supported=false 表示该存储后端
@@ -397,6 +417,8 @@ type QuotaStore interface {
 	GetQuota(tenantID string) (*QuotaConfig, error)
 	// SetQuota 设置或更新租户配额（按 tenantID 幂等 upsert）。返回持久化错误。
 	SetQuota(tenantID string, cfg *QuotaConfig) error
+	// ListQuotas 返回所有租户的配额配置（管理端用，跨租户视图）。
+	ListQuotas() ([]*QuotaConfig, error)
 }
 
 // ServiceDiscoveryStore 服务发现领域：注册/反注册/实例查询/心跳/过期清理。
@@ -442,6 +464,9 @@ type TaskRecordStore interface {
 	GetTaskRecord(tenantID, kind, id string) *TaskRecord
 	// SaveTaskRecord 幂等 upsert。返回持久化错误（调用方据此告警，不假成功）。
 	SaveTaskRecord(rec *TaskRecord) error
+	// ListTaskRecords 返回指定 kind 的全部记录（跨租户），供控制面重启恢复内存索引。
+	// 不存在该 kind 时返回空切片、nil error。
+	ListTaskRecords(kind string) ([]*TaskRecord, error)
 }
 
 // ConfigStore 配置中心领域：Get/Set/Delete/List + 版本历史 + 发布。
@@ -477,11 +502,15 @@ type SecretStore interface {
 	DeleteSecret(tenantID, key string) bool
 	// ListSecrets 列出指定租户的全部密钥元信息（脱敏视图，按 key 升序）。
 	ListSecrets(tenantID string) []*SecretMeta
-	// RotateSecret 轮换密钥：用新值产生新版本。不存在则等价于 SetSecret。
-	// 返回新版本元信息。
-	RotateSecret(tenantID, key, newValue string) *SecretMeta
+	// RotateSecret 轮换密钥：用新值产生新版本，保留已有 KeyType（入参 keyType 优先）。
+	// 不存在则等价于 SetSecret（Version=1）。返回新版本元信息；audit 记录 rotate 动作。
+	RotateSecret(tenantID, key, newValue, keyType, rotatedBy string) (*SecretMeta, error)
 	// SecretVersions 返回指定密钥的全部版本元信息（按 version 升序）。
 	SecretVersions(tenantID, key string) []*SecretMeta
+	// AddSecretAccessLog 记录一次密钥访问审计（get/rotate/delete）。
+	AddSecretAccessLog(tenantID, key, accessedBy, action string) error
+	// GetSecretAccessLog 查询指定密钥的访问审计日志（按租户隔离，分页，accessed_at 降序）。
+	GetSecretAccessLog(tenantID, key string, offset, limit int) ([]*SecretAccessLog, int, error)
 }
 
 // TicketStore 工单管理领域：创建/查询/更新/列表/关闭。
@@ -728,8 +757,8 @@ type PluginStore interface {
 	UpdatePlugin(plugin *Plugin) (*Plugin, bool)
 	// ListPlugins 返回全部插件（按创建时间升序）。
 	ListPlugins() []*Plugin
-	// DeletePlugin 按 ID 删除插件。不存在返回 false。
-	DeletePlugin(id string) bool
+	// DeletePlugin 按 ID 删除插件，按 tenantID 校验归属，不存在或越权返回 false。
+	DeletePlugin(id, tenantID string) bool
 }
 
 // BillingStore P6 计费：计划/订阅/账单 CRUD。
@@ -752,14 +781,16 @@ type BillingStore interface {
 	ListSubscriptions(tenantID string) []*Subscription
 	// UpdateSubscription 更新订阅（按 sub.ID 定位）。不存在返回 (nil, false)。
 	UpdateSubscription(sub *Subscription) (*Subscription, bool)
-	// DeleteSubscription 按 ID 删除订阅。不存在返回 false。
-	DeleteSubscription(id string) bool
+	// DeleteSubscription 按 ID 删除订阅，按 tenantID 校验归属，不存在或越权返回 false。
+	DeleteSubscription(id, tenantID string) bool
 	// CreateInvoice 创建账单。ID 为空时由 store 分配随机 ID。
 	CreateInvoice(inv *Invoice) *Invoice
 	// GetInvoice 按 ID 返回单个账单（不存在返回 (nil, false)）。
 	GetInvoice(id string) (*Invoice, bool)
 	// ListInvoices 返回指定租户的全部账单（按创建时间降序）。
 	ListInvoices(tenantID string) []*Invoice
+	// DeleteInvoice 按 ID 删除账单，按 tenantID 校验归属，不存在或越权返回 false。
+	DeleteInvoice(id, tenantID string) bool
 	// CalculateUsage 计算指定租户的资源用量统计。
 	CalculateUsage(tenantID string) (*Usage, bool)
 }
@@ -812,7 +843,41 @@ type Store interface {
 	APIKeyStore           // P6 API Key 管理：CRUD
 	PluginStore           // P6 插件市场：CRUD
 	BillingStore          // P6 计费：计划/订阅/账单 CRUD
+	CloudAccountStore     // Wave 2-B 云账号：CRUD + 同步
+	CloudResourceStore    // Wave 2-B 云资源：CRUD + 按账号删除
 
 	// WithDemo 设置是否开启演示模式：开启时每个 agent 注册预置 uname -a 示例任务。
 	WithDemo(bool) Store
+}
+
+// CloudAccountStore 云账号持久化领域（Wave 2-B）：CRUD + 同步状态回写。
+// 明文凭据不落库：CredentialsRef 仅指向 SecretItem。
+// 按 TenantID 隔离（List/Update/Delete 由调用方按 actx.TenantID 过滤或校验）。
+type CloudAccountStore interface {
+	// CreateCloudAccount 创建云账号。ID 为空时由 store 分配随机 ID；
+	// TenantID 为空时归一为 default。Status 默认 active，SyncStatus 默认 pending。
+	CreateCloudAccount(ctx context.Context, acct *CloudAccount) error
+	// GetCloudAccount 按 ID 返回单个云账号（不存在返回 (nil, nil error / nil)）。
+	GetCloudAccount(ctx context.Context, id string) (*CloudAccount, error)
+	// ListCloudAccounts 返回指定租户的云账号列表（分页，总数）。
+	ListCloudAccounts(ctx context.Context, tenantID string, offset, limit int) ([]*CloudAccount, int, error)
+	// UpdateCloudAccount 按 ID 部分更新（updates 为字段->值映射）。不存在返回 error。
+	UpdateCloudAccount(ctx context.Context, id string, updates map[string]interface{}) error
+	// DeleteCloudAccount 按 ID 删除云账号，返回是否删除成功（不存在返回 false）。
+	DeleteCloudAccount(ctx context.Context, id string) error
+	// SyncCloudAccount 回写同步状态（syncStatus/discoveredCount/lastSyncAt/updated_at）。
+	SyncCloudAccount(ctx context.Context, id string, syncStatus string, discoveredCount int) error
+}
+
+// CloudResourceStore 云资源持久化领域（Wave 2-B）：CRUD + 按账号批量删除。
+// 按 (CloudAccountID, ResourceType, ResourceID) 去重，按 TenantID 隔离。
+type CloudResourceStore interface {
+	// CreateCloudResource 创建云资源。ID 为空时由 store 分配随机 ID。
+	CreateCloudResource(ctx context.Context, res *CloudResource) error
+	// GetCloudResource 按 ID 返回单个云资源（不存在返回 (nil, error)）。
+	GetCloudResource(ctx context.Context, id string) (*CloudResource, error)
+	// ListCloudResources 返回指定租户的云资源列表（可按 accountID / resourceType 过滤，分页，总数）。
+	ListCloudResources(ctx context.Context, tenantID string, accountID string, resourceType string, offset, limit int) ([]*CloudResource, int, error)
+	// DeleteCloudResourcesByAccount 删除指定云账号下全部云资源，返回删除条数。
+	DeleteCloudResourcesByAccount(ctx context.Context, accountID string) error
 }

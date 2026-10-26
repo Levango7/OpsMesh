@@ -70,8 +70,8 @@ func (m *MemoryStore) ListPlugins() []*Plugin {
 	return out
 }
 
-// DeletePlugin 按 ID 删除插件。不存在返回 false。
-func (m *MemoryStore) DeletePlugin(id string) bool {
+// DeletePlugin 按 ID 删除插件。不存在返回 false。（tenantID 参数保留用于接口兼容；插件为平台级资源，不做租户隔离）
+func (m *MemoryStore) DeletePlugin(id, tenantID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.plugins[id]; !ok {

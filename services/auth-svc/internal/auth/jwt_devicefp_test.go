@@ -8,7 +8,7 @@ import (
 
 func TestIssueTokenWithDeviceFP_ClaimsContainFP(t *testing.T) {
 	eng := NewEngine("test-secret-32-chars-long!!!!!", 15*time.Minute, 7*24*time.Hour)
-	token, _, err := eng.IssueTokenWithDeviceFP("user-1", "alice", []string{"admin"}, []string{"user:read"}, "fp-abc", 15*time.Minute)
+	token, _, err := eng.IssueTokenWithDeviceFP("user-1", "alice", []string{"admin"}, []string{"user:read"}, "fp-abc", 15*time.Minute, "default")
 	if err != nil {
 		t.Fatalf("签发 token 失败: %v", err)
 	}
@@ -23,8 +23,8 @@ func TestIssueTokenWithDeviceFP_ClaimsContainFP(t *testing.T) {
 
 func TestIssueToken_EmptyDeviceFPBackwardCompatible(t *testing.T) {
 	eng := NewEngine("test-secret-32-chars-long!!!!!", 15*time.Minute, 7*24*time.Hour)
-	// IssueToken（旧 API）不传 deviceFP → claimsDclaims.DeviceFP 为空。
-	token, _, err := eng.IssueToken("user-1", "alice", []string{"admin"}, []string{"user:read"})
+	// IssueToken（旧 API）不传 deviceFP → claims.DeviceFP 为空。
+	token, _, err := eng.IssueToken("user-1", "alice", "default", []string{"admin"}, []string{"user:read"})
 	if err != nil {
 		t.Fatalf("签发 token 失败: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestIssueToken_EmptyDeviceFPBackwardCompatible(t *testing.T) {
 func TestValidateToken_DeviceFPInClaims(t *testing.T) {
 	eng := NewEngine("shared-secret-32-chars-long!!", 15*time.Minute, 7*24*time.Hour)
 	// 模拟 controlplane 共享密钥验签：auth-svc 签发，controlplane 用同密钥验签。
-	token, _, err := eng.IssueTokenWithDeviceFP("user-1", "bob", []string{"viewer"}, []string{"user:read"}, "device-hash-xyz", 15*time.Minute)
+	token, _, err := eng.IssueTokenWithDeviceFP("user-1", "bob", []string{"viewer"}, []string{"user:read"}, "device-hash-xyz", 15*time.Minute, "default")
 	if err != nil {
 		t.Fatalf("签发失败: %v", err)
 	}

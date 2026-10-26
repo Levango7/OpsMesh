@@ -1,0 +1,56 @@
+# Jenkins CI/CD 服务器
+# 使用方法：docker compose -f docker-compose.jenkins.yml up -d
+version: "3.8"
+
+services:
+  jenkins:
+    image: jenkins/jenkins:lts-jdk17
+    container_name: jenkins
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    environment:
+      - JAVA_OPTS=-Dhudson.slaves.NodeProvisioner.initialDelay=0
+    volumes:
+      - jenkins-data:/var/jenkins_home
+    networks:
+      - cicd-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: gitlab
+    ports:
+      - "80:80"
+      - "443:443"
+      - "2222:22"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-data:/var/opt/gitlab
+      - gitlab-logs:/var/log/gitlab
+    networks:
+      - cicd-net
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-data:/var/opt/gitlab
+      - gitlab-logs:/var/log/gitlab
+    networks:
+      - cicd-net
+
+networks:
+  cicd-net:
+    driver: bridge
+
+volumes:
+  jenkins-data:
+  gitlab-config:
+  gitlab-data:
+  gitlab-logs:

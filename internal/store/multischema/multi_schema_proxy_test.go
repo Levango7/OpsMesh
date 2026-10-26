@@ -275,7 +275,7 @@ func TestMultiSchemaStore_TenantProxy_AlertRule(t *testing.T) {
 		t.Fatal("UpdateAlertRule 代理失败")
 	}
 	// DeleteAlertRule（遍历所有 schema）
-	if !m.DeleteAlertRule(r.ID) {
+	if !m.DeleteAlertRule(r.ID, "t1") {
 		t.Fatal("DeleteAlertRule 代理失败")
 	}
 	// nil 入参

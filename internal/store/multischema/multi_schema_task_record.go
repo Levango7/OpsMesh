@@ -27,3 +27,16 @@ func (m *MultiSchemaStore) SaveTaskRecord(rec *TaskRecord) error {
 	}
 	return s.SaveTaskRecord(rec)
 }
+
+// ListTaskRecords 返回指定 kind 的全部记录：聚合所有已创建租户后端的结果。
+func (m *MultiSchemaStore) ListTaskRecords(kind string) ([]*TaskRecord, error) {
+	var out []*TaskRecord
+	for _, s := range m.allStores() {
+		recs, err := s.ListTaskRecords(kind)
+		if err != nil {
+			continue
+		}
+		out = append(out, recs...)
+	}
+	return out, nil
+}

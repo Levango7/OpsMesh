@@ -10,6 +10,8 @@ vi.mock('@/api/task', () => ({
   getTasks: vi.fn(),
   createTask: vi.fn(),
   cancelTask: vi.fn(),
+  approveTask: vi.fn(),
+  rejectTask: vi.fn(),
   getTaskDetail: vi.fn(),
 }))
 

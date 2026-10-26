@@ -434,11 +434,27 @@ func (s *Server) reconcileRunStatus(runID string) string {
 }
 
 // extractPipelineCommand 从 PipelineTemplate 中提取执行命令。
-// 简化实现：返回模板 YAML 的第一行非注释内容作为命令。
+// 支持 Tekton/Jenkins YAML 格式，提取 script/sh/command 字段；
+// 若无法解析，回退到第一行非注释内容。
 func extractPipelineCommand(tpl *store.PipelineTemplate) string {
 	if tpl.YAML == "" {
 		return fmt.Sprintf("echo 'pipeline %s started'", tpl.Name)
 	}
+	// 尝试从 YAML 中提取 script/sh/command 字段
+	for _, line := range strings.Split(tpl.YAML, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "script:") || strings.HasPrefix(trimmed, "sh:") || strings.HasPrefix(trimmed, "command:") {
+			// 提取值（冒号后的内容）
+			parts := strings.SplitN(trimmed, ":", 2)
+			if len(parts) == 2 {
+				val := strings.TrimSpace(parts[1])
+				if val != "" && val != "|" && val != ">" {
+					return val
+				}
+			}
+		}
+	}
+	// 回退：第一行非空非注释内容
 	for _, line := range strings.Split(tpl.YAML, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {

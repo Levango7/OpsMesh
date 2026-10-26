@@ -69,3 +69,28 @@ func (s *SQLStore) GetTaskRecord(tenantID, kind, id string) *TaskRecord {
 		tenantID, kind, id)
 	return scanTaskRecord(row)
 }
+
+// ListTaskRecords 返回指定 kind 的全部记录（跨租户）。
+func (s *SQLStore) ListTaskRecords(kind string) ([]*TaskRecord, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT "+taskRecordColumns+" FROM task_records WHERE kind=?",
+		kind)
+	if err != nil {
+		storefail.Record("[store] ListTaskRecords 失败 kind=%s: %v", kind, err)
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*TaskRecord
+	for rows.Next() {
+		r := scanTaskRecord(rows)
+		if r != nil {
+			out = append(out, r)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

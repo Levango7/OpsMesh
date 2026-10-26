@@ -1,25 +1,21 @@
 <template>
-  <div>
+  <div class="batch-view">
     <h2 data-testid="batch-title">{{ $t('batch.title') }}</h2>
     <p class="muted">{{ $t('batch.subtitle') }}</p>
 
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
-    <!-- 批量下发表单 -->
-    <div class="card">
+    <!-- 批量下发表单（详情页不显示） -->
+    <div v-if="!detailId" class="card">
       <h3>{{ $t('batch.dispatch_form_title') }}</h3>
       <form @submit.prevent="onSubmit">
         <div class="field">
           <label>{{ $t('batch.agent_select') }}</label>
           <div class="agent-picker">
             <div class="agent-toolbar">
-              <input
-                v-model="agentFilter"
-                :placeholder="$t('batch.filter_placeholder')"
-                class="filter-input"
-              />
-              <button type="button" class="xs outline" @click="selectAllAgents">{{ $t('batch.select_all') }}</button>
-              <button type="button" class="xs outline" @click="agentIDs = []">{{ $t('batch.clear_selection') }}</button>
+              <Input v-model="agentFilter" :placeholder="$t('batch.filter_placeholder')" />
+              <Button variant="ghost" size="small" @click="selectAllAgents">{{ $t('batch.select_all') }}</Button>
+              <Button variant="ghost" size="small" @click="agentIDs = []">{{ $t('batch.clear_selection') }}</Button>
               <span class="muted count">{{ agentIDs.length }} / {{ filteredAgents.length }}</span>
             </div>
             <div class="agent-list">
@@ -36,42 +32,45 @@
         <div class="row-2">
           <div class="field">
             <label>{{ $t('batch.type') }}</label>
-            <select v-model="form.type">
-              <option value="shell">shell</option>
-              <option value="file">file</option>
-              <option value="service">service</option>
-            </select>
+            <Select v-model="form.type" :options="typeOptions" placeholder="shell" />
           </div>
           <div class="field">
             <label>{{ $t('batch.command') }}</label>
-            <input v-model="form.command" :placeholder="$t('batch.command_placeholder')" required />
+            <Input v-model="form.command" :placeholder="$t('batch.command_placeholder')" required />
           </div>
         </div>
         <div class="row-2">
           <div class="field">
             <label>{{ $t('batch.path') }}</label>
-            <input v-model="form.path" :placeholder="$t('batch.optional')" />
+            <Input v-model="form.path" :placeholder="$t('batch.optional')" />
           </div>
           <div class="field">
             <label>{{ $t('batch.content') }}</label>
-            <input v-model="form.content" :placeholder="$t('batch.optional')" />
+            <Input v-model="form.content" :placeholder="$t('batch.optional')" />
           </div>
         </div>
         <div class="btnbar">
-          <button type="submit" class="primary" :disabled="submitting || !agentIDs.length" data-testid="batch-submit-btn">
+          <Button
+            variant="primary"
+            native-type="submit"
+            :disabled="submitting || !agentIDs.length"
+            data-testid="batch-submit-btn"
+          >
             {{ submitting ? $t('common.loading') : $t('batch.submit') }}
-          </button>
+          </Button>
         </div>
         <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
       </form>
     </div>
 
     <!-- 当前批量详情 -->
-    <div class="card" v-if="store.current">
+    <div v-if="store.current" class="card">
       <div class="flowbar">
         <h3>{{ $t('batch.status_title') }} · {{ store.current.batchID || '—' }}</h3>
-        <button class="xs outline" @click="refreshCurrent" v-if="store.current.batchID"><Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}</button>
-        <button class="xs outline" @click="store.clearCurrent()">{{ $t('common.close') }}</button>
+        <Button v-if="store.current.batchID" variant="ghost" size="small" @click="refreshCurrent">
+          <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
+        </Button>
+        <Button variant="ghost" size="small" @click="store.clearCurrent()">{{ $t('common.close') }}</Button>
       </div>
       <div class="stats">
         <div class="stat indigo">
@@ -91,60 +90,57 @@
           <div class="stat-l">{{ $t('batch.stat_status') }}</div>
         </div>
       </div>
-      <DataTable
+      <Table
+        :data="store.current.tasks || []"
         :columns="taskColumns"
-        :rows="store.current.tasks || []"
         row-key="taskID"
         :empty-text="$t('batch.no_tasks')"
       >
         <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
         <template #cell-status="{ value }">
-          <StatusBadge :status="value" :text="value" />
+          <span :class="['status-badge', 'status-' + value]">{{ value }}</span>
         </template>
-      </DataTable>
+      </Table>
     </div>
 
     <!-- 历史批量 -->
-    <div class="card" v-if="store.history.length">
+    <div v-if="store.history.length" class="card">
       <h3>{{ $t('batch.history_title') }}</h3>
-      <DataTable
+      <Table
+        :data="store.history"
         :columns="historyColumns"
-        :rows="store.history"
         row-key="batchID"
         :empty-text="$t('batch.no_history')"
       >
         <template #cell-batchID="{ value }"><code>{{ value }}</code></template>
         <template #cell-status="{ value }">
-          <StatusBadge :status="value" :text="value" />
+          <span :class="['status-badge', 'status-' + value]">{{ value }}</span>
         </template>
         <template #cell-actions="{ row }">
-          <button class="xs outline" @click="viewBatch(row.batchID)" data-testid="batch-view-btn">{{ $t('batch.view') }}</button>
+          <Button variant="ghost" size="small" @click="viewBatch(row.batchID)" data-testid="batch-view-btn">{{ $t('batch.view') }}</Button>
         </template>
-      </DataTable>
+      </Table>
     </div>
 
     <!-- 错误提示 -->
-    <ConfirmModal
-      v-model="errorConfirm.show"
-      data-testid="batch-error-modal"
-      :title="$t('common.error')"
-      :message="errorConfirm.message"
-      info
-    />
+    <Modal v-model="errorConfirm.show" :title="$t('common.error')">
+      {{ errorConfirm.message }}
+    </Modal>
   </div>
 </template>
 
 <script setup>
 // 批量运维页 — 选择设备 + 批量下发 + 状态查看
+// 路由：/batch | /batch-exec | /batch/:id
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useBatchStore } from '@/stores/batch'
 import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
-import DataTable from '@/components/DataTable.vue'
-import StatusBadge from '@/components/StatusBadge.vue'
+import { Button, Input, Select, Table, Modal } from '@/components/ui'
 import Icon from '@/components/Icon.vue'
-import ConfirmModal from '@/components/ConfirmModal.vue'
 
+const route = useRoute()
 const store = useBatchStore()
 const agents = ref([])
 const agentIDs = ref([])
@@ -155,6 +151,14 @@ const msgOk = ref(false)
 const submitting = ref(false)
 
 const errorConfirm = reactive({ show: false, message: '' })
+
+const detailId = computed(() => route.params.id || '')
+
+const typeOptions = [
+  { value: 'shell', label: 'shell' },
+  { value: 'file', label: 'file' },
+  { value: 'service', label: 'service' }
+]
 
 const filteredAgents = computed(() => {
   const q = agentFilter.value.trim().toLowerCase()
@@ -171,19 +175,19 @@ function selectAllAgents() {
 }
 
 const taskColumns = computed(() => [
-  { key: 'taskID', title: t('batch.col_task_id'), slot: 'cell-taskID' },
-  { key: 'agentID', title: t('batch.col_agent') },
-  { key: 'status', title: t('batch.col_status'), slot: 'cell-status' },
-  { key: 'output', title: t('batch.col_output') }
+  { prop: 'taskID', label: t('batch.col_task_id') },
+  { prop: 'agentID', label: t('batch.col_agent') },
+  { prop: 'status', label: t('batch.col_status') },
+  { prop: 'output', label: t('batch.col_output') }
 ])
 
 const historyColumns = computed(() => [
-  { key: 'batchID', title: t('batch.col_batch_id'), slot: 'cell-batchID' },
-  { key: 'total', title: t('batch.stat_total') },
-  { key: 'succeeded', title: t('batch.stat_succeeded') },
-  { key: 'failed', title: t('batch.stat_failed') },
-  { key: 'status', title: t('batch.stat_status'), slot: 'cell-status' },
-  { key: 'actions', title: t('batch.col_actions'), slot: 'cell-actions', width: '80px' }
+  { prop: 'batchID', label: t('batch.col_batch_id') },
+  { prop: 'total', label: t('batch.stat_total') },
+  { prop: 'succeeded', label: t('batch.stat_succeeded') },
+  { prop: 'failed', label: t('batch.stat_failed') },
+  { prop: 'status', label: t('batch.stat_status') },
+  { prop: 'actions', label: t('batch.col_actions'), width: '80px' }
 ])
 
 async function onSubmit() {
@@ -192,12 +196,6 @@ async function onSubmit() {
   submitting.value = true
   msg.value = ''
   try {
-    // 字段名与后端 batch-exec 契约对齐（docs/td60-task-contract-audit.md §2）：
-    //   设备集合 deviceIDs（此前发 agentIDs ⇒ 后端 required 校验恒 400，
-    //              批量执行从未能成功提交）；
-    //   任务类型 taskType（此前发 type ⇒ 后端取不到，静默落到默认 shell）。
-    // 单体 server_batch.go:126 与 task-svc gateway_batch.go:103 逐字一致，
-    // 故此处只可能有这一套写法，不再引入兼容层。
     const body = {
       deviceIDs: agentIDs.value,
       taskType: form.value.type,
@@ -235,6 +233,13 @@ async function refreshCurrent() {
 }
 
 onMounted(async () => {
+  if (detailId.value) {
+    try { await store.fetchStatus(detailId.value) }
+    catch (e) {
+      errorConfirm.message = e.j?.error || t('batch.fetch_status_failed')
+      errorConfirm.show = true
+    }
+  }
   try { agents.value = await getAgents() || [] }
   catch (e) { console.error('fetch agents failed:', e) }
 })
@@ -257,7 +262,6 @@ onMounted(async () => {
 
 .agent-picker { display: flex; flex-direction: column; gap: 8px; }
 .agent-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.filter-input { flex: 1; min-width: 180px; padding: 6px 10px; }
 .count { font-size: 12px; }
 .agent-list {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px;
@@ -283,6 +287,13 @@ onMounted(async () => {
 .stat.teal { border-top-color: var(--teal); }
 .stat-v { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat-l { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
+
+.status-badge { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.status-pending { background: var(--accent-soft); color: var(--accent); }
+.status-running { background: var(--accent-soft); color: var(--accent); }
+.status-completed { background: var(--ok-soft); color: var(--ok); }
+.status-failed { background: var(--fail-soft); color: var(--fail); }
+.status-cancelled { background: var(--surface-3); color: var(--text-3); }
 
 .poll-err {
   padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);

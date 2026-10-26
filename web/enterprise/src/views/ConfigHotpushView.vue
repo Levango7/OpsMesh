@@ -19,7 +19,7 @@
     <!-- ========== Tab 1: 热推送 ========== -->
     <div v-show="activeTab === 'hotpush'">
       <div class="card">
-        <h3>{{ $t('configHotpush.hotpush_form_title') }}</h3>
+        <h3 class="card__title">{{ $t('configHotpush.hotpush_form_title') }}</h3>
         <form @submit.prevent="onHotpush">
           <div class="row-2">
             <div class="field">
@@ -64,7 +64,7 @@
         </form>
       </div>
       <div class="card" v-if="store.lastHotpush">
-        <h3>{{ $t('configHotpush.result_title') }}</h3>
+        <h3 class="card__title">{{ $t('configHotpush.result_title') }}</h3>
         <div class="kv-grid">
           <div class="kv"><span class="k">{{ $t('configHotpush.field_taskID') }}</span><span class="v"><code>{{ store.lastHotpush.taskID || '—' }}</code></span></div>
           <div class="kv" v-if="store.lastHotpush.configVersion">
@@ -78,7 +78,7 @@
     <!-- ========== Tab 2: 灰度发布 ========== -->
     <div v-show="activeTab === 'canary'">
       <div class="card">
-        <h3>{{ $t('configHotpush.canary_form_title') }}</h3>
+        <h3 class="card__title">{{ $t('configHotpush.canary_form_title') }}</h3>
         <form @submit.prevent="onCanary">
           <div class="field">
             <label>{{ $t('configHotpush.field_agentIDs') }}</label>
@@ -131,7 +131,7 @@
         </form>
       </div>
       <div class="card" v-if="store.lastCanary">
-        <h3>{{ $t('configHotpush.canary_result_title') }}</h3>
+        <h3 class="card__title">{{ $t('configHotpush.canary_result_title') }}</h3>
         <div class="kv"><span class="k">{{ $t('configHotpush.field_canaryID') }}</span><span class="v"><code>{{ store.lastCanary.canaryID || '—' }}</code></span></div>
       </div>
     </div>

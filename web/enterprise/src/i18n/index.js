@@ -52,7 +52,11 @@ export const ROUTE_DOMAIN_MAP = {
   'infra-console': 'ops',
   middleware: 'ops',
   k8s: 'ops',
+  'k8s-clusters': 'ops',
+  'k8s-resources': 'ops',
   batch: 'ops',
+  'batch-exec': 'ops',
+  'batch-detail': 'ops',
   // 资产配置 → assets
   cmdb: 'assets',
   // 交付中心 → delivery
@@ -62,6 +66,7 @@ export const ROUTE_DOMAIN_MAP = {
   pipeline: 'delivery',
   argocd: 'delivery',
   canary: 'delivery',
+  'canary-detail': 'delivery',
   flux: 'delivery',
   // 可观测性 → observability
   logs: 'observability',
@@ -100,6 +105,9 @@ export const ROUTE_DOMAIN_MAP = {
   apikeys: 'platform',
   'gateway-routes': 'platform',
   'notify-channels': 'platform',
+
+  // 云账号管理（平台）
+  'cloud-accounts': 'platform',
 
   // ====================================================================
   // P1 五子域路由 → 功能域映射

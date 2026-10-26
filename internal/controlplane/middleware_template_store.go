@@ -93,16 +93,31 @@ func middlewareTemplateToStore(t *MiddlewareTemplate, tenantID string) *store.Mi
 
 // middlewareTemplateFromStore 将 store.MiddlewareTemplate 反转换为 controlplane.MiddlewareTemplate。
 // Config 为空或反序列化失败时，用 store 行的 ID/Name/Type/Version 构造最小模板（向后兼容）。
+// middlewareTemplateFromStore 将 store.MiddlewareTemplate 反转换为 controlplane.MiddlewareTemplate。
+// Config 为空或反序列化失败时，用 store 行的 ID/Name/Type/Version 构造最小模板（向后兼容）。
 func middlewareTemplateFromStore(st *store.MiddlewareTemplate) *MiddlewareTemplate {
 	if st == nil {
 		return nil
 	}
 	if st.Config == "" {
-		return &MiddlewareTemplate{ID: st.ID, Name: st.Name, Category: st.Type, Version: st.Version}
+		t := &MiddlewareTemplate{ID: st.ID, Name: st.Name, Category: st.Type, Version: st.Version}
+		// 旧模板无 versions 字段时，从目录回退
+		if len(t.Versions) == 0 {
+			if v, ok := presets.MiddlewareVersionCatalog[t.ID]; ok {
+				t.Versions = v
+			}
+		}
+		return t
 	}
 	var t MiddlewareTemplate
 	if err := json.Unmarshal([]byte(st.Config), &t); err != nil {
-		return &MiddlewareTemplate{ID: st.ID, Name: st.Name, Category: st.Type, Version: st.Version}
+		t2 := &MiddlewareTemplate{ID: st.ID, Name: st.Name, Category: st.Type, Version: st.Version}
+		if len(t2.Versions) == 0 {
+			if v, ok := presets.MiddlewareVersionCatalog[t2.ID]; ok {
+				t2.Versions = v
+			}
+		}
+		return t2
 	}
 	// 以 store 行的 ID/Name 为准（防 Config 中过期值）。
 	if st.ID != "" {
@@ -110,6 +125,12 @@ func middlewareTemplateFromStore(st *store.MiddlewareTemplate) *MiddlewareTempla
 	}
 	if st.Name != "" {
 		t.Name = st.Name
+	}
+	// 旧模板无 versions 字段时，从目录回退
+	if len(t.Versions) == 0 {
+		if v, ok := presets.MiddlewareVersionCatalog[t.ID]; ok {
+			t.Versions = v
+		}
 	}
 	return &t
 }
@@ -121,7 +142,23 @@ func (s *Server) seedPresetMiddlewareTemplates() {
 	for i := range presets.MiddlewareTemplates {
 		tpl := &presets.MiddlewareTemplates[i]
 		if existing := s.store.GetMiddlewareTemplate(tpl.ID); existing != nil {
-			continue // 已存在（用户可能已在线修改），不覆盖
+			// 已存在：如果旧模板没有 versions 字段但预置模板有，则合并 versions
+			//（保留用户对 name/description/params/scripts 的其他修改）
+			if existing.Config != "" {
+				var t MiddlewareTemplate
+				if err := json.Unmarshal([]byte(existing.Config), &t); err == nil {
+					if len(t.Versions) == 0 && len(tpl.Versions) > 0 {
+						t.Versions = tpl.Versions
+						if cfg, err := json.Marshal(t); err == nil {
+							existing.Config = string(cfg)
+							if err := s.store.SaveMiddlewareTemplate(existing); err != nil {
+								log.Printf("[controlplane] seed 合并 versions 到 %s 失败: %v", tpl.ID, err)
+							}
+						}
+					}
+				}
+			}
+			continue // 已存在（用户可能已在线修改），不覆盖其他字段
 		}
 		st := middlewareTemplateToStore(tpl, "default")
 		if err := s.store.SaveMiddlewareTemplate(st); err != nil {
@@ -160,10 +197,30 @@ func (s *Server) listMiddlewareTemplatesFromStore(tenantID string) []MiddlewareT
 
 // getMiddlewareTemplateByID 从 store 读取单个中间件模板（含回退）。
 // store 中不存在时回退到内存常量 middlewareTemplateByID（向后兼容）。
+//
+// **无租户过滤**：预置模板 seed 在 default 租户（见 seedPresetMiddlewareTemplates），
+// 却要对所有租户可解析——部署链路（handleDeployMiddlewareTemplate）与实例派生链路
+// （middleware_instances.go）都靠它解析共享预置模板，故此处**不得**加租户闸。
+// 面向租户隔离的 CRUD 路径请用 getMiddlewareTemplateScoped。
 func (s *Server) getMiddlewareTemplateByID(id string) *MiddlewareTemplate {
 	if st := s.store.GetMiddlewareTemplate(id); st != nil {
 		return middlewareTemplateFromStore(st)
 	}
 	// 回退到预置模板（store 未 seed 或为空）。
 	return middlewareTemplateByID(id)
+}
+
+// getMiddlewareTemplateScoped 按租户归属读取模板；不存在或不属于该租户一律返回 nil。
+//
+// 与无租户过滤的 getMiddlewareTemplateByID 的区别：这里做**归属判定**，
+// 属他租户的行与不存在的行返回同一个结果（nil），调用方据此回 404，
+// 不泄露"该 ID 是否存在"（防跨租户枚举）。
+func (s *Server) getMiddlewareTemplateScoped(tenantID, id string) *MiddlewareTemplate {
+	if t := s.store.GetMiddlewareTemplate(id); t != nil {
+		if t.TenantID != tenantID {
+			return nil
+		}
+		return middlewareTemplateFromStore(t)
+	}
+	return nil
 }

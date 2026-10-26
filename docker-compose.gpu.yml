@@ -1,0 +1,113 @@
+# GPU 3节点集群 (NVIDIA GPU 加速)
+# 使用方法：docker compose -f docker-compose.gpu.yml up -d
+# 需要 NVIDIA Container Toolkit 支持
+version: "3.8"
+
+services:
+  gpu-node-1:
+    image: nvidia/cuda:12.1.0-base-ubuntu22.04
+    container_name: gpu-node-1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ports:
+      - "2221:22"
+      - "8081:8080"
+    environment:
+      - NODE_NAME=gpu-node-1
+      - NODE_ROLE=master
+    volumes:
+      - gpu-node-1-data:/data
+    volumes:
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools
+    devices:
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools
+    networks:
+      - gpu-net
+    volumes:
+      - gpu-node-1-data:/data
+
+  gpu-node-2:
+    image: nvidia/cuda:12.1.0-base-ubuntu22.04
+    container_name: gpu-node-2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ports:
+      - "2222:22"
+      - "8082:8080"
+    environment:
+      - NODE_NAME=gpu-node-2
+      - NODE_ROLE=worker
+    volumes:
+      - gpu-node-2-data:/data
+    volumes:
+      - /dev/nvidia1:/dev/nvidia1
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools
+    devices:
+      - /dev/nvidia1:/dev/nvidia1
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools
+    networks:
+      - gpu-net
+    volumes:
+      - gpu-node-2-data:/data
+
+  gpu-node-3:
+    image: nvidia/cuda:12.1.0-base-ubuntu22.04
+    container_name: gpu-node-3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ports:
+      - "2223:22"
+      - "8083:8080"
+    environment:
+      - NODE_NAME=gpu-node-3
+      - NODE_ROLE=worker
+    volumes:
+      - gpu-node-3-data:/data
+    volumes:
+      - /dev/nvidia2:/dev/nvidia2
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools
+    devices:
+      - /dev/nvidia2:/dev/nvidia2
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools
+    networks:
+      - gpu-net
+    volumes:
+      - gpu-node-3-data:/data
+
+volumes:
+  gpu-node-1-data:
+  gpu-node-2-data:
+  gpu-node-3-data:
+
+networks:
+  gpu-net:
+    driver: bridge

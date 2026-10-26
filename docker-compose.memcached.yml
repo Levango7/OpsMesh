@@ -1,0 +1,41 @@
+# Memcached 集群
+# 使用方法：docker compose -f docker-compose.memcached.yml up -d
+version: "3.8"
+
+services:
+  memcached-1:
+    image: memcached:1.6-alpine
+    container_name: memcached-1
+    ports:
+      - "11211:11211"
+    command: memcached -m 256
+    networks:
+      - memcached-net
+
+  memcached-2:
+    image: memcached:1.6-alpine
+    container_name: memcached-2
+    ports:
+      - "11212:11211"
+    environment:
+      - MEMCACHED_HOST=memcached-1
+    depends_on:
+      - memcached-1
+    networks:
+      - memcached-net
+
+  memcached-3:
+    image: memcached:1.6-alpine
+    container_name: memcached-3
+    ports:
+      - "11213:11211"
+    environment:
+      - MEMCACHED_HOST=memcached-1
+    depends_on:
+      - memcached-1
+    networks:
+      - memcached-net
+
+networks:
+  memcached-net:
+    driver: bridge

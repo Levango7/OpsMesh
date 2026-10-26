@@ -1,0 +1,25 @@
+-- 029_tasks_script_body.sql — 任务多行脚本体列（修复多行脚本模板 100% 失败）
+--
+-- 缺陷：预置 OS 优化模板与中间件部署模板天然是多行 bash（heredoc、函数定义、
+--   for 循环），而任务只有 command 一个通道，agent 端 checkShellMetachars 对
+--   内联命令的换行是**硬拦截**（"ls\nrm -rf /" 类拼接注入防护）。
+--   结果：模板脚本报「shell command contains dangerous metacharacters (newline)」
+--   100% 失败——拦截是对的，但承载多行脚本的通道缺失。
+--
+-- 方案：tasks 表增加 script_body 列，与 internal/proto.Task.ScriptBody 对齐。
+--   script_body 承载**整段脚本**，由 agent 落临时文件后以 `sh <file>` 执行，
+--   不参与内联换行禁令；command 字段保持原义（单行命令，仍走元字符拦截 +
+--   命令白名单），单行任务路径行为完全不变。
+--
+-- 兼容性：MEDIUMTEXT NULL——脚本可能较长（预置模板 1-3KB），TEXT 的 64KB 上限
+--   对用户自建的大模板偏紧；可空是因为存量任务没有脚本体（NULL 即"无脚本"）。
+--   读侧一律用 sql.NullString 承接（tasks 表除主键外全部列可空，裸 string 目标
+--   遇 NULL 会让整行读不出来——见 sql_tasks.go 的既有约定）。
+--
+-- 索引决策：不加索引。该列只参与「按 task_id/agent_id 取整行」，从不作为查询条件，
+--   建索引只会给每次写入增加维护成本。
+--
+-- 幂等：MySQL 不支持 ADD COLUMN IF NOT EXISTS；迁移框架的 tolerateIdempotentDDLError
+--   会对重复列（1060 ER_DUP_FIELDNAME）做 information_schema 二次核实后幂等放行，
+--   因此本文件可重复重放、安全再执行。
+ALTER TABLE tasks ADD COLUMN script_body MEDIUMTEXT NULL;

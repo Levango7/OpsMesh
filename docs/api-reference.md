@@ -2042,7 +2042,7 @@ M2/M3 增强：CI 自动采集 + 变更审批流。CI 创建/修改/删除走审
 
 ## 中间件部署 API
 
-预置中间件部署模板（15+ 模板：nginx/redis/mysql/kafka 等），支持部署/卸载/实例查询。
+预置中间件部署模板（29 个模板：nginx/redis/mysql/kafka/apache 等），每个模板提供可选版本目录（`versions`），支持部署/卸载/实例查询。
 
 ### GET /api/v1/middleware-templates
 
@@ -2058,14 +2058,18 @@ M2/M3 增强：CI 自动采集 + 变更审批流。CI 创建/修改/删除走审
     "name": "Nginx 1.25",
     "category": "web",
     "risk": "low",
-    "version": "1.25"
+    "version": "1.25",
+    "versions": [
+      {"version": "1.25", "dockerImage": "nginx:1.25", "default": true},
+      {"version": "1.27", "dockerImage": "nginx:1.27"}
+    ]
   }
 ]
 ```
 
 ### GET /api/v1/middleware-templates/{id}
 
-模板详情（含部署参数 schema）。
+模板详情（含部署参数 schema 与版本目录 `versions`）。
 
 ### POST /api/v1/middleware-templates/{id}/deploy
 
@@ -2077,11 +2081,16 @@ M2/M3 增强：CI 自动采集 + 变更审批流。CI 创建/修改/删除走审
 {
   "agentID": "a-001",
   "deployType": "docker",
+  "version": "1.25",
   "params": {"port": "80", "workers": "4"}
 }
 ```
 
-- **响应**：`201 Created`，`{"task": {...}, "taskID": "t-001", "templateID": "mw-001", "templateName": "Nginx 1.25", "deployType": "docker"}`
+- **说明**：`version` 为可选版本号（也可放在 `params.version`），对应模板 `versions[]` 中的一项；
+  缺省或未匹配时使用默认版本（`default: true`），docker 脚本中的 `{image}` 占位符按所选版本的
+  `dockerImage` 替换。
+
+- **响应**：`201 Created`，`{"task": {...}, "taskID": "t-001", "templateID": "mw-001", "templateName": "Nginx 1.25", "deployType": "docker", "version": "1.25"}`
 
 ### GET /api/v1/middleware-instances
 

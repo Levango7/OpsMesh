@@ -1,50 +1,52 @@
 <template>
-  <div>
+  <div class="canary-view">
     <h2 data-testid="canary-title">{{ $t('canary.title') }}</h2>
     <p class="muted">{{ $t('canary.subtitle') }}</p>
 
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
-    <!-- 创建灰度发布 -->
-    <div class="card">
+    <!-- 创建灰度发布（详情页不显示） -->
+    <div v-if="!detailId" class="card">
       <h3>{{ $t('canary.create_title') }}</h3>
       <form @submit.prevent="onCreate">
         <div class="row-2">
           <div class="field">
             <label>{{ $t('canary.field_service') }}</label>
-            <input v-model.trim="form.serviceName" type="text" required data-testid="canary-service-input" />
+            <Input v-model.trim="form.serviceName" type="text" required data-testid="canary-service-input" />
           </div>
           <div class="field">
             <label>{{ $t('canary.field_target_version') }}</label>
-            <input v-model.trim="form.targetVersion" type="text" required data-testid="canary-target-version-input" />
+            <Input v-model.trim="form.targetVersion" type="text" required data-testid="canary-target-version-input" />
           </div>
         </div>
         <div class="row-2">
           <div class="field">
             <label>{{ $t('canary.field_baseline_version') }}</label>
-            <input v-model.trim="form.baselineVersion" type="text" :placeholder="$t('canary.optional')" />
+            <Input v-model.trim="form.baselineVersion" type="text" :placeholder="$t('canary.optional')" />
           </div>
           <div class="field">
             <label>{{ $t('canary.field_steps') }}</label>
-            <input v-model.trim="form.steps" type="text" placeholder="10,30,50,100" />
+            <Input v-model.trim="form.steps" type="text" placeholder="10,30,50,100" />
           </div>
         </div>
         <div class="btnbar">
-          <button type="submit" class="primary" :disabled="creating" data-testid="canary-create-btn">
+          <Button type="button" variant="primary" :disabled="creating" data-testid="canary-create-btn">
             <Icon name="add" :size="14" />
             {{ creating ? $t('common.loading') : $t('canary.create_btn') }}
-          </button>
+          </Button>
         </div>
         <p v-if="createMsg" :class="['msg', createOk ? 'ok' : 'err']">{{ createMsg }}</p>
       </form>
     </div>
 
     <!-- 当前灰度状态 -->
-    <div class="card" v-if="store.current">
+    <div v-if="store.current" class="card">
       <div class="flowbar">
         <h3>{{ $t('canary.status_title') }} · {{ store.current.canaryID || '—' }}</h3>
-        <button class="xs outline" @click="refreshCurrent" v-if="store.current.canaryID"><Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}</button>
-        <button class="xs outline" @click="store.clearCurrent()">{{ $t('common.close') }}</button>
+        <Button v-if="store.current.canaryID" variant="ghost" size="small" @click="refreshCurrent">
+          <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
+        </Button>
+        <Button variant="ghost" size="small" @click="store.clearCurrent()">{{ $t('common.close') }}</Button>
       </div>
 
       <div class="stats">
@@ -67,20 +69,20 @@
       </div>
 
       <div class="btnbar">
-        <button
-          class="primary"
+        <Button
+          variant="primary"
           @click="onAdvance"
           :disabled="advancing || !canAdvance"
           data-testid="canary-advance-btn"
         >
           <Icon name="arrow-right" :size="14" />
           {{ advancing ? $t('common.loading') : $t('canary.advance_btn') }}
-        </button>
+        </Button>
       </div>
     </div>
 
     <!-- 流量分割 -->
-    <div class="card" v-if="store.current">
+    <div v-if="store.current" class="card">
       <h3>{{ $t('canary.traffic_title') }}</h3>
       <div v-if="!trafficEdit" class="traffic-view">
         <div class="traffic-bar">
@@ -92,26 +94,28 @@
           <span class="dot baseline"></span> {{ $t('canary.legend_baseline') }} {{ baselinePercent }}%
         </div>
         <div class="btnbar">
-          <button class="xs outline" @click="openTrafficEdit" data-testid="canary-traffic-edit-btn">{{ $t('canary.traffic_edit') }}</button>
+          <Button variant="ghost" size="small" @click="openTrafficEdit" data-testid="canary-traffic-edit-btn">{{ $t('canary.traffic_edit') }}</Button>
         </div>
       </div>
       <form v-else class="traffic-form" @submit.prevent="onTrafficSave">
         <div class="field">
           <label>{{ $t('canary.field_canary_percent') }}（0-100）</label>
-          <input v-model.number="trafficForm.canaryPercent" type="number" min="0" max="100" step="1" required />
+          <Input v-model.number="trafficForm.canaryPercent" type="number" min="0" max="100" step="1" required />
         </div>
         <div class="btnbar">
-          <button type="submit" class="primary" :disabled="trafficSaving">{{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="trafficEdit = false">{{ $t('common.cancel') }}</button>
+          <Button type="submit" variant="primary" :disabled="trafficSaving">{{ $t('common.save') }}</Button>
+          <Button type="button" variant="ghost" size="small" @click="trafficEdit = false">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </div>
 
     <!-- 灰度指标 -->
-    <div class="card" v-if="store.current">
+    <div v-if="store.current" class="card">
       <div class="flowbar">
         <h3>{{ $t('canary.metrics_title') }}</h3>
-        <button class="xs outline" @click="refreshMetrics" v-if="store.current.canaryID"><Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}</button>
+        <Button v-if="store.current.canaryID" variant="ghost" size="small" @click="refreshMetrics">
+          <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
+        </Button>
       </div>
       <div v-if="!store.metrics" class="muted">{{ $t('canary.no_metrics') }}</div>
       <div v-else class="metrics-grid">
@@ -141,54 +145,47 @@
     </div>
 
     <!-- 历史灰度 -->
-    <div class="card" v-if="store.list.length">
+    <div v-if="store.list.length" class="card">
       <h3>{{ $t('canary.history_title') }}</h3>
-      <DataTable
+      <Table
+        :data="store.list"
         :columns="historyColumns"
-        :rows="store.list"
         row-key="canaryID"
         :empty-text="$t('canary.no_history')"
       >
         <template #cell-canaryID="{ value }"><code>{{ value }}</code></template>
         <template #cell-status="{ value }">
-          <StatusBadge :status="value" :text="value" />
+          <span :class="['status-badge', 'status-' + value]">{{ value }}</span>
         </template>
         <template #cell-actions="{ row }">
-          <button class="xs outline" @click="viewCanary(row.canaryID)" data-testid="canary-view-btn">{{ $t('canary.view') }}</button>
+          <Button variant="ghost" size="small" @click="viewCanary(row.canaryID)" data-testid="canary-view-btn">{{ $t('canary.view') }}</Button>
         </template>
-      </DataTable>
+      </Table>
     </div>
 
     <!-- 推进确认 -->
-    <ConfirmModal
-      v-model="advanceConfirm.show"
-      data-testid="canary-advance-confirm-modal"
-      :title="$t('canary.advance_btn')"
-      :message="$t('canary.advance_confirm')"
-      @confirm="onAdvanceConfirm"
-    />
+    <Modal v-model="advanceConfirm.show" :title="$t('canary.advance_btn')" @confirm="onAdvanceConfirm">
+      {{ $t('canary.advance_confirm') }}
+    </Modal>
     <!-- 错误提示 -->
-    <ConfirmModal
-      v-model="errorConfirm.show"
-      data-testid="canary-error-modal"
-      :title="$t('common.error')"
-      :message="errorConfirm.message"
-      info
-    />
+    <Modal v-model="errorConfirm.show" :title="$t('common.error')">
+      {{ errorConfirm.message }}
+    </Modal>
   </div>
 </template>
 
 <script setup>
 // 灰度发布页 — 创建 + 状态 + 推进 + 流量分割 + 指标
-import { ref, reactive, computed } from 'vue'
+// 路由：/canary | /canary/:id
+import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useCanaryStore } from '@/stores/canary'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
-import DataTable from '@/components/DataTable.vue'
-import StatusBadge from '@/components/StatusBadge.vue'
+import { Button, Input, Table, Modal } from '@/components/ui'
 import Icon from '@/components/Icon.vue'
-import ConfirmModal from '@/components/ConfirmModal.vue'
 
+const route = useRoute()
 const store = useCanaryStore()
 const form = ref({ serviceName: '', targetVersion: '', baselineVersion: '', steps: '10,30,50,100' })
 const creating = ref(false)
@@ -199,13 +196,14 @@ const trafficSaving = ref(false)
 const trafficEdit = ref(false)
 const trafficForm = ref({ canaryPercent: 0 })
 
+const detailId = computed(() => route.params.id || '')
+
 const advanceConfirm = reactive({ show: false })
 const errorConfirm = reactive({ show: false, message: '' })
 
 const canAdvance = computed(() => {
   const c = store.current
   if (!c) return false
-  // 已完成/已取消/已回滚则不可推进
   const status = c.status || ''
   return !['completed', 'cancelled', 'rolledback', 'failed'].includes(status)
 })
@@ -231,12 +229,12 @@ const baselineMetricsMap = computed(() => {
 })
 
 const historyColumns = computed(() => [
-  { key: 'canaryID', title: t('canary.col_canary_id'), slot: 'cell-canaryID' },
-  { key: 'serviceName', title: t('canary.stat_service') },
-  { key: 'targetVersion', title: t('canary.stat_target') },
-  { key: 'currentStep', title: t('canary.stat_step') },
-  { key: 'status', title: t('canary.stat_status'), slot: 'cell-status' },
-  { key: 'actions', title: t('canary.col_actions'), slot: 'cell-actions', width: '80px' }
+  { prop: 'canaryID', label: t('canary.col_canary_id') },
+  { prop: 'serviceName', label: t('canary.stat_service') },
+  { prop: 'targetVersion', label: t('canary.stat_target') },
+  { prop: 'currentStep', label: t('canary.stat_step') },
+  { prop: 'status', label: t('canary.stat_status') },
+  { prop: 'actions', label: t('canary.col_actions'), width: '80px' }
 ])
 
 async function onCreate() {
@@ -333,6 +331,12 @@ async function onTrafficSave() {
     trafficSaving.value = false
   }
 }
+
+onMounted(async () => {
+  if (detailId.value) {
+    await loadCanaryDetail(detailId.value)
+  }
+})
 </script>
 
 <style scoped>
@@ -389,6 +393,13 @@ async function onTrafficSave() {
 }
 .metrics-block th { background: var(--surface-3); color: var(--text-2); font-weight: 600; font-size: 11.5px; }
 .metrics-block tr:last-child td { border-bottom: none; }
+
+.status-badge { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.status-pending { background: var(--accent-soft); color: var(--accent); }
+.status-running { background: var(--accent-soft); color: var(--accent); }
+.status-completed { background: var(--ok-soft); color: var(--ok); }
+.status-failed { background: var(--fail-soft); color: var(--fail); }
+.status-cancelled { background: var(--surface-3); color: var(--text-3); }
 
 .poll-err {
   padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);

@@ -260,4 +260,10 @@ onMounted(() => {
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .modal-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .modal-body .field label { margin: 0; }
+.row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
 </style>

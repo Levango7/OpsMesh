@@ -167,6 +167,24 @@ func CloneWebhookDelivery(d *WebhookDelivery) *WebhookDelivery {
 	return &cp
 }
 
+// CloneCloudAccount 返回 acct 的深拷贝（值类型字段浅拷贝即深拷贝）。
+func CloneCloudAccount(acct *CloudAccount) *CloudAccount {
+	if acct == nil {
+		return nil
+	}
+	cp := *acct
+	return &cp
+}
+
+// CloneCloudResource 返回 res 的深拷贝（值类型字段浅拷贝即深拷贝）。
+func CloneCloudResource(res *CloudResource) *CloudResource {
+	if res == nil {
+		return nil
+	}
+	cp := *res
+	return &cp
+}
+
 // SortServiceInstances 按 ServiceID 升序排序（稳定输出，便于测试断言）。
 // 小规模数据用插入排序，避免引入 sort 包的额外依赖。
 func SortServiceInstances(s []*ServiceInstance) {

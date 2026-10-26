@@ -55,6 +55,10 @@ type Task struct {
 	ApprovedAt       *timestamppb.Timestamp `protobuf:"bytes,23,opt,name=approved_at,json=approvedAt,proto3" json:"approved_at,omitempty"`
 	BatchId          string                 `protobuf:"bytes,24,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
 	LastFiredAt      *timestamppb.Timestamp `protobuf:"bytes,25,opt,name=last_fired_at,json=lastFiredAt,proto3" json:"last_fired_at,omitempty"`
+	Priority         int32                  `protobuf:"varint,26,opt,name=priority,proto3" json:"priority,omitempty"`                                  // 任务优先级（0-10，数字越大越优先）
+	IdempotencyKey   string                 `protobuf:"bytes,27,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"` // 幂等键，(tenantID, idempotencyKey) 去重
+	StatusMachine    string                 `protobuf:"bytes,28,opt,name=status_machine,json=statusMachine,proto3" json:"status_machine,omitempty"`    // 状态机枚举值
+	ScriptBody       string                 `protobuf:"bytes,29,opt,name=script_body,json=scriptBody,proto3" json:"script_body,omitempty"`             // 多行脚本体（独立于 command 的脚本通道；不参与内联换行禁令）
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -262,6 +266,34 @@ func (x *Task) GetLastFiredAt() *timestamppb.Timestamp {
 		return x.LastFiredAt
 	}
 	return nil
+}
+
+func (x *Task) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *Task) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *Task) GetStatusMachine() string {
+	if x != nil {
+		return x.StatusMachine
+	}
+	return ""
+}
+
+func (x *Task) GetScriptBody() string {
+	if x != nil {
+		return x.ScriptBody
+	}
+	return ""
 }
 
 // TaskResult 任务执行结果。
@@ -2088,7 +2120,7 @@ var File_task_proto protoreflect.FileDescriptor
 const file_task_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"task.proto\x12\x0fopsmesh.task.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xdd\x06\n" +
+	"task.proto\x12\x0fopsmesh.task.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xea\a\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x19\n" +
 	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x1b\n" +
@@ -2126,7 +2158,12 @@ const file_task_proto_rawDesc = "" +
 	"\vapproved_at\x18\x17 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"approvedAt\x12\x19\n" +
 	"\bbatch_id\x18\x18 \x01(\tR\abatchId\x12>\n" +
-	"\rlast_fired_at\x18\x19 \x01(\v2\x1a.google.protobuf.TimestampR\vlastFiredAt\"\x8c\x02\n" +
+	"\rlast_fired_at\x18\x19 \x01(\v2\x1a.google.protobuf.TimestampR\vlastFiredAt\x12\x1a\n" +
+	"\bpriority\x18\x1a \x01(\x05R\bpriority\x12'\n" +
+	"\x0fidempotency_key\x18\x1b \x01(\tR\x0eidempotencyKey\x12%\n" +
+	"\x0estatus_machine\x18\x1c \x01(\tR\rstatusMachine\x12\x1f\n" +
+	"\vscript_body\x18\x1d \x01(\tR\n" +
+	"scriptBody\"\x8c\x02\n" +
 	"\n" +
 	"TaskResult\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x19\n" +

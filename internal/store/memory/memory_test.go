@@ -185,8 +185,9 @@ func TestMemoryStore_DAGReleaseBlockedToPending(t *testing.T) {
 
 	// A 完成 → B 应被自动释放为 pending（进入可下发队列）。
 	// 状态守卫：SubmitResult 仅接受 running 任务，须先领取。
-	m.ClaimTask(a.AgentID)
-	m.SubmitResult(&proto.TaskResult{TaskID: ta.TaskID, AgentID: a.AgentID, ExitCode: 0})
+	// 防双跑：上报携带领取时颁发的 ClaimEpoch（与 internal/agent/agent.go execute() 同源）。
+	claimedA := m.ClaimTask(a.AgentID)
+	m.SubmitResult(&proto.TaskResult{TaskID: ta.TaskID, AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimedA.ClaimEpoch})
 	if ta.Status != "done" {
 		t.Fatalf("task A status = %q, want done", ta.Status)
 	}
@@ -199,8 +200,9 @@ func TestMemoryStore_SubmitResult(t *testing.T) {
 	m := NewMemoryStore().WithDemo(true)
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a"})
 	ts := m.GetTasks(a.AgentID)
-	m.ClaimTask(a.AgentID) // 状态守卫：上报前须先领取（pending→running）
-	m.SubmitResult(&proto.TaskResult{TaskID: ts[0].TaskID, AgentID: a.AgentID, ExitCode: 0})
+	claimed := m.ClaimTask(a.AgentID) // 状态守卫：上报前须先领取（pending→running）
+	// 防双跑：携带 ClaimEpoch（与 agent execute() 一致）。
+	m.SubmitResult(&proto.TaskResult{TaskID: ts[0].TaskID, AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed.ClaimEpoch})
 
 	for _, ds := range m.Snapshot("") {
 		for _, d := range ds {
@@ -392,8 +394,9 @@ func TestMemoryStore_EventPublish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	m.ClaimTask(a.AgentID) // 状态守卫：上报前须先领取
-	m.SubmitResult(&proto.TaskResult{TaskID: created.TaskID, AgentID: a.AgentID, ExitCode: 0})
+	claimed := m.ClaimTask(a.AgentID) // 状态守卫：上报前须先领取
+	// 防双跑：携带 ClaimEpoch（与 agent execute() 一致）。
+	m.SubmitResult(&proto.TaskResult{TaskID: created.TaskID, AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed.ClaimEpoch})
 
 	actions := map[string]bool{}
 	for _, e := range bus.events {
@@ -411,8 +414,10 @@ func TestMemoryStore_EventPublish(t *testing.T) {
 func TestMemoryStore_ReclaimStaleTasks(t *testing.T) {
 	m := NewMemoryStore()
 	a := m.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "t1"})
-	// 显式下发一条任务供领取（不依赖演示预置）
-	m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi"})
+	// 显式下发一条任务供领取（不依赖演示预置）。
+	// MaxRetries 给足裕量：本用例关心"回收后重新入队"，与 SubmitResult 一致
+	// （MaxRetries=0 时一次失败即死信，回收同样会计满预算）。
+	m.CreateTask(&proto.Task{AgentID: a.AgentID, TenantID: "t1", Type: "shell", Command: "echo hi", MaxRetries: 3})
 	// 领取使其变成 running（ClaimedAt=now，ClaimedBy=agentID）
 	got := m.ClaimTask(a.AgentID)
 	if got == nil || got.Status != "running" {
@@ -789,8 +794,8 @@ func TestMemoryStore_SubmitResult_StateGuard(t *testing.T) {
 	}
 
 	// 2) 领取后的正常上报被接受（失败→重试）。
-	m.ClaimTask(a.AgentID)
-	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 1})
+	claimed := m.ClaimTask(a.AgentID)
+	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 1, ClaimEpoch: claimed.ClaimEpoch})
 	if tk.Status != "pending" || tk.RetryCount != 1 {
 		t.Fatalf("running 任务失败上报应重试: status=%q retryCount=%d", tk.Status, tk.RetryCount)
 	}

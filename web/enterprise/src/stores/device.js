@@ -1,6 +1,9 @@
-// 设备 store — 网段分组设备列表 + 详情 + 监控指标
+// 设备 store — 网段分组设备列表 + 详情 + 监控指标 + 设备发现
 import { defineStore } from 'pinia'
-import { getDevices, getDevice, provisionDevice, getMetrics } from '@/api/device'
+import {
+  getDevices, getDevice, provisionDevice, getMetrics,
+  startDiscovery, getDiscoveryJob, getDiscoveredDevices, autoProvision
+} from '@/api/device'
 import { t } from '@/i18n'
 
 export const useDeviceStore = defineStore('device', {
@@ -11,7 +14,12 @@ export const useDeviceStore = defineStore('device', {
     loading: false,
     metricsLoading: false,
     error: '',
-    metricsError: ''
+    metricsError: '',
+    // 设备发现
+    discoveryJobs: {},     // { jobID: DiscoveryJob }
+    discoveredDevices: [], // DiscoveredDevice[]
+    discoveryLoading: false,
+    discoveryError: ''
   }),
   getters: {
     total: (s) => Object.values(s.segments).reduce((n, arr) => n + (arr ? arr.length : 0), 0),
@@ -60,6 +68,55 @@ export const useDeviceStore = defineStore('device', {
       this.metrics = null
       this.metricsError = ''
     },
-    closeDrawer() { this.current = null }
+    closeDrawer() { this.current = null },
+
+    // ============ 设备发现 ============
+    async startDiscovery(tenantID, cidr) {
+      this.discoveryLoading = true; this.discoveryError = ''
+      try {
+        const job = await startDiscovery(tenantID, cidr)
+        this.discoveryJobs[job.ID] = job
+        return job
+      } catch (e) {
+        this.discoveryError = e.j?.error || t('error.discoveryStartFailed')
+        throw e
+      } finally {
+        this.discoveryLoading = false
+      }
+    },
+    async getDiscoveryStatus(jobID) {
+      try {
+        const job = await getDiscoveryJob(jobID)
+        if (job) this.discoveryJobs[job.ID] = job
+        return job
+      } catch (e) {
+        this.discoveryError = e.j?.error || t('error.discoveryStatusFailed')
+        throw e
+      }
+    },
+    async getDiscoveredDevices(tenantID) {
+      try {
+        const r = await getDiscoveredDevices(tenantID)
+        this.discoveredDevices = (r && r.devices) || r || []
+        return this.discoveredDevices
+      } catch (e) {
+        this.discoveryError = e.j?.error || t('error.discoveryListFailed')
+        this.discoveredDevices = []
+        return []
+      }
+    },
+    async autoProvision(tenantID, cidrs) {
+      this.discoveryLoading = true; this.discoveryError = ''
+      try {
+        const result = await autoProvision(tenantID, cidrs)
+        await this.fetchDevices()
+        return result
+      } catch (e) {
+        this.discoveryError = e.j?.error || t('error.autoProvisionFailed')
+        throw e
+      } finally {
+        this.discoveryLoading = false
+      }
+    }
   }
 })

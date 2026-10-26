@@ -6,35 +6,36 @@
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <div class="btnbar">
-      <button class="primary" @click="openInstall" data-testid="helm-release-install-btn">
+      <Button variant="primary" size="sm" @click="openInstall" data-testid="helm-release-install-btn">
         <Icon name="add" :size="14" /> {{ $t('helm.install_release') }}
-      </button>
-      <button class="outline" @click="store.fetchReleases()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+      </Button>
+      <Button variant="ghost" size="sm" @click="store.fetchReleases()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
     </div>
 
     <div v-if="store.loading && !store.releases.length" class="muted">{{ $t('common.loading') }}</div>
-    <DataTable
-      v-else
-      :columns="columns"
-      :rows="store.releases"
-      row-key="name"
-      :loading="store.loading"
-      :empty-text="$t('helm.empty_releases')"
-    >
-      <template #cell-name="{ value }"><code>{{ value }}</code></template>
-      <template #cell-namespace="{ value }"><span class="tag">{{ value }}</span></template>
-      <template #cell-status="{ value }">
-        <span class="tag" :class="'st-' + value">{{ $t('helm.status_' + value) }}</span>
-      </template>
-      <template #cell-actions="{ row }">
-        <div class="row-actions">
-          <button class="xs outline" :title="$t('helm.upgrade')" @click="openUpgrade(row)" data-testid="helm-release-upgrade-btn"><Icon name="edit" :size="13" /></button>
-          <button class="xs outline" :title="$t('helm.history')" @click="openHistory(row)" data-testid="helm-release-history-btn"><Icon name="logs" :size="13" /></button>
-          <button class="xs outline" :title="$t('helm.rollback')" @click="openRollback(row)" data-testid="helm-release-rollback-btn"><Icon name="success" :size="13" /></button>
-          <button class="xs danger" :title="$t('helm.uninstall')" @click="onUninstall(row)" data-testid="helm-release-uninstall-btn"><Icon name="delete" :size="13" /></button>
-        </div>
-      </template>
-    </DataTable>
+    <div v-else class="card">
+      <DataTable
+        :columns="columns"
+        :rows="store.releases"
+        row-key="name"
+        :loading="store.loading"
+        :empty-text="$t('helm.empty_releases')"
+      >
+        <template #cell-name="{ value }"><code>{{ value }}</code></template>
+        <template #cell-namespace="{ value }"><span class="tag">{{ value }}</span></template>
+        <template #cell-status="{ value }">
+          <span class="tag" :class="'st-' + value">{{ $t('helm.status_' + value) }}</span>
+        </template>
+        <template #cell-actions="{ row }">
+          <div class="row-actions">
+            <Button variant="ghost" size="sm" :title="$t('helm.upgrade')" @click="openUpgrade(row)" data-testid="helm-release-upgrade-btn"><Icon name="edit" :size="13" /></Button>
+            <Button variant="ghost" size="sm" :title="$t('helm.history')" @click="openHistory(row)" data-testid="helm-release-history-btn"><Icon name="logs" :size="13" /></Button>
+            <Button variant="ghost" size="sm" :title="$t('helm.rollback')" @click="openRollback(row)" data-testid="helm-release-rollback-btn"><Icon name="success" :size="13" /></Button>
+            <Button variant="danger" size="sm" :title="$t('helm.uninstall')" @click="onUninstall(row)" data-testid="helm-release-uninstall-btn"><Icon name="delete" :size="13" /></Button>
+          </div>
+        </template>
+      </DataTable>
+    </div>
 
     <!-- 安装/升级抽屉 -->
     <DetailDrawer :open="!!form" :title="form && form.mode === 'upgrade' ? $t('helm.upgrade_title', { name: form.name }) : $t('helm.install_release')" @close="form = null">
@@ -62,8 +63,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('common.cancel') }}</button>
+          <Button type="submit" variant="primary" size="sm"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button type="button" variant="ghost" size="sm" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -95,8 +96,8 @@
         </div>
         <div v-if="rollbackError" class="msg err">{{ rollbackError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('helm.rollback') }}</button>
-          <button type="button" class="outline" @click="rollbackForm = null">{{ $t('common.cancel') }}</button>
+          <Button type="submit" variant="primary" size="sm"><Icon name="success" :size="14" /> {{ $t('helm.rollback') }}</Button>
+          <Button type="button" variant="ghost" size="sm" @click="rollbackForm = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -131,6 +132,7 @@ import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import { Button } from '@/components/ui'
 
 const store = useHelmStore()
 const route = useRoute()
@@ -291,7 +293,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.card {
+  background: var(--color-surface-1, var(--surface-l1, #ffffff));
+  border: 1px solid var(--color-hairline, var(--border-primary, #d3dbe8));
+  border-radius: var(--radius-md, 8px);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+.btnbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .row-actions { display: flex; gap: 4px; }
 
 .poll-err {
@@ -304,7 +313,6 @@ onMounted(() => {
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .field .hint { font-size: 11.5px; color: var(--text-3); }
-.btnbar { margin-top: 8px; }
 
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
@@ -313,4 +321,10 @@ onMounted(() => {
 .tag.st-deployed { background: var(--ok-bg); color: var(--ok); }
 .tag.st-failed { background: var(--fail-bg); color: var(--fail); }
 .tag.st-pending { background: var(--warn-bg); color: var(--warn); }
+
+/* Dark mode */
+[data-theme="dark"] .card {
+  background: var(--color-surface-2, #1e2430);
+  border-color: var(--color-hairline, #23252a);
+}
 </style>

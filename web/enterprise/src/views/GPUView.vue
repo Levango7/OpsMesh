@@ -26,8 +26,10 @@
       <div class="col">
         <div class="card">
           <div class="flowbar">
-            <h3 style="margin: 0">{{ $t('gpu.nodes') }}</h3>
-            <button class="xs outline" @click="store.fetchNodes()">↻ {{ $t('common.refresh') }}</button>
+            <h3 class="card__title">{{ $t('gpu.nodes') }}</h3>
+            <Button variant="ghost" size="sm" @click="store.fetchNodes()">
+              <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
+            </Button>
           </div>
           <div v-if="store.loading && !store.nodes.length" class="muted">{{ $t('common.loading') }}</div>
           <DataTable v-else :columns="nodeCols" :rows="store.nodes" row-key="id" :empty-text="$t('gpu.noNodes')">
@@ -49,7 +51,9 @@
             </template>
             <template #cell-actions="{ row }">
               <div class="row-actions" @click.stop>
-                <button class="xs outline" @click="store.selectNode(row.id)">{{ $t('gpu.metrics') }}</button>
+                <Button variant="ghost" size="sm" @click="store.selectNode(row.id)">
+                  {{ $t('gpu.metrics') }}
+                </Button>
               </div>
             </template>
           </DataTable>
@@ -59,7 +63,7 @@
       <!-- 右：指标图表 + 工作负载 -->
       <div class="col">
         <div class="card">
-          <h3>{{ $t('gpu.utilizationChart') }}</h3>
+          <h3 class="card__title">{{ $t('gpu.utilizationChart') }}</h3>
           <p class="hint">{{ store.selectedNode ? store.selectedNode.name : $t('gpu.selectNodeHint') }}</p>
           <!-- 数据来源显式化（TD-60 §5.11）：只有 nvidia-smi 采到的才算真实指标；
                模拟兜底必须让运维看见——否则 40%~90% 的随机利用率会被当成容量依据。 -->
@@ -86,9 +90,13 @@
 
         <div class="card">
           <div class="flowbar">
-            <h3 style="margin: 0">{{ $t('gpu.workloads') }}</h3>
-            <button class="xs primary" @click="openAddWorkload" data-testid="gpu-add-workload-btn">{{ $t('gpu.addWorkload') }}</button>
-            <button class="xs outline" @click="store.fetchWorkloads()">↻ {{ $t('common.refresh') }}</button>
+            <h3 class="card__title">{{ $t('gpu.workloads') }}</h3>
+            <Button variant="primary" size="sm" @click="openAddWorkload" data-testid="gpu-add-workload-btn">
+              <Icon name="add" :size="13" /> {{ $t('gpu.addWorkload') }}
+            </Button>
+            <Button variant="ghost" size="sm" @click="store.fetchWorkloads()">
+              <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
+            </Button>
           </div>
           <div v-if="store.workloadsLoading && !store.workloads.length" class="muted">{{ $t('common.loading') }}</div>
           <DataTable v-else :columns="workloadCols" :rows="store.workloads" row-key="id" :empty-text="$t('gpu.noWorkloads')">
@@ -100,7 +108,9 @@
             <template #cell-gpuCount="{ value }">{{ value || 0 }}</template>
             <template #cell-actions="{ row }">
               <div class="row-actions" @click.stop>
-                <button class="xs outline" style="color: var(--fail); border-color: var(--fail)" @click="onDeleteWorkload(row.id)" data-testid="gpu-delete-workload-btn">{{ $t('common.delete') }}</button>
+                <Button variant="danger" size="sm" @click="onDeleteWorkload(row.id)" data-testid="gpu-delete-workload-btn">
+                  {{ $t('common.delete') }}
+                </Button>
               </div>
             </template>
           </DataTable>
@@ -111,9 +121,13 @@
     <!-- 模型管理 -->
     <div class="card">
       <div class="flowbar">
-        <h3 style="margin: 0">{{ $t('gpu.models') }}</h3>
-        <button class="xs primary" @click="openPullModel" data-testid="gpu-pull-model-btn">{{ $t('gpu.pullModel') }}</button>
-        <button class="xs outline" @click="store.fetchModels()">↻ {{ $t('common.refresh') }}</button>
+        <h3 class="card__title">{{ $t('gpu.models') }}</h3>
+        <Button variant="primary" size="sm" @click="openPullModel" data-testid="gpu-pull-model-btn">
+          <Icon name="add" :size="13" /> {{ $t('gpu.pullModel') }}
+        </Button>
+        <Button variant="ghost" size="sm" @click="store.fetchModels()">
+          <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
+        </Button>
       </div>
       <div v-if="store.modelsLoading && !store.models.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable v-else :columns="modelCols" :rows="store.models" row-key="name" :empty-text="$t('gpu.noModels')">
@@ -124,7 +138,9 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
-            <button class="xs outline" style="color: var(--fail); border-color: var(--fail)" @click="onDeleteModel(row.name)">{{ $t('common.delete') }}</button>
+            <Button variant="danger" size="sm" @click="onDeleteModel(row.name)">
+              {{ $t('common.delete') }}
+            </Button>
           </div>
         </template>
       </DataTable>
@@ -133,8 +149,10 @@
     <!-- 配额概览 -->
     <div class="card">
       <div class="flowbar">
-        <h3 style="margin: 0">{{ $t('gpu.quotas') }}</h3>
-        <button class="xs outline" @click="store.fetchQuotas()">↻ {{ $t('common.refresh') }}</button>
+        <h3 class="card__title">{{ $t('gpu.quotas') }}</h3>
+        <Button variant="ghost" size="sm" @click="store.fetchQuotas()">
+          <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
+        </Button>
       </div>
       <DataTable :columns="quotaCols" :rows="store.quotas" row-key="tenantId" :empty-text="$t('gpu.noQuotas')">
         <template #cell-tenantId="{ value }"><code>{{ value }}</code></template>
@@ -152,7 +170,7 @@
       <div class="modal">
         <header class="modal-head">
           <h3>{{ $t('gpu.addWorkload') }}</h3>
-          <button class="xs outline" @click="addOpen = false">✕</button>
+          <Button variant="ghost" size="sm" @click="addOpen = false">✕</Button>
         </header>
         <div class="modal-body">
           <div class="field">
@@ -183,8 +201,10 @@
             </select>
           </div>
           <div class="btnbar">
-            <button class="primary" @click="confirmAddWorkload" :disabled="adding" data-testid="gpu-add-workload-confirm">{{ $t('common.confirm') }}</button>
-            <button class="outline" @click="addOpen = false">{{ $t('common.cancel') }}</button>
+            <Button variant="primary" @click="confirmAddWorkload" :disabled="adding" data-testid="gpu-add-workload-confirm">
+              {{ $t('common.confirm') }}
+            </Button>
+            <Button variant="ghost" @click="addOpen = false">{{ $t('common.cancel') }}</Button>
           </div>
           <p v-if="addMsg" :class="['msg', addOk ? 'ok' : 'err']">{{ addMsg }}</p>
         </div>
@@ -196,7 +216,7 @@
       <div class="modal modal-sm">
         <header class="modal-head">
           <h3>{{ $t('gpu.pullModel') }}</h3>
-          <button class="xs outline" @click="pullOpen = false">✕</button>
+          <Button variant="ghost" size="sm" @click="pullOpen = false">✕</Button>
         </header>
         <div class="modal-body">
           <div class="field">
@@ -211,8 +231,10 @@
             </select>
           </div>
           <div class="btnbar">
-            <button class="primary" @click="confirmPullModel" :disabled="pulling" data-testid="gpu-pull-model-confirm">{{ $t('common.confirm') }}</button>
-            <button class="outline" @click="pullOpen = false">{{ $t('common.cancel') }}</button>
+            <Button variant="primary" @click="confirmPullModel" :disabled="pulling" data-testid="gpu-pull-model-confirm">
+              {{ $t('common.confirm') }}
+            </Button>
+            <Button variant="ghost" @click="pullOpen = false">{{ $t('common.cancel') }}</Button>
           </div>
           <p v-if="pullMsg" :class="['msg', pullOk ? 'ok' : 'err']">{{ pullMsg }}</p>
         </div>
@@ -229,6 +251,7 @@ import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
 import Icon from '@/components/Icon.vue'
+import { Button } from '@/components/ui'
 
 const store = useGpuStore()
 
@@ -391,8 +414,32 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.row .col {
+  flex: 1;
+  min-width: 0;
+}
 .row .col:nth-child(1) { flex: 45; }
 .row .col:nth-child(2) { flex: 55; }
+
+.card {
+  background: var(--surface, var(--surface-l1), var(--color-surface-1, #ffffff));
+  border: 1px solid var(--border, var(--border-primary), #d3dbe8);
+  border-radius: var(--radius, var(--radius-md), 8px);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+.card__title {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink-muted, #6b7280);
+}
 
 .poll-err {
   padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
@@ -446,5 +493,14 @@ onMounted(() => {
 .modal-sm { width: 420px; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .modal-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-.modal-body .field label { margin: 0; }
+.modal-body .field label { display: block; margin: 0 0 2px; }
+
+/* 暗色模式输入框 */
+[data-theme="dark"] .modal-body .field input,
+[data-theme="dark"] .modal-body .field select,
+[data-theme="dark"] .modal-body .field textarea {
+  background: var(--surface-l1, #131620);
+  border-color: var(--border-primary, #2b3243);
+  color: var(--text-primary, #f9fafb);
+}
 </style>

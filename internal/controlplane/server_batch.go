@@ -14,8 +14,10 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"log"
 	"net/http"
 	"sort"
@@ -26,7 +28,9 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // ============================================================================
@@ -91,6 +95,96 @@ func newBatchStore() *batchStore {
 		batches:  make(map[string]*batchTask),
 		canaries: make(map[string]*canaryRelease),
 	}
+}
+
+// saveBatchToTaskRecord 把批次记录整段 JSON 序列化后写穿到 TaskRecord（kind="batch"）。
+// 失败返回 error，由调用方决定是否告警；绝不因此阻断请求（写失败只留痕）。
+func (s *Server) saveBatchToTaskRecord(batch *batchTask) error {
+	if s.store == nil {
+		return nil
+	}
+	payload, err := json.Marshal(batch)
+	if err != nil {
+		return err
+	}
+	rec := &model.TaskRecord{
+		Kind:     taskRecordKindBatch,
+		ID:       batch.BatchID,
+		TenantID: batch.TenantID,
+		Payload:  payload,
+	}
+	return s.store.SaveTaskRecord(rec)
+}
+
+// saveCanaryToTaskRecord 把灰度记录整段 JSON 序列化后写穿到 TaskRecord（kind="canary"）。
+func (s *Server) saveCanaryToTaskRecord(canary *canaryRelease) error {
+	if s.store == nil {
+		return nil
+	}
+	payload, err := json.Marshal(canary)
+	if err != nil {
+		return err
+	}
+	rec := &model.TaskRecord{
+		Kind:     taskRecordKindCanary,
+		ID:       canary.CanaryID,
+		TenantID: canary.TenantID,
+		Payload:  payload,
+	}
+	return s.store.SaveTaskRecord(rec)
+}
+
+// loadAllTaskRecords 把所有 kind 为 batch/canary 的 TaskRecord 读回并重塑入内存索引。
+// 首次运行（store 为空）返回空索引，向后兼容。
+func (s *Server) loadAllTaskRecords() error {
+	if s.store == nil || s.batches == nil {
+		return nil
+	}
+	for _, kind := range []string{taskRecordKindBatch, taskRecordKindCanary} {
+		recs, err := s.store.ListTaskRecords(kind)
+		if err != nil {
+			return err
+		}
+		for _, rec := range recs {
+			switch kind {
+			case taskRecordKindBatch:
+				bt := &batchTask{}
+				if err := json.Unmarshal(rec.Payload, bt); err != nil {
+					logx.Warn(context.Background(), "批次记录载荷解析失败（跳过）",
+						"kind", kind, "id", rec.ID, "tenantID", rec.TenantID, "err", err)
+					continue
+				}
+				s.batches.mu.Lock()
+				s.batches.batches[bt.BatchID] = bt
+				s.batches.mu.Unlock()
+			case taskRecordKindCanary:
+				c := &canaryRelease{}
+				if err := json.Unmarshal(rec.Payload, c); err != nil {
+					logx.Warn(context.Background(), "灰度记录载荷解析失败（跳过）",
+						"kind", kind, "id", rec.ID, "tenantID", rec.TenantID, "err", err)
+					continue
+				}
+				s.batches.mu.Lock()
+				s.batches.canaries[c.CanaryID] = c
+				s.batches.mu.Unlock()
+			}
+		}
+	}
+	return nil
+}
+
+// recoverFromTaskRecords 在 Server 初始化时调用，从 TaskRecord 恢复 batch/canary 状态。
+// 恢复失败不阻断启动（索引退化为空，后续按 ID 查询仍会回落持久化记录）。
+func (s *Server) recoverFromTaskRecords() error {
+	if s.store == nil || s.batches == nil {
+		return nil
+	}
+	if err := s.loadAllTaskRecords(); err != nil {
+		logx.Warn(context.Background(), "从 TaskRecord 恢复批次/灰度状态失败（启动仍继续，索引为空）",
+			"err", err)
+		return err
+	}
+	return nil
 }
 
 // genBatchID 生成批次 ID（batch-<8 字节 hex>）。
@@ -232,7 +326,10 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 	}
 	// R6：写穿记录（重启后 batchID 仍可查）。失败只留痕不阻断——任务实例已落库，
 	// 此时返 5xx 会让客户端重试并**再建一批任务**（见 batch_records.go 头注释）。
-	s.persistTaskRecord(taskRecordKindBatch, bt.TenantID, batchID, bt)
+	if err := s.saveBatchToTaskRecord(bt); err != nil {
+		logx.Warn(context.Background(), "批次记录写穿失败（内存视图仍可服务）",
+			"kind", taskRecordKindBatch, "id", batchID, "err", err)
+	}
 	paginate.WriteJSON(w, http.StatusCreated, map[string]interface{}{
 		"batchID": batchID,
 		"tasks":   items,
@@ -380,7 +477,10 @@ func (s *Server) handleCanaryCreate(w http.ResponseWriter, r *http.Request) {
 	s.batches.canaries[canaryID] = canary
 	s.batches.mu.Unlock()
 	// R6：写穿记录（同批次语义，失败只留痕不阻断）。
-	s.persistTaskRecord(taskRecordKindCanary, canary.TenantID, canaryID, canary)
+	if err := s.saveCanaryToTaskRecord(canary); err != nil {
+		logx.Warn(context.Background(), "灰度记录写穿失败（内存视图仍可服务）",
+			"kind", taskRecordKindCanary, "id", canaryID, "err", err)
+	}
 
 	// 返回阶段摘要（不含每任务详情，前端按需查询）。
 	phaseSummary := make([]map[string]interface{}, len(canary.Phases))
@@ -652,7 +752,10 @@ func (s *Server) handleCanaryAdvance(w http.ResponseWriter, r *http.Request, id 
 			// R6：推进改了记录状态 ⇒ 必须写穿，否则重启后倒回推进前（用户刚推进过的阶段"又变回 pending"）。
 			// 注：此处持索引锁做一次 store 写（临界区变长）；换成"先解锁再写"会引入读改写的竞态，
 			// 一次短写更安全——如将来 store 写变慢，应改为记录级锁而不是放弃写穿。
-			s.persistTaskRecord(taskRecordKindCanary, c.TenantID, id, c)
+			if err := s.saveCanaryToTaskRecord(c); err != nil {
+				logx.Warn(context.Background(), "灰度记录写穿失败（内存视图仍可服务）",
+					"kind", taskRecordKindCanary, "id", id, "err", err)
+			}
 			paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 				"canaryID": c.CanaryID,
 				"phase":    c.Phases[i].Phase,

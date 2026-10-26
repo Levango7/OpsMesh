@@ -40,6 +40,7 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		DeployType string            `json:"deployType"`
 		Params     map[string]string `json:"params"`
 		TenantID   string            `json:"tenantID"`
+		Version    string            `json:"version"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -64,13 +65,21 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported deployType: " + body.DeployType})
 		return
 	}
-	script, ok := tpl.Scripts[body.DeployType]
+	// 版本选择：请求体 version（或 params.version）决定实际使用的镜像与脚本；
+	// 未指定时回落到模板默认版本（Versions[0]/Default）。
+	selectedVersion := selectedMiddlewareVersion(body.Version, body.Params)
+	if v := resolveMiddlewareVersion(tpl, selectedVersion); v != nil {
+		selectedVersion = v.Version
+	}
+	script, ok := resolveMiddlewareScript(tpl, body.DeployType, selectedVersion)
 	if !ok {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "script not found for deployType: " + body.DeployType})
 		return
 	}
+	tplParams := resolveMiddlewareParams(tpl, selectedVersion)
+	resolvedVersion := selectedVersion
 	// 校验必填参数。
-	for _, p := range tpl.Params {
+	for _, p := range tplParams {
 		if p.Required {
 			val, ok := body.Params[p.Name]
 			if !ok || val == "" {
@@ -88,7 +97,7 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		}
 	}
 	// 未提供的可选参数填充默认值。
-	for _, p := range tpl.Params {
+	for _, p := range tplParams {
 		if _, ok := body.Params[p.Name]; !ok && p.Default != "" {
 			if body.Params == nil {
 				body.Params = map[string]string{}
@@ -97,7 +106,7 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		}
 	}
 	// 参数类型与语义验证（端口范围/路径/非空）。
-	if err := validateMiddlewareParams(tpl.Params, body.Params); err != nil {
+	if err := validateMiddlewareParams(tplParams, body.Params); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -107,19 +116,33 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		return
 	}
 	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	// 统一走 requireTenantAgent 防线（P0-6 多租户隔离）。
 	targetTenant := actx.TenantID
-	agent := s.lookupAgent(body.AgentID)
-	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
-		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
+	if _, ok := s.requireTenantAgent(w, body.AgentID, actx.TenantID); !ok {
 		return
 	}
 	// 拼接最终 command：将脚本中 {name}/{port}/... 占位符替换为 params 实际值。
-	command := renderMiddlewareScript(script.Deploy, body.Params)
+	// 多行脚本（如 mongodb 的 systemd 部署脚本含 heredoc）不能留在内联命令通道——
+	// agent 端对内联命令的换行是硬拦截（"ls\nrm -rf /" 拼接注入防护），
+	// 留在那里 100% 被拒。故拆成两段：脚本体进 ScriptBody 通道（agent 落临时文件
+	// 后以 `sh <file>` 执行），Command 退化成单行调用（`sh {script}`）。
+	// Quota gate: middleware deploy creates a task.
+	if s.quotaMgr != nil {
+		if err := s.quotaMgr.CheckTask(actx.TenantID); err != nil {
+			paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	rendered := renderMiddlewareScript(script.Deploy, body.Params)
+	scriptBody, command := presets.SplitScriptCommand(rendered)
+	// instance key：复合键 <templateID>@<agentID>:<deployType>:<version>
+	instKey := instanceKey(id, body.AgentID, body.DeployType, resolvedVersion)
 	task, err := s.store.CreateTask(&proto.Task{
 		AgentID:    body.AgentID,
 		TenantID:   targetTenant,
 		Type:       proto.TaskTypeShell,
 		Command:    command,
+		ScriptBody: scriptBody,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
 	if err != nil {
@@ -133,13 +156,13 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		UserID:   actx.UserID,
 		Action:   "deploy_middleware",
 		Target:   task.TaskID,
-		Detail:   sanitizeAuditDetail("template=" + id + " deployType=" + body.DeployType + " agent=" + body.AgentID),
+		Detail:   sanitizeAuditDetail("template=" + id + " deployType=" + body.DeployType + " agent=" + body.AgentID + " version=" + resolvedVersion + " instance=" + instKey),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
 			Action: "deploy_middleware", Target: task.TaskID,
-			Detail: sanitizeAuditDetail("template=" + id + " deployType=" + body.DeployType + " agent=" + body.AgentID), Level: events.LevelInfo,
+			Detail: sanitizeAuditDetail("template=" + id + " deployType=" + body.DeployType + " agent=" + body.AgentID + " version=" + resolvedVersion + " instance=" + instKey), Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {
@@ -159,29 +182,34 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		"templateID":   id,
 		"templateName": tpl.Name,
 		"deployType":   body.DeployType,
+		"version":      resolvedVersion,
+		"instanceID":   instKey,
 	})
 }
 
 // handleMiddlewareInstances 处理 GET /api/v1/middleware-instances：查询已部署中间件实例。
-// MVP 实现：返回空数组（后续可从任务历史按 action=deploy_middleware 推导实例清单）。
-// 可选查询参数 agentID 过滤、category 过滤。
+// 从审计日志推导实例清单（action=deploy_middleware / uninstall_middleware）。
 func (s *Server) handleMiddlewareInstances(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	_, ok := s.requireTenantContext(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	if _, ok := s.requireProd(w, r, "middleware:read"); !ok {
 		return
 	}
-	// MVP：返回空数组。后续可从审计/任务历史推导已部署实例。
-	// 保留 query 参数解析以兼容前端调用，避免后续扩展时改签名。
-	_ = r.URL.Query().Get("agentID")
-	_ = r.URL.Query().Get("category")
-	paginate.WriteJSON(w, http.StatusOK, []interface{}{})
+
+	q := r.URL.Query()
+	agentID := q.Get("agentID")
+	category := q.Get("category")
+	templateID := q.Get("templateID")
+	includeRemoved := q.Get("includeRemoved") == "1"
+
+	instances := s.deriveMiddlewareInstances(actx.TenantID, agentID, category, templateID, includeRemoved)
+	paginate.WriteJSON(w, http.StatusOK, instances)
 }
 
 // handleUninstallMiddlewareInstance 处理 POST /api/v1/middleware-instances/{id}/uninstall：
@@ -212,6 +240,7 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		DeployType string            `json:"deployType"`
 		Params     map[string]string `json:"params"`
 		TenantID   string            `json:"tenantID"`
+		Version    string            `json:"version"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -233,7 +262,18 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found: " + body.TemplateID})
 		return
 	}
-	script, ok := tpl.Scripts[body.DeployType]
+	// 实例复合键：优先使用 URL 路径中的 instance id，缺失时按复合键推导。
+	instKey := instanceID
+	if instKey == "" {
+		instKey = instanceKey(body.TemplateID, body.AgentID, body.DeployType, resolveMiddlewareVersionStr(tpl, body.Version))
+	}
+	// 版本选择：请求体 version（或 params.version）决定实际使用的镜像与脚本。
+	selectedVersion := selectedMiddlewareVersion(body.Version, body.Params)
+	if v := resolveMiddlewareVersion(tpl, selectedVersion); v != nil {
+		selectedVersion = v.Version
+	}
+	resolvedVersion := selectedVersion
+	script, ok := resolveMiddlewareScript(tpl, body.DeployType, selectedVersion)
 	if !ok {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "script not found for deployType: " + body.DeployType})
 		return
@@ -242,17 +282,18 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "uninstall script not defined for template: " + body.TemplateID})
 		return
 	}
+	tplParams := resolveMiddlewareParams(tpl, selectedVersion)
 	// 填充默认参数（与 deploy 一致，确保占位符能被替换）。
 	if body.Params == nil {
 		body.Params = map[string]string{}
 	}
-	for _, p := range tpl.Params {
+	for _, p := range tplParams {
 		if _, ok := body.Params[p.Name]; !ok && p.Default != "" {
 			body.Params[p.Name] = p.Default
 		}
 	}
 	// 类型语义校验 + shell 元字符校验：与 deploy 同规则，防卸载路径命令注入。
-	if err := validateMiddlewareParams(tpl.Params, body.Params); err != nil {
+	if err := validateMiddlewareParams(tplParams, body.Params); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -261,19 +302,28 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		return
 	}
 	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	// 统一走 requireTenantAgent 防线（P0-6 多租户隔离）。
 	targetTenant := actx.TenantID
-	agent := s.lookupAgent(body.AgentID)
-	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
-		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
+	if _, ok := s.requireTenantAgent(w, body.AgentID, actx.TenantID); !ok {
 		return
 	}
 	// 拼接最终 command：将 Uninstall 脚本中占位符替换为 params 实际值。
-	command := renderMiddlewareScript(script.Uninstall, body.Params)
+	// 与 deploy 同款拆分：多行脚本走 ScriptBody 通道，Command 保持单行。
+	// Quota gate: middleware uninstall creates a task.
+	if s.quotaMgr != nil {
+		if err := s.quotaMgr.CheckTask(actx.TenantID); err != nil {
+			paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	rendered := renderMiddlewareScript(script.Uninstall, body.Params)
+	scriptBody, command := presets.SplitScriptCommand(rendered)
 	task, err := s.store.CreateTask(&proto.Task{
 		AgentID:    body.AgentID,
 		TenantID:   targetTenant,
 		Type:       proto.TaskTypeShell,
 		Command:    command,
+		ScriptBody: scriptBody,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
 	if err != nil {
@@ -287,13 +337,13 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		UserID:   actx.UserID,
 		Action:   "uninstall_middleware",
 		Target:   task.TaskID,
-		Detail:   sanitizeAuditDetail("instance=" + instanceID + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID),
+		Detail:   sanitizeAuditDetail("instance=" + instKey + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID + " version=" + resolvedVersion),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
 			Action: "uninstall_middleware", Target: task.TaskID,
-			Detail: sanitizeAuditDetail("instance=" + instanceID + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID), Level: events.LevelInfo,
+			Detail: sanitizeAuditDetail("instance=" + instKey + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID + " version=" + resolvedVersion), Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {
@@ -310,9 +360,10 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 	paginate.WriteJSON(w, http.StatusCreated, map[string]interface{}{
 		"task":         task,
 		"taskID":       task.TaskID,
-		"instanceID":   instanceID,
+		"instanceID":   instKey,
 		"templateID":   body.TemplateID,
 		"templateName": tpl.Name,
 		"deployType":   body.DeployType,
+		"version":      resolvedVersion,
 	})
 }

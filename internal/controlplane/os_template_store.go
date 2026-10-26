@@ -52,10 +52,29 @@ func (s *Server) listOSTemplatesFromStore(tenantID string) []OSTemplate {
 
 // getOSTemplateByID 从 store 读取单个 OS 模板（含回退）。
 // store 中不存在时回退到内存常量 osTemplateByID（向后兼容）。
+//
+// **无租户过滤**：预置模板 seed 在 default 租户，却要对所有租户可解析——执行链路
+// （handleExecuteOSTemplate）靠它解析共享预置模板，故此处**不得**加租户闸。
+// 面向租户隔离的 CRUD 路径请用 getOSTemplateScoped。
 func (s *Server) getOSTemplateByID(id string) *OSTemplate {
 	if st := s.store.GetOSTemplate(id); st != nil {
 		return osTemplateFromStore(st)
 	}
 	// 回退到预置模板（store 未 seed 或为空）。
 	return osTemplateByID(id)
+}
+
+// getOSTemplateScoped 按租户归属读取模板；不存在或不属于该租户一律返回 nil。
+//
+// 与无租户过滤的 getOSTemplateByID 的区别：这里做**归属判定**，
+// 属他租户的行与不存在的行返回同一个结果（nil），调用方据此回 404，
+// 不泄露"该 ID 是否存在"（防跨租户枚举）。
+func (s *Server) getOSTemplateScoped(tenantID, id string) *OSTemplate {
+	if t := s.store.GetOSTemplate(id); t != nil {
+		if t.TenantID != tenantID {
+			return nil
+		}
+		return osTemplateFromStore(t)
+	}
+	return nil
 }

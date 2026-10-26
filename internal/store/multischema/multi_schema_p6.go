@@ -190,13 +190,13 @@ func (m *MultiSchemaStore) ListPlugins() []*Plugin {
 	return s.ListPlugins()
 }
 
-// DeletePlugin 按 ID 删除插件：用 default 租户 store。
-func (m *MultiSchemaStore) DeletePlugin(id string) bool {
+// DeletePlugin 按 ID 删除插件：用 default 租户 store。（插件为平台级资源，tenantID 保留用于接口兼容）
+func (m *MultiSchemaStore) DeletePlugin(id, tenantID string) bool {
 	s, err := m.storeFor("default")
 	if err != nil {
 		return false
 	}
-	return s.DeletePlugin(id)
+	return s.DeletePlugin(id, tenantID)
 }
 
 // ============================================================================
@@ -312,10 +312,10 @@ func (m *MultiSchemaStore) UpdateSubscription(sub *Subscription) (*Subscription,
 	return s.UpdateSubscription(sub)
 }
 
-// DeleteSubscription 按 ID 删除订阅：遍历全部租户 store 查找。
-func (m *MultiSchemaStore) DeleteSubscription(id string) bool {
+// DeleteSubscription 按 ID 删除订阅：遍历全部租户 store，按 tenantID 校验归属。
+func (m *MultiSchemaStore) DeleteSubscription(id, tenantID string) bool {
 	for _, s := range m.allStores() {
-		if s.DeleteSubscription(id) {
+		if s.DeleteSubscription(id, tenantID) {
 			return true
 		}
 	}
@@ -365,4 +365,14 @@ func (m *MultiSchemaStore) ListInvoices(tenantID string) []*Invoice {
 		out = append(out, s.ListInvoices("")...)
 	}
 	return out
+}
+
+// DeleteInvoice 按 ID 删除账单：遍历全部租户 store，按 tenantID 校验归属。
+func (m *MultiSchemaStore) DeleteInvoice(id, tenantID string) bool {
+	for _, s := range m.allStores() {
+		if s.DeleteInvoice(id, tenantID) {
+			return true
+		}
+	}
+	return false
 }

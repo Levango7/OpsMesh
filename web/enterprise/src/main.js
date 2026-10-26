@@ -8,6 +8,8 @@ import { useThemeStore } from './stores/theme'
 import { useAuthStore } from './stores/auth'
 import { registerSW } from './registerSW'
 import './assets/tokens.css'
+import './styles/design-tokens.css'
+import './styles/k8s.css'
 
 const app = createApp(App)
 const pinia = createPinia()

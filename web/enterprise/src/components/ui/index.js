@@ -1,0 +1,21 @@
+// OpsMesh Enterprise UI Component Library
+// Barrel export for all core UI components
+
+export { default as Button } from './Button.vue'
+export { default as Input } from './Input.vue'
+export { default as Select } from './Select.vue'
+export { default as Modal } from './Modal.vue'
+export { default as Drawer } from './Drawer.vue'
+export { default as Table } from './Table.vue'
+export { default as Sidebar } from './Sidebar.vue'
+export { default as Header } from './Header.vue'
+export { default as Breadcrumb } from './Breadcrumb.vue'
+export { default as Layout } from './Layout.vue'
+export { default as Form } from './Form.vue'
+export { default as FormItem } from './FormItem.vue'
+export { default as Tabs } from './Tabs.vue'
+export { default as TabItem } from './TabItem.vue'
+export { default as TabPanel } from './TabPanel.vue'
+export { default as Tooltip } from './Tooltip.vue'
+export { default as Popover } from './Popover.vue'
+export { default as Notification } from './Notification.vue'

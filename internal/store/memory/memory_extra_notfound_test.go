@@ -111,7 +111,7 @@ func TestMemoryStore_UpdateAlertRule_NotFound(t *testing.T) {
 // TestMemoryStore_DeleteAlertRule_NotFound 验证 DeleteAlertRule 不存在返回 false。
 func TestMemoryStore_DeleteAlertRule_NotFound(t *testing.T) {
 	m := NewMemoryStore()
-	if m.DeleteAlertRule("no-exist") {
+	if m.DeleteAlertRule("no-exist", "default") {
 		t.Fatal("DeleteAlertRule 不存在应返回 false")
 	}
 }

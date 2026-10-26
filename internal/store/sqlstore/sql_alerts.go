@@ -107,11 +107,11 @@ func (s *SQLStore) ListAlertRules(tenantID string) []*AlertRule {
 	return out
 }
 
-// DeleteAlertRule 删除告警规则，返回是否删除成功（不存在返回 false）。
-func (s *SQLStore) DeleteAlertRule(id string) bool {
+// DeleteAlertRule 删除告警规则，按 tenantID 校验归属，不存在或越权返回 false。
+func (s *SQLStore) DeleteAlertRule(id, tenantID string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	res, err := s.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id=?`, id)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
 		storefail.Record("[store] DeleteAlertRule 失败 %s: %v", id, err)
 		return false

@@ -32,10 +32,13 @@ export const useMiddlewareStore = defineStore('middleware', {
         this.loading = false
       }
     },
-    async fetchInstances() {
+    async fetchInstances(filter) {
       this.instancesLoading = true
       try {
-        this.instances = await getMiddlewareInstances() || []
+        // 不传过滤条件时保持原有调用形态（无 query 参数）
+        this.instances = (filter
+          ? await getMiddlewareInstances(filter)
+          : await getMiddlewareInstances()) || []
       } catch {
         // 实例列表失败不覆盖主错误
       } finally {
@@ -63,7 +66,9 @@ export const useMiddlewareStore = defineStore('middleware', {
         this.devices = []
       }
     },
-    async deploy(id, agentID, deployType, params) {
+    // 部署：version 为可选的多版本选择；为空时不下发（兼容后端旧契约）
+    async deploy(id, agentID, deployType, params, version) {
+      if (version) return await deployMiddleware(id, agentID, deployType, params, version)
       return await deployMiddleware(id, agentID, deployType, params)
     },
     async uninstall(instanceID, agentID, deployType) {

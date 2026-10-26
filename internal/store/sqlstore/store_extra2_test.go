@@ -279,35 +279,30 @@ func TestSQLStore_Provision_InvalidChar(t *testing.T) {
 // claimEpochCond / claimEpochArgs 纯函数
 // ============================================================================
 
-// TestClaimEpochCond 验证 claimEpochCond 各种输入。
+// TestClaimEpochCond 验证 claimEpochCond 任何输入都追加校验片段（不再有跳过分支）。
 func TestClaimEpochCond(t *testing.T) {
-	if got := claimEpochCond(0); got != "" {
-		t.Fatalf("claimEpochCond(0) = %q, want empty", got)
-	}
-	if got := claimEpochCond(1); got != ` AND claim_epoch=?` {
-		t.Fatalf("claimEpochCond(1) = %q, want ' AND claim_epoch=?'", got)
-	}
-	if got := claimEpochCond(-1); got != "" {
-		t.Fatalf("claimEpochCond(-1) = %q, want empty", got)
-	}
-	if got := claimEpochCond(100); got != ` AND claim_epoch=?` {
-		t.Fatalf("claimEpochCond(100) = %q, want ' AND claim_epoch=?'", got)
+	// 修复前：epoch<=0 返回空串（跳过所有权校验）——那正是 ClaimEpoch:0 伪造上报的绕过口。
+	// 修复后：无条件追加 AND claim_epoch=?，让零值令牌与已领取任务的 claim_epoch>0 不匹配。
+	for _, epoch := range []int64{0, 1, -1, 100} {
+		if got := claimEpochCond(epoch); got != ` AND claim_epoch=?` {
+			t.Fatalf("claimEpochCond(%d) = %q, want ' AND claim_epoch=?'", epoch, got)
+		}
 	}
 }
 
-// TestClaimEpochArgs 验证 claimEpochArgs 各种输入。
+// TestClaimEpochArgs 验证 claimEpochArgs 无条件返回 taskID + epoch。
 func TestClaimEpochArgs(t *testing.T) {
 	got := claimEpochArgs("task-1", 0)
-	if len(got) != 1 || got[0] != "task-1" {
-		t.Fatalf("claimEpochArgs(task-1,0) = %+v, want [task-1]", got)
+	if len(got) != 2 || got[0] != "task-1" || got[1] != int64(0) {
+		t.Fatalf("claimEpochArgs(task-1,0) = %+v, want [task-1,0]", got)
 	}
 	got = claimEpochArgs("task-1", 5)
 	if len(got) != 2 || got[0] != "task-1" || got[1] != int64(5) {
 		t.Fatalf("claimEpochArgs(task-1,5) = %+v, want [task-1,5]", got)
 	}
 	got = claimEpochArgs("task-1", -1)
-	if len(got) != 1 || got[0] != "task-1" {
-		t.Fatalf("claimEpochArgs(task-1,-1) = %+v, want [task-1]", got)
+	if len(got) != 2 || got[0] != "task-1" || got[1] != int64(-1) {
+		t.Fatalf("claimEpochArgs(task-1,-1) = %+v, want [task-1,-1]", got)
 	}
 }
 

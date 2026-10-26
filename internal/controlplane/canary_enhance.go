@@ -5,6 +5,7 @@ package controlplane
 // API 端点：
 //   - POST /api/v1/canary/{id}/traffic-split  设置流量分割百分比
 //   - GET  /api/v1/canary/{id}/metrics        获取灰度指标对比
+//   - 同名子路径也挂在 /api/v1/tasks/canary/ 前缀下（灰度本体所在的任务域）。
 //
 // 设计要点：
 //   - 复用 server_batch.go 中 canaryRelease 结构（s.batches.canaries）；
@@ -23,12 +24,27 @@ import (
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
-// handleCanaryEnhance 分派 /api/v1/canary/{id} 子路径：
+// handleCanaryEnhance 分派灰度增强子路径：
 //   - POST /api/v1/canary/{id}/traffic-split  设置流量分割
 //   - GET  /api/v1/canary/{id}/metrics        获取灰度指标
+//   - POST /api/v1/tasks/canary/{id}/traffic-split（同上，任务域前缀）
+//   - GET  /api/v1/tasks/canary/{id}/metrics（同上，任务域前缀）
+//
+// 前缀兼容说明（2026-10-21）：本 handler 原本只认 "/api/v1/canary/" 前缀，
+// 而灰度发布本体在 "/api/v1/tasks/canary/"（见 server_batch.go 的 handleCanaryRouting）。
+// 两种前缀都真实存在调用方（前端 src/api/canary.js 用 /canary/…，
+// 任务域路由用 /tasks/canary/…），故按前缀逐个剥离，解析出 {id} 与子动作。
 func (s *Server) handleCanaryEnhance(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/canary/")
-	if rest == "" {
+	rest := r.URL.Path
+	trimmed := false
+	for _, prefix := range []string{"/api/v1/tasks/canary/", "/api/v1/canary/"} {
+		if strings.HasPrefix(rest, prefix) {
+			rest = strings.TrimPrefix(rest, prefix)
+			trimmed = true
+			break
+		}
+	}
+	if !trimmed || rest == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "canary id required"})
 		return
 	}
@@ -60,8 +76,12 @@ func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	caller, ok := s.requirePermission(w, r, "task:write")
-	if !ok {
+	// 鉴权对齐（2026-10-21）：改用 requireProd（与 handleCanaryCreate/Status/Advance 同闸）。
+	// 此前用 requirePermission——它只认 JWT/Cookie，没有 demo 模式与网关注入（X-User-Roles）
+	// 路径，导致同一批灰度接口在 demo 部署下「创建/查询能过、改分流/看指标恒 401」，
+	// 与 FIX 1「让 traffic-split / metrics 真正可达」的目标相悖。权限值不变（task:write），
+	// 生产态鉴权强度不变（无身份仍 401）。身份不落地为变量：审计 UserID 统一取 actx.UserID。
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -101,8 +121,12 @@ func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request
 	canary.Strategy = "percentage"
 	s.batches.mu.Unlock()
 
+	// UserID 取 actx.UserID（与 handleCanaryCreate/Status/Advance 的审计口径一致）。
+	// 注：不能直接用 caller.ID——requireProd 的 demo 分支返回 (nil, true)，
+	// 无 JWT 的 demo 部署下 caller 为 nil，caller.ID 会 panic（此路径在
+	// 鉴权改 requireProd 前因恒 401 而不可达，属一并修掉的潜在崩溃点）。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: caller.ID, Action: "canary_traffic_split", Target: id, Detail: sanitizeAuditDetail("percentage=" + strconv.Itoa(body.Percentage)),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "canary_traffic_split", Target: id, Detail: sanitizeAuditDetail("percentage=" + strconv.Itoa(body.Percentage)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"canaryID":   id,
@@ -118,7 +142,9 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requirePermission(w, r, "task:read"); !ok {
+	// 鉴权对齐（2026-10-21）：同 handleCanaryTrafficSplit ——改 requireProd 兼容
+	// demo 模式与网关注入身份（权限值仍为 task:read；无身份生产态仍 401）。
+	if _, ok := s.requireProd(w, r, "task:read"); !ok {
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)

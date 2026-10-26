@@ -45,7 +45,19 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request, cl
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"namespaces": out})
 }
 
-// handleListPods 处理 GET /api/v1/k8s/clusters/{id}/pods?namespace={ns}：列出 pod。
+// containerStateString 返回容器的当前状态字符串。
+func containerStateString(cs corev1.ContainerStatus) string {
+	if cs.State.Running != nil {
+		return "Running"
+	}
+	if cs.State.Waiting != nil {
+		return cs.State.Waiting.Reason
+	}
+	if cs.State.Terminated != nil {
+		return cs.State.Terminated.Reason
+	}
+	return "Unknown"
+}
 // namespace 为空时跨所有 namespace 列出（client-go 支持 ns="" 表示 all namespaces）。
 // 返回 {pods: [{name, namespace, status, podIP, nodeIP, restarts, age}]}。
 func (s *Server) handleListPods(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient) {
@@ -70,14 +82,95 @@ func (s *Server) handleListPods(w http.ResponseWriter, r *http.Request, client *
 		if status == "" {
 			status = "Unknown"
 		}
+		// 容器详情（名称、镜像、就绪状态、重启次数、状态）
+		containers := make([]map[string]interface{}, 0, len(pod.Spec.Containers))
+		for i, c := range pod.Spec.Containers {
+			cr := map[string]interface{}{
+				"name":  c.Name,
+				"image": c.Image,
+			}
+			// 探针配置
+			if c.LivenessProbe != nil {
+				cr["livenessProbe"] = true
+			}
+			if c.ReadinessProbe != nil {
+				cr["readinessProbe"] = true
+			}
+			if c.StartupProbe != nil {
+				cr["startupProbe"] = true
+			}
+			// 容器状态
+			if i < len(pod.Status.ContainerStatuses) {
+				cs := pod.Status.ContainerStatuses[i]
+				cr["ready"] = cs.Ready
+				cr["restartCount"] = cs.RestartCount
+				cr["state"] = containerStateString(cs)
+			}
+			containers = append(containers, cr)
+		}
+		// 污点容忍度
+		tolerations := make([]string, 0, len(pod.Spec.Tolerations))
+		for _, t := range pod.Spec.Tolerations {
+			tol := t.Key
+			if t.Operator != "" {
+				tol += " " + string(t.Operator)
+			}
+			if t.Value != "" {
+				tol += "=" + t.Value
+			}
+			if t.Effect != "" {
+				tol += " " + string(t.Effect)
+			}
+			tolerations = append(tolerations, tol)
+		}
+		// 亲合度
+		affinity := ""
+		if pod.Spec.Affinity != nil {
+			if pod.Spec.Affinity.NodeAffinity != nil {
+				affinity = "nodeAffinity"
+			}
+			if pod.Spec.Affinity.PodAffinity != nil {
+				if affinity != "" {
+					affinity += ","
+				}
+				affinity += "podAffinity"
+			}
+			if pod.Spec.Affinity.PodAntiAffinity != nil {
+				if affinity != "" {
+					affinity += ","
+				}
+				affinity += "podAntiAffinity"
+			}
+		}
+		// 镜像列表（去重）
+		images := make([]string, 0)
+		imageSet := make(map[string]bool)
+		for _, c := range pod.Spec.Containers {
+			if !imageSet[c.Image] {
+				imageSet[c.Image] = true
+				images = append(images, c.Image)
+			}
+		}
+		for _, c := range pod.Spec.InitContainers {
+			if !imageSet[c.Image] {
+				imageSet[c.Image] = true
+				images = append(images, c.Image)
+			}
+		}
 		out = append(out, map[string]interface{}{
-			"name":      pod.Name,
-			"namespace": pod.Namespace,
-			"status":    status,
-			"podIP":     pod.Status.PodIP,
-			"nodeIP":    pod.Status.HostIP,
-			"restarts":  restarts,
-			"age":       formatAge(pod.CreationTimestamp.Time),
+			"name":        pod.Name,
+			"namespace":   pod.Namespace,
+			"status":      status,
+			"podIP":       pod.Status.PodIP,
+			"nodeIP":      pod.Status.HostIP,
+			"nodeName":    pod.Spec.NodeName,
+			"restarts":    restarts,
+			"age":         formatAge(pod.CreationTimestamp.Time),
+			"containers":  containers,
+			"images":      images,
+			"tolerations": tolerations,
+			"affinity":    affinity,
+			"sidecars":    len(pod.Spec.Containers) > 1,
 		})
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"pods": out})

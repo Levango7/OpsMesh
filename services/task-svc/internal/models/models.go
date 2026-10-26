@@ -56,6 +56,9 @@ type Task struct {
 	ApprovedBy       string
 	ApprovedAt       time.Time
 	BatchID          string
+	Priority         int
+	IdempotencyKey   string
+	StatusMachine    string
 }
 
 // TaskResult represents the result of a task execution.

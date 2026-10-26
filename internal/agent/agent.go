@@ -958,6 +958,37 @@ func (a *Agent) execute(ctx context.Context, t proto.Task) proto.TaskResult {
 		// 安全提示：shell 命令来自控制面下发，内核做命令白名单过滤，
 		// 白名单为空时放行所有命令（向后兼容，demo/受信内网环境）。
 		// 信任边界设计：service 类型已加 verb 白名单（见 execService），shell 类型可经 --agent-shell-whitelist 收紧。
+		//
+		// 两条通道（TD 修复：多行脚本 100% 失败）：
+		//   - ScriptBody 非空 → 「整段脚本」通道：脚本落临时文件后以 `sh <file>` 执行，
+		//     不参与内联换行禁令（见 script_body.go）；
+		//   - ScriptBody 为空 → 「内联单行命令」通道：行为与改造前完全一致。
+		// 两条通道下，**内联 Command 字段都按原样校验**（元字符拦截 + 命令白名单）。
+		if t.ScriptBody != "" {
+			// 安全加固：shell 元字符检测——纵深防御拦截高危元字符（只作用于内联 Command，
+			// 脚本体是整段脚本，不存在「内联命令被换行拼接」的问题）。
+			if err := checkShellMetachars(t.Command); err != nil {
+				res.ExitCode = -1
+				res.Stderr = err.Error()
+				res.DurationMs = time.Since(start).Milliseconds()
+				return res
+			}
+			// 安全加固：命令白名单检查（白名单为空时跳过，向后兼容）。
+			// Command 为空时用默认调用形态参与校验——否则「空命令 ⇒ 白名单检查空转」
+			// 会让脚本通道变成没有门槛的后门。
+			wlCmd := t.Command
+			if strings.TrimSpace(wlCmd) == "" {
+				wlCmd = defaultScriptCommand
+			}
+			if err := a.checkShellWhitelist(wlCmd); err != nil {
+				res.ExitCode = -1
+				res.Stderr = err.Error()
+				res.DurationMs = time.Since(start).Milliseconds()
+				return res
+			}
+			runErr = a.executeScriptBody(ctx, t, stdout, stderr)
+			break
+		}
 		if t.Command == "" {
 			res.ExitCode = -1
 			res.Stderr = "empty command"
@@ -1357,6 +1388,16 @@ func isNetworkDiagnoseCommand(base string) bool {
 //   - Windows 上 Setpgid 无效，取消时用 cmd.Process.Kill() 杀父进程 + taskkill /T /F /PID 杀进程树。
 func (a *Agent) executeShell(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	cmd := shellCommand(command)
+	return a.runProcess(ctx, cmd, stdout, stderr)
+}
+
+// runProcess 启动子进程并等待其结束，处理取消/超时时的进程树终止。
+//
+// 内联命令通道（executeShell）与脚本体通道（executeScriptFile）共用同一套
+// 生命周期语义：进程组隔离（setProcessGroup）、沙箱环境（sandboxedEnv）、
+// 取消时杀整组/整棵树（killProcessGroup + Process.Kill 兜底），
+// 保证脚本体里的后台子进程不会在取消后继续跑。
+func (a *Agent) runProcess(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Writer) error {
 	setProcessGroup(cmd) // 平台特定：Linux/Darwin 设 Setpgid；Windows noop
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

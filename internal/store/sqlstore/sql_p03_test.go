@@ -171,7 +171,7 @@ func TestScanServiceInstance_ScanError(t *testing.T) {
 // 表由 NewSQLStore 迁移建表保证存在；清理失败视为 schema 不完整，测试终止。
 func clearP03Tables(t *testing.T, s *SQLStore) {
 	t.Helper()
-	for _, tbl := range []string{"secrets", "configs", "config_history", "services"} {
+	for _, tbl := range []string{"secrets", "secret_access_logs", "configs", "config_history", "services"} {
 		if _, err := s.db.ExecContext(context.Background(), "DELETE FROM "+tbl); err != nil {
 			t.Fatalf("清理表 %s 失败: %v", tbl, err)
 		}
@@ -219,9 +219,9 @@ func TestSQLStore_P03Secret(t *testing.T) {
 	}
 
 	// 2. RotateSecret → 验证版本递增 + KeyType 保留
-	meta2 := s.RotateSecret("tenant-A", "app/db/password", refDBPassV2)
-	if meta2 == nil {
-		t.Fatal("RotateSecret 返回 nil")
+	meta2, err := s.RotateSecret("tenant-A", "app/db/password", refDBPassV2, "", "user-1")
+	if err != nil || meta2 == nil {
+		t.Fatalf("RotateSecret 返回 nil err=%v", err)
 	}
 	if meta2.Version != 2 {
 		t.Fatalf("轮换后版本应为 2；got=%d", meta2.Version)

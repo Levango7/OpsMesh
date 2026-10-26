@@ -323,6 +323,16 @@ type SecretMeta struct {
 	UpdatedAt time.Time `json:"updatedAt"` // 最近一次轮换时间
 }
 
+// SecretAccessLog 密钥访问审计日志：记录谁、何时、对哪个密钥做了什么操作（get/rotate/delete）。
+// 按 (TenantID, Key, AccessedAt) 隔离，供审计/合规查询。
+type SecretAccessLog struct {
+	Key         string    `json:"key"`         // 密钥逻辑名
+	TenantID    string    `json:"tenantID"`    // 所属租户（隔离）
+	AccessedBy  string    `json:"accessedBy"`  // 操作人（用户/调用方标识）
+	Action      string    `json:"action"`      // get | rotate | delete
+	AccessedAt  time.Time `json:"accessedAt"`  // 访问时间
+}
+
 // ============================================================================
 // Phase 1 服务台与工单管理 / SLO 管理领域数据模型。
 // 与现有领域解耦，通过 TicketStore / SLOStore 两个小接口暴露，
@@ -774,6 +784,50 @@ type InvoiceItem struct {
 	Quantity  int    `json:"quantity"`
 	UnitPrice int    `json:"unitPrice"` // 单位：分
 	Amount    int    `json:"amount"`    // 单位：分
+}
+
+// CloudAccount 云账号实体（Wave 2-B 多云基础设施）。
+//
+// 控制面接入云厂商（aliyun/aws/azure/tencent/huawei）的凭据引用与同步元信息。
+// 明文凭据不落库：CredentialsRef 仅指向 SecretItem（密钥管理领域）。
+// 按 (TenantID, ID) 唯一，按 TenantID 隔离。
+type CloudAccount struct {
+	ID              string    `json:"id"`
+	TenantID        string    `json:"tenantId"`
+	WorkspaceID     string    `json:"workspaceId"`
+	Name            string    `json:"name"`
+	Provider        string    `json:"provider"` // aliyun/aws/azure/tencent/huawei
+	Region          string    `json:"region"`
+	AuthType        string    `json:"authType"`       // aksk/oidc/managed_identity
+	CredentialsRef  string    `json:"credentialsRef"` // reference to SecretItem (no plaintext)
+	Status          string    `json:"status"`         // active/pending/suspended/disabled
+	SyncStatus      string    `json:"syncStatus"`     // syncing/synced/sync_failed
+	LastSyncAt      time.Time `json:"lastSyncAt"`
+	DiscoveredCount int       `json:"discoveredCount"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+	CreatedBy       string    `json:"createdBy"`
+}
+
+// CloudResource 云厂商资源实体（Wave 2-B 多云基础设施）。
+//
+// 由云账号同步/发现落库，按 (CloudAccountID, ResourceType, ResourceID) 去重，
+// 按 TenantID 隔离。Tags 为 JSON map 文本。
+type CloudResource struct {
+	ID             string    `json:"id"`
+	TenantID       string    `json:"tenantId" gorm:"index"`
+	CloudAccountID string    `json:"cloudAccountId" gorm:"index"`
+	Provider       string    `json:"provider"`
+	Region         string    `json:"region"`
+	ResourceType   string    `json:"resourceType"`
+	ResourceID     string    `json:"resourceId"` // cloud vendor native ID
+	ResourceName   string    `json:"resourceName"`
+	Status         string    `json:"status"`
+	Tags           string    `json:"tags"` // JSON map
+	PrivateIP      string    `json:"privateIp"`
+	PublicIP       string    `json:"publicIp"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // Invoice 账单实体（Phase 6 计费）。

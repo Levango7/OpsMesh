@@ -38,11 +38,12 @@ defineProps({
 
 <style scoped>
 .metrics-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  /* 统一层级：一层 L1（主卡片）+ 清晰的边框 */
+  background: var(--color-surface-1, #ffffff);
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-md, 8px);
   padding: 16px 18px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05));
   margin-bottom: 16px;
 }
 .mc-head {
@@ -52,11 +53,12 @@ defineProps({
 .mc-title { display: flex; align-items: center; gap: 8px; }
 .mc-icon {
   width: 28px; height: 28px; border-radius: 8px;
-  background: var(--surface-3);
+  /* 三层 L3（图标底衬），与 L1 卡片形成层级差 */
+  background: var(--color-surface-3, #eef1f7);
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
 .mc-title h3 { margin: 0; font-size: 14px; }
 .mc-actions { display: inline-flex; align-items: center; gap: 6px; }
-.mc-body { font-size: 13px; color: var(--text-2); }
+.mc-body { font-size: 13px; color: var(--color-ink-muted, #6b7280); }
 </style>

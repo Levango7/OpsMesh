@@ -94,6 +94,10 @@ message Task {
   google.protobuf.Timestamp approved_at = 23;
   string batch_id = 24;
   google.protobuf.Timestamp last_fired_at = 25;
+  int32 priority = 26;           // 任务优先级（0-10，数字越大越优先）
+  string idempotency_key = 27;   // 幂等键，(tenantID, idempotencyKey) 去重
+  string status_machine = 28;    // 状态机枚举值
+  string script_body = 29;       // 多行脚本体（独立于 command 的脚本通道；不参与内联换行禁令）
 }
 
 // TaskResult 任务执行结果。

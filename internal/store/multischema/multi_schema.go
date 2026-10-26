@@ -746,6 +746,23 @@ func (m *MultiSchemaStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
 	return s.SetQuota(tenantID, cfg)
 }
 
+// ListQuotas 返回所有租户的配额配置：遍历所有 schema。
+func (m *MultiSchemaStore) ListQuotas() ([]*QuotaConfig, error) {
+	out := make([]*QuotaConfig, 0)
+	for _, ns := range m.namedStores() {
+		cfgs, err := ns.store.ListQuotas()
+		if err != nil {
+			continue
+		}
+		for _, cfg := range cfgs {
+			cp := *cfg
+			cp.TenantID = ns.name
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 // ============================================================================
 // AuditStore 实现（3 方法）
 // ============================================================================
@@ -791,6 +808,27 @@ func (m *MultiSchemaStore) QueryAudits(tenant, action string, since, until time.
 	var out []*proto.AuditEvent
 	for _, s := range m.allStores() {
 		out = append(out, s.QueryAudits("", action, since, until, 0)...)
+	}
+	sortAuditsDesc(out)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// QueryHighRiskAudits 返回指定租户的高风险审计事件：tenant 非空时直接路由；为空时遍历所有 schema 合并。
+func (m *MultiSchemaStore) QueryHighRiskAudits(tenant string, since, until time.Time, limit int) []*proto.AuditEvent {
+	if tenant != "" {
+		s, err := m.storeFor(tenant)
+		if err != nil {
+			return nil
+		}
+		return s.QueryHighRiskAudits(tenant, since, until, limit)
+	}
+	// tenant 为空：跨 schema 合并。
+	var out []*proto.AuditEvent
+	for _, s := range m.allStores() {
+		out = append(out, s.QueryHighRiskAudits("", since, until, 0)...)
 	}
 	sortAuditsDesc(out)
 	if limit > 0 && len(out) > limit {
@@ -1217,6 +1255,59 @@ func (m *MultiSchemaStore) RejectTask(id, tenantID, approvedBy string) bool {
 	return s.RejectTask(id, tenantID, approvedBy)
 }
 
+// CreateTaskWithIdempotency 下发任务并做 (tenantID, idempotencyKey) 去重：从 t.TenantID 路由。
+func (m *MultiSchemaStore) CreateTaskWithIdempotency(ctx context.Context, t *proto.Task) (*proto.Task, error) {
+	s, err := m.storeFor(t.TenantID)
+	if err != nil {
+		storefail.Record("[multi-schema] CreateTaskWithIdempotency 路由失败 tenant=%q: %v", t.TenantID, err)
+		return nil, fmt.Errorf("[multi-schema] CreateTaskWithIdempotency 路由失败 tenant=%q: %w", t.TenantID, err)
+	}
+	ret, err := s.CreateTaskWithIdempotency(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	if ret != nil && ret.TaskID != "" {
+		m.setTaskTenant(ret.TaskID, t.TenantID)
+	}
+	return ret, nil
+}
+
+// GetTaskByIdempotencyKey 按 (tenantID, idempotencyKey) 查已存在任务：直接用 tenantID 路由。
+func (m *MultiSchemaStore) GetTaskByIdempotencyKey(tenantID, key string) *proto.Task {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return nil
+	}
+	return s.GetTaskByIdempotencyKey(tenantID, key)
+}
+
+// ListTasksByPriority 按优先级降序分页列出任务：直接用 tenantID 路由。
+func (m *MultiSchemaStore) ListTasksByPriority(tenantID string, offset, limit int) ([]*proto.Task, int, error) {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.ListTasksByPriority(tenantID, offset, limit)
+}
+
+// RetryDeadLetterTask 重新入队死信任务：直接用 tenantID 路由。
+func (m *MultiSchemaStore) RetryDeadLetterTask(id, tenantID string) bool {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return false
+	}
+	return s.RetryDeadLetterTask(id, tenantID)
+}
+
+// DeleteTask 删除任务：直接用 tenantID 路由。
+func (m *MultiSchemaStore) DeleteTask(id, tenantID string) bool {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return false
+	}
+	return s.DeleteTask(id, tenantID)
+}
+
 // ============================================================================
 // 告警规则：CreateAlertRule / ListAlertRules / DeleteAlertRule
 // ============================================================================
@@ -1243,14 +1334,13 @@ func (m *MultiSchemaStore) ListAlertRules(tenantID string) []*AlertRule {
 	return s.ListAlertRules(tenantID)
 }
 
-// DeleteAlertRule 删除告警规则：遍历所有 schema 尝试删除（与 Alert 单查同模式：规则 ID 跨 schema 唯一性弱）。
-func (m *MultiSchemaStore) DeleteAlertRule(id string) bool {
-	for _, s := range m.allStores() {
-		if s.DeleteAlertRule(id) {
-			return true
-		}
+// DeleteAlertRule 删除告警规则：按 tenantID 路由到对应 schema，校验归属。
+func (m *MultiSchemaStore) DeleteAlertRule(id, tenantID string) bool {
+	s, err := m.storeFor(tenantID)
+	if err != nil {
+		return false
 	}
-	return false
+	return s.DeleteAlertRule(id, tenantID)
 }
 
 // GetAlertRule 按 ID 返回单个告警规则（M2 持久化补全）。

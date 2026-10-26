@@ -22,6 +22,21 @@ vi.mock('@/api/k8s', () => ({
   getK8sConfigMaps: vi.fn(),
   getK8sSecrets: vi.fn(),
   getK8sNodes: vi.fn(),
+  getK8sNetworkPolicies: vi.fn(),
+  getK8sIngressClasses: vi.fn(),
+  getK8sStorageClasses: vi.fn(),
+  getK8sPDBs: vi.fn(),
+  getK8sServiceAccounts: vi.fn(),
+  getK8sEndpointSlices: vi.fn(),
+  getK8sResourceQuotas: vi.fn(),
+  getK8sLimitRanges: vi.fn(),
+  getK8sPriorityClasses: vi.fn(),
+  getK8sRuntimeClasses: vi.fn(),
+  getK8sLeases: vi.fn(),
+  getK8sEvents: vi.fn(),
+  getK8sMutatingWebhooks: vi.fn(),
+  getK8sValidatingWebhooks: vi.fn(),
+  getK8sCSRs: vi.fn(),
 }))
 
 import { useK8sStore } from '@/stores/k8s'
@@ -29,6 +44,9 @@ import {
   getK8sClusters,
   createK8sCluster,
   deleteK8sCluster,
+  getK8sNetworkPolicies,
+  getK8sStorageClasses,
+  getK8sValidatingWebhooks,
 } from '@/api/k8s'
 
 describe('useK8sStore', () => {
@@ -154,6 +172,59 @@ describe('useK8sStore', () => {
 
       const store = useK8sStore()
       await expect(store.removeCluster('c1')).rejects.toThrow('delete cluster failed')
+    })
+  })
+
+  describe('fetchResources 扩展资源类型', () => {
+    it('networkpolicies 为命名空间级：携带 namespace 调用', async () => {
+      getK8sNetworkPolicies.mockResolvedValueOnce({ networkpolicies: [{ name: 'np1', namespace: 'ns1' }] })
+
+      const store = useK8sStore()
+      store.currentClusterID = 'c1'
+      store.namespace = 'ns1'
+      store.resourceType = 'networkpolicies'
+      await store.fetchResources()
+
+      expect(getK8sNetworkPolicies).toHaveBeenCalledWith('c1', 'ns1')
+      expect(store.resources).toEqual([{ name: 'np1', namespace: 'ns1' }])
+      expect(store.resourcesLoading).toBe(false)
+    })
+
+    it('storageclasses 为集群级：不携带 namespace 调用', async () => {
+      getK8sStorageClasses.mockResolvedValueOnce({ storageclasses: [{ name: 'standard' }] })
+
+      const store = useK8sStore()
+      store.currentClusterID = 'c1'
+      store.namespace = 'ns1'
+      store.resourceType = 'storageclasses'
+      await store.fetchResources()
+
+      expect(getK8sStorageClasses).toHaveBeenCalledWith('c1')
+      expect(store.resources).toEqual([{ name: 'standard' }])
+    })
+
+    it('响应为裸数组时直接使用', async () => {
+      getK8sValidatingWebhooks.mockResolvedValueOnce([{ name: 'vwc1' }])
+
+      const store = useK8sStore()
+      store.currentClusterID = 'c1'
+      store.resourceType = 'validatingwebhooks'
+      await store.fetchResources()
+
+      expect(getK8sValidatingWebhooks).toHaveBeenCalledWith('c1')
+      expect(store.resources).toEqual([{ name: 'vwc1' }])
+    })
+
+    it('新类型请求失败时设置 error 并清空 resources', async () => {
+      getK8sNetworkPolicies.mockRejectedValueOnce({ j: { error: 'network policy 拉取失败' } })
+
+      const store = useK8sStore()
+      store.currentClusterID = 'c1'
+      store.resourceType = 'networkpolicies'
+      await store.fetchResources()
+
+      expect(store.error).toBe('network policy 拉取失败')
+      expect(store.resources).toEqual([])
     })
   })
 

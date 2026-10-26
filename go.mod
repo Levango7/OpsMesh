@@ -15,6 +15,7 @@ require (
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
+	github.com/aliyun/alibaba-cloud-sdk-go v1.61.18
 	github.com/andybalholm/brotli v1.1.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0

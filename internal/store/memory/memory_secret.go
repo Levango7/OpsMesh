@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"log"
 	"sort"
 	"time"
@@ -135,16 +136,90 @@ func (m *MemoryStore) ListSecrets(tenantID string) []*SecretMeta {
 	return out
 }
 
-// RotateSecret 轮换密钥：用新值产生新版本。不存在则等价于 SetSecret（KeyType 默认 passphrase）。
-// 返回新版本元信息。
-func (m *MemoryStore) RotateSecret(tenantID, key, newValue string) *SecretMeta {
-	m.mu.RLock()
-	keyType := "passphrase"
-	if existing, ok := m.secrets[secretKey(tenantID, key)]; ok {
-		keyType = existing.KeyType
+// RotateSecret 轮换密钥：用新值产生新版本，版本号+1，保留历史版本供审计。
+// keyType 为空时沿用已有 KeyType（不存在则 passphrase）。rotatedBy 记入访问日志。
+// 不存在则等价于 SetSecret（Version=1）。返回新版本元信息；失败返回 error。
+func (m *MemoryStore) RotateSecret(tenantID, key, newValue, keyType, rotatedBy string) (*SecretMeta, error) {
+	if tenantID == "" {
+		tenantID = "default"
 	}
-	m.mu.RUnlock()
-	return m.SetSecret(&SecretItem{Key: key, Value: newValue, KeyType: keyType}, tenantID)
+	if keyType == "" {
+		m.mu.RLock()
+		if existing, ok := m.secrets[secretKey(tenantID, key)]; ok {
+			keyType = existing.KeyType
+		}
+		m.mu.RUnlock()
+		if keyType == "" {
+			keyType = "passphrase"
+		}
+	}
+	item := &SecretItem{Key: key, Value: newValue, KeyType: keyType}
+	meta := m.SetSecret(item, tenantID)
+	if meta == nil {
+		return nil, fmt.Errorf("rotate secret refused (tenant=%s key=%s)", tenantID, key)
+	}
+	m.addSecretAccessLogLocked(tenantID, key, rotatedBy, "rotate")
+	return meta, nil
+}
+
+// AddSecretAccessLog 记录一次密钥访问审计（get/rotate/delete）。
+func (m *MemoryStore) AddSecretAccessLog(tenantID, key, accessedBy, action string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.addSecretAccessLogLocked(tenantID, key, accessedBy, action)
+	return nil
+}
+
+// addSecretAccessLogLocked 在持锁下追加一条访问日志，超 auditCap 时截断最旧。
+func (m *MemoryStore) addSecretAccessLogLocked(tenantID, key, accessedBy, action string) {
+	m.secretAccessLogs = append(m.secretAccessLogs, &SecretAccessLog{
+		Key:         key,
+		TenantID:    tenantID,
+		AccessedBy:  accessedBy,
+		Action:      action,
+		AccessedAt:  time.Now(),
+	})
+	if len(m.secretAccessLogs) > auditCap {
+		m.secretAccessLogs = m.secretAccessLogs[len(m.secretAccessLogs)-auditCap:]
+	}
+}
+
+// GetSecretAccessLog 查询指定密钥的访问审计日志（按租户隔离，accessed_at 降序，分页）。
+// key 为空时返回该租户全部密钥的访问日志；limit<=0 表示不限制。
+func (m *MemoryStore) GetSecretAccessLog(tenantID, key string, offset, limit int) ([]*SecretAccessLog, int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var filtered []*SecretAccessLog
+	for _, l := range m.secretAccessLogs {
+		if l.TenantID != tenantID {
+			continue
+		}
+		if key != "" && l.Key != key {
+			continue
+		}
+		filtered = append(filtered, l)
+	}
+	total := len(filtered)
+	sort.Slice(filtered, func(i, j int) bool { return filtered[i].AccessedAt.After(filtered[j].AccessedAt) })
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	end := total
+	if limit > 0 {
+		end = offset + limit
+		if end > total {
+			end = total
+		}
+	}
+	out := make([]*SecretAccessLog, 0, end-offset)
+	for _, l := range filtered[offset:end] {
+		cp := *l
+		out = append(out, &cp)
+	}
+	return out, total, nil
 }
 
 // SecretVersions 返回指定密钥的全部版本元信息（按 version 升序）。

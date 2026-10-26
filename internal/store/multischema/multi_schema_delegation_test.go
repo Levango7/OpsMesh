@@ -88,9 +88,9 @@ func TestMultiSchemaStore_DelegationP03ToP6(t *testing.T) {
 	if meta1 == nil || meta1.Version != 1 {
 		t.Fatalf("SetSecret delegate = %+v", meta1)
 	}
-	meta2 := m.RotateSecret(ten, "k1", "${vault:test/k1/v2}")
-	if meta2 == nil || meta2.Version != 2 {
-		t.Fatalf("RotateSecret delegate = %+v", meta2)
+	meta2, err := m.RotateSecret(ten, "k1", "${vault:test/k1/v2}", "", "user-1")
+	if err != nil || meta2 == nil || meta2.Version != 2 {
+		t.Fatalf("RotateSecret delegate = %+v err=%v", meta2, err)
 	}
 	if item, ok := m.GetSecret(ten, "k1"); !ok || item.Value != "${vault:test/k1/v2}" {
 		t.Fatalf("GetSecret delegate = (%+v,%v)", item, ok)
@@ -446,10 +446,10 @@ func TestMultiSchemaStore_DelegationP03ToP6(t *testing.T) {
 	}
 
 	// ---- P6 删除路径（放最后，避免影响前面的聚合断言）----
-	if !m.DeleteSubscription(sub.ID) || m.DeleteSubscription(sub.ID) {
+	if !m.DeleteSubscription(sub.ID, "tenanta") || m.DeleteSubscription(sub.ID, "tenanta") {
 		t.Fatal("DeleteSubscription delegate broken")
 	}
-	if !m.DeletePlugin(plg.ID) || m.DeletePlugin(plg.ID) {
+	if !m.DeletePlugin(plg.ID, "default") || m.DeletePlugin(plg.ID, "default") {
 		t.Fatal("DeletePlugin delegate broken")
 	}
 	if !m.DeleteBillingPlan(plan.ID) || m.DeleteBillingPlan(plan.ID) {

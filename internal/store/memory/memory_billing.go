@@ -151,11 +151,15 @@ func (m *MemoryStore) UpdateSubscription(sub *Subscription) (*Subscription, bool
 	return model.CloneSubscription(sub), true
 }
 
-// DeleteSubscription 按 ID 删除订阅。
-func (m *MemoryStore) DeleteSubscription(id string) bool {
+// DeleteSubscription 按 ID 删除订阅，按 tenantID 校验归属，不存在或越权返回 false。
+func (m *MemoryStore) DeleteSubscription(id, tenantID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.subscriptions[id]; !ok {
+	s, ok := m.subscriptions[id]
+	if !ok {
+		return false
+	}
+	if s.TenantID != tenantID {
 		return false
 	}
 	delete(m.subscriptions, id)
@@ -212,6 +216,21 @@ func (m *MemoryStore) ListInvoices(tenantID string) []*Invoice {
 		}
 	}
 	return out
+}
+
+// DeleteInvoice 按 ID 删除账单，按 tenantID 校验归属，不存在或越权返回 false。
+func (m *MemoryStore) DeleteInvoice(id, tenantID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.invoices[id]
+	if !ok {
+		return false
+	}
+	if inv.TenantID != tenantID {
+		return false
+	}
+	delete(m.invoices, id)
+	return true
 }
 
 // CalculateUsage 计算指定租户的资源用量统计。

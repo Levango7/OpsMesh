@@ -30,7 +30,9 @@ const arityJudgedFloor = 128
 // arityWideExemptions 是「消费侧 ≥3 而 SQL 不可判」的显式账目（键 file#fn#var）。
 // 当前为空：三种消费形态与包级/函数级字面量展开已覆盖全部宽站点。
 // 空表也是合法状态；条目必须带理由，且站点消失/被解析成功后必须删除（过期即判红）。
-var arityWideExemptions = map[string]string{}
+var arityWideExemptions = map[string]string{
+	"sql_cloud_resource.go#ListCloudResources#rows": "SELECT 列在 fmt.Sprintf 运行时拼接（动态 WHERE 子句），静态不可判；消费侧 scanCloudResource=14",
+}
 
 // TestSelectColumnCountMatchesScanTargets 本包的对账门禁（TD-90）。
 func TestSelectColumnCountMatchesScanTargets(t *testing.T) {

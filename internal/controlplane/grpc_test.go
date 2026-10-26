@@ -90,8 +90,10 @@ func TestGRPCRegistrationLoop(t *testing.T) {
 	}
 
 	// 上报结果：设备 TaskState 应变为 done
+	// 防双跑：上报必须携带**领取时颁发的 ClaimEpoch**（store.SubmitResult 精确校验
+	// claim_epoch 相等，ClaimTask 领取时 +1）。缺令牌会被判越权上报拒收，任务停在 running。
 	if err := conn.Invoke(rctx, "/opsmesh.v1.Registration/ReportResult",
-		&proto.TaskResult{TaskID: ptResp.Tasks[0].TaskID, AgentID: regResp.AgentID, ExitCode: 0},
+		&proto.TaskResult{TaskID: ptResp.Tasks[0].TaskID, AgentID: regResp.AgentID, ExitCode: 0, ClaimEpoch: ptResp.Tasks[0].ClaimEpoch},
 		&grpcx.Empty{}, grpc.ForceCodec(grpcx.JSONCodec)); err != nil {
 		t.Fatalf("ReportResult: %v", err)
 	}

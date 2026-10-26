@@ -88,8 +88,41 @@
             <template #cell-provider="{ value }">
               <span class="badge info">{{ value || '—' }}</span>
             </template>
+            <template #cell-actions="{ row }">
+              <button class="xs outline" @click="onRotate(row.key)" :disabled="rotating === row.key">
+                {{ rotating === row.key ? $t('secrets.rotating') : $t('secrets.rotate') }}
+              </button>
+            </template>
           </DataTable>
         </div>
+
+        <!-- 轮转密钥对话框 -->
+        <Modal v-model="rotateConfirm.show" :title="$t('secrets.rotate')" @close="cancelRotate">
+          <div class="field">
+            <label>{{ $t('secrets.rotate_key') }}</label>
+            <code>{{ rotateConfirm.key }}</code>
+          </div>
+          <div class="field">
+            <label>{{ $t('secrets.rotate_new_value') }}</label>
+            <input v-model="rotateConfirm.newValue" :placeholder="$t('secrets.rotate_new_value_hint')" />
+          </div>
+          <div class="field">
+            <label>{{ $t('secrets.rotate_key_type') }}</label>
+            <select v-model="rotateConfirm.keyType">
+              <option value="passphrase">passphrase</option>
+              <option value="aes">aes</option>
+              <option value="hmac">hmac</option>
+              <option value="rsa">rsa</option>
+              <option value="ecdsa">ecdsa</option>
+            </select>
+          </div>
+          <div class="btnbar">
+            <button class="primary" @click="confirmRotate" :disabled="!rotateConfirm.newValue || rotating">
+              {{ rotating ? $t('secrets.rotating') : $t('secrets.rotate_confirm') }}
+            </button>
+            <button class="outline" @click="cancelRotate">{{ $t('common.cancel') }}</button>
+          </div>
+        </Modal>
 
         <!-- 帮助说明 -->
         <div class="card">
@@ -118,11 +151,12 @@
 //
 // 安全约束：本页面不展示任何密钥值，仅展示 key 名称与来源 provider。
 import { onMounted, reactive, ref } from 'vue'
-import { getSecretProviderStatus, testSecretProvider, listSecretKeys } from '@/api/secrets'
+import { getSecretProviderStatus, testSecretProvider, listSecretKeys, rotateSecret } from '@/api/secrets'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
+import { Modal } from '@/components/ui'
 
 // 提供者状态
 const status = reactive({ provider: '', enabled: false, addr: '', mount: '', file: '' })
@@ -137,9 +171,12 @@ const testOk = ref(false)
 
 // 密钥列表
 const keys = ref([])
+const rotating = ref('')
+const rotateConfirm = ref({ show: false, key: '', newValue: '', keyType: 'passphrase' })
 const keyCols = [
   { key: 'key', title: 'Key', slot: 'cell-key' },
-  { key: 'provider', title: 'Provider', slot: 'cell-provider' }
+  { key: 'provider', title: 'Provider', slot: 'cell-provider' },
+  { key: 'actions', title: 'Actions', slot: 'cell-actions', width: '100px' }
 ]
 
 // 拉取提供者状态
@@ -173,6 +210,33 @@ async function fetchKeys() {
   } catch {
     keys.value = []
   }
+}
+
+// 轮转密钥：打开确认对话框
+function onRotate(key) {
+  rotateConfirm.value = { show: true, key, newValue: '', keyType: 'passphrase' }
+}
+
+async function confirmRotate() {
+  const { key, newValue, keyType } = rotateConfirm.value
+  if (!newValue) {
+    rotateConfirm.value.show = false
+    return
+  }
+  rotating.value = key
+  try {
+    await rotateSecret(key, { keyType, newValue, rotatedBy: 'ui' })
+    await fetchKeys()
+  } catch {
+    // 轮转失败
+  } finally {
+    rotating.value = ''
+    rotateConfirm.value.show = false
+  }
+}
+
+function cancelRotate() {
+  rotateConfirm.value.show = false
 }
 
 // 测试 Vault 连接

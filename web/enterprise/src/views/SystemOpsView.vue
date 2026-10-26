@@ -1,22 +1,24 @@
 <template>
-  <div>
-    <h2 data-testid="systemops-title">{{ $t('system_ops.title') }}</h2>
-    <p class="muted">{{ $t('system_ops.subtitle') }}</p>
+  <div class="system-ops">
+    <div class="system-ops__header">
+      <h2 data-testid="systemops-title" class="system-ops__title">{{ $t('system_ops.title') }}</h2>
+      <p class="system-ops__subtitle">{{ $t('system_ops.subtitle') }}</p>
+    </div>
 
     <!-- 设备选择 -->
     <div class="toolbar">
       <div class="field">
-        <label>{{ $t('system_ops.device') }}</label>
-        <select v-model="selectedDevice" @change="loadSystemInfo">
-          <option value="">{{ $t('system_ops.select_device') }}</option>
-          <option v-for="d in devices" :key="d.deviceID" :value="d.deviceID">
-            {{ d.hostname || d.deviceID }} ({{ d.ip || d.deviceID }})
-          </option>
-        </select>
+        <label class="field__label">{{ $t('system_ops.device') }}</label>
+        <Select
+          v-model="selectedDevice"
+          :placeholder="$t('system_ops.select_device')"
+          :options="deviceOptions"
+          @update:model-value="loadSystemInfo"
+        />
       </div>
-      <button class="outline" @click="loadSystemInfo" :disabled="!selectedDevice">
+      <Button variant="primary" size="sm" @click="loadSystemInfo" :disabled="!selectedDevice">
         <Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="error" class="poll-err"><Icon name="warning" :size="14" /> {{ error }}</div>
@@ -25,188 +27,119 @@
 
     <template v-else>
       <!-- Tab 切换 -->
-      <div class="tabbar">
-        <button :class="['tab', { active: tab === 'users' }]" @click="tab = 'users'" data-testid="tab-users">
-          {{ $t('system_ops.tab_users') }} ({{ users.length }})
-        </button>
-        <button :class="['tab', { active: tab === 'groups' }]" @click="tab = 'groups'" data-testid="tab-groups">
-          {{ $t('system_ops.tab_groups') }} ({{ groups.length }})
-        </button>
-        <button :class="['tab', { active: tab === 'firewall' }]" @click="tab = 'firewall'" data-testid="tab-firewall">
-          {{ $t('system_ops.tab_firewall') }} ({{ firewall.length }})
-        </button>
-        <button :class="['tab', { active: tab === 'services' }]" @click="tab = 'services'" data-testid="tab-services">
-          {{ $t('system_ops.tab_services') }} ({{ services.length }})
-        </button>
-        <button :class="['tab', { active: tab === 'journal' }]" @click="tab = 'journal'" data-testid="tab-journal">
-          {{ $t('system_ops.tab_journal') }}
-        </button>
-      </div>
+      <Tabs v-model="tab" type="line">
+        <TabItem name="users" :label="$t('system_ops.tab_users') + ' (' + users.length + ')' " />
+        <TabItem name="groups" :label="$t('system_ops.tab_groups') + ' (' + groups.length + ')' " />
+        <TabItem name="firewall" :label="$t('system_ops.tab_firewall') + ' (' + firewall.length + ')' " />
+        <TabItem name="services" :label="$t('system_ops.tab_services') + ' (' + services.length + ')' " />
+        <TabItem name="journal" :label="$t('system_ops.tab_journal') " />
+      </Tabs>
 
       <!-- 用户 -->
       <div v-show="tab === 'users'" class="card">
         <div class="flowbar">
-          <h3 style="margin: 0">{{ $t('system_ops.users_title') }}</h3>
-          <input v-model="userSearch" :placeholder="$t('system_ops.search_user')" class="search-input" />
+          <h3 class="card__title">{{ $t('system_ops.users_title') }}</h3>
+          <Input v-model="userSearch" :placeholder="$t('system_ops.search_user')" class="search-input" />
           <label class="chk"><input type="checkbox" v-model="showSystemUsers" /> {{ $t('system_ops.show_system') }}</label>
-          <button class="xs primary" @click="openCreateUser"><Icon name="add" :size="13" /> {{ $t('system_ops.add_user') }}</button>
+          <Button variant="primary" size="sm" @click="openCreateUser">
+            <Icon name="add" :size="13" /> {{ $t('system_ops.add_user') }}
+          </Button>
         </div>
-        <table class="data-table" data-testid="users-table">
-          <thead>
-            <tr>
-              <th>{{ $t('system_ops.col_name') }}</th>
-              <th>UID</th>
-              <th>GID</th>
-              <th>{{ $t('system_ops.col_home') }}</th>
-              <th>{{ $t('system_ops.col_shell') }}</th>
-              <th>{{ $t('system_ops.col_type') }}</th>
-              <th>{{ $t('system_ops.col_actions') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="u in filteredUsers" :key="u.name">
-              <td><code>{{ u.name }}</code></td>
-              <td>{{ u.uid }}</td>
-              <td>{{ u.gid }}</td>
-              <td class="muted">{{ u.home }}</td>
-              <td class="muted">{{ u.shell }}</td>
-              <td><span class="tag" :class="u.system ? 'off' : 'ok'">{{ u.system ? $t('system_ops.type_system') : $t('system_ops.type_normal') }}</span></td>
-              <td>
-                <button class="xs danger" @click="confirmDelete('user', u.name)" :disabled="u.system">{{ $t('common.delete') }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <Table
+          :data="filteredUsers"
+          :columns="usersColumns"
+          row-key="name"
+        />
       </div>
 
       <!-- 用户组 -->
       <div v-show="tab === 'groups'" class="card">
         <div class="flowbar">
-          <h3 style="margin: 0">{{ $t('system_ops.groups_title') }}</h3>
-          <input v-model="groupSearch" :placeholder="$t('system_ops.search_group')" class="search-input" />
-          <button class="xs primary" @click="openCreateGroup"><Icon name="add" :size="13" /> {{ $t('system_ops.add_group') }}</button>
+          <h3 class="card__title">{{ $t('system_ops.groups_title') }}</h3>
+          <Input v-model="groupSearch" :placeholder="$t('system_ops.search_group')" class="search-input" />
+          <Button variant="primary" size="sm" @click="openCreateGroup">
+            <Icon name="add" :size="13" /> {{ $t('system_ops.add_group') }}
+          </Button>
         </div>
-        <table class="data-table" data-testid="groups-table">
-          <thead>
-            <tr>
-              <th>{{ $t('system_ops.col_group_name') }}</th>
-              <th>GID</th>
-              <th>{{ $t('system_ops.col_members') }}</th>
-              <th>{{ $t('system_ops.col_actions') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="g in filteredGroups" :key="g.name">
-              <td><code>{{ g.name }}</code></td>
-              <td>{{ g.gid }}</td>
-              <td class="muted">{{ (g.members || []).join(', ') || '—' }}</td>
-              <td>
-                <button class="xs danger" @click="confirmDelete('group', g.name)">{{ $t('common.delete') }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <Table
+          :data="filteredGroups"
+          :columns="groupsColumns"
+          row-key="name"
+        />
       </div>
 
       <!-- 防火墙 -->
       <div v-show="tab === 'firewall'" class="card">
         <div class="flowbar">
-          <h3 style="margin: 0">{{ $t('system_ops.firewall_title') }}</h3>
+          <h3 class="card__title">{{ $t('system_ops.firewall_title') }}</h3>
           <span class="tag">{{ $t('system_ops.backend') }}: {{ firewallBackend || '—' }}</span>
-          <button class="xs primary" @click="openAddRule"><Icon name="add" :size="13" /> {{ $t('system_ops.add_rule') }}</button>
+          <Button variant="ghost" size="sm" @click="onQueryFirewallRules">
+            {{ $t('system_ops.query_rules') }}
+          </Button>
+          <Button variant="primary" size="sm" @click="openAddRule">
+            <Icon name="add" :size="13" /> {{ $t('system_ops.add_rule') }}
+          </Button>
         </div>
-        <table class="data-table" data-testid="firewall-table">
-          <thead>
-            <tr>
-              <th>{{ $t('system_ops.col_chain') }}</th>
-              <th>{{ $t('system_ops.col_target') }}</th>
-              <th>{{ $t('system_ops.col_protocol') }}</th>
-              <th>{{ $t('system_ops.col_port') }}</th>
-              <th>{{ $t('system_ops.col_source') }}</th>
-              <th>{{ $t('system_ops.col_rule') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(r, i) in firewall" :key="i">
-              <td>{{ r.chain || '—' }}</td>
-              <td>{{ r.target || '—' }}</td>
-              <td>{{ r.protocol || '—' }}</td>
-              <td>{{ r.port || '—' }}</td>
-              <td class="muted">{{ r.source || '—' }}</td>
-              <td class="muted mono">{{ r.rule }}</td>
-              <td>
-                <button class="xs danger" @click="deleteFirewallRule(r, i)" data-testid="delete-firewall-rule" title="{{ $t('common.delete') }}">
-                  <Icon name="delete" :size="12" />
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <Table
+          :data="firewall"
+          :columns="firewallColumns"
+        />
+        <div v-if="firewallRules" class="firewall-rules-result">
+          <h4>{{ $t('system_ops.firewall_rules_result') }}</h4>
+          <pre class="code-block">{{ JSON.stringify(firewallRules, null, 2) }}</pre>
+        </div>
       </div>
 
       <!-- 服务管理 -->
       <div v-show="tab === 'services'" class="card">
         <div class="flowbar">
-          <h3 style="margin: 0">{{ $t('system_ops.services_title') }}</h3>
+          <h3 class="card__title">{{ $t('system_ops.services_title') }}</h3>
           <span class="muted">{{ $t('system_ops.services_hint') }}</span>
-          <button class="xs outline" @click="loadSystemInfo"><Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}</button>
+          <Button variant="ghost" size="sm" @click="loadSystemInfo">
+            <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
+          </Button>
         </div>
-        <table class="data-table" data-testid="services-table">
-          <thead>
-            <tr>
-              <th>{{ $t('system_ops.col_service') }}</th>
-              <th>{{ $t('system_ops.col_status') }}</th>
-              <th>{{ $t('system_ops.col_enabled') }}</th>
-              <th>{{ $t('system_ops.col_actions') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="s in services" :key="s.name">
-              <td><code>{{ s.name }}</code></td>
-              <td><span class="tag" :class="s.status === 'running' ? 'ok' : 'off'">{{ s.status }}</span></td>
-              <td>{{ s.enabled ? $t('system_ops.enabled') : $t('system_ops.disabled') }}</td>
-              <td class="svc-actions">
-                <button class="xs outline" @click="svcAction(s.name, 'restart')">{{ $t('system_ops.svc_restart') }}</button>
-                <button class="xs outline" @click="svcAction(s.name, 'stop')">{{ $t('system_ops.svc_stop') }}</button>
-                <button class="xs primary" @click="svcAction(s.name, 'start')">{{ $t('system_ops.svc_start') }}</button>
-                <button class="xs outline" @click="svcAction(s.name, 'status')">{{ $t('system_ops.svc_status') }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <Table
+          :data="services"
+          :columns="servicesColumns"
+        />
       </div>
 
       <!-- journal 日志查询 -->
       <div v-show="tab === 'journal'" class="card">
         <div class="flowbar">
-          <h3 style="margin: 0">{{ $t('system_ops.journal_title') }}</h3>
+          <h3 class="card__title">{{ $t('system_ops.journal_title') }}</h3>
         </div>
         <div class="journal-form">
           <div class="field">
-            <label>{{ $t('system_ops.journal_unit') }}</label>
-            <input v-model.trim="journalForm.unit" placeholder="nginx.service" />
+            <label class="field__label">{{ $t('system_ops.journal_unit') }}</label>
+            <Input v-model.trim="journalForm.unit" placeholder="nginx.service" />
           </div>
           <div class="field">
-            <label>{{ $t('system_ops.journal_lines') }}</label>
-            <input v-model.number="journalForm.lines" type="number" min="1" max="2000" placeholder="100" />
+            <label class="field__label">{{ $t('system_ops.journal_lines') }}</label>
+            <Input v-model.number="journalForm.lines" type="number" min="1" max="2000" placeholder="100" />
           </div>
           <div class="field">
-            <label>{{ $t('system_ops.journal_level') }}</label>
-            <select v-model="journalForm.level">
-              <option value="">{{ $t('system_ops.journal_all_levels') }}</option>
-              <option value="err">err</option>
-              <option value="warning">warning</option>
-              <option value="info">info</option>
-              <option value="debug">debug</option>
-            </select>
+            <label class="field__label">{{ $t('system_ops.journal_level') }}</label>
+            <Select
+              v-model="journalForm.level"
+              :options="journalLevelOptions"
+              :placeholder="$t('system_ops.journal_all_levels')"
+            />
           </div>
           <div class="field">
-            <label>{{ $t('system_ops.journal_since') }}</label>
-            <input v-model.trim="journalForm.since" placeholder="1 hour ago" />
+            <label class="field__label">{{ $t('system_ops.journal_since') }}</label>
+            <Input v-model.trim="journalForm.since" placeholder="1 hour ago" />
           </div>
-          <button class="xs primary" @click="runJournalQuery" :disabled="journalLoading" data-testid="journal-query-btn">
+          <Button
+            variant="primary"
+            size="sm"
+            @click="runJournalQuery"
+            :disabled="journalLoading"
+            data-testid="journal-query-btn"
+          >
             {{ journalLoading ? $t('common.loading') : $t('system_ops.journal_query') }}
-          </button>
+          </Button>
         </div>
         <div v-if="journalError" class="poll-err">{{ journalError }}</div>
         <pre v-if="journalResult" class="journal-output" data-testid="journal-output">{{ journalResult }}</pre>
@@ -214,77 +147,67 @@
     </template>
 
     <!-- 创建用户弹窗 -->
-    <DetailDrawer :open="showUserForm" :title="$t('system_ops.add_user')" @close="showUserForm = false">
-      <form class="op-form" @submit.prevent="submitCreateUser">
-        <div class="field">
-          <label>{{ $t('system_ops.col_name') }} *</label>
-          <input v-model.trim="userForm.username" placeholder="deploy" required />
-        </div>
-        <div class="field">
-          <label>{{ $t('system_ops.col_group') }}</label>
-          <input v-model.trim="userForm.group" placeholder="deploy" />
-        </div>
-        <div class="field">
-          <label>{{ $t('system_ops.col_home') }}</label>
-          <input v-model.trim="userForm.home" placeholder="/home/deploy" />
-        </div>
-        <div class="field">
-          <label>{{ $t('system_ops.col_shell') }}</label>
-          <input v-model.trim="userForm.shell" placeholder="/bin/bash" />
-        </div>
+    <Drawer v-model="showUserForm" :title="$t('system_ops.add_user')" @close="showUserForm = false">
+      <Form class="op-form" @submit.prevent="submitCreateUser">
+        <FormItem :label="t('system_ops.col_name') + ' *'" required>
+          <Input v-model.trim="userForm.username" placeholder="deploy" />
+        </FormItem>
+        <FormItem :label="t('system_ops.col_group')">
+          <Input v-model.trim="userForm.group" placeholder="deploy" />
+        </FormItem>
+        <FormItem :label="t('system_ops.col_home')">
+          <Input v-model.trim="userForm.home" placeholder="/home/deploy" />
+        </FormItem>
+        <FormItem :label="t('system_ops.col_shell')">
+          <Input v-model.trim="userForm.shell" placeholder="/bin/bash" />
+        </FormItem>
         <div class="btnbar">
-          <button type="submit" class="primary" :disabled="submitting">{{ $t('system_ops.submit') }}</button>
-          <button type="button" class="outline" @click="showUserForm = false">{{ $t('common.cancel') }}</button>
+          <Button type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
+          <Button variant="ghost" size="sm" @click="showUserForm = false">{{ $t('common.cancel') }}</Button>
         </div>
-      </form>
-    </DetailDrawer>
+      </Form>
+    </Drawer>
 
     <!-- 创建组弹窗 -->
-    <DetailDrawer :open="showGroupForm" :title="$t('system_ops.add_group')" @close="showGroupForm = false">
-      <form class="op-form" @submit.prevent="submitCreateGroup">
-        <div class="field">
-          <label>{{ $t('system_ops.col_group_name') }} *</label>
-          <input v-model.trim="groupForm.groupName" placeholder="deploy" required />
-        </div>
+    <Drawer v-model="showGroupForm" :title="$t('system_ops.add_group')" @close="showGroupForm = false">
+      <Form class="op-form" @submit.prevent="submitCreateGroup">
+        <FormItem :label="t('system_ops.col_group_name') + ' *'" required>
+          <Input v-model.trim="groupForm.groupName" placeholder="deploy" />
+        </FormItem>
         <div class="btnbar">
-          <button type="submit" class="primary" :disabled="submitting">{{ $t('system_ops.submit') }}</button>
-          <button type="button" class="outline" @click="showGroupForm = false">{{ $t('common.cancel') }}</button>
+          <Button type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
+          <Button variant="ghost" size="sm" @click="showGroupForm = false">{{ $t('common.cancel') }}</Button>
         </div>
-      </form>
-    </DetailDrawer>
+      </Form>
+    </Drawer>
 
     <!-- 添加防火墙规则弹窗 -->
-    <DetailDrawer :open="showRuleForm" :title="$t('system_ops.add_rule')" @close="showRuleForm = false">
-      <form class="op-form" @submit.prevent="submitAddRule">
-        <div class="field">
-          <label>{{ $t('system_ops.col_port') }} *</label>
-          <input v-model.trim="ruleForm.port" placeholder="8080" required />
-        </div>
-        <div class="field">
-          <label>{{ $t('system_ops.col_protocol') }}</label>
-          <select v-model="ruleForm.protocol">
-            <option value="tcp">tcp</option>
-            <option value="udp">udp</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>{{ $t('system_ops.col_source') }}</label>
-          <input v-model.trim="ruleForm.source" placeholder="0.0.0.0/0" />
-        </div>
+    <Drawer v-model="showRuleForm" :title="$t('system_ops.add_rule')" @close="showRuleForm = false">
+      <Form class="op-form" @submit.prevent="submitAddRule">
+        <FormItem :label="t('system_ops.col_port') + ' *'" required>
+          <Input v-model.trim="ruleForm.port" placeholder="8080" />
+        </FormItem>
+        <FormItem :label="t('system_ops.col_protocol')">
+          <Select v-model="ruleForm.protocol" :options="protocolOptions" />
+        </FormItem>
+        <FormItem :label="t('system_ops.col_source')">
+          <Input v-model.trim="ruleForm.source" placeholder="0.0.0.0/0" />
+        </FormItem>
         <div class="btnbar">
-          <button type="submit" class="primary" :disabled="submitting">{{ $t('system_ops.submit') }}</button>
-          <button type="button" class="outline" @click="showRuleForm = false">{{ $t('common.cancel') }}</button>
+          <Button type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
+          <Button variant="ghost" size="sm" @click="showRuleForm = false">{{ $t('common.cancel') }}</Button>
         </div>
-      </form>
-    </DetailDrawer>
+      </Form>
+    </Drawer>
 
     <!-- 删除确认 -->
-    <ConfirmModal
-      v-model="deleteConfirm.show"
-      :title="$t('common.delete')"
-      :message="deleteConfirm.message"
-      @confirm="doDelete"
-    />
+    <Modal v-model="deleteConfirm.show" :title="$t('common.delete')" @close="deleteConfirm.show = false">
+      <p>{{ deleteConfirm.message }}</p>
+      <div class="btnbar" style="justify-content: flex-end">
+        <Button variant="ghost" size="sm" @click="deleteConfirm.show = false">{{ $t('common.cancel') }}</Button>
+        <Button variant="danger" size="sm" @click="doDelete">{{ $t('common.delete') }}</Button>
+      </div>
+    </Modal>
   </div>
 </template>
 
@@ -294,8 +217,7 @@ import { useDeviceStore } from '@/stores/device'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
 import Icon from '@/components/Icon.vue'
-import DetailDrawer from '@/components/DetailDrawer.vue'
-import ConfirmModal from '@/components/ConfirmModal.vue'
+import { Button, Input, Select, Drawer, Modal, Table, Form, FormItem, Tabs, TabItem } from '@/components/ui'
 import {
   getDeviceSystemInfo,
   createSystemUser,
@@ -303,16 +225,19 @@ import {
   createSystemGroup,
   deleteSystemGroup,
   addFirewallRule,
-  deleteFirewallRule as deleteFirewallRuleApi,
-  systemServiceAction,
   queryJournal,
   getTaskResult,
+  listFirewallRules,
 } from '@/api/system-ops'
 
 const deviceStore = useDeviceStore()
 
 // device store 的设备列表 getter 是 flat（segments 扁平化）；此前误用不存在的 .list 导致下拉恒空。
 const devices = computed(() => deviceStore.flat || [])
+const deviceOptions = computed(() => devices.value.map(d => ({
+  value: d.deviceID,
+  label: (d.hostname || d.deviceID) + ' (' + (d.ip || d.deviceID) + ')'
+})))
 const selectedDevice = ref('')
 const loading = ref(false)
 const submitting = ref(false)
@@ -323,6 +248,7 @@ const users = ref([])
 const groups = ref([])
 const firewall = ref([])
 const firewallBackend = ref('')
+const firewallRules = ref(null)
 const services = ref([])
 
 // journal 查询状态
@@ -343,6 +269,19 @@ const groupForm = reactive({ groupName: '' })
 const ruleForm = reactive({ port: '', protocol: 'tcp', source: '' })
 const deleteConfirm = reactive({ show: false, kind: '', name: '', message: '' })
 
+const protocolOptions = [
+  { value: 'tcp', label: 'tcp' },
+  { value: 'udp', label: 'udp' }
+]
+
+const journalLevelOptions = [
+  { value: '', label: t('system_ops.journal_all_levels') },
+  { value: 'err', label: 'err' },
+  { value: 'warning', label: 'warning' },
+  { value: 'info', label: 'info' },
+  { value: 'debug', label: 'debug' }
+]
+
 const filteredUsers = computed(() => {
   let list = users.value
   if (!showSystemUsers.value) list = list.filter(u => !u.system)
@@ -356,6 +295,40 @@ const filteredGroups = computed(() => {
   if (!q) return groups.value
   return groups.value.filter(g => g.name.toLowerCase().includes(q))
 })
+
+const usersColumns = [
+  { prop: 'name', label: t('system_ops.col_name'), width: 150 },
+  { prop: 'uid', label: 'UID', width: 60 },
+  { prop: 'gid', label: 'GID', width: 60 },
+  { prop: 'home', label: t('system_ops.col_home'), width: 200 },
+  { prop: 'shell', label: t('system_ops.col_shell'), width: 120 },
+  { prop: 'system', label: t('system_ops.col_type'), width: 100, formatter: (row) => row.system ? t('system_ops.type_system') : t('system_ops.type_normal') },
+  { prop: 'actions', label: t('system_ops.col_actions'), width: 100, slot: 'cell-actions' }
+]
+
+const groupsColumns = [
+  { prop: 'name', label: t('system_ops.col_group_name'), width: 150 },
+  { prop: 'gid', label: 'GID', width: 60 },
+  { prop: 'members', label: t('system_ops.col_members'), width: 200, formatter: (row) => (row.members || []).join(', ') || '—' },
+  { prop: 'actions', label: t('system_ops.col_actions'), width: 100, slot: 'cell-actions' }
+]
+
+const firewallColumns = [
+  { prop: 'chain', label: t('system_ops.col_chain'), width: 100 },
+  { prop: 'target', label: t('system_ops.col_target'), width: 100 },
+  { prop: 'protocol', label: t('system_ops.col_protocol'), width: 100 },
+  { prop: 'port', label: t('system_ops.col_port'), width: 80 },
+  { prop: 'source', label: t('system_ops.col_source'), width: 150 },
+  { prop: 'rule', label: t('system_ops.col_rule'), width: 200 },
+  { prop: 'actions', label: t('system_ops.col_actions'), width: 80, slot: 'cell-actions' }
+]
+
+const servicesColumns = [
+  { prop: 'name', label: t('system_ops.col_service'), width: 150 },
+  { prop: 'status', label: t('system_ops.col_status'), width: 100 },
+  { prop: 'enabled', label: t('system_ops.col_enabled'), width: 100 },
+  { prop: 'actions', label: t('system_ops.col_actions'), width: 160, slot: 'cell-actions' }
+]
 
 async function loadSystemInfo() {
   if (!selectedDevice.value) return
@@ -438,13 +411,6 @@ async function submitAddRule() {
   }
 }
 
-function confirmDelete(kind, name) {
-  deleteConfirm.kind = kind
-  deleteConfirm.name = name
-  deleteConfirm.message = t('system_ops.confirm_delete', { name })
-  deleteConfirm.show = true
-}
-
 async function doDelete() {
   const { kind, name } = deleteConfirm
   try {
@@ -459,16 +425,6 @@ async function doDelete() {
     error.value = e.j?.error || t('system_ops.op_failed')
   } finally {
     deleteConfirm.show = false
-  }
-}
-
-async function svcAction(service, action) {
-  try {
-    await systemServiceAction({ agentID: currentAgentID(), service, action })
-    toast.success(t('system_ops.task_dispatched'))
-    setTimeout(loadSystemInfo, 3000)
-  } catch (e) {
-    error.value = e.j?.error || t('system_ops.op_failed')
   }
 }
 
@@ -511,13 +467,12 @@ async function runJournalQuery() {
   }
 }
 
-async function deleteFirewallRule(rule) {
+async function onQueryFirewallRules() {
   try {
-    await deleteFirewallRuleApi({ rule: rule.rule, chain: rule.chain })
-    toast.success(t('system_ops.task_dispatched'))
-    setTimeout(loadSystemInfo, 3000)
-} catch (e) {
-    error.value = e.j?.error || t('system_ops.op_failed')
+    const resp = await listFirewallRules({ agentID: currentAgentID() })
+    firewallRules.value = resp
+  } catch (e) {
+    error.value = e.j?.error || t('system_ops.query_failed')
   }
 }
 
@@ -527,26 +482,142 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.toolbar { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 14px; }
-.field { display: flex; flex-direction: column; gap: 4px; }
-.field label { font-size: 12px; color: var(--text-2); }
-.field input, .field select { padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; }
-.tabbar { display: flex; gap: 8px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
-.tab { background: none; border: none; padding: 8px 14px; cursor: pointer; font-size: 13px; color: var(--text-2); border-bottom: 2px solid transparent; }
-.tab.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-.flowbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
-.search-input { padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; flex: 1; min-width: 160px; }
-.chk { font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 4px; }
-.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.data-table th, .data-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
-.data-table th { background: var(--muted); color: var(--text-2); font-size: 12px; }
-.data-table tr:hover { background: var(--muted-soft); }
-.mono { font-family: monospace; font-size: 11.5px; }
-.op-form { display: flex; flex-direction: column; gap: 10px; }
-.btnbar { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
-.poll-err { padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm); background: var(--fail-soft); border: 1px solid var(--fail-bg); color: var(--fail); font-size: 12.5px; }
-.svc-actions { display: flex; gap: 4px; flex-wrap: wrap; }
-.journal-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
-.journal-output { background: var(--surface-3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; font-family: monospace; font-size: 12px; max-height: 500px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.system-ops {
+  display: block;
+}
+
+.system-ops__header {
+  margin-bottom: var(--space-6, 24px);
+}
+
+.system-ops__title {
+  margin: 0;
+  font-size: var(--font-size-base, 13px);
+  font-weight: 600;
+  color: var(--color-ink, #f7f8f8);
+}
+
+.system-ops__subtitle {
+  margin: 0 0 var(--space-4, 16px) 0;
+  font-size: var(--font-size-sm, 12px);
+  color: var(--color-ink-muted, #d0d6e0);
+}
+
+.toolbar {
+  display: flex;
+  gap: var(--space-3, 12px);
+  align-items: flex-end;
+  margin-bottom: var(--space-4, 16px);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+}
+
+.field__label {
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 500;
+  color: var(--color-ink-muted, #d0d6e0);
+}
+
+.flowbar {
+  display: flex;
+  gap: var(--space-3, 12px);
+  align-items: center;
+  margin-bottom: var(--space-3, 12px);
+  flex-wrap: wrap;
+}
+
+.card {
+  background: var(--color-surface-1, #0f1011);
+  border: 1px solid var(--color-hairline, #23252a);
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-4, 16px);
+}
+.card__title,
+.card h3 { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
+
+.poll-err {
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  margin: var(--space-1, 6px) 0;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-error-soft, #fef2f2);
+  border: 1px solid var(--color-error-light, #fecaca);
+  color: var(--color-error, #ef4444);
+  font-size: var(--font-size-sm, 12px);
+  font-weight: 500;
+}
+
+.muted {
+  color: var(--color-ink-muted, #d0d6e0);
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill-sm, 64px);
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 500;
+}
+
+.tag--ok {
+  background: color-mix(in srgb, var(--color-success, #27a644) 15%, transparent);
+  color: var(--color-success, #27a644);
+}
+
+.tag--off {
+  background: var(--color-surface-2, #141516);
+  color: var(--color-ink-tertiary, #62666d);
+}
+
+.op-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+}
+
+.btnbar {
+  display: flex;
+  gap: var(--space-2, 8px);
+  justify-content: flex-end;
+  margin-top: var(--space-2, 8px);
+}
+
+.journal-form {
+  display: flex;
+  gap: var(--space-3, 12px);
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3, 12px);
+}
+
+.journal-output {
+  background: var(--color-surface-2, #141516);
+  border: 1px solid var(--color-hairline, #23252a);
+  border-radius: var(--radius-sm, 6px);
+  padding: var(--space-3, 12px);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs, 11px);
+  max-height: 500px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.svc-actions {
+  display: flex;
+  gap: var(--space-1, 4px);
+  flex-wrap: wrap;
+}
+
+/* Light mode */
+[data-theme="light"] .poll-err {
+  background: var(--color-error-soft, #fef2f2);
+  border-color: var(--color-error-light, #fecaca);
+  color: var(--color-error, #ef4444);
+}
 </style>

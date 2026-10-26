@@ -527,10 +527,9 @@ func (s *Server) handleNetworkDiagnose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 校验 agent 存在且属于当前租户。
-	agent := s.lookupAgent(req.AgentID)
-	if agent == nil || (tenant != "" && agent.TenantID != tenant) {
-		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found or tenant mismatch"})
+	// 校验 agent 存在且属于当前租户（统一走 requireTenantAgent 防线）。
+	agent, ok := s.requireTenantAgent(w, req.AgentID, tenant)
+	if !ok {
 		return
 	}
 
@@ -837,10 +836,9 @@ func (s *Server) handleNetworkConnectivity(w http.ResponseWriter, r *http.Reques
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "targets is required (non-empty)"})
 		return
 	}
-	// 校验 source agent 存在且属于当前租户。
-	agent := s.lookupAgent(req.SourceAgentID)
-	if agent == nil || (tenant != "" && agent.TenantID != tenant) {
-		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "source agent not found or tenant mismatch"})
+	// 校验 source agent 存在且属于当前租户（统一走 requireTenantAgent 防线）。
+	agent, ok := s.requireTenantAgent(w, req.SourceAgentID, tenant)
+	if !ok {
 		return
 	}
 

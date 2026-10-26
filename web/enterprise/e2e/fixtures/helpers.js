@@ -13,7 +13,10 @@ export const routes = {
   deviceDetail: (id) => APP_BASE + 'devices/' + id,
   tasks: APP_BASE + 'tasks',
   alerts: APP_BASE + 'alerts',
-  k8s: APP_BASE + 'k8s'
+  k8s: APP_BASE + 'k8s',
+  // K8s 已拆分为「集群管理 / 资源管理」两个子页面
+  k8sClusters: APP_BASE + 'k8s/clusters',
+  k8sResources: APP_BASE + 'k8s/resources'
 }
 
 // 初始化一个已登录的 page：注入 cookie + mock API + 跳转到指定路由

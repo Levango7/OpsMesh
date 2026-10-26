@@ -24,10 +24,12 @@ import (
 )
 
 // handlerRequiredPerms 2026-09-29 一次性盘点的缺口清单（controlplane 全部
-// requireProd/requirePermission 字符串字面量 vs 目录比对的结果，15 项）。
+// requireProd/requirePermission 字符串字面量 vs 目录比对的结果，15 项），
+// 2026-10-22 追加 cloud 族（前端路由 requirePerm: 'cloud:read' + 云账号 handler 闸）。
 var handlerRequiredPerms = []string{
 	"alert:write",
 	"approval:read", "approval:write", "approval:approve",
+	"cloud:read", "cloud:write",
 	"helm:read", "helm:write",
 	"middleware:write",
 	"os:write",

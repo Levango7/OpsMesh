@@ -13,7 +13,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/ai/agent"
+	"github.com/Levango7/OpsMesh/internal/ai/gateway"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/cost"
+	"github.com/Levango7/OpsMesh/internal/knowledge"
+	"github.com/Levango7/OpsMesh/internal/k8slifecycle"
 	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
@@ -35,10 +40,9 @@ func (s *Server) Start() error {
 	// 授权态含客户名与设备上限，属商务信息。端点本身不受 requireEnterpriseGate 约束，
 	// 否则未授权用户恰好无法查"为什么没授权"。
 	mux.HandleFunc("/api/v1/license", s.handleLicenseStatus)
-	mux.HandleFunc("/api/v1/tasks", s.handleListTasks)
-	mux.HandleFunc("/api/v1/tasks/", s.handleTaskRouting) // 子路径：{id}/cancel、{id}/result
-	mux.HandleFunc("/healthz", s.handleHealthz)           // K8s liveness 探针（+ 深度检查）
-	mux.HandleFunc("/readyz", s.handleReadyz)             // K8s readiness 探针（新增）
+	s.registerTaskRoutes(mux)
+	mux.HandleFunc("/healthz", s.handleHealthz) // K8s liveness 探针（+ 深度检查）
+	mux.HandleFunc("/readyz", s.handleReadyz)   // K8s readiness 探针（新增）
 	// P1-6 可支撑性：构建信息（无鉴权，仅版本/构建/运行时，供现场排障核对版本）。
 	mux.HandleFunc("/version", s.handleVersion)
 	// P1-6 可支撑性：配置转储与诊断包（需 diagnostics:dump 权限，RBAC 派生规则下仅 admin）。
@@ -55,12 +59,20 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/admin/service-traffic", s.handleAdminServiceTraffic)
 	// P1-6 可支撑性：pprof（默认关闭；开启后仍受 --metrics-allow-cidr 白名单约束）。
 	s.registerPprof(mux)
-	mux.HandleFunc("/api/v1/audits", s.handleAudits)                // GET 审计检索
-	mux.HandleFunc("/api/v1/tasks/batch", s.handleBatchCreateTasks) // POST 批量下发
-	mux.HandleFunc("/api/v1/devices/", s.handleDeviceRouting)       // 子路径：{id} DELETE 退役、{id}/provision
-	mux.HandleFunc("/api/v1/alerts", s.handleAlerts)                // GET 活跃告警（M7）
-	mux.HandleFunc("/api/v1/alerts/", s.handleAlertRouting)         // 子路径：{id}/ack、{id}/silence
-	mux.HandleFunc("/api/v1/events/stream", s.handleEventsStream)   // SSE 实时推送（替代 5s 轮询）
+	mux.HandleFunc("/api/v1/audits", s.handleAudits) // GET 审计检索
+	// /api/v1/tasks/batch：按方法拆分注册（2026-10-21）。
+	// 此前是**无方法限定**的裸字面量注册，与 registerTaskRoutes 的 "GET /api/v1/tasks/{id}"
+	// 冲突——Go 1.22 ServeMux 判定「字面量路径更具体，但方法集更宽」时无法裁定优先级，
+	// Start() 第二次注册即 panic（进程起不来）。按方法显式拆分后：
+	//   - GET 仍进 handler 并由其返回 405（observable 行为与拆分前逐字一致）；
+	//   - POST 走原创建逻辑；
+	//   - 与 "GET /api/v1/tasks/{id}" 同段数字面量+同方法 ⇒ 更具体者胜，不冲突。
+	mux.HandleFunc("GET /api/v1/tasks/batch", s.handleBatchCreateTasks)  // GET：handler 内 405（保持既有行为）
+	mux.HandleFunc("POST /api/v1/tasks/batch", s.handleBatchCreateTasks) // POST 批量下发
+	mux.HandleFunc("/api/v1/devices/", s.handleDeviceRouting)            // 子路径：{id} DELETE 退役、{id}/provision
+	mux.HandleFunc("/api/v1/alerts", s.handleAlerts)                     // GET 活跃告警（M7）
+	mux.HandleFunc("/api/v1/alerts/", s.handleAlertRouting)              // 子路径：{id}/ack、{id}/silence
+	mux.HandleFunc("/api/v1/events/stream", s.handleEventsStream)        // SSE 实时推送（替代 5s 轮询）
 	// 自动纳管：install.sh 分发脚本 + agent 二进制分发 + 自动纳管触发
 	mux.HandleFunc("/install.sh", s.handleInstallSh)
 	mux.HandleFunc("/bin/opsmesh-agent", s.handleServeAgent)
@@ -83,6 +95,21 @@ func (s *Server) Start() error {
 	mux.Handle("/api/v1/workflows/", orchMux)
 	// AIOps：POST /api/v1/aiops/analyze|remediate|remediate-nl|execute，GET /api/v1/aiops/status|executions。
 	s.aiopsHandler.RegisterRoutes(mux)
+	if s.aiGatewayHandler != nil {
+		aigateway.RegisterAIGatewayRoutes(mux, s.aiGatewayHandler)
+	}
+	if s.agentHandler != nil {
+		agent.RegisterAgentRoutes(mux, s.agentHandler)
+	}
+	if s.knowledgeHandler != nil {
+		knowledge.RegisterKnowledgeRoutes(mux, s.knowledgeHandler)
+	}
+	if s.costHandler != nil {
+		cost.RegisterCostRoutes(mux, s.costHandler)
+	}
+	if s.k8sLifecycleHandler != nil {
+		k8slifecycle.RegisterK8sLifecycleRoutes(mux, s.k8sLifecycleHandler)
+	}
 	// M13 微服务聚合代理：gpu/runbook/incident/autoscaler/portal 五域转发到
 	// services/* 独立进程（规则表见 service_proxy.go；bot 域由 bot_bridge.go 提供
 	// 聚合 handler，契约与前端 src/api/bot.js 对齐）。鉴权在代理层统一完成。
@@ -174,9 +201,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/os-templates", s.handleListOSTemplates)
 	mux.HandleFunc("/api/v1/os-templates/", s.handleOSTemplateRouting) // 子路径：{id} 和 {id}/execute
 	// 系统运维操作：用户/组/防火墙的 shell 模板执行（查询走 /api/v1/devices/{id}/system）。
-	mux.HandleFunc("/api/v1/system/users", s.handleSystemUsers)       // POST 创建 / DELETE 删除用户
-	mux.HandleFunc("/api/v1/system/groups", s.handleSystemGroups)     // POST 创建 / DELETE 删除组
-	mux.HandleFunc("/api/v1/system/firewall", s.handleSystemFirewall) // POST 添加 / DELETE 删除规则
+	mux.HandleFunc("/api/v1/system/users", s.handleSystemUsers)                    // POST 创建 / DELETE 删除用户
+	mux.HandleFunc("/api/v1/system/groups", s.handleSystemGroups)                  // POST 创建 / DELETE 删除组
+	mux.HandleFunc("/api/v1/system/firewall", s.handleSystemFirewall)              // POST 添加 / DELETE 删除规则
+	mux.HandleFunc("GET /api/v1/system/firewall/rules", s.handleListFirewallRules) // GET 防火墙规则结构化查询
 	// systemctl 服务管理 + journal 日志查询。
 	mux.HandleFunc("/api/v1/system/services", s.handleSystemServices) // POST 服务操作（start/stop/restart/...）
 	mux.HandleFunc("/api/v1/system/journal", s.handleSystemJournal)   // POST journalctl 查询下发
@@ -186,6 +214,20 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/middleware/kafka/topic", s.handleKafkaTopic) // POST Kafka Topic 管理
 	// 中间件运维泛路由：GET /api/v1/middleware/{deviceID} / POST /api/v1/middleware/{type}/{action}。
 	s.registerMiddlewareRoutes(mux)
+	s.registerKafkaRoutes(mux)
+	s.registerKafkaExtendedRoutes(mux)
+	s.registerKafkaAdvancedRoutes(mux)
+	s.registerKafkaScaleRoutes(mux)
+	s.registerKafkaFinalRoutes(mux)
+	s.registerRabbitMQExtendedRoutes(mux)
+	s.registerRabbitMQFinalRoutes(mux)
+	s.registerRocketMQExtendedRoutes(mux)
+	s.registerRocketMQFinalRoutes(mux)
+	s.registerActiveMQExtendedRoutes(mux)
+	s.registerActiveMQFinalRoutes(mux)
+	s.registerPulsarRoutes(mux)
+	s.registerPulsarExtendedRoutes(mux)
+	s.registerDataRoutes(mux)
 	// 中间件部署：预置模板列表 + 详情 + 在指定 agent 上部署 + 已部署实例查询 + 卸载。
 	mux.HandleFunc("/api/v1/middleware-templates", s.handleMiddlewareTemplates)
 	mux.HandleFunc("/api/v1/middleware-templates/", s.handleMiddlewareTemplateDetail) // 子路径：{id} 和 {id}/deploy
@@ -197,30 +239,44 @@ func (s *Server) Start() error {
 	s.registerLBRoutes(mux)
 	// 对象存储运维：Amazon S3 / Aliyun OSS / MinIO（固定路径优先，再泛路由 /api/v1/storage/）。
 	s.registerStorageRoutes(mux)
+	s.RegisterFastDFSRoutes(mux)
+	s.registerDistFSRoutes(mux)
+	s.registerCacheRoutes(mux)
 	// 镜像仓库运维：Harbor（固定路径优先，再泛路由 /api/v1/harbor/）。
 	s.registerHarborRoutes(mux)
 	// 环境依赖优化：Java/node.js/Python/Go + fd-limit/IPVS（固定路径优先，再泛路由 /api/v1/env/）。
 	s.registerEnvRoutes(mux)
 	// 监控系统兼容：Zabbix/夜莺/SkyWalking（固定路径优先，再泛路由 /api/v1/monitor/）。
 	s.registerMonitorRoutes(mux)
+	s.registerGPUExtendedRoutes(mux)
+	s.registerELKRoutes(mux)
+	s.registerELKExtendedRoutes(mux)
 	// 时序/流数据存储：InfluxDB/TDengine/VictoriaMetrics（固定路径优先，再泛路由 /api/v1/tsdb/）。
 	s.registerTSDBRoutes(mux)
 	// 向量数据库：Milvus/Qdrant/pgvector（固定路径优先，再泛路由 /api/v1/vector/）。
 	s.registerVectorRoutes(mux)
+	s.registerVectorExtendedRoutes(mux)
 	// 图数据库：Neo4j/NebulaGraph（固定路径优先，再泛路由 /api/v1/graph/）。
 	s.registerGraphRoutes(mux)
+	s.registerGraphExtendedRoutes2(mux)
 	// MongoDB 运维：固定路径优先，再泛路由 /api/v1/mongo/{deviceID}。
 	s.registerMongoRoutes(mux)
 	// OLAP 分析引擎：ClickHouse/Doris/Trino（固定路径优先，再泛路由 /api/v1/olap/）。
 	s.registerOLAPRoutes(mux)
+	s.registerOLAPExtendedRoutes(mux)
 	// 内核运维：参数/模块/升级/GRUB（固定路径优先，再泛路由 /api/v1/kernel/）。
 	s.registerKernelRoutes(mux)
-	// 安全运维：漏洞扫描/基线修复/组件更新/回滚（固定路径优先，再泛路由 /api/v1/security/）。
+	s.registerOSPlatformRoutes(mux)
+	s.registerOSExtRoutes(mux)
+	s.registerDomesticRoutes(mux)
+	s.registerOSTuningRoutes(mux)
+	s.registerGitUnixRoutes(mux)	// 安全运维：漏洞扫描/基线修复/组件更新/回滚（固定路径优先，再泛路由 /api/v1/security/）。
 	s.registerSecurityRoutes(mux)
 	// 虚拟化衔接：KVM/vSphere/OpenStack/Proxmox（固定路径优先，再泛路由 /api/v1/virt/）。
 	s.registerVirtRoutes(mux)
 	// Ansible 自动化运维：inventory/playbook/ad-hoc（固定路径优先，再泛路由 /api/v1/ansible/）。
 	s.registerAnsibleRoutes(mux)
+	s.registerScriptCompileRoutes(mux)
 	// SSH 互信：keygen/authorize/revoke/list/test。
 	s.registerSSHTrustRoutes(mux)
 	// NTP 时间同步：status/sync/config/timezone/deploy/service。
@@ -232,8 +288,8 @@ func (s *Server) Start() error {
 	// Phase 3 K8s 集群管理：GET/POST 集群列表 + DELETE 单集群 + POST 测试连接。
 	mux.HandleFunc("/api/v1/k8s/clusters", s.handleK8sClusters)
 	mux.HandleFunc("/api/v1/k8s/clusters/", s.handleK8sClusterRouting) // 子路径：{id} 和 {id}/test
-	// K8s 集群一键部署：kubeadm/kind/k3s。
 	s.registerK8sProvisionRoutes(mux)
+	s.RegisterK8sClusterDeployRoutes(mux)
 	// 修复 9：告警规则 CRUD API。
 	mux.HandleFunc("/api/v1/alert-rules", s.handleAlertRules)
 	mux.HandleFunc("/api/v1/alert-rules/", s.handleAlertRuleRouting) // 子路径：{id} DELETE 删除
@@ -262,10 +318,7 @@ func (s *Server) Start() error {
 	// 批量状态查询走 /api/v1/tasks/batch/{id}；灰度发布走 /api/v1/tasks/canary[/{id}|/{id}/advance]。
 	// 定时任务管理走 /api/v1/schedules[/{id}|/{id}/pause|/{id}/resume]。
 	// 审批 API 走 /api/v1/approval/{flows,requests,pending}。
-	mux.HandleFunc("/api/v1/tasks/batch-exec", s.handleBatchExec)                // POST 批量执行（M5 增强）
-	mux.HandleFunc("/api/v1/tasks/batch/", s.handleBatchRouting)                 // GET 批量状态查询
-	mux.HandleFunc("/api/v1/tasks/canary", s.handleCanaryCreate)                 // POST 灰度发布
-	mux.HandleFunc("/api/v1/tasks/canary/", s.handleCanaryRouting)               // GET 灰度状态 / POST advance
+	s.registerBatchCanaryRoutes(mux)
 	mux.HandleFunc("/api/v1/schedules", s.handleSchedules)                       // GET 列表 / POST 创建定时任务
 	mux.HandleFunc("/api/v1/schedules/", s.handleScheduleRouting)                // 子路径：{id} GET/PUT/DELETE、{id}/pause、{id}/resume
 	mux.HandleFunc("/api/v1/approval/flows", s.handleApprovalFlows)              // GET 列表 / POST 创建审批流
@@ -324,9 +377,18 @@ func (s *Server) Start() error {
 
 	// 密钥管理 API：查看 provider 状态 + 测试连接 + 列出密钥 key。
 	// status/keys 不返回 Vault token 与密钥值（安全考虑）；test 端点做 SSRF 校验。
-	mux.HandleFunc("/api/v1/secrets/status", s.handleSecretsStatus) // GET 当前 provider 配置概览
-	mux.HandleFunc("/api/v1/secrets/test", s.handleSecretsTest)     // POST 测试 Vault 连接
-	mux.HandleFunc("/api/v1/secrets/keys", s.handleSecretsKeys)     // GET 密钥 key 列表（仅名称 + provider）
+	mux.HandleFunc("/api/v1/secrets/status", s.handleSecretsStatus)           // GET 当前 provider 配置概览
+	mux.HandleFunc("/api/v1/secrets/test", s.handleSecretsTest)               // POST 测试 Vault 连接
+	mux.HandleFunc("/api/v1/secrets/keys", s.handleSecretsKeys)               // GET 密钥 key 列表（仅名称 + provider）
+	mux.HandleFunc("POST /api/v1/secrets/{key}/rotate", s.handleRotateSecret) // POST 密钥轮换 + 访问审计
+
+	// Wave 2-B 云账号与云资源（租户隔离）。
+	// GET/POST /api/v1/cloud-accounts 列表/创建；子路径 /{id}、/{id}/sync、/{id}/test、/{id}/regions 走 routing。
+	// GET /api/v1/cloud-resources 云资源列表（可按 accountID/resourceType 过滤）。
+	mux.HandleFunc("GET /api/v1/cloud-accounts", s.handleCloudAccounts)
+	mux.HandleFunc("POST /api/v1/cloud-accounts", s.handleCloudAccounts)
+	mux.HandleFunc("/api/v1/cloud-accounts/", s.handleCloudAccountRouting)
+	mux.HandleFunc("GET /api/v1/cloud-resources", s.handleListCloudResources)
 
 	// CMDB 采集自动化：POST 手动触发全量采集（返回 {collected, failed}）。
 	mux.HandleFunc("/api/v1/cmdb/collect", s.handleCMDBCollect)
@@ -367,6 +429,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/compliance/reports", s.handleComplianceReports)
 	mux.HandleFunc("/api/v1/compliance/reports/", s.handleComplianceReportRouting) // 子路径：{id} GET
 	mux.HandleFunc("/api/v1/audit/events", s.handleAuditEvents)                    // GET 查询审计事件
+	mux.HandleFunc("GET /api/v1/audit/high-risk", s.handleHighRiskAudits)          // GET 高风险审计专项查询（Wave 5-C）
 	mux.HandleFunc("/api/v1/audit/verify", s.handleAuditVerify)                    // GET 校验审计哈希链（P1-3 防篡改）
 	mux.HandleFunc("/api/v1/audit/export", s.handleAuditExport)                    // GET 导出审计日志
 	mux.HandleFunc("/api/v1/ha/status", s.handleHAStatus)                          // GET HA 状态
@@ -378,6 +441,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/backup/restore", s.handleBackupRestore)                // POST 恢复备份
 	mux.HandleFunc("/api/v1/backup/", s.handleBackupDeleteRouting)                 // 子路径：{id} DELETE
 	mux.HandleFunc("/metrics", s.handlePrometheusMetrics)
+
+	// 可观测性链路追踪：Jaeger 原生查询路径，不带 /api/v1 前缀。
+	// 前端 trace.js 覆盖 baseURL 为 ''，直接请求 /api/services、/api/traces。
+	// 当前为 graceful 降级实现，返回空结果，避免前端 404。
+	mux.HandleFunc("GET /api/services", s.handleTraceServices)
+	mux.HandleFunc("GET /api/services/", s.handleTraceRouting)   // {service}/operations
+	mux.HandleFunc("GET /api/traces", s.handleListTraces)
+	mux.HandleFunc("GET /api/traces/", s.handleTraceRouting)    // {traceID}
 
 	// 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。
 	// ：httpMetricsMiddleware 包在最外层，记录所有请求（含 panic 转的 500）的计数与延迟。
@@ -443,6 +514,7 @@ func (s *Server) Start() error {
 	go s.leaderLoop(ctx)                // 选主：周期续租，仅 leader 执行周期协调任务
 	go s.reclaimLoop(ctx)               // 任务租约回收：周期复位失联 agent 的 running 任务（仅 leader）
 	go s.scheduleLoop(ctx)              // F4 定时/周期调度：周期派生到点模板任务的 pending 实例（仅 leader）
+	go s.monitorTaskTimeouts(ctx)       // Wave 4-D：任务超时监控，超时 running 任务自动取消（仅 leader）
 	go s.archiveLoop(ctx)               // F5 离线超龄自动归档（仅 leader）
 	go s.auditMaintenanceLoop(ctx)      // P1-3 审计归档保留 + 哈希链自检（仅 leader）
 	go s.notifyLoop(ctx)                // M7 告警 Webhook 推送：周期检查新 critical 告警并推送到 webhook URL
@@ -528,6 +600,58 @@ func (s *Server) Start() error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// registerTaskRoutes 注册任务域路由。
+//
+// 抽出独立方法的理由：Start() 内联注册无法在测试里复用（会真的起监听），
+// 而"路由是否可达"正是本域最容易被改坏的东西（精确匹配 vs 通配匹配）。
+// 测试直接构造 mux 调用本方法，断言的是**真实注册的模式**，不是复制一份。
+//
+// 模式语义（Go 1.22 ServeMux）：
+//   - "/api/v1/tasks/"：子树模式，兜住 {id}/cancel|result|approve|reject|retry|dead-letter 等子路径。
+//   - "GET /api/v1/tasks/{id}"：裸任务详情（前端 OS 优化/中间件部署的日志轮询依赖它）。
+//   - "GET /api/v1/tasks/dead-letter"：字面量优先于 {id} 通配（更具体者胜），互不冲突。
+func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/tasks", s.handleListTasks)
+	mux.HandleFunc("/api/v1/tasks/", s.handleTaskRouting)                        // 子路径：{id}/cancel、{id}/result、{id}/retry、{id}/dead-letter
+	mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskRouting)                // GET 任务详情（{id} 详情 + 详情外的子树兜底）
+	mux.HandleFunc("GET /api/v1/tasks/dead-letter", s.handleListDeadLetterTasks) // Wave 4-D DLQ 列表
+	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.handleTaskRouting)         // Wave 4-D DLQ 重试
+	mux.HandleFunc("DELETE /api/v1/tasks/{id}/dead-letter", s.handleTaskRouting) // Wave 4-D DLQ 清除
+}
+
+// registerBatchCanaryRoutes 注册批量运维/灰度发布路由（M5）。
+//
+// 修复（2026-10-21）：此前注册的是**精确路径** "GET /api/v1/tasks/batch" 与
+// "GET /api/v1/tasks/canary"，而两个 handler 解析的是 "/api/v1/tasks/batch/{id}"
+// 与 "/api/v1/tasks/canary/{id}"（前者 TrimPrefix 掉带斜杠的前缀后为空 → 恒 404）。
+// 于是真实路径 /api/v1/tasks/batch/{id} 落到 "/api/v1/tasks/" 子树 → handleTaskRouting
+// → 404，handleBatchStatus / handleCanaryStatus / handleCanaryAdvance 全是死代码。
+// 改为 Go 1.22 通配模式后真实路径直达对应 handler。
+//
+// 模式冲突说明（ServeMux 冲突检测）：
+//   - "GET /api/v1/tasks/batch/{id}" 与 "GET /api/v1/tasks/{id}" 段数不同 → 不重叠，不冲突；
+//   - "GET /api/v1/tasks/canary/{id}" 与 "GET /api/v1/tasks/dead-letter" 段数不同 → 同上；
+//   - "GET /api/v1/tasks/{id}" 与 "GET /api/v1/tasks/dead-letter" 同段数但后者是字面量
+//     （更具体）→ 允许共存，命中 dead-letter 时字面量胜出。
+//
+// 注册方式（2026-10-21 补）：batch-exec / canary 两个**字面量**路径必须按方法显式注册。
+// 若沿用无方法限定的裸注册（如 "/api/v1/tasks/batch-exec"），它与 "GET /api/v1/tasks/{id}"
+// 构成 ServeMux 冲突：batch-exec 路径更具体但方法集更宽（覆盖 GET），而 {id} 是 GET 限定，
+// Go 无法裁定谁胜 ⇒ Start() 在 registerBatchCanaryRoutes 第一行即 panic（控制面起不来）。
+// 改为 GET+POST 双注册后两者都是「同段数字面量+具体方法 ⇒ 更具体者胜」，不冲突；
+// 且 GET 仍进各自 handler 由内部方法检查返回 405（observable 行为不变）。
+func (s *Server) registerBatchCanaryRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/tasks/batch-exec", s.handleBatchExec)                     // GET：handler 内 405（保持既有行为）
+	mux.HandleFunc("POST /api/v1/tasks/batch-exec", s.handleBatchExec)                    // POST 批量执行（M5 增强）
+	mux.HandleFunc("GET /api/v1/tasks/batch/{id}", s.handleBatchRouting)                  // GET 批量状态查询 {id}
+	mux.HandleFunc("GET /api/v1/tasks/canary", s.handleCanaryCreate)                      // GET：handler 内 405（保持既有行为）
+	mux.HandleFunc("POST /api/v1/tasks/canary", s.handleCanaryCreate)                     // POST 灰度发布
+	mux.HandleFunc("GET /api/v1/tasks/canary/{id}", s.handleCanaryRouting)                // GET 灰度状态 {id}
+	mux.HandleFunc("POST /api/v1/tasks/canary/{id}/advance", s.handleCanaryRouting)       // POST 灰度推进
+	mux.HandleFunc("POST /api/v1/tasks/canary/{id}/traffic-split", s.handleCanaryEnhance) // POST 流量分割
+	mux.HandleFunc("GET /api/v1/tasks/canary/{id}/metrics", s.handleCanaryEnhance)        // GET 灰度指标
 }
 
 // corsMiddleware 按白名单放行跨域请求（安全加固：替代反射任意 Origin）。

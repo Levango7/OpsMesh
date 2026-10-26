@@ -29,7 +29,7 @@ const taskProtoServiceCopyRelPath = "../../services/task-svc/api/proto/v1/task.p
 
 // expectedTaskFields 是 Task 定义的期望字段数（手工维护）。
 // 当任一侧 Task 增删字段时，须同步更新此值 + 两份定义。
-const expectedTaskFields = 25
+const expectedTaskFields = 29
 
 // TestTaskSchemaFieldCountConsistency 校验 model.go Task struct 与 task.proto Task message
 // 的字段数一致，且与硬编码期望值一致。双重守门：
@@ -237,9 +237,9 @@ func countProtoTaskFields(path string) (int, error) {
 		return 0, err
 	}
 
-	// proto3 字段声明格式: `[repeated] <type> <name> = <number>;`
+	// proto3 字段声明格式: `[repeated] <type> <name> = <number>;`，行尾可跟行内注释。
 	// 匹配行内含 `= <数字>;` 且行首非注释。
-	fieldLineRe := regexp.MustCompile(`^\s*\S.*=\s*\d+\s*;\s*$`)
+	fieldLineRe := regexp.MustCompile(`^\s*\S.*=\s*\d+\s*;`)
 
 	count := 0
 	for _, line := range strings.Split(body, "\n") {

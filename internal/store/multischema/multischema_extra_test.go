@@ -296,7 +296,7 @@ func TestMultiSchemaStore_DeleteAlertRule_Empty(t *testing.T) {
 		return newMemoryStore(), nil
 	}
 	m := newMultiSchemaWithFactory(namer, factory)
-	if m.DeleteAlertRule("no-exist") {
+	if m.DeleteAlertRule("no-exist", "default") {
 		t.Fatal("DeleteAlertRule 空应返回 false")
 	}
 	if m.GetAlertRule("no-exist") != nil {

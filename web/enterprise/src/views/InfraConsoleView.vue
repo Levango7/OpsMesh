@@ -27,8 +27,15 @@
     <div class="console-wrap">
       <!-- 左侧 domain 导航 -->
       <aside class="domain-nav" data-testid="domain-nav">
+        <input
+          v-model="domainSearch"
+          :placeholder="L('搜索域…', 'Search domains…')"
+          class="domain-search"
+          type="search"
+          data-testid="domain-search"
+        />
         <button
-          v-for="d in INFRA_DOMAINS"
+          v-for="d in filteredDomains"
           :key="d.id"
           :class="['domain-btn', { active: currentDomain?.id === d.id }]"
           @click="selectDomain(d)"
@@ -174,6 +181,16 @@ const currentAction = ref(INFRA_DOMAINS[0].actions[0])
 const form = reactive({})
 const result = ref(null)
 const taskOutput = ref('')
+const domainSearch = ref('')
+
+const filteredDomains = computed(() => {
+  const q = domainSearch.value.trim().toLowerCase()
+  if (!q) return INFRA_DOMAINS
+  return INFRA_DOMAINS.filter((d) => {
+    const name = (d.name?.zh || d.name?.en || d.id || '').toLowerCase()
+    return name.includes(q) || d.id.includes(q)
+  })
+})
 
 const prettyJSON = (v) => JSON.stringify(v, null, 2)
 
@@ -229,6 +246,13 @@ async function refreshDevices() {
 
 async function submit() {
   errorMsg.value = ''
+  // Destructive action confirmation
+  const destructive = ['delete', 'drop', 'remove', 'purge', 'uninstall', 'umount', 'delete-queue', 'delete-topic', 'delete-collection', 'delete-user', 'delete-node', 'delete-volume', 'delete-pool', 'delete-snapshot', 'delete-backup']
+  const actionId = currentAction.value?.id || ''
+  const actionName = currentAction.value?.name?.zh || actionId
+  if (destructive.some(d => actionId.includes(d) || actionName.toLowerCase().includes(d))) {
+    if (!confirm(L(`确认执行破坏性操作「${actionName}」？`, `Confirm destructive action "${actionName}"?`))) return
+  }
   submitting.value = true
   try {
     // 设备字段注入：动作含 deviceID 字段时确保已选。
@@ -244,6 +268,8 @@ async function submit() {
     result.value = r
     if (r.kind === 'task') {
       toast.success(L('任务已下发', 'Task dispatched'))
+      // Auto-poll for result after 3s
+      setTimeout(() => pollTaskResult(), 3000)
     }
   } catch (e) {
     errorMsg.value = e?.response?.data?.error || e?.message || String(e)
@@ -294,17 +320,16 @@ onMounted(async () => {
   align-items: flex-start;
   margin-top: 8px;
 }
-.domain-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 190px;
-  max-width: 220px;
-  flex-shrink: 0;
-  position: sticky;
-  top: 70px;
-  max-height: calc(100vh - 140px);
-  overflow-y: auto;
+.domain-search {
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--color-surface-1, #ffffff);
+  color: var(--color-ink, #1f2937);
+  box-sizing: border-box;
 }
 .domain-btn {
   display: flex;
@@ -345,9 +370,14 @@ onMounted(async () => {
   cursor: pointer;
   font-size: 13px;
 }
-.tab:hover { background: var(--bg-2, #f4f5f7); }
+.domain-btn:focus-visible,
+.tab:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: 2px;
+}
 .tab.active {
-  background: var(--primary, #2563eb);
+  background: var(--color-primary, #2563eb);
   color: #fff;
 }
 .op-form .field { margin-bottom: 10px; }
@@ -374,8 +404,8 @@ onMounted(async () => {
 .result-pre {
   margin: 6px 0 0;
   padding: 10px;
-  background: #1e2430;
-  color: #d7e3f4;
+  background: var(--color-surface-2, #1e2430);
+  color: var(--color-ink, #d7e3f4);
   border-radius: 6px;
   font-size: 12px;
   max-height: 320px;

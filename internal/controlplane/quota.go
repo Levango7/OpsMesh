@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
@@ -43,7 +44,15 @@ var ErrQuotaExceeded = errors.New("quota exceeded")
 //
 // 默认配额（defaultQuota）用于未显式设置配额的租户（来自 config）。
 // enabled 控制是否启用配额检查（false 时所有 Check 方法直接放行，向后兼容）。
+// QuotaManager 配额管理器：租户级资源配额检查 + 用量统计。
+//
+// 并发策略（tradeoff）：使用单一粗粒度 sync.Mutex（mu）串行化所有 Check* 路径的
+// "读取配额 + 统计用量 + 比较"三步，保证配额检查的原子性，避免并发创建下超额放行。
+// 粗粒度锁的代价：Check* 与 store 查询串行，吞吐略降；但配额检查本就低频且短时，
+// 相比细粒度锁/乐观并发显著降低复杂度与死锁风险。store 自身并发安全，mu 仅保护
+// QuotaManager 视角下的 count+compare 临界区，不替代 store 锁。
 type QuotaManager struct {
+	mu           sync.Mutex // 保护 Check*/count 的 count+compare 临界区（粗粒度单锁）
 	store        store.Store // 用于查询当前用量 + 读写配额配置
 	defaultQuota *store.QuotaConfig
 	enabled      bool
@@ -105,6 +114,8 @@ func (q *QuotaManager) CheckDevice(tenantID string) error {
 	if q == nil || !q.enabled || tenantID == "" {
 		return nil
 	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	cfg := q.GetQuota(tenantID)
 	if cfg.MaxDevices <= 0 {
 		return nil // 0=不限
@@ -123,6 +134,8 @@ func (q *QuotaManager) CheckTask(tenantID string) error {
 	if q == nil || !q.enabled || tenantID == "" {
 		return nil
 	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	cfg := q.GetQuota(tenantID)
 	if cfg.MaxTasks <= 0 {
 		return nil // 0=不限
@@ -141,6 +154,8 @@ func (q *QuotaManager) CheckAlert(tenantID string) error {
 	if q == nil || !q.enabled || tenantID == "" {
 		return nil
 	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	cfg := q.GetQuota(tenantID)
 	if cfg.MaxAlerts <= 0 {
 		return nil // 0=不限
@@ -191,13 +206,22 @@ func (q *QuotaManager) countDevices(tenantID string) int {
 	return count
 }
 
-// countTasks 统计租户当前任务数（AllTasks 按租户过滤）。
+// countTasks 统计租户当前非终态任务数（pending/claimed/running/blocked/pending_approval）。
+// 终态任务（done/failed/cancelled/rejected/dead_letter）不计入配额，避免历史任务挤占并发配额。
 // tenantID 为空时返回 0（不统计）。
+// AllTasks 返回全部任务（含终态），此处客户端过滤仅统计非终态。
 func (q *QuotaManager) countTasks(tenantID string) int {
 	if tenantID == "" {
 		return 0
 	}
-	return len(q.store.AllTasks(tenantID))
+	count := 0
+	for _, t := range q.store.AllTasks(tenantID) {
+		switch t.Status {
+		case "pending", "claimed", "running", "blocked", "pending_approval":
+			count++
+		}
+	}
+	return count
 }
 
 // countAlerts 统计租户当前告警数（Alerts 按租户过滤）。
@@ -246,9 +270,7 @@ func (s *Server) handleQuotaRouting(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// listQuotas 列出所有租户配额（管理端用）。
-// 由于 store.QuotaStore 接口未提供 ListQuotas 方法，此处返回当前 actx 租户的配额 + 用量。
-// 跨租户列表需扩展 QuotaStore 接口，当前 MVP 仅返回当前租户视图。
+// listQuotas 列出所有租户配额（管理端用，跨租户视图）。
 func (s *Server) listQuotas(w http.ResponseWriter, r *http.Request) {
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
@@ -261,14 +283,28 @@ func (s *Server) listQuotas(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "quotas": []interface{}{}})
 		return
 	}
-	usage, err := s.quotaMgr.Usage(actx.TenantID)
-	if err != nil {
-		writeInternalError(r.Context(), w, "quota.listUsage", err)
+	// 跨租户列表：需要 admin 权限
+	if !s.isAdmin(actx) {
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "admin required for cross-tenant quota listing"})
 		return
+	}
+	quotas, err := s.store.ListQuotas()
+	if err != nil {
+		writeInternalError(r.Context(), w, "quota.listQuotas", err)
+		return
+	}
+	out := make([]map[string]interface{}, 0, len(quotas))
+	for _, q := range quotas {
+		usage, _ := s.quotaMgr.Usage(q.TenantID)
+		out = append(out, map[string]interface{}{
+			"tenantID": q.TenantID,
+			"quota":    q,
+			"usage":    usage,
+		})
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"enabled": s.quotaMgr.Enabled(),
-		"current": usage,
+		"quotas":  out,
 	})
 }
 

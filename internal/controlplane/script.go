@@ -301,6 +301,14 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 
+	// Quota gate: script execute creates a task.
+	if s.quotaMgr != nil {
+		if err := s.quotaMgr.CheckTask(actx.TenantID); err != nil {
+			paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
 	// 真实执行：创建 shell 任务下发到指定 agent。
 	task := &proto.Task{
 		Type:     "shell",

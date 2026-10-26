@@ -74,6 +74,7 @@ message User {
   repeated string role_ids = 5;
   google.protobuf.Timestamp created_at = 6;
   bool must_change_password = 7;
+  string tenant_id = 8;
 }
 
 // Role represents a role entity.
@@ -97,6 +98,7 @@ message Permission {
 message LoginRequest {
   string username = 1;
   string password = 2;
+  string tenant_id = 3;
 }
 
 // TokenResponse contains access and refresh tokens.
@@ -161,6 +163,7 @@ message CreateUserRequest {
   // 该用户首次登录只签 5min 改密专用令牌，必须改密后才能取得常规会话。
   // 迁移 job 以一次性随机口令建号时必须置 true，否则用户拿到的是长期口令。
   bool must_change_password = 5;
+  string tenant_id = 6;
 }
 
 // GetLoginGuardStatusRequest is the request to query login guard status.

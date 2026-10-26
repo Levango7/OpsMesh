@@ -33,7 +33,7 @@
     <!-- Tab 1: 故障根因分析 -->
     <div v-if="activeTab === 'analyze'" class="card">
       <div class="flowbar">
-        <h3 style="margin: 0">{{ $t('aiops.analyze_title') }}</h3>
+        <h3 class="card__title">{{ $t('aiops.analyze_title') }}</h3>
         <button class="xs primary" @click="runAnalyze" data-testid="aiops-analyze-btn">{{ $t('aiops.analyze_run') }}</button>
         <button class="xs outline" @click="loadStatus">↻ {{ $t('common.refresh') }}</button>
       </div>
@@ -85,7 +85,7 @@
     <!-- Tab 2: 智能修复方案 -->
     <div v-if="activeTab === 'remediate'" class="card">
       <div class="flowbar">
-        <h3 style="margin: 0">{{ $t('aiops.remediate_title') }}</h3>
+        <h3 class="card__title">{{ $t('aiops.remediate_title') }}</h3>
         <button class="xs primary" @click="runRemediate" data-testid="aiops-remediate-btn">{{ $t('aiops.remediate_run') }}</button>
         <button class="xs outline" @click="loadStatus">↻ {{ $t('common.refresh') }}</button>
       </div>
@@ -164,7 +164,7 @@
     <!-- Tab 3: 自然语言任务 -->
     <div v-if="activeTab === 'nl'" class="card">
       <div class="flowbar">
-        <h3 style="margin: 0">{{ $t('aiops.nl_title') }}</h3>
+        <h3 class="card__title">{{ $t('aiops.nl_title') }}</h3>
         <button class="xs primary" @click="runNL" data-testid="aiops-nl-btn">{{ $t('aiops.nl_run') }}</button>
       </div>
 
@@ -189,7 +189,7 @@
     <!-- Tab 4: 自动执行 -->
     <div v-if="activeTab === 'execute'" class="card">
       <div class="flowbar">
-        <h3 style="margin: 0">{{ $t('aiops.execute_title') }}</h3>
+        <h3 class="card__title">{{ $t('aiops.execute_title') }}</h3>
         <p class="hint">{{ $t('aiops.execute_hint') }}</p>
       </div>
 
@@ -212,7 +212,7 @@
     <!-- Tab 5: 执行历史 -->
     <div v-if="activeTab === 'history'" class="card">
       <div class="flowbar">
-        <h3 style="margin: 0">{{ $t('aiops.history_title') }}</h3>
+        <h3 class="card__title">{{ $t('aiops.history_title') }}</h3>
         <button class="xs outline" @click="loadExecutions">↻ {{ $t('common.refresh') }}</button>
       </div>
 
@@ -325,10 +325,6 @@ async function loadExecutions() {
   }
 }
 
-function selectExec(rec) {
-  selectedExec.value = rec
-}
-
 async function runAnalyze() {
   analyzeLoading.value = true
   rootCause.value = null
@@ -409,9 +405,10 @@ onMounted(() => {
 }
 .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .form-field { display: flex; flex-direction: column; gap: 4px; }
-.form-field label { font-size: 12px; color: var(--text-2); }
+.form-field label { display: block; font-size: 12px; color: var(--text-2); }
 .form-field input, .form-field select, .form-field textarea {
   padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px;
 }

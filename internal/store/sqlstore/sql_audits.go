@@ -23,9 +23,10 @@ func (s *SQLStore) Audit(e *proto.AuditEvent) {
 	// 突发并发下的死锁 1213 / 锁等待超时 1205 是预期内瞬时冲突，有限重试。
 	if _, hasChain := s.auditColumnFlags(ctx); hasChain {
 		hasTrace := s.columnExists(ctx, "audit_log", "trace_id")
+		hasHighRisk := s.columnExists(ctx, "audit_log", "high_risk")
 		var err error
 		for attempt := 0; attempt < 3; attempt++ {
-			if _, err = s.insertChainedAudit(ctx, e, hasTrace); !isRetryableTxErr(err) {
+			if _, err = s.insertChainedAudit(ctx, e, hasTrace, hasHighRisk); !isRetryableTxErr(err) {
 				break
 			}
 			time.Sleep(time.Duration(attempt+1) * 20 * time.Millisecond)
@@ -37,14 +38,35 @@ func (s *SQLStore) Audit(e *proto.AuditEvent) {
 		// 校验端如实计入 LegacyRows（链前遗留行），不会被误报成篡改。
 		storefail.Record("[store] 链式审计写入失败，降级为非链式写入（该行不计入哈希链）: %v", err)
 	}
-	// 持久化 trace_id（列存在时写入，列不存在时回退到无 trace_id 写入）。
+	// 持久化 trace_id/high_risk（列存在时写入，列不存在时回退到不写入该列）。
 	// trace_id 列由 migrations/004_add_audit_trace_id.sql 添加；
-	// 老库未迁移时 INSERT 会报错"Unknown column"，此时降级到无 trace_id 写入（向后兼容）。
-	if s.columnExists(ctx, "audit_log", "trace_id") {
+	// high_risk 列由 migrations/026_audit_high_risk.sql 添加；
+	// 老库未迁移时 INSERT 会报错"Unknown column"，此时降级到不写该列（向后兼容）。
+	hasTrace := s.columnExists(ctx, "audit_log", "trace_id")
+	hasHighRisk := s.columnExists(ctx, "audit_log", "high_risk")
+	if hasTrace && hasHighRisk {
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT INTO audit_log (tenant_id, user_id, action, target, detail, created_at, trace_id, high_risk)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.TenantID, e.UserID, e.Action, e.Target, e.Detail, e.CreatedAt, e.TraceID, boolToInt(e.HighRisk)); err != nil {
+			storefail.Record("[store] Audit 写入失败: %v", err)
+		}
+		return
+	}
+	if hasTrace {
 		if _, err := s.db.ExecContext(ctx,
 			`INSERT INTO audit_log (tenant_id, user_id, action, target, detail, created_at, trace_id)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			e.TenantID, e.UserID, e.Action, e.Target, e.Detail, e.CreatedAt, e.TraceID); err != nil {
+			storefail.Record("[store] Audit 写入失败: %v", err)
+		}
+		return
+	}
+	if hasHighRisk {
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT INTO audit_log (tenant_id, user_id, action, target, detail, created_at, high_risk)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			e.TenantID, e.UserID, e.Action, e.Target, e.Detail, e.CreatedAt, boolToInt(e.HighRisk)); err != nil {
 			storefail.Record("[store] Audit 写入失败: %v", err)
 		}
 		return
@@ -63,9 +85,14 @@ func (s *SQLStore) Audits() []*proto.AuditEvent {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	hasTrace := s.columnExists(ctx, "audit_log", "trace_id")
+	hasHighRisk := s.columnExists(ctx, "audit_log", "high_risk")
 	var q string
-	if hasTrace {
+	if hasTrace && hasHighRisk {
+		q = `SELECT tenant_id, user_id, action, target, detail, created_at, trace_id, high_risk FROM audit_log ORDER BY id DESC LIMIT 100`
+	} else if hasTrace {
 		q = `SELECT tenant_id, user_id, action, target, detail, created_at, trace_id FROM audit_log ORDER BY id DESC LIMIT 100`
+	} else if hasHighRisk {
+		q = `SELECT tenant_id, user_id, action, target, detail, created_at, high_risk FROM audit_log ORDER BY id DESC LIMIT 100`
 	} else {
 		q = `SELECT tenant_id, user_id, action, target, detail, created_at FROM audit_log ORDER BY id DESC LIMIT 100`
 	}
@@ -78,7 +105,7 @@ func (s *SQLStore) Audits() []*proto.AuditEvent {
 	var out []*proto.AuditEvent
 	for rows.Next() {
 		var e proto.AuditEvent
-		if err := scanAuditRow(rows, &e, hasTrace); err != nil {
+		if err := scanAuditRow(rows, &e, hasTrace, hasHighRisk); err != nil {
 			storefail.Record("[store] Audits 扫描失败: %v", err)
 			continue
 		}
@@ -97,9 +124,14 @@ func (s *SQLStore) QueryAudits(tenant, action string, since, until time.Time, li
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	hasTrace := s.columnExists(ctx, "audit_log", "trace_id")
+	hasHighRisk := s.columnExists(ctx, "audit_log", "high_risk")
 	var q string
-	if hasTrace {
+	if hasTrace && hasHighRisk {
+		q = `SELECT tenant_id, user_id, action, target, detail, created_at, trace_id, high_risk FROM audit_log WHERE 1=1`
+	} else if hasTrace {
 		q = `SELECT tenant_id, user_id, action, target, detail, created_at, trace_id FROM audit_log WHERE 1=1`
+	} else if hasHighRisk {
+		q = `SELECT tenant_id, user_id, action, target, detail, created_at, high_risk FROM audit_log WHERE 1=1`
 	} else {
 		q = `SELECT tenant_id, user_id, action, target, detail, created_at FROM audit_log WHERE 1=1`
 	}
@@ -134,7 +166,7 @@ func (s *SQLStore) QueryAudits(tenant, action string, since, until time.Time, li
 	var out []*proto.AuditEvent
 	for rows.Next() {
 		var e proto.AuditEvent
-		if err := scanAuditRow(rows, &e, hasTrace); err != nil {
+		if err := scanAuditRow(rows, &e, hasTrace, hasHighRisk); err != nil {
 			storefail.Record("[store] QueryAudits 扫描失败: %v", err)
 			continue
 		}
@@ -146,34 +178,96 @@ func (s *SQLStore) QueryAudits(tenant, action string, since, until time.Time, li
 	return out
 }
 
+// QueryHighRiskAudits 返回指定租户的高风险审计事件（high_risk=1），供 GET /api/v1/audit/high-risk。
+// tenant 为空时返回全部租户（平台级）；since/until 为零值表示不限；limit<=0 表示不限制。
+// 返回按时间倒序。
+func (s *SQLStore) QueryHighRiskAudits(tenant string, since, until time.Time, limit int) []*proto.AuditEvent {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hasTrace := s.columnExists(ctx, "audit_log", "trace_id")
+	hasHighRisk := s.columnExists(ctx, "audit_log", "high_risk")
+	if !hasHighRisk {
+		// 老库未应用迁移 026：无 high_risk 列，无法区分高风险事件，返回空。
+		return nil
+	}
+	var q string
+	if hasTrace {
+		q = `SELECT tenant_id, user_id, action, target, detail, created_at, trace_id, high_risk FROM audit_log WHERE high_risk=1`
+	} else {
+		q = `SELECT tenant_id, user_id, action, target, detail, created_at, high_risk FROM audit_log WHERE high_risk=1`
+	}
+	args := []interface{}{}
+	if tenant != "" {
+		q += ` AND tenant_id=?`
+		args = append(args, tenant)
+	}
+	if !since.IsZero() {
+		q += ` AND created_at>=?`
+		args = append(args, since)
+	}
+	if !until.IsZero() {
+		q += ` AND created_at<=?`
+		args = append(args, until)
+	}
+	q += ` ORDER BY id DESC`
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		storefail.Record("[store] QueryHighRiskAudits 查询失败: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	var out []*proto.AuditEvent
+	for rows.Next() {
+		var e proto.AuditEvent
+		if err := scanAuditRow(rows, &e, hasTrace, hasHighRisk); err != nil {
+			storefail.Record("[store] QueryHighRiskAudits 扫描失败: %v", err)
+			continue
+		}
+		out = append(out, &e)
+	}
+	if err := rows.Err(); err != nil {
+		storefail.Record("[store] QueryHighRiskAudits 遍历失败: %v", err)
+	}
+	return out
+}
+
 // auditRowScanner 是 *sql.Row 与 *sql.Rows 的共同最小子集。
 type auditRowScanner interface {
 	Scan(dest ...any) error
 }
 
-// scanAuditRow 读 audit_log 的 6（或 7）列：
-// tenant_id, user_id, action, target, detail, created_at [, trace_id]
+// scanAuditRow 读 audit_log 的 6/7/8 列：
+// tenant_id, user_id, action, target, detail, created_at [, trace_id] [, high_risk]
 //
 // audit_log 除 id（自增主键）外全部列可空——migrations/001 未声明 NOT NULL，
-// trace_id 更是 migration 004 后补的列（补到已存在的表时存量行为 NULL）。
-// 用标量目标扫描时，任一列为 NULL 就让整行读不出来，
+// trace_id 更是 migration 004 后补的列，high_risk 是 migration 026 后补的列，
+// 补到已存在的表时存量行为 NULL/默认值。用标量目标扫描时，任一列为 NULL 就让整行读不出来，
 // 症状是「审计记录凭空消失」，对等保三级留痕是不可接受的，故一律 sql.Null* 承接。
-func scanAuditRow(row auditRowScanner, e *proto.AuditEvent, hasTrace bool) error {
+func scanAuditRow(row auditRowScanner, e *proto.AuditEvent, hasTrace, hasHighRisk bool) error {
 	var tenantID, userID, action, target, detail sql.NullString
 	var createdAt sql.NullTime
 	var traceID sql.NullString
+	var highRisk sql.NullInt64
+	dest := []any{&tenantID, &userID, &action, &target, &detail, &createdAt}
 	if hasTrace {
-		if err := row.Scan(&tenantID, &userID, &action, &target, &detail, &createdAt, &traceID); err != nil {
-			return err
-		}
-	} else {
-		if err := row.Scan(&tenantID, &userID, &action, &target, &detail, &createdAt); err != nil {
-			return err
-		}
+		dest = append(dest, &traceID)
+	}
+	if hasHighRisk {
+		dest = append(dest, &highRisk)
+	}
+	if err := row.Scan(dest...); err != nil {
+		return err
 	}
 	e.TenantID, e.UserID, e.Action = tenantID.String, userID.String, action.String
 	e.Target, e.Detail, e.CreatedAt = target.String, detail.String, createdAt.Time
 	e.TraceID = traceID.String
+	if hasHighRisk {
+		e.HighRisk = highRisk.Int64 == 1
+	}
 	return nil
 }
 

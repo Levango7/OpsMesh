@@ -293,12 +293,16 @@ func (s *Server) handleDeleteSubscription(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if !s.store.DeleteSubscription(id) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if !s.store.DeleteSubscription(id, actx.TenantID) {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "subscription not found"})
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "subscription_delete", Target: id, Detail: "",
+		TenantID: actx.TenantID, UserID: caller.ID, Action: "subscription_delete", Target: id, Detail: "",
 	})
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

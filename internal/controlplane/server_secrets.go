@@ -355,3 +355,58 @@ func warnPlaintextSecrets(st secretLister) {
 	logx.Warn(context.Background(), "secrets 表存在明文存量（建议改为 ${provider:key} 引用并轮换）",
 		"count", len(plain), "sample", strings.Join(shown, ","))
 }
+
+// secretsRotateRequest /api/v1/secrets/{key}/rotate 请求体。
+type secretsRotateRequest struct {
+	KeyType   string `json:"keyType"`   // 密钥类型：aes/hmac/rsa/ecdsa/passphrase（空时沿用已有/默认 passphrase）
+	NewValue  string `json:"newValue"`  // 新密钥值（TD-88：须为 ${provider:key} 引用）
+	RotatedBy string `json:"rotatedBy"` // 轮换操作人（审计留痕）
+}
+
+// secretsRotateResponse /api/v1/secrets/{key}/rotate 响应。
+type secretsRotateResponse struct {
+	Meta *store.SecretMeta `json:"meta"` // 新版本元信息（脱敏，不含 Value）
+}
+
+// handleRotateSecret 处理 POST /api/v1/secrets/{key}/rotate：轮换密钥产生新版本并留痕。
+func (s *Server) handleRotateSecret(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if _, ok := s.requireProd(w, r, "secrets:write"); !ok {
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	tenantID := actx.TenantID
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	key := r.PathValue("key")
+	if key == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "secret key required"})
+		return
+	}
+	var req secretsRotateRequest
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		paginate.JSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.NewValue == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "newValue is required"})
+		return
+	}
+	meta, err := s.store.RotateSecret(tenantID, key, req.NewValue, req.KeyType, req.RotatedBy)
+	if err != nil {
+		writeSanitizedError(r.Context(), w, http.StatusBadRequest, "rotate secret", "rotate failed: "+err.Error(), err)
+		return
+	}
+	if meta == nil {
+		writeSanitizedError(r.Context(), w, http.StatusBadRequest, "rotate secret", "rotate refused (plaintext value or store write failed)", nil)
+		return
+	}
+	paginate.WriteJSON(w, http.StatusOK, secretsRotateResponse{Meta: meta})
+}

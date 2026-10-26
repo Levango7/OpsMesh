@@ -319,4 +319,10 @@ onMounted(() => { /* 不自动查询，等用户点查询 */ })
 
 /* 深色主题下提示面板背景 */
 :global([data-theme="dark"]) .syntax-hint { background: var(--surface-3); }
+.row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
 </style>

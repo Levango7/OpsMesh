@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -98,13 +99,14 @@ type MemoryStore struct {
 	// 由 m.mu 保护并发安全；key 形如 "tenantID|key" 或 serviceID。
 	services map[string]*ServiceInstance // serviceID -> 实例
 	// TD-66 P1：API 网关路由规则（按 tenantID -> ruleID）。
-	gatewayRoutes  map[string]map[string]*GatewayRoute
-	taskRecords    map[string]map[string]*TaskRecord // TD-60 R6：批量/灰度记录（tenant → kind|id → rec）
-	configs        map[string]*ConfigItem            // tenantID|key -> 配置项（当前版本）
-	configHistory  map[string][]*ConfigItem          // tenantID|key -> 版本历史（升序，最近 N 条）
-	secrets        map[string]*SecretItem            // tenantID|key -> 当前版本密钥明文
-	secretMetas    map[string]*SecretMeta            // tenantID|key -> 当前版本元信息（脱敏）
-	secretVersions map[string][]*SecretMeta          // tenantID|key -> 全部版本元信息（升序）
+	gatewayRoutes    map[string]map[string]*GatewayRoute
+	taskRecords      map[string]map[string]*TaskRecord // TD-60 R6：批量/灰度记录（tenant → kind|id → rec）
+	configs          map[string]*ConfigItem            // tenantID|key -> 配置项（当前版本）
+	configHistory    map[string][]*ConfigItem          // tenantID|key -> 版本历史（升序，最近 N 条）
+	secrets          map[string]*SecretItem            // tenantID|key -> 当前版本密钥明文
+	secretMetas      map[string]*SecretMeta            // tenantID|key -> 当前版本元信息（脱敏）
+	secretVersions   map[string][]*SecretMeta          // tenantID|key -> 全部版本元信息（升序）
+	secretAccessLogs []*SecretAccessLog                // 密钥访问审计日志（按租户/key 过滤）
 	// Phase 1 工单管理：ticketID -> 工单。
 	// 由 m.mu 保护并发安全；按 tenantID 隔离。
 	tickets map[string]*Ticket
@@ -163,7 +165,24 @@ type MemoryStore struct {
 	// Phase 6 计费账单：invoiceID -> Invoice。
 	// 由 m.mu 保护并发安全；按 tenantID 隔离。
 	invoices map[string]*Invoice
+	// Wave 2-B 云账号：accountID -> 云账号。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	cloudAccounts map[string]*CloudAccount
+	// Wave 2-B 云资源：resourceID -> 云资源。
+	// 由 m.mu 保护并发安全；按 tenantID 隔离。
+	cloudResources map[string]*CloudResource
+	// Wave 4-B 幂等： "tenantID|idempotencyKey" -> 条目（TTL 24h，内存后端重启即丢）。
+	idempotencyKeys map[string]idempotencyEntry
 }
+
+// idempotencyEntry 幂等键映射条目。
+type idempotencyEntry struct {
+	taskID    string
+	createdAt time.Time
+}
+
+// idempotencyCacheKey 构造幂等键的 map 键。
+func idempotencyCacheKey(tenantID, key string) string { return tenantID + "|" + key }
 
 // tokenMeta B1 install token 元数据：一次性、限时，消费后标记 consumed。
 type tokenMeta struct {
@@ -328,6 +347,7 @@ func NewMemoryStore() *MemoryStore {
 		secrets:               make(map[string]*SecretItem),
 		secretMetas:           make(map[string]*SecretMeta),
 		secretVersions:        make(map[string][]*SecretMeta),
+		secretAccessLogs:      make([]*SecretAccessLog, 0),
 		tickets:               make(map[string]*Ticket),
 		slos:                  make(map[string]*SLO),
 		trafficPolicies:       make(map[string]*TrafficPolicy),
@@ -350,6 +370,9 @@ func NewMemoryStore() *MemoryStore {
 		billingPlans:          make(map[string]*SubscriptionPlan),
 		subscriptions:         make(map[string]*Subscription),
 		invoices:              make(map[string]*Invoice),
+		cloudAccounts:         make(map[string]*CloudAccount),
+		cloudResources:        make(map[string]*CloudResource),
+		idempotencyKeys:       make(map[string]idempotencyEntry),
 	}
 	m.seedRBAC()
 	return m
@@ -641,6 +664,7 @@ func (m *MemoryStore) ClaimTask(agentID string) *proto.Task {
 	if a := m.agents[agentID]; a != nil {
 		agentTenant = a.TenantID
 	}
+	candidates := make([]*proto.Task, 0, len(m.tasks[agentID]))
 	for _, t := range m.tasks[agentID] {
 		// 仅模板任务（ParentID 空且 Schedule 非空）不可被直接领取；
 		// 派生实例（ParentID 指向模板）是正常 pending 任务，可被领取。
@@ -651,16 +675,24 @@ func (m *MemoryStore) ClaimTask(agentID string) *proto.Task {
 			continue
 		}
 		if t.Status == "" || t.Status == "pending" {
-			t.Status = "running"
-			t.ClaimedAt = time.Now()
-			t.ClaimedBy = agentID
-			t.ClaimEpoch++
-			// 返回锁内拷贝：调用方（gRPC 层）在锁外读取/序列化，避免与 SubmitResult 锁内修改构成 data race。
-			c := *t
-			return &c
+			candidates = append(candidates, t)
 		}
 	}
-	return nil
+	if len(candidates) == 0 {
+		return nil
+	}
+	// Wave 4-B：按优先级降序选取（数字越大越优先）；同优先级保持下发先后顺序（稳定排序）。
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].Priority > candidates[j].Priority
+	})
+	t := candidates[0]
+	t.Status = "running"
+	t.ClaimedAt = time.Now()
+	t.ClaimedBy = agentID
+	t.ClaimEpoch++
+	// 返回锁内拷贝：调用方（gRPC 层）在锁外读取/序列化，避免与 SubmitResult 锁内修改构成 data race。
+	c := *t
+	return &c
 }
 
 // UpsertDevice 写入/更新一台纳管设备（真实网段发现 用；按 deviceID 幂等）。
@@ -703,6 +735,8 @@ func (m *MemoryStore) PendingDepth() int {
 //
 // 防双跑：增加 agent 心跳校验——仅当任务的 ClaimedBy 对应 agent 心跳也超时
 // （LastSeen < cutoff）才回收。心跳正常的 agent 仍可能在执行长任务，不回收避免双跑。
+// 计入重试预算：每次回收 RetryCount++，达 MaxRetries 后按 SubmitResult 的死信规则
+// 置 failed + DeadLetter（毒任务有限次复活后进死信，可被 dead-letter 端点看到并人工重试）。
 // MemoryStore 单进程无 HA，不需要 leader fencing（仅 SQLStore 需要）。
 func (m *MemoryStore) ReclaimStaleTasks(maxAge time.Duration) int {
 	if maxAge <= 0 {
@@ -721,9 +755,32 @@ func (m *MemoryStore) ReclaimStaleTasks(maxAge time.Duration) int {
 			if a, ok := m.agents[t.ClaimedBy]; ok && !a.LastSeen.Before(cutoff) {
 				continue
 			}
-			t.Status = "pending"
+			// 计入重试预算：每次回收都是一次执行失败的等价事件（agent 失联）。
+			// 旧实现只复位不计数，导致 MaxRetries 形同虚设——毒任务无限复活、
+			// 永远到不了死信（既不可领取也不是 failed，没有端点能看到它）。
+			t.RetryCount++
+			// 认领信息在上面的心跳守卫里已经读过，此处先取值再清空（供告警归因）。
+			agentID := t.ClaimedBy
 			t.ClaimedAt = time.Time{}
 			t.ClaimedBy = ""
+			if t.RetryCount >= t.MaxRetries {
+				// 预算耗尽：与 SubmitResult 的死信规则一致，置 failed + DeadLetter。
+				t.Status = "failed"
+				t.DeadLetter = true
+				m.addAlertLocked(&proto.Alert{
+					AlertID:   "alert-" + t.TaskID,
+					TenantID:  t.TenantID,
+					DeviceID:  "dev-" + agentID,
+					AgentID:   agentID,
+					Severity:  "critical",
+					Message:   fmt.Sprintf("task %s entered dead-letter after %d stale reclaims", t.TaskID, t.RetryCount),
+					CreatedAt: time.Now(),
+				})
+			} else {
+				t.Status = "pending"
+				t.ClaimedAt = time.Time{}
+				t.ClaimedBy = ""
+			}
 			n++
 		}
 	}
@@ -752,20 +809,21 @@ func (m *MemoryStore) FireDueSchedules(now time.Time) int {
 			if !t.LastFiredAt.IsZero() && !t.LastFiredAt.Before(minuteStart) {
 				continue
 			}
-			inst := &proto.Task{
-				AgentID:    t.AgentID,
-				TenantID:   t.TenantID,
-				Type:       t.Type,
-				Command:    t.Command,
-				Content:    t.Content,
-				Path:       t.Path,
-				Status:     "pending",
-				ParentID:   t.TaskID,
-				MaxRetries: t.MaxRetries,
-				Timeout:    t.Timeout,    // 继承模板的节点级超时
-				RetryDelay: t.RetryDelay, // 继承模板的重试间隔
-				CreatedAt:  now,
-			}
+		inst := &proto.Task{
+			AgentID:    t.AgentID,
+			TenantID:   t.TenantID,
+			Type:       t.Type,
+			Command:    t.Command,
+			Content:    t.Content,
+			Path:       t.Path,
+			ScriptBody: t.ScriptBody, // 多行脚本体随模板任务继承（与 SQL 后端 FireDueSchedules 一致）
+			Status:     "pending",
+			ParentID:   t.TaskID,
+			MaxRetries: t.MaxRetries,
+			Timeout:    t.Timeout,    // 继承模板的节点级超时
+			RetryDelay: t.RetryDelay, // 继承模板的重试间隔
+			CreatedAt:  now,
+		}
 			m.seq++
 			inst.TaskID = fmt.Sprintf("task-%d-%d", now.UnixNano(), m.seq)
 			m.addTaskLocked(inst)
@@ -780,6 +838,10 @@ func (m *MemoryStore) FireDueSchedules(now time.Time) int {
 
 // CreateTask 下发任务。内存后端无 I/O，除调用方违反前置条件（agentID 为空）外
 // 不会失败；error 返回值是 2026-10-12 缺口 3 契约为了一致性保留的（见 model.TaskStore）。
+//
+// ScriptBody（多行脚本体）与 Command 一并随任务结构体保存：内存后端持有的是
+// *proto.Task 指针，字段天然随任务流转（GetTasks / ClaimTask / TaskByID 返回的是
+// 结构体拷贝，字符串字段按值复制），无需额外搬运——与 SQL 后端的 script_body 列对应。
 func (m *MemoryStore) CreateTask(t *proto.Task) (*proto.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -792,6 +854,16 @@ func (m *MemoryStore) CreateTask(t *proto.Task) (*proto.Task, error) {
 	}
 	if t.Status == "" {
 		t.Status = "pending"
+	}
+	// Wave 4-B 幂等：若设置了 IdempotencyKey 且 (tenantID, key) 已映射到任务，
+	// 返回已有任务，不重复下发（TTL 24h，由 cleanupIdempotencyLocked 清理过期条目）。
+	if t.IdempotencyKey != "" {
+		if entry, ok := m.idempotencyKeys[idempotencyCacheKey(t.TenantID, t.IdempotencyKey)]; ok && time.Since(entry.createdAt) <= 24*time.Hour {
+			if existing := m.tasksByID[entry.taskID]; existing != nil {
+				cp := *existing
+				return &cp, nil
+			}
+		}
 	}
 	// M5 作业编排：含前置依赖的任务初始为 blocked，待依赖 done 后由 SubmitResult 释放为 pending。
 	if len(t.DependsOn) > 0 {
@@ -806,6 +878,11 @@ func (m *MemoryStore) CreateTask(t *proto.Task) (*proto.Task, error) {
 		t.CreatedAt = time.Now()
 	}
 	m.addTaskLocked(t)
+	// Wave 4-B：登记幂等键映射（tenantID|idempotencyKey -> taskID，TTL 24h）。
+	if t.IdempotencyKey != "" {
+		m.idempotencyKeys[idempotencyCacheKey(t.TenantID, t.IdempotencyKey)] = idempotencyEntry{taskID: t.TaskID, createdAt: time.Now()}
+		m.cleanupIdempotencyLocked()
+	}
 	// 事件驱动：下发任务事件经总线发布。
 	m.publish(events.Event{Action: "create_task", Target: t.TaskID, TenantID: t.TenantID, Detail: t.Command, Level: events.LevelInfo})
 	return t, nil
@@ -819,12 +896,143 @@ func (m *MemoryStore) addTaskLocked(t *proto.Task) {
 	m.tasksByID[t.TaskID] = t
 }
 
+// cleanupIdempotencyLocked 删除超过 TTL 的幂等键条目（内存后端简易清理，调用方须持锁）。
+func (m *MemoryStore) cleanupIdempotencyLocked() {
+	const ttl = 24 * time.Hour
+	now := time.Now()
+	for k, e := range m.idempotencyKeys {
+		if now.Sub(e.createdAt) > ttl {
+			delete(m.idempotencyKeys, k)
+		}
+	}
+}
+
+// AddIdempotencyKey 登记 (tenantID, key) -> taskID 幂等映射（Wave 4-B）。
+func (m *MemoryStore) AddIdempotencyKey(tenantID, key, taskID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if tenantID == "" || key == "" || taskID == "" {
+		return
+	}
+	m.idempotencyKeys[idempotencyCacheKey(tenantID, key)] = idempotencyEntry{taskID: taskID, createdAt: time.Now()}
+	m.cleanupIdempotencyLocked()
+}
+
+// GetIdempotencyKey 按 (tenantID, key) 取关联的 taskID（不存在或已过期返回 ok=false）。
+func (m *MemoryStore) GetIdempotencyKey(tenantID, key string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	entry, ok := m.idempotencyKeys[idempotencyCacheKey(tenantID, key)]
+	if !ok {
+		return "", false
+	}
+	if time.Since(entry.createdAt) > 24*time.Hour {
+		return "", false
+	}
+	return entry.taskID, true
+}
+
+// GetTaskByIdempotencyKey 按 (tenantID, idempotencyKey) 返回已存在的任务（不存在返回 nil）。
+func (m *MemoryStore) GetTaskByIdempotencyKey(tenantID, key string) *proto.Task {
+	taskID, ok := m.GetIdempotencyKey(tenantID, key)
+	if !ok || taskID == "" {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	t := m.tasksByID[taskID]
+	if t == nil {
+		return nil
+	}
+	cp := *t
+	return &cp
+}
+
+// CreateTaskWithIdempotency 下发任务并做 (tenantID, idempotencyKey) 去重（Wave 4-B）。
+// IdempotencyKey 为空时退化为 CreateTask；内存后端无 I/O 超时需求，ctx 保留以满足契约。
+func (m *MemoryStore) CreateTaskWithIdempotency(ctx context.Context, t *proto.Task) (*proto.Task, error) {
+	_ = ctx
+	return m.CreateTask(t)
+}
+
+// ListTasksByPriority 按优先级降序分页列出任务（tenantID 非空时按租户过滤）；
+// 返回任务列表与总数（Wave 4-B）。
+func (m *MemoryStore) ListTasksByPriority(tenantID string, offset, limit int) ([]*proto.Task, int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var all []*proto.Task
+	for _, ts := range m.tasks {
+		for _, t := range ts {
+			if tenantID != "" && t.TenantID != tenantID {
+				continue
+			}
+			cp := *t
+			all = append(all, &cp)
+		}
+	}
+	total := len(all)
+	// 排序键：Priority DESC → CreatedAt ASC → TaskID ASC（对齐 SQL 的 ORDER BY，并补足决胜键）。
+	// 旧实现只按 Priority 排序，而同优先级行的相对顺序取自 Go map 迭代（随机），
+	// 于是 offset 分页会重复/漏行——必须补 CreatedAt/TaskID 才能在相等优先级上定序。
+	sort.SliceStable(all, func(i, j int) bool {
+		a, b := all[i], all[j]
+		if a.Priority != b.Priority {
+			return a.Priority > b.Priority
+		}
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return a.TaskID < b.TaskID
+	})
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	end := total
+	if limit > 0 {
+		end = offset + limit
+		if end > total {
+			end = total
+		}
+		if end < offset {
+			end = offset
+		}
+	}
+	return all[offset:end], total, nil
+}
+
+// validTaskTransition 状态机允许的转移（Wave 4-B）：
+// pending → claimed/running/blocked/pending_approval；claimed → running；
+// running → done/failed/cancelled/pending（失败重新入队重试）；
+// blocked → pending；pending_approval → pending/rejected；
+// 终态（done/failed/cancelled/rejected/dead_letter）不允许任何转移。
+func validTaskTransition(from, to string) bool {
+	switch from {
+	case "pending":
+		return to == "claimed" || to == "running" || to == "blocked" || to == "pending_approval"
+	case "claimed":
+		return to == "running"
+	case "running":
+		return to == "done" || to == "failed" || to == "cancelled" || to == "pending"
+	case "blocked":
+		return to == "pending"
+	case "pending_approval":
+		return to == "pending" || to == "rejected"
+	}
+	return false
+}
+
 // SubmitResult 接收 agent 上报的执行结果，按成功/失败处理任务终态，并同步设备看板。
 // F2 失败重试 / 死信：失败且未达上限 → 复位 pending（RetryCount++）重新入队；
 // 已达上限 → 置 failed 且标记 DeadLetter（死信，需人工处置）并产出 critical 告警（M7）。
 // 状态守卫（幂等）：仅接受任务处于 running 时的上报；其他状态的迟到上报被忽略（结果记录不受影响）。
-// 防双跑：res.ClaimEpoch > 0 时校验持有者令牌，拒绝旧持有者（任务被回收重派后）上报；
-// res.ClaimEpoch == 0 时跳过校验（兼容旧 agent/测试）。
+// 防双跑 + 防伪造：Res.ClaimEpoch 必须与任务当前 ClaimEpoch 精确相等（ClaimTask 领取时 +1）。
+// 零值令牌仅在任务从未被领取时才被放行；对已被领取的任务，ClaimEpoch=0 必不匹配而拒绝。
+// 旧实现只在 res.ClaimEpoch>0 时校验，等于给 ClaimEpoch:0 开了越权改写他人任务终态的后门
+// （标记 done/failed → 触发重试/死信/依赖释放）。
+// 本仓库 agent 恒填充 res.ClaimEpoch = t.ClaimEpoch（见 internal/agent/agent.go execute()）。
 func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -836,17 +1044,30 @@ func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 		if t.TaskID != res.TaskID {
 			continue
 		}
-		// 状态守卫（幂等）：仅接受任务处于 running 时的上报；
-		// 其他状态的迟到/重复上报一律忽略，防止已取消任务被翻回 done、
-		// 防止重复失败上报反复累计 retry_count 造成假死信。
-		if t.Status != "running" {
-			log.Printf("store: memory SubmitResult 忽略非 running 任务 %s (status=%s exitCode=%d)", t.TaskID, t.Status, res.ExitCode)
+		// 状态机守卫（幂等，Wave 4-B）：仅允许 running → {done, failed, cancelled} 的
+		// 上报转移；其余状态（含已终态）的迟到/重复上报一律忽略，防止已取消或已
+		// 结束的任务被翻回 done，防重复失败上报反复累计 retry_count 造成假死信。
+		next := "done"
+		if !success {
+			if t.RetryCount < t.MaxRetries {
+				next = "pending"
+			} else {
+				next = "failed"
+			}
+		}
+		if !validTaskTransition(t.Status, next) {
+			log.Printf("store: memory SubmitResult 状态机拒绝非法转移 %s %s→%s (exitCode=%d)", t.TaskID, t.Status, next, res.ExitCode)
 			return
 		}
-		// 防双跑：claim_epoch 校验——拒绝旧持有者上报（任务被回收重派后 epoch 已 +1）。
-		// res.ClaimEpoch > 0 时校验（新 agent 填充）；= 0 时跳过（兼容旧 agent/测试）。
-		if res.ClaimEpoch > 0 && t.ClaimEpoch != res.ClaimEpoch {
-			log.Printf("store: memory SubmitResult 拒绝旧持有者上报 %s (claim_epoch=%d != %d)", t.TaskID, res.ClaimEpoch, t.ClaimEpoch)
+		// 防双跑 + 防伪造：claim_epoch 校验——上报令牌必须与任务当前 ClaimEpoch 精确相等。
+		// ClaimTask 领取时 ClaimEpoch++，故已领取任务的令牌必 >0：
+		//   - 攻击者不带头令牌（发 ClaimEpoch=0）⇒ 与已领取任务的 ClaimEpoch>0 不匹配 ⇒ 拒绝；
+		//   - 旧持有者（任务被回收重派后 epoch 已 +1）⇒ 令牌过期 ⇒ 拒绝。
+		// 仅当任务从未被领取（ClaimEpoch==0，如直接置 Status="running" 的构造路径）时零值令牌
+		// 才被放行——此时任务未经任何 agent 认领，不存在"抢占他人任务"的语义。
+		// 旧实现是 res.ClaimEpoch>0 才校验，等于给 ClaimEpoch:0 开了越权改写的后门。
+		if res.ClaimEpoch != t.ClaimEpoch {
+			log.Printf("store: memory SubmitResult 拒绝越权上报 %s (claim_epoch=%d != %d)", t.TaskID, res.ClaimEpoch, t.ClaimEpoch)
 			return
 		}
 		if success {
@@ -903,9 +1124,16 @@ func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 	m.publish(events.Event{Action: "report_result", Target: res.TaskID, TenantID: "", Detail: fmt.Sprintf("exitCode=%d", res.ExitCode), Level: lvl})
 }
 
-// releaseDeps M5 作业编排：任务 done 后，将其 blocked 的依赖任务中“全部前置依赖现已 done”的
-// 释放为 pending，使其进入可下发队列。仅在同 agent 的任务图内生效（任务按 agentID 索引）。
+// releaseDeps M5 作业编排：任务到达终态后，重新评估同 agent 下依赖它的 blocked 任务。
+//   - 前置依赖全部 done ⇒ 释放为 pending（进入可下发队列），与既有语义一致；
+//   - 任一前置依赖 failed/cancelled ⇒ 下游置 failed 并标记 DeadLetter，
+//     使其进入死信视图（可被 dead-letter 端点看到并人工重试），而不是永久 blocked。
+//
+// 仅在同 agent 的任务图内生效（任务按 agentID 索引）。
 // 调用方需持锁（SubmitResult 已加锁）。
+//
+// 为什么必须处理非 done 终态：上游失败时 AllDepsDone 恒为 false，下游永远停在 blocked——
+// 不可领取、不在死信视图、没有看护路径，等于从系统里静默消失。
 func (m *MemoryStore) releaseDeps(agentID, doneTaskID string) {
 	byID := make(map[string]*proto.Task, len(m.tasks[agentID]))
 	for _, t := range m.tasks[agentID] {
@@ -915,13 +1143,35 @@ func (m *MemoryStore) releaseDeps(agentID, doneTaskID string) {
 		if t.Status != "blocked" {
 			continue
 		}
-		if dag.AllDepsDone(t, byID) {
-			t.Status = "pending"
+		// 依赖未全部达终态 ⇒ 继续等待（其余任务上报后再次评估）。
+		if !dag.AllDepsTerminal(t, byID) {
+			continue
+		}
+		if failedDep, failed := dag.AnyDepFailed(t, byID); failed {
+			// 上游失败/取消 ⇒ 下游不可能再执行：置 failed + 死信，使其可见可处置。
+			t.Status = "failed"
+			t.DeadLetter = true
 			t.ClaimedAt = time.Time{}
 			t.ClaimedBy = ""
-			m.publish(events.Event{Action: "task_released", Target: t.TaskID, TenantID: t.TenantID,
-				Detail: "deps done (trigger=" + doneTaskID + ")", Level: events.LevelInfo})
+			reason := fmt.Sprintf("upstream dependency %s %s", failedDep, byID[failedDep].Status)
+			m.addAlertLocked(&proto.Alert{
+				AlertID:   "alert-" + t.TaskID,
+				TenantID:  t.TenantID,
+				DeviceID:  "dev-" + t.AgentID,
+				AgentID:   t.AgentID,
+				Severity:  "critical",
+				Message:   fmt.Sprintf("task %s failed: %s", t.TaskID, reason),
+				CreatedAt: time.Now(),
+			})
+			m.publish(events.Event{Action: "task_failed", Target: t.TaskID, TenantID: t.TenantID,
+				Detail: reason + " (trigger=" + doneTaskID + ", dead-letter)", Level: events.LevelWarn})
+			continue
 		}
+		t.Status = "pending"
+		t.ClaimedAt = time.Time{}
+		t.ClaimedBy = ""
+		m.publish(events.Event{Action: "task_released", Target: t.TaskID, TenantID: t.TenantID,
+			Detail: "deps done (trigger=" + doneTaskID + ")", Level: events.LevelInfo})
 	}
 }
 
@@ -1040,6 +1290,9 @@ func (m *MemoryStore) CancelTask(id, tenantID string) bool {
 	}
 	if t.Status == "pending" || t.Status == "running" {
 		t.Status = "cancelled"
+		// M5 作业编排：取消也是终态，须重新评估依赖它的 blocked 下游
+		// （上游被取消 ⇒ 下游不可能执行，应置 failed + 死信而不是永久 blocked）。
+		m.releaseDeps(t.AgentID, t.TaskID)
 		return true
 	}
 	return false
@@ -1177,6 +1430,38 @@ func (m *MemoryStore) QueryAudits(tenant, action string, since, until time.Time,
 			continue
 		}
 		if action != "" && e.Action != action {
+			continue
+		}
+		if !since.IsZero() && e.CreatedAt.Before(since) {
+			continue
+		}
+		if !until.IsZero() && e.CreatedAt.After(until) {
+			continue
+		}
+		out = append(out, e)
+	}
+	// 倒序：最新在前
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// QueryHighRiskAudits 返回指定租户的高风险审计事件（e.HighRisk==true，由 AuditHighRisk 写入时置位）。
+// tenant 为空时返回全部租户；since/until 为零值表示不限；limit<=0 表示不限制。
+// 返回按时间倒序（最新在前）。
+func (m *MemoryStore) QueryHighRiskAudits(tenant string, since, until time.Time, limit int) []*proto.AuditEvent {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*proto.AuditEvent, 0, len(m.audits))
+	for _, e := range m.audits {
+		if !e.HighRisk {
+			continue
+		}
+		if tenant != "" && e.TenantID != tenant {
 			continue
 		}
 		if !since.IsZero() && e.CreatedAt.Before(since) {
@@ -1509,6 +1794,57 @@ func (m *MemoryStore) RejectTask(id, tenantID, approvedBy string) bool {
 	return true
 }
 
+// RetryDeadLetterTask 重新入队死信任务：DeadLetter=false, status=pending, retry_count=0，
+// 清除 ClaimedBy/ClaimedAt，使任务可再次被 ClaimTask 领取。仅 DeadLetter=true 且 status=failed 的
+// 任务且 tenant 匹配时生效，返回是否更新。
+func (m *MemoryStore) RetryDeadLetterTask(id, tenantID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.tasksByID[id]
+	if !ok {
+		return false
+	}
+	if tenantID != "" && t.TenantID != tenantID {
+		return false
+	}
+	if t.DeadLetter != true || t.Status != "failed" {
+		return false
+	}
+	t.DeadLetter = false
+	t.Status = "pending"
+	t.RetryCount = 0
+	t.ClaimedBy = ""
+	t.ClaimedAt = time.Time{}
+	m.publish(events.Event{Action: "task_retry_dead_letter", Target: t.TaskID, TenantID: t.TenantID,
+		Detail: "dead letter requeued", Level: events.LevelInfo})
+	return true
+}
+
+// DeleteTask 删除任务（死信清理等）：仅 tenant 匹配时生效，返回是否删除。
+func (m *MemoryStore) DeleteTask(id, tenantID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.tasksByID[id]
+	if !ok {
+		return false
+	}
+	if tenantID != "" && t.TenantID != tenantID {
+		return false
+	}
+	// 从 agent 的任务切片中移除。
+	agentTasks := m.tasks[t.AgentID]
+	for i, tt := range agentTasks {
+		if tt.TaskID == id {
+			m.tasks[t.AgentID] = append(agentTasks[:i], agentTasks[i+1:]...)
+			break
+		}
+	}
+	delete(m.tasksByID, id)
+	m.publish(events.Event{Action: "task_deleted", Target: id, TenantID: t.TenantID,
+		Detail: "task purged", Level: events.LevelWarn})
+	return true
+}
+
 // ============================================================================
 // 告警规则：CreateAlertRule / ListAlertRules / DeleteAlertRule
 // ============================================================================
@@ -1562,11 +1898,15 @@ func (m *MemoryStore) ListAlertRules(tenantID string) []*AlertRule {
 	return out
 }
 
-// DeleteAlertRule 删除告警规则，返回是否删除成功（不存在返回 false）。
-func (m *MemoryStore) DeleteAlertRule(id string) bool {
+// DeleteAlertRule 删除告警规则，按 tenantID 校验归属，不存在或越权返回 false。
+func (m *MemoryStore) DeleteAlertRule(id, tenantID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.alertRules[id]; !ok {
+	r, ok := m.alertRules[id]
+	if !ok {
+		return false
+	}
+	if r.TenantID != tenantID {
 		return false
 	}
 	delete(m.alertRules, id)
@@ -1628,9 +1968,20 @@ func (m *MemoryStore) GetQuota(tenantID string) (*QuotaConfig, error) {
 	return &cp, nil
 }
 
-// SetQuota 设置或更新租户配额（按 tenantID 幂等 upsert）。
-// cfg 为 nil 时等价于删除该租户配额（回退到默认配额）。
-// 返回深拷贝避免外部继续修改 cfg 影响 store 内部状态。
+// ListQuotas 返回所有租户的配额配置（管理端用，跨租户视图）。
+func (m *MemoryStore) ListQuotas() ([]*QuotaConfig, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*QuotaConfig, 0, len(m.quotaConfigs))
+	for tenantID, cfg := range m.quotaConfigs {
+		cp := *cfg
+		cp.TenantID = tenantID
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+// SetQuota 设置或更新租户配额（按 tenantID 幂等 upsert）。cfg 为 nil 时删除。
 func (m *MemoryStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
 	if tenantID == "" {
 		return fmt.Errorf("tenantID must not be empty")
@@ -1642,6 +1993,7 @@ func (m *MemoryStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
 		return nil
 	}
 	stored := *cfg
+	stored.TenantID = tenantID
 	m.quotaConfigs[tenantID] = &stored
 	return nil
 }

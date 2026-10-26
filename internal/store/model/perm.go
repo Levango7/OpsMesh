@@ -149,6 +149,16 @@ var PermSpecs = []PermSpec{
 	{"secrets", "secrets:read", "查看密钥服务配置"},
 	{"secrets", "secrets:write", "测试/管理密钥服务"},
 	{"task", "task:approve", "审批高风险任务"},
+	// 2026-10-22 云账号权限族补齐：前端路由 /cloud-accounts 以 requirePerm: 'cloud:read' 把关，
+	// 但目录里此前**没有 cloud 族**——admin 的权限集由 PermSpecs 派生（RolePermissions），
+	// admin 拿不到 cloud:read ⇒ 该路由对全部角色（含 admin）恒不可达（死路由）。
+	// 机制与 M13 六域补种 / cmdb:approve 同策：目录补齐后 SQLStore INSERT IGNORE 幂等补种，
+	// 预置角色权限快照按并集回填（只加不减），升级部署下次启动自动生效。
+	// 派生效应（如实记录，防误判）：viewer 随「全部 *:read」自动获得 cloud:read；
+	// operator **不获得**（cloud 组不在 operatorGroups / operatorReadOnlyGroups，
+	// 云账号写权限是否下放 operator 属产品语义，未决前按最小权限处理）。
+	{"cloud", "cloud:read", "查看云账号"},
+	{"cloud", "cloud:write", "管理云账号"},
 }
 
 // RolePermissions 返回预置角色名→权限集合映射，与 seedRBAC 的角色定义保持一致。

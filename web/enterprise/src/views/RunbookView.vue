@@ -259,6 +259,12 @@ onMounted(() => {
 <style scoped>
 .row .col:nth-child(1) { flex: 40; }
 .row .col:nth-child(2) { flex: 60; }
+.row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
 
 .poll-err {
   padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);

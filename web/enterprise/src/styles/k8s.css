@@ -1,0 +1,358 @@
+/* ===========================================================================
+ * K8s 模块共享样式
+ * ---------------------------------------------------------------------------
+ * K8s 管理拆分为「集群管理 / 资源管理」两个子页面后，两页共用以下样式：
+ *   - .k8s-page / .k8s-page__head  页面骨架
+ *   - .k8s-subnav                 子页签（集群 / 资源）
+ *   - .poll-err                    错误横幅
+ *   - .flowbar / .field            工具条与表单字段
+ *   - .row-actions                 表格行内操作组
+ *   - .res-tabs / .res-tab         资源类型切换
+ *   - .modal-mask / .modal-*       对话框
+ * 放在全局（非 scoped）供两个子页面共用，避免重复。
+ * =========================================================================== */
+
+/* ===== 按钮栏 ===== */
+.btnbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  margin-bottom: var(--space-3, 12px);
+  flex-wrap: wrap;
+}
+
+/* ===== 表单字段 ===== */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+  margin-bottom: var(--space-2, 8px);
+}
+.field label {
+  margin: 0;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 500;
+  color: var(--color-ink-muted, #6b7280);
+}
+
+/* ===== 卡片 ===== */
+.card {
+  background: var(--surface, var(--surface-l1), var(--color-surface-1, #ffffff));
+  border: 1px solid var(--border, var(--border-primary), #d3dbe8);
+  border-radius: var(--radius, var(--radius-md), 8px);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.card h3 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink, var(--text-secondary), #6b7280);
+}
+.card__title {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink, var(--text-secondary), #6b7280);
+}
+.card + .card {
+  margin-top: 0;
+}
+
+/* ===== 页面骨架 ===== */
+.k8s-page {
+  display: block;
+}
+
+.k8s-page__head {
+  margin-bottom: var(--space-4, 16px);
+}
+
+.k8s-page__title {
+  margin: 0;
+  font-size: var(--font-size-base, 13px);
+  font-weight: 600;
+  color: var(--color-ink, #f7f8f8);
+}
+
+.k8s-page__desc {
+  margin: var(--space-1, 4px) 0 0 0;
+  font-size: var(--font-size-sm, 12px);
+  color: var(--color-ink-muted, #6b7280);
+}
+
+/* ===== 子页签 ===== */
+.k8s-subnav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  padding: var(--space-1, 4px);
+  margin-bottom: var(--space-4, 16px);
+  background: var(--color-surface-2, #f7f9fc);
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-lg, 12px);
+}
+
+.k8s-subnav__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  padding: 7px 14px;
+  border-radius: var(--radius-md, 8px);
+  font-size: var(--font-size-sm, 12.5px);
+  font-weight: 500;
+  color: var(--color-ink-muted, #6b7280);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.k8s-subnav__item:hover {
+  background: var(--color-surface-3, #eef1f7);
+  color: var(--color-ink, #f7f8f8);
+  text-decoration: none;
+}
+
+.k8s-subnav__item.is-active {
+  background: var(--color-surface-1, #ffffff);
+  color: var(--color-primary, #5e6ad2);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+  border: 1px solid var(--color-hairline, #d3dbe8);
+}
+
+.k8s-subnav__item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #5e6ad2) 40%, transparent);
+}
+
+/* ===== 错误横幅 ===== */
+.poll-err {
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  margin: var(--space-1, 6px) 0 var(--space-3, 12px) 0;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-error-soft, #fef2f2);
+  border: 1px solid var(--color-error-light, #fecaca);
+  color: var(--color-error, #ef4444);
+  font-size: var(--font-size-sm, 12px);
+  font-weight: 500;
+}
+
+/* ===== 工具条 ===== */
+.flowbar {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3, 12px);
+}
+
+.flowbar .field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+  margin-bottom: 0;
+  min-width: 200px;
+}
+
+.flowbar .field label {
+  margin: 0;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 500;
+  color: var(--color-ink-muted, #6b7280);
+}
+
+.flowbar .field select,
+.flowbar .field input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface-1, #ffffff);
+  color: var(--color-ink, #f7f8f8);
+  font-size: var(--font-size-sm, 13px);
+  font-family: inherit;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.flowbar .field select:focus,
+.flowbar .field input:focus {
+  border-color: var(--color-primary, #5e6ad2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #5e6ad2) 40%, transparent);
+}
+
+/* ===== 暗色模式输入框 ===== */
+[data-theme="dark"] .flowbar .field select,
+[data-theme="dark"] .flowbar .field input,
+[data-theme="dark"] .modal-body .field input,
+[data-theme="dark"] .modal-body .field textarea,
+[data-theme="dark"] .modal-body .field select,
+[data-theme="dark"] .res-tab {
+  background: var(--surface-l1, #131620);
+  border-color: var(--border-primary, #2b3243);
+  color: var(--text-primary, #f9fafb);
+}
+
+.row-actions {
+  display: inline-flex;
+  gap: var(--space-1, 6px);
+  flex-wrap: wrap;
+}
+
+/* ===== 资源类型切换 ===== */
+.res-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1, 6px);
+  margin: var(--space-2, 10px) 0 var(--space-3, 12px) 0;
+  border-bottom: 1px solid var(--color-hairline, #d3dbe8);
+  padding-bottom: var(--space-2, 8px);
+}
+
+.res-tab {
+  padding: 5px 14px;
+  font-size: var(--font-size-xs, 12px);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface-3, #eef1f7);
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  color: var(--color-ink-muted, #6b7280);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.res-tab:hover {
+  background: var(--color-surface-2, #f7f9fc);
+  color: var(--color-ink, #f7f8f8);
+}
+
+.res-tab.active {
+  background: var(--color-primary, #5e6ad2);
+  color: #fff;
+  border-color: var(--color-primary, #5e6ad2);
+}
+
+/* ===== 对话框 ===== */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--modal-mask, rgba(0, 0, 0, 0.5));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  width: 540px;
+  max-width: 94vw;
+  max-height: 88vh;
+  overflow: auto;
+  background: var(--color-surface-1, #ffffff);
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: var(--shadow-xl, 0 16px 48px rgba(0, 0, 0, 0.5));
+  padding: 20px 22px;
+}
+
+.modal-sm { width: 420px; }
+.modal-lg { width: 760px; }
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3, 12px);
+}
+
+.modal-body .field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+  margin-bottom: var(--space-2, 10px);
+}
+
+.modal-body .field label {
+  margin: 0;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 500;
+  color: var(--color-ink-muted, #6b7280);
+}
+
+.modal-body .field input,
+.modal-body .field textarea {
+  padding: 7px 10px;
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface-1, #ffffff);
+  color: var(--color-ink, #f7f8f8);
+  font-size: var(--font-size-sm, 13px);
+  font-family: inherit;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.modal-body .field input:focus,
+.modal-body .field textarea:focus {
+  border-color: var(--color-primary, #5e6ad2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #5e6ad2) 40%, transparent);
+}
+
+.modal-body .field textarea {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs, 12px);
+  resize: vertical;
+}
+
+.code-block {
+  background: var(--color-surface-2, #f7f9fc);
+  color: var(--color-ink, #f7f8f8);
+  padding: var(--space-3, 12px);
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-sm, 6px);
+  overflow: auto;
+  font-size: var(--font-size-xs, 12px);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--font-mono, monospace);
+}
+
+.logs-block {
+  max-height: 480px;
+  min-height: 200px;
+}
+
+.msg {
+  margin: var(--space-2, 8px) 0 0 0;
+  font-size: var(--font-size-sm, 12px);
+}
+.msg.ok { color: var(--color-success, #27a644); }
+.msg.err { color: var(--color-error, #ef4444); }
+
+.muted {
+  color: var(--color-ink-muted, #6b7280);
+}
+
+.hint {
+  margin: 0 0 var(--space-3, 12px) 0;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-ink-tertiary, #9ca3af);
+}
+
+/* ===== 暗色模式覆盖 ===== */
+[data-theme="dark"] .k8s-subnav__item.is-active {
+  background: var(--surface-l1, #131620);
+  border-color: var(--border-primary, #2b3243);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k8s-subnav__item,
+  .res-tab,
+  .flowbar .field input,
+  .flowbar .field select,
+  .modal-body .field input,
+  .modal-body .field textarea {
+    transition: none !important;
+  }
+}

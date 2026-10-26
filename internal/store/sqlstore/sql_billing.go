@@ -350,11 +350,10 @@ func (s *SQLStore) UpdateSubscription(sub *Subscription) (*Subscription, bool) {
 	return model.CloneSubscription(sub), true
 }
 
-// DeleteSubscription 按 ID 删除订阅。不存在返回 false。
-// 不带 tenant_id 条件（与 memory 一致，按 ID 全局唯一）。
-func (s *SQLStore) DeleteSubscription(id string) bool {
+// DeleteSubscription 按 ID 删除订阅，按 tenantID 校验归属，不存在或越权返回 false。
+func (s *SQLStore) DeleteSubscription(id, tenantID string) bool {
 	res, err := s.db.ExecContext(context.Background(),
-		`DELETE FROM subscriptions WHERE id=?`, id)
+		`DELETE FROM subscriptions WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
 		storefail.Record("[store] DeleteSubscription 失败 (sub=%s): %v", id, err)
 		return false
@@ -362,6 +361,22 @@ func (s *SQLStore) DeleteSubscription(id string) bool {
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
 		storefail.Record("[store] DeleteSubscription RowsAffected 失败 (sub=%s): %v", id, rowsErr)
+		return false
+	}
+	return n > 0
+}
+
+// DeleteInvoice 按 ID 删除账单，按 tenantID 校验归属，不存在或越权返回 false。
+func (s *SQLStore) DeleteInvoice(id, tenantID string) bool {
+	res, err := s.db.ExecContext(context.Background(),
+		`DELETE FROM invoices WHERE id=? AND tenant_id=?`, id, tenantID)
+	if err != nil {
+		storefail.Record("[store] DeleteInvoice 失败 (invoice=%s): %v", id, err)
+		return false
+	}
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		storefail.Record("[store] DeleteInvoice RowsAffected 失败 (invoice=%s): %v", id, rowsErr)
 		return false
 	}
 	return n > 0

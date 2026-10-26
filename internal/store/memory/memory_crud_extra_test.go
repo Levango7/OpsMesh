@@ -473,7 +473,7 @@ func TestMemoryStore_Subscriptions_CRUD(t *testing.T) {
 		t.Fatal("unknown sub update should fail")
 	}
 
-	if !m.DeleteSubscription(s.ID) || m.DeleteSubscription(s.ID) {
+	if !m.DeleteSubscription(s.ID, "t1") || m.DeleteSubscription(s.ID, "t1") {
 		t.Fatal("delete semantics broken")
 	}
 }
@@ -814,7 +814,7 @@ func TestMemoryStore_Plugin_CRUD(t *testing.T) {
 		t.Fatal("asc order broken")
 	}
 
-	if !m.DeletePlugin(p.ID) || m.DeletePlugin(p.ID) {
+	if !m.DeletePlugin(p.ID, "default") || m.DeletePlugin(p.ID, "default") {
 		t.Fatal("delete semantics broken")
 	}
 }
@@ -1362,9 +1362,9 @@ func TestMemoryStore_Secret_RotateDeleteVersions(t *testing.T) {
 	}
 
 	// Rotate：沿用已有 KeyType 并产生新版本。
-	meta2 := m.RotateSecret("t1", "app/token", "${vault:test/app/token/v2}")
-	if meta2.Version != 2 || meta2.KeyType != "passphrase" {
-		t.Fatalf("rotated meta = %+v, want version=2 passphrase", meta2)
+	meta2, err := m.RotateSecret("t1", "app/token", "${vault:test/app/token/v2}", "", "user-1")
+	if err != nil || meta2.Version != 2 || meta2.KeyType != "passphrase" {
+		t.Fatalf("rotated meta = %+v err=%v, want version=2 passphrase", meta2, err)
 	}
 	got, ok := m.GetSecret("t1", "app/token")
 	if !ok || got.Value != "${vault:test/app/token/v2}" || got.KeyType != "passphrase" {
@@ -1372,9 +1372,9 @@ func TestMemoryStore_Secret_RotateDeleteVersions(t *testing.T) {
 	}
 
 	// Rotate 不存在的密钥 → 等价 SetSecret（KeyType 默认 passphrase）。
-	fresh := m.RotateSecret("t1", "app/new", "${vault:test/app/new}")
-	if fresh.Version != 1 || fresh.KeyType != "passphrase" {
-		t.Fatalf("fresh rotate = %+v", fresh)
+	fresh, err := m.RotateSecret("t1", "app/new", "${vault:test/app/new}", "", "user-1")
+	if err != nil || fresh.Version != 1 || fresh.KeyType != "passphrase" {
+		t.Fatalf("fresh rotate = %+v err=%v", fresh, err)
 	}
 
 	versions := m.SecretVersions("t1", "app/token")

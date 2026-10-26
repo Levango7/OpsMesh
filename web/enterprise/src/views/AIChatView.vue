@@ -1,0 +1,135 @@
+<template>
+  <div class="ai-chat-page">
+    <div class="page-head">
+      <h2 class="page-title">{{ $t('aiChat.title') }}</h2>
+      <p class="page-desc">{{ $t('aiChat.desc') }}</p>
+    </div>
+
+    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
+
+    <!-- 聊天区域 -->
+    <div class="chat-container">
+      <div class="chat-messages" ref="messagesRef">
+        <div v-for="(msg, idx) in store.messages" :key="idx" :class="['chat-msg', msg.role]">
+          <div class="msg-role">{{ msg.role === 'user' ? $t('aiChat.you') : $t('aiChat.ai') }}</div>
+          <div class="msg-content">{{ msg.content }}</div>
+          <div v-if="msg.usage" class="msg-usage">
+            {{ $t('aiChat.tokens') }}: {{ msg.usage.totalTokens }}
+          </div>
+        </div>
+        <div v-if="store.loading" class="chat-msg assistant">
+          <div class="msg-role">{{ $t('aiChat.ai') }}</div>
+          <div class="msg-content typing">{{ $t('aiChat.thinking') }}</div>
+        </div>
+      </div>
+
+      <!-- 输入区域 -->
+      <div class="chat-input-bar">
+        <textarea
+          v-model="input"
+          :placeholder="$t('aiChat.placeholder')"
+          @keyup.enter.exact.prevent="send"
+          rows="2"
+          class="chat-input"
+        ></textarea>
+        <div class="chat-actions">
+          <label class="chk"><input type="checkbox" v-model="useRAG" /> {{ $t('aiChat.use_rag') }}</label>
+          <select v-model="model" class="model-select">
+            <option value="gpt-4o-mini">GPT-4o Mini</option>
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+            <option value="qwen-turbo">Qwen Turbo</option>
+            <option value="llama3.1">Llama 3.1 (Local)</option>
+          </select>
+          <Button variant="primary" size="sm" @click="send" :disabled="store.loading || !input.trim()">
+            {{ $t('aiChat.send') }}
+          </Button>
+          <Button variant="ghost" size="sm" @click="store.clearMessages()">{{ $t('aiChat.clear') }}</Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Token 用量 -->
+    <div class="card" v-if="store.tokenUsage">
+      <div class="flowbar">
+        <h3 class="card__title">{{ $t('aiChat.token_usage') }}</h3>
+      </div>
+      <div class="usage-grid">
+        <div class="usage-item">
+          <span class="usage-label">{{ $t('aiChat.input_tokens') }}</span>
+          <span class="usage-value">{{ store.tokenUsage.totalInputTokens }}</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">{{ $t('aiChat.output_tokens') }}</span>
+          <span class="usage-value">{{ store.tokenUsage.totalOutputTokens }}</span>
+        </div>
+        <div class="usage-item">
+          <span class="usage-label">{{ $t('aiChat.total_tokens') }}</span>
+          <span class="usage-value">{{ store.tokenUsage.totalTokens }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, nextTick } from 'vue'
+import { useAIStore } from '@/stores/ai'
+import Icon from '@/components/Icon.vue'
+import { Button } from '@/components/ui'
+
+const store = useAIStore()
+const input = ref('')
+const useRAG = ref(false)
+const model = ref('gpt-4o-mini')
+const messagesRef = ref(null)
+
+async function send() {
+  const text = input.value.trim()
+  if (!text || store.loading) return
+  input.value = ''
+  try {
+    await store.chat(text, model.value, useRAG.value)
+    await nextTick()
+    if (messagesRef.value) {
+      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+    }
+  } catch {
+    // error already in store
+  }
+}
+</script>
+
+<style scoped>
+.ai-chat-page { max-width: 900px; margin: 0 auto; }
+.page-head { margin-bottom: 20px; }
+.page-title { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
+.page-desc { margin: 0; color: var(--color-ink-muted, #6b7280); font-size: 13px; }
+.chat-container { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.chat-messages { max-height: 500px; overflow-y: auto; padding: 12px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); background: var(--color-surface-1, #ffffff); }
+.chat-msg { margin-bottom: 12px; }
+.chat-msg.user .msg-role { color: var(--color-primary, #3b82f6); }
+.chat-msg.assistant .msg-role { color: var(--color-success, #059669); }
+.msg-role { font-size: 11px; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; }
+.msg-content { font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.msg-usage { font-size: 10px; color: var(--color-ink-muted, #6b7280); margin-top: 4px; }
+.typing { opacity: 0.6; font-style: italic; }
+.chat-input-bar { display: flex; flex-direction: column; gap: 8px; }
+.chat-input { width: 100%; padding: 8px 10px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 13px; resize: vertical; min-height: 60px; background: var(--color-surface-1, #ffffff); }
+.chat-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.model-select { padding: 6px 8px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 12px; background: var(--color-surface-1, #ffffff); }
+.chk { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.card { background: var(--color-surface-1, #ffffff); border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); padding: 16px 18px; margin-bottom: 16px; }
+.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
+.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.usage-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.usage-item { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--color-surface-2, #f7f9fc); border-radius: var(--radius-sm, 6px); }
+.usage-label { font-size: 11px; color: var(--color-ink-muted, #6b7280); }
+.usage-value { font-size: 16px; font-weight: 600; }
+.muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
+.poll-err {
+  padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm, 6px);
+  background: var(--color-error-soft, #fef2f2); border: 1px solid var(--color-error-light, #fecaca);
+  color: var(--color-error, #ef4444); font-size: 12.5px; font-weight: 500;
+}
+</style>

@@ -58,6 +58,7 @@ func auditEntryHash(prev string, e *proto.AuditEvent) string {
 	auditHashField(&b, e.Detail)
 	auditHashField(&b, e.CreatedAt.UTC().Format(time.RFC3339))
 	auditHashField(&b, e.TraceID)
+	auditHashField(&b, strconv.FormatBool(e.HighRisk))
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
 }
@@ -144,8 +145,8 @@ func (s *SQLStore) tableExists(ctx context.Context, table string) bool {
 }
 
 // insertChainedAudit 在事务内把事件追加到审计哈希链，返回写入的行 id。
-// 调用方须已完成列存在性探测（hasTrace 决定是否写入 trace_id 列）。
-func (s *SQLStore) insertChainedAudit(ctx context.Context, e *proto.AuditEvent, hasTrace bool) (int64, error) {
+// 调用方须已完成列存在性探测（hasTrace 决定是否写入 trace_id 列，hasHighRisk 决定是否写入 high_risk 列）。
+func (s *SQLStore) insertChainedAudit(ctx context.Context, e *proto.AuditEvent, hasTrace, hasHighRisk bool) (int64, error) {
 	// 时间归一（硬约束）：DATETIME 秒精度，纳秒值会让哈希无法回读复算。
 	e.CreatedAt = e.CreatedAt.UTC().Truncate(time.Second)
 
@@ -170,12 +171,23 @@ func (s *SQLStore) insertChainedAudit(ctx context.Context, e *proto.AuditEvent, 
 
 	entryHash := auditEntryHash(lastHash, e)
 	var res sql.Result
-	if hasTrace {
+	switch {
+	case hasTrace && hasHighRisk:
+		res, err = tx.ExecContext(ctx,
+			`INSERT INTO audit_log (tenant_id, user_id, action, target, detail, created_at, trace_id, high_risk, prev_hash, entry_hash)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.TenantID, e.UserID, e.Action, e.Target, e.Detail, e.CreatedAt, e.TraceID, boolToInt(e.HighRisk), lastHash, entryHash)
+	case hasTrace:
 		res, err = tx.ExecContext(ctx,
 			`INSERT INTO audit_log (tenant_id, user_id, action, target, detail, created_at, trace_id, prev_hash, entry_hash)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.TenantID, e.UserID, e.Action, e.Target, e.Detail, e.CreatedAt, e.TraceID, lastHash, entryHash)
-	} else {
+	case hasHighRisk:
+		res, err = tx.ExecContext(ctx,
+			`INSERT INTO audit_log (tenant_id, user_id, action, target, detail, created_at, high_risk, prev_hash, entry_hash)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.TenantID, e.UserID, e.Action, e.Target, e.Detail, e.CreatedAt, boolToInt(e.HighRisk), lastHash, entryHash)
+	default:
 		res, err = tx.ExecContext(ctx,
 			`INSERT INTO audit_log (tenant_id, user_id, action, target, detail, created_at, prev_hash, entry_hash)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -221,6 +233,7 @@ func (s *SQLStore) VerifyAuditChain(tenant string, limit int) (*AuditChainVerify
 	defer cancel()
 
 	hasTrace, hasChain := s.auditColumnFlags(ctx)
+	hasHighRisk := s.columnExists(ctx, "audit_log", "high_risk")
 	if !hasChain {
 		// 老库未应用迁移 019：如实回报「不支持」，不伪称校验通过，也不当成错误。
 		return &AuditChainVerifyResult{
@@ -265,30 +278,43 @@ func (s *SQLStore) VerifyAuditChain(tenant string, limit int) (*AuditChainVerify
 	}
 
 	// 取最近 limit 条链式行（倒序取再反转，保证窗口是「最新的一段」）。
-	cols := `id, tenant_id, user_id, action, target, detail, created_at, trace_id, prev_hash, entry_hash`
+	var traceIDScan sql.NullString
+	var highRiskScan sql.NullInt64
+	cols := `id, tenant_id, user_id, action, target, detail, created_at`
+	extra := ""
+	if hasTrace {
+		extra += `, trace_id`
+	}
+	if hasHighRisk {
+		extra += `, high_risk`
+	}
+	cols += extra + `, prev_hash, entry_hash`
 	scan := func(rows *sql.Rows, r *auditChainRow) error {
-		// audit_log 除自增 id 外全部列可空（001 建表未声明 NOT NULL，trace_id 是后补列），
-		// 与 scanAuditRow 同一个理由。本函数对 Scan 错误是**向上抛**，所以症状比
-		// "某条记录消失"更重：一条 NULL 就让整次链校验失败。
-		var tenantID, userID, action, target, detail, traceID sql.NullString
+		var tenantID, userID, action, target, detail sql.NullString
 		var createdAt sql.NullTime
 		var prevHash, entryHash sql.NullString
-		if err := rows.Scan(&r.ID, &tenantID, &userID, &action, &target, &detail,
-			&createdAt, &traceID, &prevHash, &entryHash); err != nil {
+		dest := []any{&r.ID, &tenantID, &userID, &action, &target, &detail, &createdAt}
+		if hasTrace {
+			dest = append(dest, &traceIDScan)
+		}
+		if hasHighRisk {
+			dest = append(dest, &highRiskScan)
+		}
+		dest = append(dest, &prevHash, &entryHash)
+		if err := rows.Scan(dest...); err != nil {
 			return err
 		}
 		r.Event.TenantID, r.Event.UserID, r.Event.Action = tenantID.String, userID.String, action.String
 		r.Event.Target, r.Event.Detail, r.Event.CreatedAt = target.String, detail.String, createdAt.Time
-		r.Event.TraceID = traceID.String
+		r.Event.TraceID = traceIDScan.String
+		if hasHighRisk {
+			r.Event.HighRisk = highRiskScan.Int64 == 1
+		}
 		r.PrevHash, r.EntryHash = prevHash.String, entryHash.String
 		return nil
 	}
 	where := `WHERE entry_hash IS NOT NULL AND entry_hash<>''` + tenantFilter
 	q := `SELECT ` + cols + ` FROM audit_log ` + where + ` ORDER BY id DESC LIMIT ?`
-	if !hasTrace {
-		q = `SELECT id, tenant_id, user_id, action, target, detail, created_at, '', prev_hash, entry_hash
-		     FROM audit_log ` + where + ` ORDER BY id DESC LIMIT ?`
-	}
 	qargs := append(append([]interface{}{}, targs...), limit)
 	dbRows, err := s.db.QueryContext(ctx, q, qargs...)
 	if err != nil {

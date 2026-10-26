@@ -502,10 +502,11 @@ func TestLoopM4_ReclaimLoop_ReclaimsStaleTask(t *testing.T) {
 
 	// 下发一个任务并领取（ClaimTask 翻转 pending→running，设置 ClaimedBy/ClaimedAt）。
 	task, err := s.store.CreateTask(&proto.Task{
-		AgentID:  agent.AgentID,
-		TenantID: "t1",
-		Type:     proto.TaskTypeShell,
-		Command:  "sleep 600",
+		AgentID:    agent.AgentID,
+		TenantID:   "t1",
+		Type:       proto.TaskTypeShell,
+		Command:    "sleep 600",
+		MaxRetries: 3,
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)

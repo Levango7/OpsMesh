@@ -173,29 +173,30 @@ function formatCell(row, col) {
   overflow: hidden; border-radius: var(--radius-sm);
 }
 .data-table th, .data-table td {
-  text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border);
+  text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--color-hairline, #d3dbe8);
 }
 .data-table th {
-  background: var(--surface-3); color: var(--text-2);
+  /* 三层 L3（表头比卡片下沉一级） */
+  background: var(--color-surface-3, #eef1f7); color: var(--color-ink-muted, #6b7280);
   font-weight: 600; font-size: 12px; letter-spacing: .02em;
 }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tbody tr { transition: .12s; }
-.data-table tbody tr:hover { background: var(--bg-soft); }
+.data-table tbody tr:hover { background: var(--color-bg-hover, #eef1f7); }
 .data-table tr.clickable { cursor: pointer; }
-.data-table tr.clickable:hover { background: var(--accent-soft); }
-.data-table td.empty { text-align: center; color: var(--text-3); padding: 18px; }
+.data-table tr.clickable:hover { background: var(--color-primary-soft, #eff6ff); }
+.data-table td.empty { text-align: center; color: var(--color-ink-tertiary, #9ca3af); padding: 18px; }
 
 /* 加载骨架：复用 tokens 的 shimmer 动画，仅用 CSS token，无图片 */
 .data-table td.skel { padding: 0; }
 .skel-row {
   display: flex; gap: 18px; align-items: center;
-  padding: 11px 12px; border-bottom: 1px solid var(--border);
+  padding: 11px 12px; border-bottom: 1px solid var(--color-hairline, #d3dbe8);
 }
 .skel-row:last-child { border-bottom: none; }
 .skel-cell {
   flex: 1; height: 12px; border-radius: 5px;
-  background: linear-gradient(90deg, var(--surface-3) 25%, var(--surface-2) 50%, var(--surface-3) 75%);
+  background: linear-gradient(90deg, var(--color-surface-3) 25%, var(--color-surface-2) 50%, var(--color-surface-3) 75%);
   background-size: 200% 100%;
   animation: dt-skel-shimmer 1.4s infinite;
 }

@@ -62,8 +62,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath     -ldflags="-s -w -X github.co
 
 # P2-2 供应链安全：distroless 镜像 digest 同样由 Renovate 自动钉死。
 # 手动钉死：crane digest gcr.io/distroless/static-debian12 → FROM gcr.io/distroless/static-debian12@sha256:<digest> AS runtime
-FROM gcr.io/distroless/static-debian12 AS runtime
-# distroless static-debian12 内置 nonroot 用户（UID/GID 65532），以非 root 运行（H16）。
+# 本地开发/受限网络：改用 debian:bookworm-slim 避免 gcr.io 拉取受阻
+FROM debian:bookworm-slim AS runtime
+# 创建 nonroot 用户（UID/GID 65532），以非 root 运行（H16）。
+RUN groupadd -g 65532 nonroot && useradd -u 65532 -g 65532 -M -s /usr/sbin/nologin nonroot
 USER nonroot:nonroot
 COPY --from=build /opsmesh /usr/local/bin/opsmesh
 # distroless 无 curl/wget，HEALTHCHECK 复用二进制 --health 子命令探活 localhost:8080/healthz。

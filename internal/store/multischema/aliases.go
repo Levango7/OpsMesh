@@ -40,6 +40,7 @@ type TaskRecord = model.TaskRecord
 type ConfigItem = model.ConfigItem
 type SecretItem = model.SecretItem
 type SecretMeta = model.SecretMeta
+type SecretAccessLog = model.SecretAccessLog
 type Ticket = model.Ticket
 type TicketFilter = model.TicketFilter
 type SLO = model.SLO
@@ -72,6 +73,8 @@ type SubscriptionPlan = model.SubscriptionPlan
 type Subscription = model.Subscription
 type InvoiceItem = model.InvoiceItem
 type Invoice = model.Invoice
+type CloudAccount = model.CloudAccount
+type CloudResource = model.CloudResource
 
 // ---- 随契约下沉上提的类型（3，批次 3） ----
 
@@ -138,4 +141,6 @@ type (
 	APIKeyStore           = model.APIKeyStore
 	PluginStore           = model.PluginStore
 	BillingStore          = model.BillingStore
+	CloudAccountStore     = model.CloudAccountStore
+	CloudResourceStore    = model.CloudResourceStore
 )

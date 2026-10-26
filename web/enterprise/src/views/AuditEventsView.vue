@@ -22,6 +22,12 @@
         <input v-model.trim="filters.user" type="text" />
       </div>
       <div class="field">
+        <label>
+          <input type="checkbox" v-model="highRiskOnly" />
+          {{ $t('audit_events.high_risk_only') }}
+        </label>
+      </div>
+      <div class="field">
         <label>{{ $t('audit_events.filter_limit') }}</label>
         <select v-model.number="filters.limit">
           <option :value="50">50</option>
@@ -40,6 +46,9 @@
         <button type="button" class="outline" data-testid="audit-export-btn" :disabled="exporting" @click="onExport">
           <Icon name="clipboard" :size="14" />
           {{ exporting ? $t('audit_events.exporting') : $t('audit_events.export') }}
+        </button>
+        <button type="button" class="outline" data-testid="audit-verify-btn" :disabled="verifying" @click="onVerify">
+          {{ verifying ? $t('audit_events.verifying') : $t('audit_events.verify_chain') }}
         </button>
       </div>
     </form>
@@ -74,9 +83,11 @@
       @prev="page--"
       @next="page++"
     />
-    <p v-else-if="events.length" class="muted count-hint">
-      {{ $t('audit_events.count_hint', { n: events.length }) }}
-    </p>
+    <div v-if="verifyResult" class="verify-result" :class="verifyResult.ok ? 'ok' : 'err'">
+      <strong>{{ verifyResult.ok ? $t('audit_events.verify_ok') : $t('audit_events.verify_fail') }}</strong>
+      <span v-if="verifyResult.checked"> — {{ $t('audit_events.verify_checked', { n: verifyResult.checked }) }}</span>
+      <span v-if="!verifyResult.ok && verifyResult.firstBadID"> ({{ verifyResult.firstBadID }}: {{ verifyResult.reason }})</span>
+    </div>
 
     <!-- 错误提示（替代 alert） -->
     <ConfirmModal
@@ -92,7 +103,7 @@
 <script setup>
 // 审计事件页 — 只读：筛选表单（时间范围/动作/用户）+ DataTable + 前端分页 + 导出下载
 import { ref, reactive, computed, onMounted } from 'vue'
-import { getEvents, exportEvents } from '@/api/audit'
+import { getEvents, exportEvents, getHighRiskAudits, verifyAuditChain } from '@/api/audit'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
@@ -103,6 +114,9 @@ import { fmtTime } from '@/composables/useFormatTime'
 const events = ref([])
 const loading = ref(false)
 const exporting = ref(false)
+const verifying = ref(false)
+const highRiskOnly = ref(false)
+const verifyResult = ref(null)
 const page = ref(1)
 const pageSize = 20 // 前端分页大小（后端按 limit 一次拉取）
 
@@ -137,8 +151,11 @@ function buildParams() {
 async function fetchEvents() {
   loading.value = true
   try {
-    const r = await getEvents(buildParams())
-    events.value = (r && r.events) || []
+    const params = buildParams()
+    const r = highRiskOnly.value
+      ? await getHighRiskAudits(params)
+      : await getEvents(params)
+    events.value = (r && (r.events || r)) || []
     page.value = 1
   } catch {
     events.value = []
@@ -161,7 +178,19 @@ function onReset() {
   fetchEvents()
 }
 
-// 导出：调用 GET /audit/export 拿 JSON 数组，前端生成文件下载
+// 校验哈希链
+async function onVerify() {
+  verifying.value = true
+  verifyResult.value = null
+  try {
+    const r = await verifyAuditChain({ limit: 1000 })
+    verifyResult.value = r
+  } catch (e) {
+    verifyResult.value = { ok: false, reason: e?.message || 'verify failed' }
+  } finally {
+    verifying.value = false
+  }
+}
 async function onExport() {
   exporting.value = true
   try {
@@ -215,4 +244,7 @@ onMounted(() => {
   vertical-align: bottom; font-size: 12.5px;
 }
 .count-hint { margin-top: 10px; font-size: 12.5px; }
+.verify-result { margin-top: 10px; padding: 8px 12px; border-radius: var(--radius-sm); font-size: 12.5px; }
+.verify-result.ok { background: var(--success-bg); color: var(--teal); }
+.verify-result.err { background: var(--fail-soft); color: var(--fail); }
 </style>

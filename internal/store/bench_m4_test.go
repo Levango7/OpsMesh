@@ -180,7 +180,7 @@ func BenchmarkMemoryStore_AlertRule(b *testing.B) {
 			}
 			created := m.CreateAlertRule(rule)
 			_ = m.ListAlertRules("t1")
-			m.DeleteAlertRule(created.ID)
+			m.DeleteAlertRule(created.ID, "t1")
 		}
 	})
 }

@@ -24,6 +24,10 @@ func indexByID(tasks []*proto.Task) map[string]*proto.Task {
 
 // AllDepsDone 判定任务 t 的全部前置依赖是否都已 done。
 // deps 缺失（不在图中）视为未就绪（保守：不阻塞整体，但依赖本身不成立）。
+//
+// 保留给既有调用方使用；新代码在"依赖是否已可判定终局"的场景应改用 AllDepsTerminal /
+// AnyDepFailed —— AllDepsDone 要求每个依赖都恰好 done，上游 failed/cancelled 时永远为 false，
+// 使依赖它的 blocked 任务既不能被释放、也不会失败，永久停留在 blocked。
 func AllDepsDone(t *proto.Task, byID map[string]*proto.Task) bool {
 	for _, dep := range t.DependsOn {
 		d, ok := byID[dep]
@@ -35,6 +39,54 @@ func AllDepsDone(t *proto.Task, byID map[string]*proto.Task) bool {
 		}
 	}
 	return true
+}
+
+// isTerminalStatus 判定任务状态是否为终态（不再变化）。
+// 终态集合：done / failed / cancelled / rejected / dead_letter。
+func isTerminalStatus(status string) bool {
+	switch status {
+	case "done", "failed", "cancelled", "rejected", "dead_letter":
+		return true
+	}
+	return false
+}
+
+// AllDepsTerminal 判定任务 t 的全部前置依赖是否都已达终态。
+// 语义比 AllDepsDone 宽：只要每个依赖都走到了"不再变化"的状态（含 failed/cancelled）即为 true。
+// deps 缺失（不在图中）仍视为未就绪——与 AllDepsDone 的保守口径一致，缺依赖不能凭空判定终局。
+//
+// 用途：依赖释放判定。上游失败/取消时下游必须被显式解决（失败并进死信），
+// 而不是永远 blocked——它既不可领取，也不出现在死信视图，没有任何看护路径能发现它。
+func AllDepsTerminal(t *proto.Task, byID map[string]*proto.Task) bool {
+	for _, dep := range t.DependsOn {
+		d, ok := byID[dep]
+		if !ok {
+			return false // 依赖任务不存在
+		}
+		if !isTerminalStatus(d.Status) {
+			return false
+		}
+	}
+	return true
+}
+
+// AnyDepFailed 判定任务 t 的前置依赖中是否存在"非成功"的终态依赖，返回其 ID。
+// 非成功终态指 failed / cancelled / rejected / dead_letter（即上游没走到 done）。
+// 全部依赖均为 done（或无依赖）时返回 ("", false)。
+//
+// 用途：下游的处置分流——任一上游失败/取消 ⇒ 下游不可能再执行，应置 failed 并进死信；
+// 全部 done ⇒ 下游照常释放为 pending 进入可下发队列。
+func AnyDepFailed(t *proto.Task, byID map[string]*proto.Task) (string, bool) {
+	for _, dep := range t.DependsOn {
+		d, ok := byID[dep]
+		if !ok {
+			continue // 缺失依赖不判定为失败（由 AllDepsTerminal 卡住就绪判定）
+		}
+		if isTerminalStatus(d.Status) && d.Status != "done" {
+			return d.TaskID, true
+		}
+	}
+	return "", false
 }
 
 // ReadyIDs 返回当前可下发（依赖全部 done）的任务 ID 列表（不修改入参）。

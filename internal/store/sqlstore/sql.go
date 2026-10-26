@@ -852,6 +852,9 @@ func (s *SQLStore) applyLegacyColumnFixups(ctx context.Context) {
 	// 节点级超时与重试：tasks 表增加 timeout / retry_delay 列。
 	s.alterColumnIfMissing(ctx, "tasks", "timeout", "INT DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "retry_delay", "INT DEFAULT 0")
+	// Wave 4-B：任务优先级与幂等键列（新库由 025 迁移一次性建齐；老库此处补齐）。
+	s.alterColumnIfMissing(ctx, "tasks", "priority", "INT DEFAULT 0")
+	s.alterColumnIfMissing(ctx, "tasks", "idempotency_key", "VARCHAR(128)")
 	s.alterColumnIfMissing(ctx, "tasks", "schedule", "VARCHAR(64)")
 	s.alterColumnIfMissing(ctx, "tasks", "parent_id", "VARCHAR(64)")
 	s.alterColumnIfMissing(ctx, "tasks", "last_fired_at", "DATETIME")

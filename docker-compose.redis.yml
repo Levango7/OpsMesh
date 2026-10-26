@@ -1,0 +1,51 @@
+# Redis 集群
+# 使用方法：docker compose -f docker-compose.redis.yml up -d
+version: "3.8"
+
+services:
+  redis-master:
+    image: redis:7.2-alpine
+    container_name: redis-master
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass redis123
+    volumes:
+      - redis-master-data:/data
+    networks:
+      - redis-net
+    healthcheck:
+      test: ["redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-replica-1:
+    image: redis:7.2-alpine
+    container_name: redis-replica-1
+    ports:
+      - "6379:6379"
+    environment:
+      - REDIS_REPLICA_OF=redis-master:6379
+    depends_on:
+      - redis-master
+    networks:
+      - redis-net
+
+  redis-replica-2:
+    image: redis:7.2-alpine
+    container_name: redis-replica-2
+    ports:
+      - "6378:6379"
+    environment:
+      - REDIS_REPLICA_OF=redis-master:6379
+    depends_on:
+      - redis-master
+    networks:
+      - redis-net
+
+networks:
+  redis-net:
+    driver: bridge
+
+volumes:
+  redis-master-data:

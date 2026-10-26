@@ -3,89 +3,123 @@
     <h2>{{ $t('mwdep.title') }}</h2>
     <p class="muted">{{ $t('mwdep.desc') }}</p>
 
-    <!-- 分类筛选 -->
-    <div class="cat-filter">
-      <button
-        v-for="cat in categories"
-        :key="cat"
-        class="cat-btn"
-        :class="{ active: store.category === cat }"
-        @click="store.setCategory(cat)"
-      >{{ $t('mwdep.category.' + cat) }}</button>
-    </div>
-
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
-    <div class="row">
-      <!-- 左：模板列表 + 详情 -->
-      <div class="col">
-        <div class="card">
-          <h3>{{ $t('mwdep.title') }}</h3>
-          <div v-if="store.loading && !store.templates.length" class="muted">{{ $t('mwdep.loading') }}</div>
-          <DataTable
-            v-else
-            :columns="tplColumns"
-            :rows="store.templates"
-            row-key="id"
-            :empty-text="$t('mwdep.noTemplates')"
-          >
-            <template #cell-id="{ value }"><code>{{ value }}</code></template>
-            <template #cell-category="{ value }">
-              <span class="badge info">{{ $t('mwdep.category.' + (value || 'all')) }}</span>
-            </template>
-            <template #cell-deployTypes="{ value }">
-              <span v-for="dt in (value || [])" :key="dt" class="badge info">{{ $t('mwdep.deployType.' + dt) }}</span>
-              <span v-if="!(value && value.length)" class="muted">—</span>
-            </template>
-            <template #cell-risk="{ value }">
-              <StatusBadge :status="riskStatus(value)" :text="$t('mwdep.risk.' + (value || 'medium'))" />
-            </template>
-            <template #cell-actions="{ row }">
-              <div class="row-actions" @click.stop>
-                <button class="xs outline" @click="onView(row.id)">{{ $t('mwdep.view') }}</button>
-                <button class="xs primary" @click="onDeploy(row.id)">{{ $t('mwdep.deploy') }}</button>
-              </div>
-            </template>
-          </DataTable>
+    <!-- 单卡片 + 顶部视图切换：模板目录 / 已部署实例 -->
+    <div class="card">
+      <div class="view-head">
+        <div class="segmented" role="tablist">
+          <button
+            class="segmented__item"
+            :class="{ 'is-active': view === 'templates' }"
+            role="tab"
+            :aria-selected="view === 'templates'"
+            data-testid="mwdep-view-templates"
+            @click="setView('templates')"
+          >{{ $t('mwdep.viewTemplates') }}</button>
+          <button
+            class="segmented__item"
+            :class="{ 'is-active': view === 'instances' }"
+            role="tab"
+            :aria-selected="view === 'instances'"
+            data-testid="mwdep-view-instances"
+            @click="setView('instances')"
+          >{{ $t('mwdep.viewInstances') }}</button>
+        </div>
+        <div class="view-head__actions">
+          <Button
+            v-if="view === 'instances'"
+            variant="secondary"
+            size="sm"
+            icon="refresh"
+            data-testid="mwdep-instances-refresh"
+            @click="store.fetchInstances()"
+          >{{ $t('mwdep.refresh') }}</Button>
         </div>
       </div>
 
-      <!-- 右：已部署实例 -->
-      <div class="col">
-        <div class="card">
-          <div class="flowbar">
-            <h3 style="margin: 0">{{ $t('mwdep.instancesTitle') }}</h3>
-            <button class="xs outline" @click="store.fetchInstances()">↻ {{ $t('mwdep.refresh') }}</button>
-          </div>
-          <p class="hint">{{ $t('mwdep.instancesHint') }}</p>
-          <div v-if="store.instancesLoading && !store.instances.length" class="muted">{{ $t('mwdep.loading') }}</div>
-          <DataTable
-            v-else
-            :columns="insColumns"
-            :rows="store.instances"
-            row-key="id"
-            :empty-text="$t('mwdep.noInstances')"
-          >
-            <template #cell-id="{ value }"><code>{{ value }}</code></template>
-            <template #cell-deployType="{ value }">
-              <span class="badge info">{{ $t('mwdep.deployType.' + (value || 'docker')) }}</span>
-            </template>
-            <template #cell-status="{ value }">
-              <StatusBadge :status="instanceStatus(value)" :text="value || '-'" />
-            </template>
-            <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
-            <template #cell-actions="{ row }">
-              <button
-                v-if="canUninstall(row.status)"
-                class="xs outline"
-                style="color: var(--fail); border-color: var(--fail)"
-                @click.stop="onUninstall(row)"
-              >{{ $t('mwdep.uninstall') }}</button>
-              <span v-else class="muted">—</span>
-            </template>
-          </DataTable>
-        </div>
+      <!-- 分类筛选：仅模板目录视图可见 -->
+      <div v-if="view === 'templates'" class="cat-filter">
+        <button
+          v-for="cat in categories"
+          :key="cat"
+          class="cat-btn"
+          :class="{ active: store.category === cat }"
+          @click="store.setCategory(cat)"
+        >{{ $t('mwdep.category.' + cat) }}</button>
       </div>
+
+      <!-- 模板目录表 -->
+      <template v-if="view === 'templates'">
+        <div v-if="store.loading && !store.templates.length" class="muted">{{ $t('mwdep.loading') }}</div>
+        <DataTable
+          v-else
+          :columns="tplColumns"
+          :rows="store.templates"
+          row-key="id"
+          :empty-text="$t('mwdep.noTemplates')"
+        >
+          <template #cell-tpl-id="{ value }"><code>{{ value }}</code></template>
+          <template #cell-tpl-category="{ value }">
+            <span class="badge info">{{ $t('mwdep.category.' + (value || 'all')) }}</span>
+          </template>
+          <template #cell-tpl-version="{ row }">
+            <span class="ver-cell">
+              <code>{{ defaultVersion(row) || '—' }}</code>
+              <span
+                v-if="otherVersions(row).length"
+                class="ver-more"
+                :title="moreVersionsTitle(row)"
+                data-testid="mwdep-more-versions"
+              >+{{ otherVersions(row).length }}</span>
+            </span>
+          </template>
+          <template #cell-tpl-deployTypes="{ value }">
+            <span v-for="dt in (value || [])" :key="dt" class="badge info">{{ $t('mwdep.deployType.' + dt) }}</span>
+            <span v-if="!(value && value.length)" class="muted">—</span>
+          </template>
+          <template #cell-tpl-risk="{ value }">
+            <StatusBadge :status="riskStatus(value)" :text="$t('mwdep.risk.' + (value || 'medium'))" />
+          </template>
+          <template #cell-tpl-actions="{ row }">
+            <div class="row-actions" @click.stop>
+              <button class="xs outline" @click="onView(row.id)">{{ $t('mwdep.view') }}</button>
+              <button class="xs primary" @click="onDeploy(row.id)">{{ $t('mwdep.deploy') }}</button>
+            </div>
+          </template>
+        </DataTable>
+      </template>
+
+      <!-- 已部署实例表 -->
+      <template v-else>
+        <p class="hint">{{ $t('mwdep.instancesHint') }}</p>
+        <div v-if="store.instancesLoading && !store.instances.length" class="muted">{{ $t('mwdep.loading') }}</div>
+        <DataTable
+          v-else
+          :columns="insColumns"
+          :rows="store.instances"
+          row-key="id"
+          :empty-text="$t('mwdep.noInstances')"
+        >
+          <template #cell-ins-id="{ value }"><code>{{ value }}</code></template>
+          <template #cell-ins-deployType="{ value }">
+            <span class="badge info">{{ $t('mwdep.deployType.' + (value || 'docker')) }}</span>
+          </template>
+          <template #cell-ins-status="{ value }">
+            <StatusBadge :status="instanceStatus(value)" :text="value || '-'" />
+          </template>
+          <template #cell-ins-createdAt="{ value }">{{ fmtTime(value) }}</template>
+          <template #cell-ins-actions="{ row }">
+            <button
+              v-if="canUninstall(row.status)"
+              class="xs outline"
+              style="color: var(--fail); border-color: var(--fail)"
+              @click.stop="onUninstall(row)"
+            >{{ $t('mwdep.uninstall') }}</button>
+            <span v-else class="muted">—</span>
+          </template>
+        </DataTable>
+      </template>
     </div>
 
     <!-- 模板详情抽屉 -->
@@ -105,11 +139,27 @@
         </div>
         <h4>{{ $t('mwdep.detailDesc') }}</h4>
         <p>{{ tpl.description || '—' }}</p>
+        <!-- 可用版本 -->
+        <div v-if="tplVersions.length" class="versions-section">
+          <h4>{{ $t('mwdep.availableVersions') }}</h4>
+          <ul class="version-list">
+            <li
+              v-for="v in tplVersions"
+              :key="v.version"
+              class="version-item"
+              :class="{ 'is-default': v.version === tplDefaultVersion }"
+            >
+              <code>{{ v.version }}</code>
+              <span v-if="v.label" class="muted">{{ v.label }}</span>
+              <span v-if="v.version === tplDefaultVersion" class="badge info">{{ $t('mwdep.defaultVersion') }}</span>
+            </li>
+          </ul>
+        </div>
         <div v-if="tpl.params && tpl.params.length" class="params-section">
           <h4>{{ $t('mwdep.detailParams') }}</h4>
           <DataTable :columns="paramCols" :rows="tpl.params" row-key="name" :empty-text="$t('mwdep.noParams')">
-            <template #cell-name="{ value }"><code>{{ value }}</code></template>
-            <template #cell-required="{ value }">
+            <template #cell-param-name="{ value }"><code>{{ value }}</code></template>
+            <template #cell-param-required="{ value }">
               <StatusBadge v-if="value" status="failed" :text="$t('mwdep.param.required')" />
               <span v-else class="badge info">{{ $t('mwdep.param.optional') }}</span>
             </template>
@@ -132,18 +182,24 @@
 
     <!-- 部署对话框 -->
     <div v-if="deployOpen" class="modal-mask" @click.self="closeDeploy">
-      <div class="modal">
+      <div class="modal modal-deploy">
         <header class="modal-head">
           <h3>{{ $t('mwdep.deployTitle') }}</h3>
           <button class="xs outline" @click="closeDeploy">✕</button>
         </header>
         <div class="modal-body">
           <p class="muted">{{ $t('mwdep.deployHint') }}</p>
-          <div class="row">
+          <div class="deploy-fields">
             <div class="field">
               <label>{{ $t('mwdep.selectDeployType') }}</label>
               <select v-model="deployForm.deployType">
                 <option v-for="dt in (deployTpl?.deployTypes || ['docker', 'systemd'])" :key="dt" :value="dt">{{ $t('mwdep.deployType.' + dt) }}</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>{{ $t('mwdep.selectVersion') }}</label>
+              <select v-model="deployForm.version" data-testid="mwdep-version-select" :disabled="!deployVersions.length">
+                <option v-for="v in deployVersions" :key="v.version" :value="v.version">{{ versionLabel(v) }}</option>
               </select>
             </div>
             <div class="field">
@@ -156,9 +212,9 @@
               </select>
             </div>
           </div>
-          <div v-if="deployTpl && deployTpl.params && deployTpl.params.length" class="params-form">
+          <div v-if="deployParams.length" class="params-form">
             <h4>{{ $t('mwdep.params') }}</h4>
-            <div v-for="p in deployTpl.params" :key="p.name" class="field">
+            <div v-for="p in deployParams" :key="p.name" class="field">
               <label>{{ p.name }}<span v-if="p.required" class="req">*</span></label>
               <input
                 v-model="deployForm.params[p.name]"
@@ -208,8 +264,8 @@
 </template>
 
 <script setup>
-// 中间件部署 — 模板列表 + 分类筛选 + 详情 + 部署 + 实例列表 + 卸载
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+// 中间件部署 — 单面板视图切换（模板目录 / 已部署实例）+ 分类筛选 + 详情 + 多版本部署 + 卸载
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useMiddlewareStore } from '@/stores/middleware'
 import { getMiddlewareTemplate } from '@/api/middleware'
 import { getTaskDetail } from '@/api/task'
@@ -218,41 +274,101 @@ import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
+import { Button } from '@/components/ui'
 
 const store = useMiddlewareStore()
 
-// 分类列表（与个人版对齐）
-const categories = ['all', 'database', 'cache', 'message', 'web', 'search', 'storage', 'service', 'monitor']
+// 视图切换：模板目录 / 已部署实例（分段开关）
+const view = ref('templates')   // 'templates' | 'instances'
+
+// 分类列表（与后端预置模板的 category 集合对齐：database/cache/message/web/search/storage/service/monitor）
+const categories = ['all', 'database', 'cache', 'message', 'web', 'search', 'storage', 'service', 'monitor', 'gpu']
 
 const tplColumns = computed(() => [
-  { key: 'id', title: 'ID', slot: 'cell-id' },
+  { key: 'id', title: 'ID', slot: 'cell-tpl-id' },
   { key: 'name', title: t('mwdep.col.name') },
-  { key: 'category', title: t('mwdep.col.category'), slot: 'cell-category' },
-  { key: 'version', title: t('mwdep.col.version') },
-  { key: 'deployTypes', title: t('mwdep.col.deployTypes'), slot: 'cell-deployTypes' },
-  { key: 'risk', title: t('mwdep.col.risk'), slot: 'cell-risk' },
-  { key: 'actions', title: t('mwdep.col.action'), slot: 'cell-actions', width: '160px' }
+  { key: 'category', title: t('mwdep.col.category'), slot: 'cell-tpl-category' },
+  { key: 'version', title: t('mwdep.col.version'), slot: 'cell-tpl-version' },
+  { key: 'deployTypes', title: t('mwdep.col.deployTypes'), slot: 'cell-tpl-deployTypes' },
+  { key: 'risk', title: t('mwdep.col.risk'), slot: 'cell-tpl-risk' },
+  { key: 'actions', title: t('mwdep.col.action'), slot: 'cell-tpl-actions', width: '160px' }
 ])
 const insColumns = computed(() => [
-  { key: 'id', title: t('mwdep.instance.col.id'), slot: 'cell-id' },
+  { key: 'id', title: t('mwdep.instance.col.id'), slot: 'cell-ins-id' },
   { key: 'templateID', title: t('mwdep.instance.col.template') },
   { key: 'agentID', title: t('mwdep.instance.col.agent') },
-  { key: 'deployType', title: t('mwdep.instance.col.deployType'), slot: 'cell-deployType' },
-  { key: 'status', title: t('mwdep.instance.col.status'), slot: 'cell-status' },
-  { key: 'createdAt', title: t('mwdep.instance.col.createdAt'), slot: 'cell-createdAt' },
-  { key: 'actions', title: t('mwdep.instance.col.action'), slot: 'cell-actions', width: '90px' }
+  { key: 'deployType', title: t('mwdep.instance.col.deployType'), slot: 'cell-ins-deployType' },
+  { key: 'version', title: t('mwdep.instanceVersion') },
+  { key: 'status', title: t('mwdep.instance.col.status'), slot: 'cell-ins-status' },
+  { key: 'createdAt', title: t('mwdep.instance.col.createdAt'), slot: 'cell-ins-createdAt' },
+  { key: 'actions', title: t('mwdep.instance.col.action'), slot: 'cell-ins-actions', width: '90px' }
 ])
 const paramCols = [
-  { key: 'name', title: 'Name', slot: 'cell-name' },
+  { key: 'name', title: 'Name', slot: 'cell-param-name' },
   { key: 'type', title: 'Type' },
   { key: 'default', title: 'Default' },
-  { key: 'required', title: 'Required', slot: 'cell-required' },
+  { key: 'required', title: 'Required', slot: 'cell-param-required' },
   { key: 'description', title: 'Description' }
 ]
 
 const tpl = computed(() => store.current || {})
 const drawerTitle = computed(() => tpl.value.name || tpl.value.id || '')
 const scriptsKeys = computed(() => (tpl.value.scripts ? Object.keys(tpl.value.scripts) : []))
+
+// ---- 版本处理 ----
+// 模板版本列表：后端未下发 versions 时回退到顶层 version（单版本）
+function templateVersions(tplObj) {
+  if (!tplObj) return []
+  const list = Array.isArray(tplObj.versions) ? tplObj.versions.filter((v) => v && v.version) : []
+  if (list.length) return list
+  if (tplObj.version) return [{ version: tplObj.version, label: tplObj.version, default: true }]
+  return []
+}
+
+// 默认版本：default:true 优先，否则取第一个
+function defaultVersion(tplObj) {
+  const list = templateVersions(tplObj)
+  if (!list.length) return ''
+  const d = list.find((v) => v.default)
+  return (d || list[0]).version
+}
+
+// 除默认版本外的其它版本
+function otherVersions(tplObj) {
+  const dv = defaultVersion(tplObj)
+  return templateVersions(tplObj).filter((v) => v.version !== dv)
+}
+
+// 版本展示名：version（带 label 时附加 label）
+function versionLabel(v) {
+  if (!v) return ''
+  return v.label ? `${v.version} · ${v.label}` : v.version
+}
+
+// 合并模板参数与版本参数：同名以版本参数为准（版本未声明的字段沿用模板定义）
+function mergeParams(tplObj, version) {
+  const base = tplObj && Array.isArray(tplObj.params) ? tplObj.params : []
+  const v = templateVersions(tplObj).find((x) => x.version === version)
+  const vParams = v && Array.isArray(v.params) ? v.params : []
+  const map = new Map()
+  base.forEach((p) => { if (p && p.name) map.set(p.name, { ...p }) })
+  vParams.forEach((p) => {
+    if (!p || !p.name) return
+    map.set(p.name, { ...(map.get(p.name) || {}), ...p })
+  })
+  return Array.from(map.values())
+}
+
+// 抽屉里的可用版本
+const tplVersions = computed(() => templateVersions(tpl.value))
+const tplDefaultVersion = computed(() => defaultVersion(tpl.value))
+
+// 模板表「+N」徽标的 tooltip：列出其它版本
+function moreVersionsTitle(tplObj) {
+  const others = otherVersions(tplObj)
+  if (!others.length) return ''
+  return t('mwdep.moreVersions', { n: others.length }) + ' · ' + others.map((v) => versionLabel(v)).join(' / ')
+}
 
 function riskStatus(risk) {
   if (risk === 'low') return 'success'
@@ -275,29 +391,52 @@ function fmtTime(s) {
 
 function onView(id) { store.fetchDetail(id) }
 
+// 视图切换：进入实例视图时刷新实例列表（运维场景要求实时性）
+function setView(v) {
+  if (view.value === v) return
+  view.value = v
+  if (v === 'instances') store.fetchInstances()
+}
+
 // ---- 部署对话框 ----
 const deployOpen = ref(false)
 const deployTpl = ref(null)
-const deployForm = ref({ deployType: '', agentID: '', params: {} })
+const deployForm = ref({ deployType: '', agentID: '', params: {}, version: '' })
 const deployMsg = ref('')
 const deployOk = ref(false)
 const deploying = ref(false)
 const deployLog = ref('')
 let deployTimer = null
 
+// 部署对话框的可选版本 + 当前版本的参数定义
+const deployVersions = computed(() => templateVersions(deployTpl.value))
+const deployParams = computed(() => mergeParams(deployTpl.value, deployForm.value.version))
+
+// 切换版本时按新版本的参数定义重建参数表单
+watch(() => deployForm.value.version, () => {
+  const vals = {}
+  deployParams.value.forEach((p) => {
+    vals[p.name] = p.default != null ? String(p.default) : ''
+  })
+  deployForm.value.params = vals
+})
+
 async function onDeploy(id) {
   deployOpen.value = true
   deployMsg.value = ''
   deployLog.value = ''
-  deployForm.value = { deployType: '', agentID: '', params: {} }
+  deployForm.value = { deployType: '', agentID: '', params: {}, version: '' }
   deployTpl.value = null
   if (deployTimer) { clearInterval(deployTimer); deployTimer = null }
   try {
     deployTpl.value = await getMiddlewareTemplate(id)
     const types = deployTpl.value.deployTypes || ['docker', 'systemd']
     deployForm.value.deployType = types[0] || 'docker'
+    // 默认版本：default:true 优先，否则第一个
+    deployForm.value.version = defaultVersion(deployTpl.value)
+    // 参数按「模板参数 + 选中版本参数」合并后的定义渲染
     const params = {}
-    ;(deployTpl.value.params || []).forEach((p) => {
+    mergeParams(deployTpl.value, deployForm.value.version).forEach((p) => {
       params[p.name] = p.default != null ? String(p.default) : ''
     })
     deployForm.value.params = params
@@ -322,9 +461,9 @@ async function confirmDeploy() {
   if (!deployForm.value.agentID) {
     deployMsg.value = t('mwdep.noAgent'); deployOk.value = false; return
   }
-  // 校验参数
+  // 校验参数（按当前版本合并后的参数定义）
   const params = {}
-  for (const p of (deployTpl.value.params || [])) {
+  for (const p of deployParams.value) {
     const v = deployForm.value.params[p.name]
     if (p.required && (v == null || v === '')) {
       deployMsg.value = t('mwdep.paramRequired', { name: p.name }); deployOk.value = false; return
@@ -342,7 +481,13 @@ async function confirmDeploy() {
   deployMsg.value = t('mwdep.submitting'); deployOk.value = true
   deployLog.value = ''
   try {
-    const r = await store.deploy(deployTpl.value.id, deployForm.value.agentID, deployForm.value.deployType, params)
+    const r = await store.deploy(
+      deployTpl.value.id,
+      deployForm.value.agentID,
+      deployForm.value.deployType,
+      params,
+      deployForm.value.version
+    )
     if (r.s < 400 && r.j) {
       const taskId = r.j.taskID || r.j.id || r.j.taskId || ''
       deployMsg.value = t('mwdep.deployTaskCreated', { id: (taskId || JSON.stringify(r.j)) })
@@ -487,6 +632,40 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 视图头：分段开关（左）+ 工具条（右） */
+.view-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.view-head__actions { display: inline-flex; align-items: center; gap: 8px; }
+
+/* 分段开关（对齐 .k8s-subnav 模式：容器内嵌，选中项浮起） */
+.segmented {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px; background: var(--color-surface-2, #f7f9fc);
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-lg, 8px);
+}
+.segmented__item {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 14px; border: 1px solid transparent;
+  border-radius: var(--radius-md, 6px);
+  background: transparent; color: var(--color-ink-muted, #6b7280);
+  font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  cursor: pointer; transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+.segmented__item:hover { background: var(--color-surface-3, #eef1f7); color: var(--color-ink, #f7f8f8); }
+.segmented__item.is-active {
+  background: var(--color-surface-1, #ffffff);
+  color: var(--color-primary, #5e6ad2);
+  border-color: var(--color-hairline, #d3dbe8);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+.segmented__item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #5e6ad2) 40%, transparent);
+}
+
 .cat-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
 .cat-btn {
   padding: 5px 12px; font-size: 12.5px; border-radius: 999px;
@@ -512,10 +691,25 @@ onUnmounted(() => {
   font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
   font-family: var(--font-mono);
 }
-.params-section, .scripts-section { margin-top: 12px; }
+.params-section, .scripts-section, .versions-section { margin-top: 12px; }
 .script-group { margin-bottom: 14px; }
 .script-type { font-weight: 600; margin-bottom: 6px; }
 .script-item { margin-bottom: 8px; }
+
+/* 版本 */
+.ver-cell { display: inline-flex; align-items: center; gap: 6px; }
+.ver-more {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 7px;
+  border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: var(--info-bg); color: var(--info); cursor: help;
+}
+.version-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.version-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: var(--radius-sm);
+  background: var(--surface-3); border: 1px solid transparent;
+}
+.version-item.is-default { border-color: var(--accent); background: var(--accent-soft); }
 
 /* 模态对话框 */
 .modal-mask {
@@ -528,10 +722,14 @@ onUnmounted(() => {
   padding: 20px 22px;
 }
 .modal-sm { width: 420px; }
+.modal-deploy { width: 700px; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .modal-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
 .modal-body .field label { margin: 0; }
 .modal-body .req { color: var(--fail); margin-left: 2px; }
+/* 部署对话框：部署方式 / 版本 / 目标设备 三列并排 */
+.deploy-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.deploy-fields .field { min-width: 0; margin-bottom: 0; }
 .params-form { margin: 8px 0; }
 .log-block { margin-top: 12px; }
 </style>

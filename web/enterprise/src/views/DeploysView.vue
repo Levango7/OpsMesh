@@ -202,4 +202,10 @@ onMounted(() => { store.fetchList() })
   background: var(--fail-soft); border: 1px solid var(--fail-bg);
   color: var(--fail); font-size: 12.5px; font-weight: 500;
 }
+.row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
 </style>

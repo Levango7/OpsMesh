@@ -1,0 +1,95 @@
+# 云厂商模拟环境 (Aliyun, AWS, Azure, Tencent, Huawei)
+# 使用方法：docker compose -f docker-compose.cloud.yml up -d
+version: "3.8"
+
+services:
+  # 阿里云 OSS 模拟
+  aliyun-oss:
+    image: minio/minio
+    container_name: aliyun-oss
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - aliyun-oss-data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - cloud-net
+
+  # AWS S3 模拟 (LocalStack)
+  aws-s3:
+    image: localstack/localstack:latest
+    container_name: aws-s3
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - ./localstack-init:/etc/localstack/init/ready.d
+      - localstack-data:/var/lib/localstack
+    networks:
+      - cloud-net
+
+  # Azure Blob 存储模拟
+  azure-blob:
+    image: mcr.microsoft.com/azure-storage/azurite
+    container_name: azure-blob
+    ports:
+      - "10000:10000"
+      - "10001:10001"
+    environment:
+      - AZURE_STORAGE_ACCOUNT_NAME=devstoreaccount1
+      - AZURE_STORAGE_ACCOUNT_KEY=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/KK9ZFPWtrJVBo2lmxLG6Onc3xYA==
+    volumes:
+      - azure-blob-data:/data
+    networks:
+      - cloud-net
+
+  # 腾讯云 COS 模拟 (MinIO)
+  tencent-cos:
+    image: minio/minio
+    container_name: tencent-cos
+    ports:
+      - "9002:9000"
+      - "9003:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - tencent-cos-data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - cloud-net
+
+  # 华为云 OBS 模拟 (MinIO)
+  huawei-obs:
+    image: minio/minio
+    container_name: huawei-obs
+    ports:
+      - "9004:9000"
+      - "9005:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - huawei-obs-data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - cloud-net
+
+volumes:
+  aliyun-oss-data:
+  localstack-data:
+  azure-blob-data:
+  tencent-cos-data:
+  huawei-obs-data:
+
+networks:
+  cloud-net:
+    driver: bridge

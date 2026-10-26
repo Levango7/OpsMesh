@@ -4,7 +4,7 @@
     <p class="muted">{{ $t('tasks.subtitle') }}</p>
 
     <div class="card" v-if="authStore.hasPerm('task:write')">
-      <h3 data-testid="task-form-title">{{ $t('tasks.dispatch_form_title') }}</h3>
+      <h3 class="card__title" data-testid="task-form-title">{{ $t('tasks.dispatch_form_title') }}</h3>
       <form @submit.prevent="onSubmit">
         <div class="row">
           <div class="field">
@@ -40,7 +40,9 @@
           </div>
         </div>
         <div class="btnbar">
-          <button type="submit" class="primary" data-testid="task-submit-btn" :disabled="submitting">{{ submitting ? $t('common.loading') : $t('tasks.submit') }}</button>
+          <Button native-type="submit" variant="primary" data-testid="task-submit-btn" :disabled="submitting">
+            {{ submitting ? $t('common.loading') : $t('tasks.submit') }}
+          </Button>
         </div>
         <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
       </form>
@@ -51,6 +53,7 @@
 
     <div class="card">
       <div class="flowbar">
+        <h3 class="card__title">{{ $t('tasks.task_list_title') }}</h3>
         <div class="field">
           <label>{{ $t('tasks.status_filter') }}</label>
           <select v-model="store.statusFilter" @change="store.fetchTasks()" data-testid="task-status-filter">
@@ -62,25 +65,48 @@
             <option value="cancelled">cancelled</option>
           </select>
         </div>
-        <button @click="store.fetchTasks()">↻ {{ $t('common.refresh') }}</button>
+        <Button variant="ghost" size="sm" @click="store.fetchTasks()">
+          <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
+        </Button>
       </div>
 
       <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
       <DataTable :columns="columns" :rows="store.list" row-key="taskID" :loading="store.loading" :empty-text="$t('tasks.empty')">
         <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
+        <template #cell-command="{ value }"><code>{{ truncateCmd(value) }}</code></template>
+        <template #cell-status="{ value }">
+          <StatusBadge :status="value" :text="value" />
+        </template>
+        <template #cell-actions="{ row }">
+          <div v-if="(row.status === 'pending' || row.status === 'running') && authStore.hasPerm('task:cancel')" class="row-actions">
+            <Button variant="ghost" size="sm" @click.stop="onCancel(row.taskID)" data-testid="task-cancel-btn">
+              {{ $t('tasks.cancel') }}
+            </Button>
+          </div>
+          <span v-else class="muted">—</span>
+        </template>
+      </DataTable>
+    </div>
+
+    <!-- 待审批任务段 -->
+    <div class="card" v-if="authStore.hasPerm('task:write')">
+      <h3 class="card__title" data-testid="task-approval-title">{{ $t('tasks.pending_approval_title') }}</h3>
+      <DataTable :columns="approvalColumns" :rows="store.pendingApprovals" row-key="taskID" :empty-text="$t('tasks.empty')">
+        <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
         <template #cell-command="{ value }"><code>{{ value }}</code></template>
         <template #cell-status="{ value }">
           <StatusBadge :status="value" :text="value" />
         </template>
         <template #cell-actions="{ row }">
-          <button
-            v-if="(row.status === 'pending' || row.status === 'running') && authStore.hasPerm('task:cancel')"
-            class="xs outline"
-            @click.stop="onCancel(row.taskID)"
-            data-testid="task-cancel-btn"
-          >{{ $t('tasks.cancel') }}</button>
-          <span v-else class="muted">—</span>
+          <div class="row-actions">
+            <Button variant="ghost" size="sm" data-testid="task-approve-btn" @click.stop="onApprove(row.taskID)">
+              {{ $t('tasks.approve') }}
+            </Button>
+            <Button variant="danger" size="sm" data-testid="task-reject-btn" @click.stop="onReject(row.taskID)">
+              {{ $t('tasks.reject') }}
+            </Button>
+          </div>
         </template>
       </DataTable>
     </div>
@@ -105,6 +131,7 @@ import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
+import { Button } from '@/components/ui'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const store = useTaskStore()
@@ -142,6 +169,12 @@ function scheduleSSEFetch() {
   }
 }
 
+function truncateCmd(v) {
+  if (!v) return ''
+  const s = String(v)
+  return s.length > 80 ? s.slice(0, 80) + '…' : s
+}
+
 const columns = [
   { key: 'taskID', title: t('tasks.col_task_id'), slot: 'cell-taskID' },
   { key: 'agentID', title: t('tasks.col_agent') },
@@ -149,6 +182,15 @@ const columns = [
   { key: 'command', title: t('tasks.col_command'), slot: 'cell-command' },
   { key: 'status', title: t('tasks.col_status'), slot: 'cell-status' },
   { key: 'actions', title: t('tasks.col_actions'), slot: 'cell-actions', width: '90px' }
+]
+
+const approvalColumns = [
+  { key: 'taskID', title: t('tasks.col_task_id'), slot: 'cell-taskID' },
+  { key: 'agentID', title: t('tasks.col_agent') },
+  { key: 'type', title: t('tasks.col_type') },
+  { key: 'command', title: t('tasks.col_command'), slot: 'cell-command' },
+  { key: 'status', title: t('tasks.col_status'), slot: 'cell-status' },
+  { key: 'actions', title: t('tasks.col_actions'), slot: 'cell-actions', width: '120px' }
 ]
 
 async function onSubmit() {
@@ -175,10 +217,17 @@ async function onCancelConfirm() {
   if (!id) return
   try { await store.cancel(id) } catch (e) { console.error('cancel task failed:', e) }
 }
+async function onApprove(id) {
+  try { await store.approve(id) } catch (e) { console.error('approve task failed:', e) }
+}
+async function onReject(id) {
+  try { await store.reject(id) } catch (e) { console.error('reject task failed:', e) }
+}
 
 onMounted(async () => {
   try { agents.value = await getAgents() || [] } catch (e) { console.error('fetch agents failed:', e) }
   store.fetchTasks()
+  store.fetchPendingApprovals()
   // SSE 实时推送：任务状态变更（创建/领取/取消/回执）到达即刷新列表（App.vue 事件总线）。
   window.addEventListener('opsmesh:task-status', onTaskStatus)
 })
@@ -190,16 +239,38 @@ onUnmounted(() => {
 
 function onTaskStatus() {
   scheduleSSEFetch()
+  store.fetchPendingApprovals()
 }
 </script>
 
 <style scoped>
+.card {
+  background: var(--color-surface-1, var(--surface-l1, #ffffff));
+  border: 1px solid var(--color-hairline, var(--border-primary, #d3dbe8));
+  border-radius: var(--radius-md, 8px);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
+.row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; min-width: 220px; }
-.field label { margin: 0; }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.field label { display: block; margin: 0; font-size: 11px; font-weight: 500; color: var(--color-ink-muted, #6b7280); }
+.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.row-actions { display: inline-flex; gap: 6px; align-items: center; }
+.btnbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
 .poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
+  padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm);
+  background: var(--color-error-soft, #fef2f2); border: 1px solid var(--color-error-light, #fecaca);
+  color: var(--color-error, #ef4444); font-size: 12.5px; font-weight: 500;
+}
+.msg { margin-top: 8px; font-size: 12.5px; }
+.msg.ok { color: var(--color-success, #059669); }
+.msg.err { color: var(--color-error, #ef4444); }
+
+/* Dark mode */
+[data-theme="dark"] .card {
+  background: var(--color-surface-2, #1e2430);
+  border-color: var(--color-hairline, #23252a);
 }
 </style>

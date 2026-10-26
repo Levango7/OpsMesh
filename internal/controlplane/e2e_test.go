@@ -153,6 +153,9 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 	}
 
 	// 5) 上报结果
+	// 防双跑：上报必须携带**领取时颁发的 ClaimEpoch**（store.SubmitResult 精确校验
+	// claim_epoch 相等，ClaimTask 领取时 +1）。缺令牌（旧实现只校验 res.ClaimEpoch>0）
+	// 会被判越权上报拒收，任务永远停在 running。
 	if err := cli.ReportResult(ctx, &proto.TaskResult{
 		TaskID:     tk.TaskID,
 		AgentID:    agentID,
@@ -160,6 +163,7 @@ func TestE2E_TaskLifecycle(t *testing.T) {
 		Stdout:     stdout.String(),
 		Stderr:     stderr.String(),
 		DurationMs: 1,
+		ClaimEpoch: tk.ClaimEpoch,
 	}); err != nil {
 		t.Fatalf("ReportResult: %v", err)
 	}

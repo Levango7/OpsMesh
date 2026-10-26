@@ -8,6 +8,7 @@
 package memory
 
 import (
+	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/store/model"
@@ -44,4 +45,20 @@ func (m *MemoryStore) GetTaskRecord(tenantID, kind, id string) *model.TaskRecord
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return model.CloneTaskRecord(m.taskRecords[tenantID][taskRecordKey(kind, id)])
+}
+
+// ListTaskRecords 返回指定 kind 的全部记录（跨租户），深拷贝。
+func (m *MemoryStore) ListTaskRecords(kind string) ([]*model.TaskRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	prefix := kind + "|"
+	var out []*model.TaskRecord
+	for _, tenantRecords := range m.taskRecords {
+		for key, rec := range tenantRecords {
+			if strings.HasPrefix(key, prefix) {
+				out = append(out, model.CloneTaskRecord(rec))
+			}
+		}
+	}
+	return out, nil
 }

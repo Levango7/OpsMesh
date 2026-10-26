@@ -33,6 +33,7 @@ type User struct {
 	RoleIds            []string               `protobuf:"bytes,5,rep,name=role_ids,json=roleIds,proto3" json:"role_ids,omitempty"`
 	CreatedAt          *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	MustChangePassword bool                   `protobuf:"varint,7,opt,name=must_change_password,json=mustChangePassword,proto3" json:"must_change_password,omitempty"`
+	TenantId           string                 `protobuf:"bytes,8,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -114,6 +115,13 @@ func (x *User) GetMustChangePassword() bool {
 		return x.MustChangePassword
 	}
 	return false
+}
+
+func (x *User) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
 }
 
 // Role represents a role entity.
@@ -267,6 +275,7 @@ type LoginRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
 	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	TenantId      string                 `protobuf:"bytes,3,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -311,6 +320,13 @@ func (x *LoginRequest) GetUsername() string {
 func (x *LoginRequest) GetPassword() string {
 	if x != nil {
 		return x.Password
+	}
+	return ""
+}
+
+func (x *LoginRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
 	}
 	return ""
 }
@@ -749,6 +765,7 @@ type CreateUserRequest struct {
 	// 该用户首次登录只签 5min 改密专用令牌，必须改密后才能取得常规会话。
 	// 迁移 job 以一次性随机口令建号时必须置 true，否则用户拿到的是长期口令。
 	MustChangePassword bool `protobuf:"varint,5,opt,name=must_change_password,json=mustChangePassword,proto3" json:"must_change_password,omitempty"`
+	TenantId           string `protobuf:"bytes,6,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -816,6 +833,13 @@ func (x *CreateUserRequest) GetMustChangePassword() bool {
 		return x.MustChangePassword
 	}
 	return false
+}
+
+func (x *CreateUserRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
 }
 
 // GetLoginGuardStatusRequest is the request to query login guard status.

@@ -21,11 +21,17 @@ type NodeProvider interface {
 	Get(id string) (*models.GPUNode, error)
 }
 
+// WorkloadProvider provides workload queue information to the scheduler.
+type WorkloadProvider interface {
+	GetPendingWorkloads() []*models.Workload
+}
+
 // Scheduler handles workload scheduling across GPU nodes.
 type Scheduler struct {
-	mu       sync.RWMutex
-	policies []models.SchedulingPolicy
-	now      func() time.Time
+	mu              sync.RWMutex
+	policies        []models.SchedulingPolicy
+	now             func() time.Time
+	workloadProvider WorkloadProvider
 }
 
 // NewScheduler creates a new Scheduler.
@@ -37,6 +43,20 @@ func NewScheduler(now func() time.Time) *Scheduler {
 		policies: defaultPolicies(),
 		now:      now,
 	}
+}
+
+// NewSchedulerWithWorkloads creates a new Scheduler with a workload provider.
+func NewSchedulerWithWorkloads(now func() time.Time, wp WorkloadProvider) *Scheduler {
+	s := NewScheduler(now)
+	s.workloadProvider = wp
+	return s
+}
+
+// SetWorkloadProvider sets the workload provider for queue management.
+func (s *Scheduler) SetWorkloadProvider(wp WorkloadProvider) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.workloadProvider = wp
 }
 
 // defaultPolicies returns the default scheduling policies.
@@ -120,9 +140,60 @@ func (s *Scheduler) SetPolicies(policies []models.SchedulingPolicy) error {
 	return nil
 }
 
-// GetQueue returns pending workloads (placeholder for queue management).
+// GetQueue returns pending workloads sorted by priority (highest first).
 func (s *Scheduler) GetQueue() []*models.Workload {
-	return []*models.Workload{}
+	s.mu.RLock()
+	wp := s.workloadProvider
+	s.mu.RUnlock()
+
+	if wp == nil {
+		return []*models.Workload{}
+	}
+
+	pending := wp.GetPendingWorkloads()
+	if pending == nil {
+		return []*models.Workload{}
+	}
+
+	// Copy to avoid mutation
+	out := make([]*models.Workload, len(pending))
+	copy(out, pending)
+
+	// Sort by priority (descending), then by creation time (ascending)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Priority != out[j].Priority {
+			return out[i].Priority > out[j].Priority
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+
+	return out
+}
+
+// AssignNodeResources updates node VRAM allocation after scheduling.
+// Returns true if allocation succeeded, false if insufficient resources.
+func (s *Scheduler) AssignNodeResources(node *models.GPUNode, vramMB int) bool {
+	if node == nil || vramMB <= 0 {
+		return false
+	}
+	if node.UsedVRAMMB+vramMB > node.TotalVRAMMB {
+		return false
+	}
+	node.UsedVRAMMB += vramMB
+	node.UpdatedAt = s.now()
+	return true
+}
+
+// ReleaseNodeResources releases VRAM allocation when a workload is cancelled/completed.
+func (s *Scheduler) ReleaseNodeResources(node *models.GPUNode, vramMB int) {
+	if node == nil || vramMB <= 0 {
+		return
+	}
+	node.UsedVRAMMB -= vramMB
+	if node.UsedVRAMMB < 0 {
+		node.UsedVRAMMB = 0
+	}
+	node.UpdatedAt = s.now()
 }
 
 // activePolicy returns the highest priority enabled policy.
@@ -157,6 +228,35 @@ func (s *Scheduler) filterAndSortNodes(nodes []*models.GPUNode, workload *models
 		if policy != nil && policy.MaxGPUsPerNode > 0 && workload.GPURequest.Count > policy.MaxGPUsPerNode {
 			continue
 		}
+
+		// Affinity check: if policy has labels, node must match all of them
+		if policy != nil && len(policy.Labels) > 0 {
+			if !matchLabels(n.Labels, policy.Labels) {
+				continue
+			}
+		}
+
+		// Affinity policy type: workload requires specific node labels
+		if policy != nil && policy.Type == "affinity" && len(policy.Labels) > 0 {
+			if !matchLabels(n.Labels, policy.Labels) {
+				continue
+			}
+		}
+
+		// Anti-affinity policy type: workload must NOT run on nodes with matching labels
+		if policy != nil && policy.Type == "anti-affinity" && len(policy.Labels) > 0 {
+			if matchLabels(n.Labels, policy.Labels) {
+				continue
+			}
+		}
+
+		// GPU model preference
+		if workload.GPURequest.GPUModel != "" {
+			if !nodeHasGPUModel(n, workload.GPURequest.GPUModel) {
+				continue
+			}
+		}
+
 		eligible = append(eligible, n)
 	}
 
@@ -168,6 +268,13 @@ func (s *Scheduler) filterAndSortNodes(nodes []*models.GPUNode, workload *models
 	} else if policy != nil && policy.Type == "spreading" {
 		sort.Slice(eligible, func(i, j int) bool {
 			return eligible[i].UsedVRAMMB < eligible[j].UsedVRAMMB
+		})
+	} else if policy != nil && policy.Type == "priority" {
+		// Priority: prefer nodes with more available resources for high-priority workloads
+		sort.Slice(eligible, func(i, j int) bool {
+			availI := eligible[i].TotalVRAMMB - eligible[i].UsedVRAMMB
+			availJ := eligible[j].TotalVRAMMB - eligible[j].UsedVRAMMB
+			return availI > availJ
 		})
 	} else {
 		sort.Slice(eligible, func(i, j int) bool {
@@ -223,4 +330,30 @@ func countAllocated(n *models.GPUNode) int {
 func hasSufficientVRAM(n *models.GPUNode, minVRAMMB int) bool {
 	availableVRAM := n.TotalVRAMMB - n.UsedVRAMMB
 	return availableVRAM >= minVRAMMB
+}
+
+// matchLabels checks if node labels contain all policy labels.
+func matchLabels(nodeLabels, policyLabels map[string]string) bool {
+	if len(policyLabels) == 0 {
+		return true
+	}
+	if nodeLabels == nil {
+		return false
+	}
+	for k, v := range policyLabels {
+		if nodeLabels[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// nodeHasGPUModel checks if a node has at least one GPU matching the requested model.
+func nodeHasGPUModel(n *models.GPUNode, model string) bool {
+	for _, g := range n.GPUs {
+		if g.Model == model {
+			return true
+		}
+	}
+	return false
 }

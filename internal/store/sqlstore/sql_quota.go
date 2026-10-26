@@ -49,8 +49,37 @@ func (s *SQLStore) GetQuota(tenantID string) (*QuotaConfig, error) {
 	return &cfg, nil
 }
 
-// SetQuota 设置或更新租户配额（按 tenantID 幂等 upsert）。
-// cfg 为 nil 时等价于删除该租户配额（回退到默认配额）。
+// ListQuotas 返回所有租户的配额配置（管理端用，跨租户视图）。
+func (s *SQLStore) ListQuotas() ([]*QuotaConfig, error) {
+	if s.db == nil {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT tenant_id, max_devices, max_tasks, max_alerts FROM quota_configs`)
+	if err != nil {
+		storefail.Record("[store] ListQuotas 查询失败: %v", err)
+		return nil, nil
+	}
+	defer rows.Close()
+	out := make([]*QuotaConfig, 0)
+	for rows.Next() {
+		var cfg QuotaConfig
+		if err := rows.Scan(&cfg.TenantID, &cfg.MaxDevices, &cfg.MaxTasks, &cfg.MaxAlerts); err != nil {
+			storefail.Record("[store] ListQuotas 扫描失败: %v", err)
+			continue
+		}
+		cp := cfg
+		out = append(out, &cp)
+	}
+	if err := rows.Err(); err != nil {
+		storefail.Record("[store] ListQuotas 迭代失败: %v", err)
+	}
+	return out, nil
+}
+
+// SetQuota 设置或更新租户配额（按 tenantID 幂等 upsert）。cfg 为 nil 时删除该租户配额。
 func (s *SQLStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
 	if tenantID == "" {
 		return fmt.Errorf("tenantID must not be empty")
@@ -70,6 +99,7 @@ func (s *SQLStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
 		return nil
 	}
 	now := time.Now().UTC()
+	cfg.TenantID = tenantID
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO quota_configs (tenant_id, max_devices, max_tasks, max_alerts, updated_at)
 		 VALUES (?, ?, ?, ?, ?)

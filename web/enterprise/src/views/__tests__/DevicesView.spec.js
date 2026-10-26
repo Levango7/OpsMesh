@@ -11,7 +11,8 @@
 //   - @/stores/device：返回可控 store 对象
 //   - vue-router：useRouter 返回带 push 的 vi.fn
 //   - @/composables/useFormatTime：fmtTime 返回原值
-//   - @/components/DataTable.vue / StatusBadge.vue / DetailDrawer.vue / Icon.vue：stub
+//   - @/components/DataTable.vue / StatusBadge.vue / Icon.vue：stub
+//   - @/components/ui：Drawer 被 stub，Button 保持真实
 //   - 全局 $t：通过 global.mocks 注入
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -86,14 +87,19 @@ vi.mock('@/components/DataTable.vue', () => ({
   },
 }))
 
-vi.mock('@/components/DetailDrawer.vue', () => ({
-  default: {
-    name: 'DetailDrawer',
-    props: ['open', 'title'],
-    emits: ['close'],
-    template: '<div class="drawer-mock" v-if="open"><slot /></div>',
-  },
-}))
+vi.mock('@/components/ui', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    Drawer: {
+      name: 'Drawer',
+      props: ['modelValue', 'title'],
+      emits: ['update:modelValue', 'close'],
+      template:
+        '<div class="drawer-mock" v-if="modelValue"><div class="drawer__title">{{ title }}</div><slot /></div>',
+    },
+  }
+})
 
 import DevicesView from '@/views/DevicesView.vue'
 

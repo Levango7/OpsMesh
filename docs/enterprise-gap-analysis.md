@@ -24,7 +24,7 @@
 | 告警（活跃） | alert.js | AlertsView.vue | /alerts |
 | OS 优化 | os-optimize.js | OSOptimizeView.vue | /os-optimize |
 | 中间件部署 | middleware.js | MiddlewareDeployView.vue | /middleware |
-| K8s 管理 | k8s.js | K8sManageView.vue | /k8s |
+| K8s 管理 | k8s.js | K8sClustersView.vue + K8sResourcesView.vue | /k8s/clusters, /k8s/resources |
 | CMDB（基础查询） | cmdb.js | CMDBView.vue | /cmdb |
 | 作业编排 | workflow.js | WorkflowsView.vue | /workflows |
 | 部署 | deploy.js | DeploysView.vue | /deploys |

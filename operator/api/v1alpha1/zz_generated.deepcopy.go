@@ -9,7 +9,7 @@ package v1alpha1
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	runtime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // DeepCopyInto copies all properties of MySQLSpec into dst.
@@ -141,6 +141,254 @@ func (in *OpsMeshInstanceList) DeepCopy() *OpsMeshInstanceList {
 
 // DeepCopyObject returns a runtime.Object deep copy of OpsMeshInstanceList.
 func (in *OpsMeshInstanceList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+// DeepCopyInto copies all properties of ExternalK8sClusterSpec into dst.
+func (in *ExternalK8sClusterSpec) DeepCopyInto(dst *ExternalK8sClusterSpec) {
+	*dst = *in
+	in.KubeconfigSecretRef.DeepCopyInto(&dst.KubeconfigSecretRef)
+}
+
+// DeepCopy returns a deep copy of ExternalK8sClusterSpec.
+func (in *ExternalK8sClusterSpec) DeepCopy() *ExternalK8sClusterSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(ExternalK8sClusterSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies all properties of APIResourceSummary into dst.
+func (in *APIResourceSummary) DeepCopyInto(dst *APIResourceSummary) {
+	*dst = *in
+}
+
+// DeepCopy returns a deep copy of APIResourceSummary.
+func (in *APIResourceSummary) DeepCopy() *APIResourceSummary {
+	if in == nil {
+		return nil
+	}
+	out := new(APIResourceSummary)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies all properties of ExternalK8sClusterStatus into dst.
+func (in *ExternalK8sClusterStatus) DeepCopyInto(dst *ExternalK8sClusterStatus) {
+	*dst = *in
+	if in.LastSyncTime != nil {
+		in, out := &in.LastSyncTime, &dst.LastSyncTime
+		*out = (*in).DeepCopy()
+	}
+	if in.CRDNames != nil {
+		in, out := &in.CRDNames, &dst.CRDNames
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.APIResourceList != nil {
+		in, out := &in.APIResourceList, &dst.APIResourceList
+		*out = make([]APIResourceSummary, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.Conditions != nil {
+		in, out := &in.Conditions, &dst.Conditions
+		*out = make([]metav1.Condition, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+// DeepCopy returns a deep copy of ExternalK8sClusterStatus.
+func (in *ExternalK8sClusterStatus) DeepCopy() *ExternalK8sClusterStatus {
+	if in == nil {
+		return nil
+	}
+	out := new(ExternalK8sClusterStatus)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies all properties of ExternalK8sCluster into dst.
+func (in *ExternalK8sCluster) DeepCopyInto(dst *ExternalK8sCluster) {
+	*dst = *in
+	out := dst
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+// DeepCopy returns a deep copy of ExternalK8sCluster.
+func (in *ExternalK8sCluster) DeepCopy() *ExternalK8sCluster {
+	if in == nil {
+		return nil
+	}
+	out := new(ExternalK8sCluster)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyObject returns a runtime.Object deep copy of ExternalK8sCluster.
+func (in *ExternalK8sCluster) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+// DeepCopyInto copies all properties of ExternalK8sClusterList into dst.
+func (in *ExternalK8sClusterList) DeepCopyInto(dst *ExternalK8sClusterList) {
+	*dst = *in
+	out := dst
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		in, out := &in.Items, &dst.Items
+		*out = make([]ExternalK8sCluster, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+// DeepCopy returns a deep copy of ExternalK8sClusterList.
+func (in *ExternalK8sClusterList) DeepCopy() *ExternalK8sClusterList {
+	if in == nil {
+		return nil
+	}
+	out := new(ExternalK8sClusterList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyObject returns a runtime.Object deep copy of ExternalK8sClusterList.
+func (in *ExternalK8sClusterList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+// DeepCopyInto copies all properties of HelmReleaseSpec into dst.
+func (in *HelmReleaseSpec) DeepCopyInto(dst *HelmReleaseSpec) {
+	*dst = *in
+	if in.Values != nil {
+		in, out := &in.Values, &dst.Values
+		*out = make(map[string]interface{}, len(*in))
+		for k, v := range *in {
+			(*out)[k] = v
+		}
+	}
+	if in.ValuesFileRef != nil {
+		in, out := &in.ValuesFileRef, &dst.ValuesFileRef
+		*out = new(corev1.SecretKeySelector)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+// DeepCopy returns a deep copy of HelmReleaseSpec.
+func (in *HelmReleaseSpec) DeepCopy() *HelmReleaseSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(HelmReleaseSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies all properties of HelmReleaseStatus into dst.
+func (in *HelmReleaseStatus) DeepCopyInto(dst *HelmReleaseStatus) {
+	*dst = *in
+	if in.LastDeployedTime != nil {
+		in, out := &in.LastDeployedTime, &dst.LastDeployedTime
+		*out = (*in).DeepCopy()
+	}
+	if in.LastUpgradeCheck != nil {
+		in, out := &in.LastUpgradeCheck, &dst.LastUpgradeCheck
+		*out = (*in).DeepCopy()
+	}
+	if in.Conditions != nil {
+		in, out := &in.Conditions, &dst.Conditions
+		*out = make([]metav1.Condition, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+// DeepCopy returns a deep copy of HelmReleaseStatus.
+func (in *HelmReleaseStatus) DeepCopy() *HelmReleaseStatus {
+	if in == nil {
+		return nil
+	}
+	out := new(HelmReleaseStatus)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies all properties of HelmRelease into dst.
+func (in *HelmRelease) DeepCopyInto(dst *HelmRelease) {
+	*dst = *in
+	out := dst
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+// DeepCopy returns a deep copy of HelmRelease.
+func (in *HelmRelease) DeepCopy() *HelmRelease {
+	if in == nil {
+		return nil
+	}
+	out := new(HelmRelease)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyObject returns a runtime.Object deep copy of HelmRelease.
+func (in *HelmRelease) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+// DeepCopyInto copies all properties of HelmReleaseList into dst.
+func (in *HelmReleaseList) DeepCopyInto(dst *HelmReleaseList) {
+	*dst = *in
+	out := dst
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		in, out := &in.Items, &dst.Items
+		*out = make([]HelmRelease, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+// DeepCopy returns a deep copy of HelmReleaseList.
+func (in *HelmReleaseList) DeepCopy() *HelmReleaseList {
+	if in == nil {
+		return nil
+	}
+	out := new(HelmReleaseList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyObject returns a runtime.Object deep copy of HelmReleaseList.
+func (in *HelmReleaseList) DeepCopyObject() runtime.Object {
 	if c := in.DeepCopy(); c != nil {
 		return c
 	}

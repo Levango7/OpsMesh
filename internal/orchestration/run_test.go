@@ -251,8 +251,8 @@ func TestReconcile_UpdatesRun(t *testing.T) {
 		prefix := "wf-" + strconv.FormatInt(wf.ID, 10) + "-"
 
 		// 非终态：完成 n1，n2 仍 pending，Reconcile 应保持 running，不写 FinishedAt。
-		st.ClaimTask(a.AgentID)
-		st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n1", AgentID: a.AgentID, ExitCode: 0})
+		claimed1 := st.ClaimTask(a.AgentID)
+		st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n1", AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed1.ClaimEpoch})
 		if err := h.Reconcile(context.Background(), wf.ID, "t1"); err != nil {
 			t.Fatalf("Reconcile mid: %v", err)
 		}
@@ -268,8 +268,8 @@ func TestReconcile_UpdatesRun(t *testing.T) {
 		}
 
 		// 终态：完成 n2，Reconcile 应置 success + FinishedAt 非零。
-		st.ClaimTask(a.AgentID)
-		st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n2", AgentID: a.AgentID, ExitCode: 0})
+		claimed2 := st.ClaimTask(a.AgentID)
+		st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n2", AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed2.ClaimEpoch})
 		if err := h.Reconcile(context.Background(), wf.ID, "t1"); err != nil {
 			t.Fatalf("Reconcile final: %v", err)
 		}
@@ -304,10 +304,10 @@ func TestReconcile_UpdatesRun(t *testing.T) {
 		prefix := "wf-" + strconv.FormatInt(wf.ID, 10) + "-"
 
 		// n1 成功，n2 失败 → Reconcile 应置 failed + FinishedAt 非零。
-		st.ClaimTask(a.AgentID)
-		st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n1", AgentID: a.AgentID, ExitCode: 0})
-		st.ClaimTask(a.AgentID)
-		st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n2", AgentID: a.AgentID, ExitCode: 1})
+		claimed3 := st.ClaimTask(a.AgentID)
+		st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n1", AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed3.ClaimEpoch})
+		claimed4 := st.ClaimTask(a.AgentID)
+		st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n2", AgentID: a.AgentID, ExitCode: 1, ClaimEpoch: claimed4.ClaimEpoch})
 		if err := h.Reconcile(context.Background(), wf.ID, "t1"); err != nil {
 			t.Fatalf("Reconcile failed: %v", err)
 		}

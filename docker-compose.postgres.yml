@@ -1,0 +1,77 @@
+# PostgreSQL 集群
+# 使用方法：docker compose -f docker-compose.postgres.yml up -d
+version: "3.8"
+
+services:
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: postgres-primary
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: opsmesh
+      POSTGRES_USER: opsmesh
+      POSTGRES_PASSWORD: opsmesh123
+    volumes:
+      - postgres-primary-data:/var/lib/postgresql/data
+    networks:
+      - postgres-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opsmesh -d opsmesh"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-replica-1:
+    image: postgres:15-alpine
+    container_name: postgres-replica-1
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: opsmesh
+      POSTGRES_USER: opsmesh
+      POSTGRES_PASSWORD: opsmesh123
+      PGPASSWORD: opsmesh123
+    environment:
+      POSTGRES_HOST: postgres-primary
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: opsmesh
+      POSTGRES_PASSWORD: opsmesh123
+      PGPASSWORD: opsmesh123
+    depends_on:
+      - postgres-primary
+    networks:
+      - postgres-net
+    volumes:
+      - postgres-replica-1-data:/var/lib/postgresql/data
+
+  postgres-replica-2:
+    image: postgres:15-alpine
+    container_name: postgres-replica-2
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: opsmesh
+      POSTGRES_USER: opsmesh
+      POSTGRES_PASSWORD: opsmesh123
+    environment:
+      POSTGRES_HOST: postgres-primary
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: opsmesh
+      POSTGRES_PASSWORD: opsmesh123
+      PGPASSWORD: opsmesh123
+    depends_on:
+      - postgres-primary
+    networks:
+      - postgres-net
+    volumes:
+      - postgres-replica-2-data:/var/lib/postgresql/data
+
+networks:
+  postgres-net:
+    driver: bridge
+
+volumes:
+  postgres-primary-data:
+  postgres-replica-1-data:
+  postgres-replica-2-data:

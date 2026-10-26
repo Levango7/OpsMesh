@@ -57,6 +57,10 @@ type (
 	APIKeyStore           = model.APIKeyStore
 	PluginStore           = model.PluginStore
 	BillingStore          = model.BillingStore
+	CloudAccount          = model.CloudAccount
+	CloudResource         = model.CloudResource
+	CloudAccountStore     = model.CloudAccountStore
+	CloudResourceStore    = model.CloudResourceStore
 	Store                 = model.Store
 )
 
@@ -98,6 +102,8 @@ var (
 	_ APIKeyStore           = (*MemoryStore)(nil)
 	_ PluginStore           = (*MemoryStore)(nil)
 	_ BillingStore          = (*MemoryStore)(nil)
+	_ CloudAccountStore     = (*MemoryStore)(nil)
+	_ CloudResourceStore    = (*MemoryStore)(nil)
 	_ Store                 = (*MemoryStore)(nil)
 
 	_ DeviceStore           = (*SQLStore)(nil)
@@ -135,6 +141,8 @@ var (
 	_ APIKeyStore           = (*SQLStore)(nil)
 	_ PluginStore           = (*SQLStore)(nil)
 	_ BillingStore          = (*SQLStore)(nil)
+	_ CloudAccountStore     = (*SQLStore)(nil)
+	_ CloudResourceStore    = (*SQLStore)(nil)
 	_ Store                 = (*SQLStore)(nil)
 
 	// MultiSchemaStore 全量断言：确保多租户 schema 隔离实现满足各领域小接口。
@@ -174,5 +182,7 @@ var (
 	_ APIKeyStore           = (*MultiSchemaStore)(nil)
 	_ PluginStore           = (*MultiSchemaStore)(nil)
 	_ BillingStore          = (*MultiSchemaStore)(nil)
+	_ CloudAccountStore     = (*MultiSchemaStore)(nil)
+	_ CloudResourceStore    = (*MultiSchemaStore)(nil)
 	_ Store                 = (*MultiSchemaStore)(nil)
 )

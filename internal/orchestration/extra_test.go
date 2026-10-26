@@ -90,24 +90,24 @@ func TestExtra_TaskRetryAndDeadLetter(t *testing.T) {
 	}
 
 	// 第 1 次失败 → retry 1，重回 pending
-	st.ClaimTask(a.AgentID)
-	st.SubmitResult(&proto.TaskResult{TaskID: task.TaskID, AgentID: a.AgentID, ExitCode: 1})
+	claimed1 := st.ClaimTask(a.AgentID)
+	st.SubmitResult(&proto.TaskResult{TaskID: task.TaskID, AgentID: a.AgentID, ExitCode: 1, ClaimEpoch: claimed1.ClaimEpoch})
 	cur := st.TaskByID(task.TaskID)
 	if cur.Status != "pending" || cur.RetryCount != 1 {
 		t.Fatalf("after 1st fail: status=%s retry=%d, want pending/1", cur.Status, cur.RetryCount)
 	}
 
 	// 第 2 次失败 → retry 2
-	st.ClaimTask(a.AgentID)
-	st.SubmitResult(&proto.TaskResult{TaskID: task.TaskID, AgentID: a.AgentID, ExitCode: 1})
+	claimed2 := st.ClaimTask(a.AgentID)
+	st.SubmitResult(&proto.TaskResult{TaskID: task.TaskID, AgentID: a.AgentID, ExitCode: 1, ClaimEpoch: claimed2.ClaimEpoch})
 	cur = st.TaskByID(task.TaskID)
 	if cur.Status != "pending" || cur.RetryCount != 2 {
 		t.Fatalf("after 2nd fail: status=%s retry=%d, want pending/2", cur.Status, cur.RetryCount)
 	}
 
 	// 第 3 次失败 → 达上限，死信
-	st.ClaimTask(a.AgentID)
-	st.SubmitResult(&proto.TaskResult{TaskID: task.TaskID, AgentID: a.AgentID, ExitCode: 1})
+	claimed3 := st.ClaimTask(a.AgentID)
+	st.SubmitResult(&proto.TaskResult{TaskID: task.TaskID, AgentID: a.AgentID, ExitCode: 1, ClaimEpoch: claimed3.ClaimEpoch})
 	cur = st.TaskByID(task.TaskID)
 	if cur.Status != "failed" || !cur.DeadLetter {
 		t.Fatalf("after 3rd fail: status=%s deadLetter=%v, want failed/true", cur.Status, cur.DeadLetter)
@@ -221,24 +221,24 @@ func TestExtra_DAGSerialExecution(t *testing.T) {
 	}
 
 	// done n1 → n2 释放
-	st.ClaimTask(a.AgentID)
-	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n1", AgentID: a.AgentID, ExitCode: 0})
+	claimed4 := st.ClaimTask(a.AgentID)
+	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n1", AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed4.ClaimEpoch})
 	fm = fresh()
 	if fm[prefix+"n2"].Status != "pending" || fm[prefix+"n3"].Status != "blocked" {
 		t.Fatalf("after n1: n2=%s n3=%s, want pending/blocked", fm[prefix+"n2"].Status, fm[prefix+"n3"].Status)
 	}
 
 	// done n2 → n3 释放
-	st.ClaimTask(a.AgentID)
-	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n2", AgentID: a.AgentID, ExitCode: 0})
+	claimed5 := st.ClaimTask(a.AgentID)
+	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n2", AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed5.ClaimEpoch})
 	fm = fresh()
 	if fm[prefix+"n3"].Status != "pending" {
 		t.Fatalf("after n2: n3=%s, want pending", fm[prefix+"n3"].Status)
 	}
 
 	// done n3 → reconcile success
-	st.ClaimTask(a.AgentID)
-	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n3", AgentID: a.AgentID, ExitCode: 0})
+	claimed6 := st.ClaimTask(a.AgentID)
+	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n3", AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed6.ClaimEpoch})
 	if err := h.Reconcile(context.Background(), wf.ID, "t1"); err != nil {
 		t.Fatal(err)
 	}
@@ -284,8 +284,8 @@ func TestExtra_TaskCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	st.ClaimTask(a.AgentID)
-	st.SubmitResult(&proto.TaskResult{TaskID: t3.TaskID, AgentID: a.AgentID, ExitCode: 0})
+	claimed7 := st.ClaimTask(a.AgentID)
+	st.SubmitResult(&proto.TaskResult{TaskID: t3.TaskID, AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed7.ClaimEpoch})
 	if st.CancelTask(t3.TaskID, "t1") {
 		t.Fatal("cancel done should fail")
 	}
@@ -675,8 +675,8 @@ func TestExtra_ReconcileScenarios(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefix := "wf-" + strconv.FormatInt(wf1.ID, 10) + "-"
-	st.ClaimTask(a.AgentID)
-	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n1", AgentID: a.AgentID, ExitCode: 1})
+	claimed8 := st.ClaimTask(a.AgentID)
+	st.SubmitResult(&proto.TaskResult{TaskID: prefix + "n1", AgentID: a.AgentID, ExitCode: 1, ClaimEpoch: claimed8.ClaimEpoch})
 	if err := h.Reconcile(context.Background(), wf1.ID, "t1"); err != nil {
 		t.Fatal(err)
 	}
@@ -696,8 +696,8 @@ func TestExtra_ReconcileScenarios(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefix2 := "wf-" + strconv.FormatInt(wf2.ID, 10) + "-"
-	st.ClaimTask(a.AgentID)
-	st.SubmitResult(&proto.TaskResult{TaskID: prefix2 + "n1", AgentID: a.AgentID, ExitCode: 0})
+	claimed9 := st.ClaimTask(a.AgentID)
+	st.SubmitResult(&proto.TaskResult{TaskID: prefix2 + "n1", AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed9.ClaimEpoch})
 	if err := h.Reconcile(context.Background(), wf2.ID, "t1"); err != nil {
 		t.Fatal(err)
 	}

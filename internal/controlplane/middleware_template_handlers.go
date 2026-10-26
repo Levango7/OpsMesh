@@ -87,6 +87,15 @@ func (s *Server) handleCreateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "scripts is required"})
 		return
 	}
+	// 租户归属闸（P0 跨租户命令注入）：客户端可自带 ID，而 store 以 ID 为主键、
+	// 写入不校验归属 ⇒ 自带一个已属他租户的 ID（如 default 租户的共享预置行 mysql）
+	// 会直接覆盖对方模板，被所有租户部署执行。属他租户一律 404（不泄露存在性）。
+	if tpl.ID != "" {
+		if st := s.store.GetMiddlewareTemplate(tpl.ID); st != nil && st.TenantID != actx.TenantID {
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			return
+		}
+	}
 	tpl.Risk = presets.NormalizeRisk(tpl.Risk)
 	st := middlewareTemplateToStore(&tpl, actx.TenantID)
 	if err := s.store.SaveMiddlewareTemplate(st); err != nil {
@@ -140,8 +149,16 @@ func (s *Server) handleUpdateMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "scripts is required"})
 		return
 	}
-	existing := s.store.GetMiddlewareTemplate(id)
+	// 租户归属闸（P0 跨租户命令注入）：模板行属他租户时按 404 拒绝（不泄露存在性）。
+	// store 以 ID 为主键、写入不校验归属，故此前任何持 middleware:write 的租户都能
+	// 把恶意 scripts 写进 default 租户的共享预置行（如 mysql），被所有租户部署执行。
+	existing := s.getMiddlewareTemplateScoped(actx.TenantID, id)
 	if existing == nil {
+		if s.store.GetMiddlewareTemplate(id) != nil {
+			// 行存在但属他租户 → 404。
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			return
+		}
 		// 回退检查：若为预置模板 ID 且尚未 seed，允许 upsert。
 		if preset := middlewareTemplateByID(id); preset == nil {
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
@@ -185,8 +202,15 @@ func (s *Server) handleDeleteMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	existing := s.store.GetMiddlewareTemplate(id)
+	// 租户归属闸（P0 跨租户命令注入）：模板行属他租户时按 404 拒绝（不泄露存在性），
+	// 防止任一租户删除 default 租户的共享预置行（删除后他人部署即断链）。
+	existing := s.getMiddlewareTemplateScoped(actx.TenantID, id)
 	if existing == nil {
+		if s.store.GetMiddlewareTemplate(id) != nil {
+			// 行存在但属他租户 → 404。
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			return
+		}
 		if middlewareTemplateByID(id) == nil {
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 			return
@@ -223,14 +247,31 @@ func (s *Server) handleMiddlewareTemplateByID(w http.ResponseWriter, r *http.Req
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	_, ok := s.requireTenantContext(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	if _, ok := s.requireProd(w, r, "middleware:read"); !ok {
 		return
 	}
-	t := s.getMiddlewareTemplateByID(id)
+	// 租户归属闸：先按本租户取（属他租户的行与不存在的行都返回 nil）。
+	t := s.getMiddlewareTemplateScoped(actx.TenantID, id)
+	if t == nil {
+		if st := s.store.GetMiddlewareTemplate(id); st != nil {
+			// 行存在但属他租户 → 404（不泄露存在性）。
+			// 例外：default 租户的**共享预置模板行**对所有租户只读可见——列表接口本就按
+			// 「当前租户 + default 租户」合并展示预置模板，详情接口须保持同一语义，
+			// 否则列表里点开任一预置模板必然 404（前端 middleware.js 依赖该详情接口）。
+			if st.TenantID != "default" || middlewareTemplateByID(id) == nil {
+				paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+				return
+			}
+			t = middlewareTemplateFromStore(st)
+		} else {
+			// store 尚未 seed：回退到内存预置模板（与 getMiddlewareTemplateByID 同语义）。
+			t = middlewareTemplateByID(id)
+		}
+	}
 	if t == nil {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return

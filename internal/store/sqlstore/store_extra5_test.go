@@ -135,7 +135,7 @@ func TestSQLStore_ListAlertRules_BadDB(t *testing.T) {
 
 func TestSQLStore_DeleteAlertRule_BadDB(t *testing.T) {
 	s := newSQLStoreWithBadDB()
-	if s.DeleteAlertRule("ar1") {
+	if s.DeleteAlertRule("ar1", "default") {
 		t.Fatal("DeleteAlertRule DB 不可达应返回 false")
 	}
 }

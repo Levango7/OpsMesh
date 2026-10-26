@@ -307,9 +307,18 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 
 // AlertRule 告警规则定义（M7 扩展：可配置的告警触发规则）。
 // 用户可定义基于指标的告警规则，由后台评估循环检查并触发告警。
+//
+// Name（2026-10-21 补）：前端 AlertRulesView.vue 的规则表单首列就是 name（创建/更新
+// 都提交 {name, metric, op, threshold, duration, severity, enabled}），此前结构体无
+// 该字段 ⇒ 提交被 json 静默丢弃，列表 name 列恒空。**注意持久化缺口**：store 的
+// alert_rules 表与 model.AlertRule 都没有 name 列（见 migrations/001_initial.sql），
+// 因此 Name 目前只在「创建/更新的即时响应体」里回显，跨列表/详情读取不保留；
+// 要彻底落地需补 migration（ADD COLUMN name）+ model 字段 + scanAlertRule/INSERT 列，
+// 属存储层迁移、不在本次路由修复范围内（已在交付说明中登记）。
 type AlertRule struct {
 	ID          string    `json:"id"`
 	TenantID    string    `json:"tenantID"`
+	Name        string    `json:"name"`        // 规则展示名（前端表单提交；见上方持久化缺口说明）
 	Metric      string    `json:"metric"`      // 指标名（如 cpu.usage、mem.usage）
 	Op          string    `json:"op"`          // 比较运算符：> >= < <= ==
 	Threshold   float64   `json:"threshold"`   // 阈值
@@ -414,7 +423,7 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusCreated, rule)
 }
 
-// handleAlertRuleRouting 分派 /api/v1/alert-rules/{id} 子路径：DELETE 删除。
+// handleAlertRuleRouting 分派 /api/v1/alert-rules/{id} 子路径：PUT 更新 / DELETE 删除。
 func (s *Server) handleAlertRuleRouting(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/alert-rules/")
 	if id == "" {
@@ -422,11 +431,117 @@ func (s *Server) handleAlertRuleRouting(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	switch r.Method {
+	case http.MethodPut:
+		s.updateAlertRule(w, r, id)
 	case http.MethodDelete:
 		s.deleteAlertRule(w, r, id)
 	default:
 		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// alertRuleUpdateRequest PUT /api/v1/alert-rules/{id} 的请求体。
+//
+// 字段名与 controlplane.AlertRule 的 json tag 对齐：name/metric/op/threshold/
+// forDuration/severity/message/enabled。duration 是前端 AlertRulesView.vue 用的
+// 别名（"5m" 形式），与 forDuration 同义；forDuration 缺省时用 duration 兜底
+// （两个都缺则清空持续时间）。
+type alertRuleUpdateRequest struct {
+	Name        string  `json:"name"`
+	Metric      string  `json:"metric"`
+	Op          string  `json:"op"`
+	Threshold   float64 `json:"threshold"`
+	ForDuration string  `json:"forDuration"`
+	Duration    string  `json:"duration"`
+	Severity    string  `json:"severity"`
+	Message     string  `json:"message"`
+	Enabled     bool    `json:"enabled"`
+}
+
+// updateAlertRule 处理 PUT /api/v1/alert-rules/{id}：更新一条告警规则。
+//
+// 修复（2026-10-21）：此前 handleAlertRuleRouting 只实现 DELETE，PUT 落到 default
+// 分支恒 405，前端 AlertRulesView.vue 的"编辑规则 → updateRule → PUT"永远失败。
+//
+// 语义：全量替换（PUT 语义）——metric/op 必填，op 取值与创建接口一致；
+// ID / TenantID / CreatedAt / CreatedBy 沿用存量记录（调用方不得改归属）。
+// 审计方式与 createAlertRule 一致（action=update_alert_rule + 脱敏 detail）。
+func (s *Server) updateAlertRule(w http.ResponseWriter, r *http.Request, id string) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "alert:write"); !ok {
+		return
+	}
+	var body alertRuleUpdateRequest
+	if err := decodeJSONBody(w, r, &body); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if body.Metric == "" || body.Op == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "metric and op are required"})
+		return
+	}
+	switch body.Op {
+	case ">", ">=", "<", "<=", "==":
+	default:
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "op must be one of >, >=, <, <=, =="})
+		return
+	}
+	if body.Severity == "" {
+		body.Severity = "warning"
+	}
+	forDuration := body.ForDuration
+	if forDuration == "" {
+		forDuration = body.Duration
+	}
+	// 存量规则：不存在或不属于当前租户一律 404。
+	existing := s.store.GetAlertRule(id)
+	if existing == nil {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		return
+	}
+	if actx.TenantID != "" && existing.TenantID != actx.TenantID {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		return
+	}
+	rule := storeAlertRuleToCP(existing)
+	rule.Name = body.Name
+	rule.Metric = body.Metric
+	rule.Op = body.Op
+	rule.Threshold = body.Threshold
+	rule.ForDuration = forDuration
+	rule.Severity = body.Severity
+	rule.Message = body.Message
+	rule.Enabled = body.Enabled
+	// 归属与创建信息不可由请求体改写。
+	rule.ID = id
+	rule.TenantID = existing.TenantID
+	rule.CreatedAt = existing.CreatedAt
+	rule.CreatedBy = existing.CreatedBy
+	if !s.store.UpdateAlertRule(cpAlertRuleToStore(rule)) {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		return
+	}
+	// 响应体以「落库后回读」为准：forDuration 等字段与列表/详情接口**逐字一致**
+	// （存储层是 int 秒，回读统一格式化为 "600s"；若直接回显请求里的 "10m"，
+	// PUT 响应与随后的列表就是两套口径，调用方无从判断哪个是对的）。
+	fresh := s.store.GetAlertRule(id)
+	if fresh == nil {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		return
+	}
+	resp := storeAlertRuleToCP(fresh)
+	// name 无存储列（见 AlertRule.Name 注释的持久化缺口），从请求体回填，
+	// 避免「保存成功 → name 却在响应里消失」的假象。
+	resp.Name = rule.Name
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "update_alert_rule", Target: rule.ID,
+		Detail: sanitizeAuditDetail(fmt.Sprintf("metric=%s op=%s threshold=%g severity=%s", rule.Metric, rule.Op, rule.Threshold, rule.Severity)),
+	})
+	paginate.WriteJSON(w, http.StatusOK, resp)
 }
 
 // deleteAlertRule 删除一条告警规则。
@@ -543,5 +658,5 @@ func (s *Server) removeAlertRule(id, tenantID string) bool {
 	if tenantID != "" && existing.TenantID != tenantID {
 		return false
 	}
-	return s.store.DeleteAlertRule(id)
+	return s.store.DeleteAlertRule(id, tenantID)
 }

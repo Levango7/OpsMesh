@@ -159,8 +159,8 @@ func (s *SQLStore) ListPlugins() []*Plugin {
 	return out
 }
 
-// DeletePlugin 按 ID 删除插件。不存在返回 false。
-func (s *SQLStore) DeletePlugin(id string) bool {
+// DeletePlugin 按 ID 删除插件。不存在返回 false。（tenantID 参数保留用于接口兼容；插件表无 tenant_id 列，不做租户隔离）
+func (s *SQLStore) DeletePlugin(id, tenantID string) bool {
 	res, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM plugins WHERE id=?`, id)
 	if err != nil {

@@ -173,6 +173,70 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusOK, events)
 }
 
+// handleHighRiskAudits 处理 GET /api/v1/audit/high-risk：按租户/时间窗检索高风险审计事件。
+//
+// 高风险操作由 isHighRiskAction 判定（user_delete、group_delete、firewall_add/del、
+// service stop/start/restart、pkg install/remove/upgrade、task create/approve/reject、
+// secret rotate/delete）。事件在写入时已置 HighRisk=true，查询端直接按 high_risk 标记过滤。
+//
+// 查询参数：tenant（仅平台租户可指定他租户）、from/to（RFC3339）、limit（默认 100，上限 1000）。
+// 鉴权：audit:read + 租户上下文；租户口径与 /api/v1/audit/events 对齐（§3.8）。
+func (s *Server) handleHighRiskAudits(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "audit:read"); !ok {
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if actx.TenantID == "" {
+		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
+		return
+	}
+	if r.Method != http.MethodGet {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	q := r.URL.Query()
+	tenant := actx.TenantID
+	if t := q.Get("tenant"); t != "" && tenantOrDefault(tenant) == store.DefaultTenantID {
+		tenant = t // §3.8：仅平台租户可跨租户查询
+	}
+	from := q.Get("from")
+	to := q.Get("to")
+	limit := auditDefaultLimit
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > auditMaxLimit {
+		limit = auditMaxLimit
+	}
+	var since, until time.Time
+	if from != "" {
+		t, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'from' time (use RFC3339): " + err.Error()})
+			return
+		}
+		since = t
+	}
+	if to != "" {
+		t, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'to' time (use RFC3339): " + err.Error()})
+			return
+		}
+		until = t
+	}
+	events := s.store.QueryHighRiskAudits(tenant, since, until, limit)
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"events": events,
+		"count":  len(events),
+	})
+}
+
 // handleAuditVerify 处理 GET /api/v1/audit/verify：校验审计哈希链完整性（P1-3 防篡改）。
 //
 // 查询参数：limit=校验窗口行数（默认 1000，上限 10000）。

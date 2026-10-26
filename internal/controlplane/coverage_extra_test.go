@@ -1211,8 +1211,8 @@ func TestHandleNetworkConnectivity_AgentNotFound(t *testing.T) {
 	req.Header.Set("X-Tenant-ID", "t1")
 	rec := httptest.NewRecorder()
 	s.handleNetworkConnectivity(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status=%d, want 404", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want 403", rec.Code)
 	}
 }
 
@@ -1394,8 +1394,8 @@ func TestHandleNetworkDiagnose_AgentNotFound(t *testing.T) {
 	req.Header.Set("X-Tenant-ID", "default")
 	w := httptest.NewRecorder()
 	s.handleNetworkDiagnose(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("agent not found: status=%d, want 404", w.Code)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("agent not found: status=%d, want 403", w.Code)
 	}
 }
 

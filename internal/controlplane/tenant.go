@@ -190,10 +190,45 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id s
 			s.store.DeleteScript(id, sc.ID)
 		}
 	}
-	// TODO(L3-future): 级联清理 Device/Task/Alert/Agent/Subscription/Invoice/Plugin 等域。
-	// 当前 store 已有部分按 tenantID 的 List/Delete，待 handler 侧逐一补齐聚合调用。
+
+	// 级联清理 Task：按 tenantID 删除所有任务。
+	for _, t := range s.store.AllTasks(id) {
+		if t != nil {
+			s.store.DeleteTask(t.TaskID, id)
+		}
+	}
+
+	// 级联清理 Device：按 tenantID 退役所有设备。
+	for _, seg := range s.store.Snapshot(id) {
+		for i := range seg {
+			d := &seg[i]
+			s.store.RetireDevice(d.DeviceID, id)
+		}
+	}
+
+	// 级联清理 Alert 规则：按 tenantID 删除所有告警规则。
+	for _, r := range s.store.ListAlertRules(id) {
+		if r != nil {
+			s.store.DeleteAlertRule(r.ID, id)
+		}
+	}
+
+	// 级联清理 Plugin：插件为平台级资源，不按租户隔离，跳过。
+	// 级联清理 Subscription/Invoice：按 tenantID 删除。
+	for _, sub := range s.store.ListSubscriptions(id) {
+		if sub != nil {
+			s.store.DeleteSubscription(sub.ID, id)
+		}
+	}
+	for _, inv := range s.store.ListInvoices(id) {
+		if inv != nil {
+			s.store.DeleteInvoice(inv.ID, id)
+		}
+	}
+
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: caller.ID, Action: "tenant_delete", Target: id, Detail: "cascade:apikeys,webhooks,scripts",
+		TenantID: "default", UserID: caller.ID, Action: "tenant_delete", Target: id,
+		Detail: "cascade:apikeys,webhooks,scripts,tasks,devices,alerts,subscriptions,invoices",
 	})
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

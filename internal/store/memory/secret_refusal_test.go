@@ -20,8 +20,8 @@ func TestSetSecretRejectsPlaintext(t *testing.T) {
 	if meta == nil {
 		t.Fatal("引用形态写入应成功")
 	}
-	if got := m.RotateSecret("t1", "k", "plain-again"); got != nil {
-		t.Fatalf("明文轮换应被拒绝，got %+v", got)
+	if got, err := m.RotateSecret("t1", "k", "plain-again", "", ""); err == nil || got != nil {
+		t.Fatalf("明文轮换应被拒绝，got %+v err=%v", got, err)
 	}
 	if item, ok := m.GetSecret("t1", "k"); !ok || item.Value != "${vault:test/k}" {
 		t.Fatalf("被拒绝的轮换不应改动原值: (%+v,%v)", item, ok)

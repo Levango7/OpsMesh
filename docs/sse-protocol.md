@@ -37,12 +37,13 @@ GET /api/v1/events/stream
 
 > **注意**：本协议字段名为 Go 结构体 tag 直出（`tenantID`/`traceID`/`taskID`），并非下划线式，与 REST API 部分端点的命名习惯不同——以本表为准。
 
-## 事件类型枚举（全量 10 种）
+## 事件类型枚举（全量 11 种）
 
 | type | 触发点 | data 关键字段 |
 |---|---|---|
 | `hello` | 连接建立握手 | `{}` |
 | `task_status` | 任务创建 / 领取 / 取消 / 上报结果 | `taskID`、`status`、`agentID` |
+| `task_cancel` | 任务取消信号下发给 agent（Wave 4-D） | `taskID`、`agentID` |
 | `alert_new` | 新告警产生 / ack / silence（列表变更即触发） | `alertID`、`severity`、`ruleID` |
 | `device_online` | agent Register 上线 | `deviceID`、`segment`、`addr` |
 | `device_offline` | 设备退役 / 离线归档 | `deviceID`、`lastSeen` |

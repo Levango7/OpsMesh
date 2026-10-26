@@ -32,3 +32,8 @@ export const systemServiceAction = (body) => postJSON('/system/services', body)
 // journal 日志查询（下发 journalctl 查询任务，结果经 /api/v1/tasks/{id}/result 查询）
 export const queryJournal = (body) => postJSON('/system/journal', body)
 export const getTaskResult = (taskID) => getJSON(`/tasks/${encodeURIComponent(taskID)}/result`)
+
+// 防火墙规则结构化查询（P1-5A）
+// 契约：GET /api/v1/system/firewall/rules?agentID=
+//   → 200 {"agentID":..., "firewall":[{chain,rule,target,protocol,port,source}], "backend":..., "collectedAt":...}
+export const listFirewallRules = (params) => getJSON('/system/firewall/rules', params)

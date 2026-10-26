@@ -1,0 +1,256 @@
+<template>
+  <div class="k8s-lifecycle-page">
+    <div class="page-head">
+      <h2 class="page-title">{{ $t('k8sLifecycle.title') }}</h2>
+      <p class="page-desc">{{ $t('k8sLifecycle.desc') }}</p>
+    </div>
+
+    <div class="card">
+      <div class="flowbar">
+        <h3 class="card__title">{{ $t('k8sLifecycle.upgrade_title') }}</h3>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>{{ $t('k8sLifecycle.cluster_id') }}</label>
+          <input v-model.trim="upgradeForm.clusterId" placeholder="cluster-1" />
+        </div>
+        <div class="field">
+          <label>{{ $t('k8sLifecycle.target_version') }}</label>
+          <select v-model="upgradeForm.targetVersion">
+            <option value="1.30.0">v1.30.0</option>
+            <option value="1.29.4">v1.29.4</option>
+            <option value="1.28.9">v1.28.9</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>{{ $t('k8sLifecycle.cp_node') }}</label>
+          <input v-model.trim="upgradeForm.cpNode" placeholder="192.168.1.10" />
+        </div>
+      </div>
+      <div class="btnbar">
+        <Button variant="primary" size="sm" @click="planUpgrade" :disabled="planning">{{ $t('k8sLifecycle.plan_btn') }}</Button>
+        <Button variant="primary" size="sm" @click="doUpgrade" :disabled="upgrading">{{ $t('k8sLifecycle.upgrade_btn') }}</Button>
+      </div>
+      <div v-if="upgradePlan" class="result-box">
+        <pre class="code-block">{{ upgradePlan.planOutput }}</pre>
+      </div>
+      <div v-if="upgradeStatus" class="status-box">
+        <div class="status-row"><span>{{ $t('k8sLifecycle.phase') }}:</span> {{ upgradeStatus.phase }}</div>
+        <div class="status-row"><span>{{ $t('k8sLifecycle.progress') }}:</span> {{ upgradeStatus.progress }}%</div>
+        <div class="status-row"><span>{{ $t('k8sLifecycle.step') }}:</span> {{ upgradeStatus.currentStep }}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flowbar">
+        <h3 class="card__title">{{ $t('k8sLifecycle.etcd_title') }}</h3>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>{{ $t('k8sLifecycle.cp_node') }}</label>
+          <input v-model.trim="etcdForm.cpNode" placeholder="192.168.1.10" />
+        </div>
+        <div class="field">
+          <label>{{ $t('k8sLifecycle.backup_dir') }}</label>
+          <input v-model.trim="etcdForm.backupDir" placeholder="/var/backups/etcd" />
+        </div>
+      </div>
+      <div class="btnbar">
+        <Button variant="primary" size="sm" @click="doBackup" :disabled="backing">{{ $t('k8sLifecycle.backup_btn') }}</Button>
+        <Button variant="ghost" size="sm" @click="listBackups">{{ $t('k8sLifecycle.list_backups') }}</Button>
+      </div>
+      <div v-if="backupResult" class="result-box">
+        <div class="result-row"><span>{{ $t('k8sLifecycle.backup_path') }}:</span> {{ backupResult.backupPath }}</div>
+        <div class="result-row"><span>{{ $t('k8sLifecycle.backup_size') }}:</span> {{ backupResult.size }} bytes</div>
+      </div>
+      <div v-if="backupList.length" class="backup-list">
+        <div v-for="b in backupList" :key="b" class="backup-item">{{ b }}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flowbar">
+        <h3 class="card__title">{{ $t('k8sLifecycle.cert_title') }}</h3>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>{{ $t('k8sLifecycle.cluster_id') }}</label>
+          <input v-model.trim="certForm.clusterId" placeholder="cluster-1" />
+        </div>
+      </div>
+      <div class="btnbar">
+        <Button variant="primary" size="sm" @click="doCertRotate" :disabled="rotating">{{ $t('k8sLifecycle.cert_rotate_btn') }}</Button>
+      </div>
+      <div v-if="certStatus" class="status-box">
+        <div class="status-row"><span>{{ $t('k8sLifecycle.phase') }}:</span> {{ certStatus.phase }}</div>
+        <div class="status-row"><span>{{ $t('k8sLifecycle.progress') }}:</span> {{ certStatus.progress }}%</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flowbar">
+        <h3 class="card__title">{{ $t('k8sLifecycle.node_scale_title') }}</h3>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>{{ $t('k8sLifecycle.action') }}</label>
+          <select v-model="scaleForm.action">
+            <option value="add">Add</option>
+            <option value="remove">Remove</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>{{ $t('k8sLifecycle.nodes') }}</label>
+          <input v-model.trim="scaleForm.nodes" placeholder="192.168.1.20, 192.168.1.21" />
+        </div>
+        <div class="field">
+          <label>{{ $t('k8sLifecycle.cp_node') }}</label>
+          <input v-model.trim="scaleForm.cpNode" placeholder="192.168.1.10" />
+        </div>
+      </div>
+      <div class="btnbar">
+        <Button variant="primary" size="sm" @click="doNodeScale" :disabled="scaling">{{ $t('k8sLifecycle.scale_btn') }}</Button>
+      </div>
+      <div v-if="scaleResult" class="result-box">
+        <pre class="code-block">{{ JSON.stringify(scaleResult, null, 2) }}</pre>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue'
+import { Button } from '@/components/ui'
+
+const planning = ref(false)
+const upgrading = ref(false)
+const backing = ref(false)
+const rotating = ref(false)
+const scaling = ref(false)
+
+const upgradeForm = ref({ clusterId: '', targetVersion: '1.30.0', cpNode: '', user: 'root', sshKey: '' })
+const etcdForm = ref({ cpNode: '', backupDir: '/var/backups/etcd' })
+const certForm = ref({ clusterId: '' })
+const scaleForm = ref({ action: 'add', nodes: '', cpNode: '', joinCmd: '' })
+
+const upgradePlan = ref(null)
+const upgradeStatus = ref(null)
+const backupResult = ref(null)
+const backupList = ref([])
+const certStatus = ref(null)
+const scaleResult = ref(null)
+
+async function planUpgrade() {
+  planning.value = true
+  try {
+    const r = await fetch('/api/v1/k8s/lifecycle/upgrade/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clusterId: upgradeForm.value.clusterId,
+        targetVersion: upgradeForm.value.targetVersion,
+        host: upgradeForm.value.cpNode,
+        user: upgradeForm.value.user,
+        sshKey: upgradeForm.value.sshKey
+      })
+    })
+    upgradePlan.value = await r.json()
+  } catch { /* ignore */ }
+  finally { planning.value = false }
+}
+
+async function doUpgrade() {
+  upgrading.value = true
+  try {
+    const r = await fetch('/api/v1/k8s/lifecycle/upgrade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clusterId: upgradeForm.value.clusterId,
+        targetVersion: upgradeForm.value.targetVersion
+      })
+    })
+    upgradeStatus.value = await r.json()
+  } catch { /* ignore */ }
+  finally { upgrading.value = false }
+}
+
+async function doBackup() {
+  backing.value = true
+  try {
+    const r = await fetch('/api/v1/k8s/lifecycle/etcd-backup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clusterId: 'cluster-1',
+        cpNode: etcdForm.value.cpNode,
+        backupDir: etcdForm.value.backupDir
+      })
+    })
+    backupResult.value = await r.json()
+  } catch { /* ignore */ }
+  finally { backing.value = false }
+}
+
+async function listBackups() {
+  try {
+    const r = await fetch(`/api/v1/k8s/lifecycle/etcd-backups?cpNode=${encodeURIComponent(etcdForm.value.cpNode)}&backupDir=${encodeURIComponent(etcdForm.value.backupDir)}`)
+    const data = await r.json()
+    backupList.value = data.backups || []
+  } catch { /* ignore */ }
+}
+
+async function doCertRotate() {
+  rotating.value = true
+  try {
+    const r = await fetch('/api/v1/k8s/lifecycle/cert-rotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clusterId: certForm.value.clusterId })
+    })
+    certStatus.value = await r.json()
+  } catch { /* ignore */ }
+  finally { rotating.value = false }
+}
+
+async function doNodeScale() {
+  scaling.value = true
+  try {
+    const nodes = scaleForm.value.nodes.split(',').map(s => s.trim()).filter(Boolean)
+    const r = await fetch('/api/v1/k8s/lifecycle/node-scale', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clusterId: 'cluster-1',
+        action: scaleForm.value.action,
+        nodes,
+        cpNode: scaleForm.value.cpNode,
+        joinCmd: scaleForm.value.joinCmd
+      })
+    })
+    scaleResult.value = await r.json()
+  } catch { /* ignore */ }
+  finally { scaling.value = false }
+}
+</script>
+
+<style scoped>
+.k8s-lifecycle-page { max-width: 900px; margin: 0 auto; }
+.page-head { margin-bottom: 20px; }
+.page-title { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
+.page-desc { margin: 0; color: var(--color-ink-muted, #6b7280); font-size: 13px; }
+.card { background: var(--color-surface-1, #ffffff); border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); padding: 16px 18px; margin-bottom: 16px; }
+.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
+.row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; min-width: 200px; }
+.field label { font-size: 11px; font-weight: 500; color: var(--color-ink-muted, #6b7280); }
+.field input, .field select { padding: 7px 9px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 13px; background: var(--color-surface-1, #ffffff); }
+.btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.result-box { margin-top: 12px; padding: 12px; background: var(--color-surface-2, #f7f9fc); border-radius: var(--radius-sm, 6px); }
+.code-block { font-size: 12px; font-family: var(--font-family-mono); white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow: auto; }
+.status-box { margin-top: 12px; padding: 12px; background: var(--color-surface-2, #f7f9fc); border-radius: var(--radius-sm, 6px); }
+.status-row { display: flex; gap: 8px; margin-bottom: 4px; font-size: 13px; }
+.backup-list { margin-top: 8px; }
+.backup-item { font-size: 12px; padding: 4px 8px; background: var(--color-surface-2, #f7f9fc); border-radius: 4px; margin-bottom: 4px; }
+.muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
+</style>

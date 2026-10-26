@@ -186,4 +186,10 @@ onMounted(() => {
 .history-cmd { font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-platform { font-size: 11.5px; color: var(--text-3); }
 .history-time { font-size: 11.5px; color: var(--text-3); }
+.row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
 </style>

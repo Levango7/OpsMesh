@@ -109,6 +109,33 @@
   全部块随本版发货）。
 
 ## [0.16.0] — 2026-10-16（TD-95 收口：镜像发布抽成复用件 _publish-image.yml 并在 main 验绿；方向① 经评估主动不做）
+## [Unreleased] — 2026-10-25（K8s 扩展资源与 OS/中间件/硬件运维补全）
+
+### Added
+- **K8s 扩展资源**: 15 个新资源类型 (NetworkPolicy/IngressClass/StorageClass/PDB/ServiceAccount/EndpointSlice/ResourceQuota/LimitRange/PriorityClass/RuntimeClass/Lease/Event/MutatingWebhook/ValidatingWebhook/CSR)，后端 `k8s_resources_ext.go` + 前端 35 个资源 tab
+- **OS 运维**: `os_ext_ops.go` (用户/磁盘/挂载/网络/SSH/定时任务/日志轮转/开机启动)、`os_platform_ops.go` (硬件盘点/磁盘健康/RAID)、`os_tuning_ops.go` (内核调优/应用调优/存储调优/证书/资源/系统备份)
+- **Git 版本控制**: `git_unix_ops.go` (clone/pull/push/commit/branch/tag/log/diff/checkout/status)
+- **国产/信创**: `domestic_ops.go` (统信UOS/麒麟/openEuler 检测、鲲鹏/昇腾/寒武纪/摩尔线程检测、GaussDB/Kingbase/Dameng、TongWeb/BES/InforSuite)
+- **消息队列扩展**: RocketMQ/Pulsar/ActiveMQ/RabbitMQ 完整运维 (HA/扩缩容/升级/备份/调优/安全/可观测性)
+- **缓存**: Redis (Cluster/Sentinel/持久化/调优/监控/安全/备份) + Memcached + Ignite
+- **ELK**: Elasticsearch/Logstash/Kibana/Filebeat/OpenSearch 25 个 handler
+- **向量/图数据库**: Milvus/Qdrant/pgvector + Neo4j/NebulaGraph 扩缩容/升级/备份/用户/索引/Schema
+- **OLAP**: ClickHouse/Doris (FE/BE)/Trino 集群/监控/备份/升级/物化视图
+- **分布式文件系统**: Ceph/GlusterFS/HDFS/SeaweedFS + FastDFS
+- **数据管道**: Airflow/Spark/Flink/dbt/Debezium + Hive/Iceberg/Delta + StarRocks/Doris/ClickHouse
+- **脚本编译**: 15 种脚本语言 + 6 种编译语言 + 9 种构建工具 (Maven/Gradle/npm/Cargo/Make/CMake/Go/Python)
+- **Docker Compose**: 11 个多集群部署文件 (Kafka/GPU/ELK/MySQL/PostgreSQL/MongoDB/Redis/Memcached/AWS/Cloud/CI)
+
+### Changed
+- `middleware_ops.go` 拆分为 6 个域文件 (kafka/zookeeper/redis/rabbitmq/activemq)
+- InfraConsoleView 改进: 域搜索、破坏性操作确认、任务自动轮询、焦点样式、CSS 变量修复
+- 前端 ESLint 修复: 29 个 no-empty 错误 + 24 个 no-unused-vars 警告清零
+
+### Fixed
+- 修复 `registerOSExtRoutes` 重复注册
+- 修复 K8s pod listing 增加 containers/probes/affinity/tolerations 字段
+
+## [Unreleased] — 2026-10-16（TD-95 收口：镜像发布抽成复用件 _publish-image.yml 并在 main 验绿；方向① 经评估主动不做）
 
 - **Phase A（已落地 + runner 验绿）**：把 ci.yml 的 `image`/`image-agent` 两个 ~400 行镜像发布 job
   逐步骤（build→Trivy→syft SBOM→keyless cosign sign+attest→attest 自验→提权 `:<版本>`/`:latest`→digest

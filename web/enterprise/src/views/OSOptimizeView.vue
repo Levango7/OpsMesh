@@ -5,20 +5,22 @@
 
     <!-- 分类筛选 -->
     <div class="cat-filter">
-      <button
+      <Button
         v-for="cat in categories"
         :key="cat"
+        :variant="store.category === cat ? 'primary' : 'ghost'"
+        size="sm"
         class="cat-btn"
         :class="{ active: store.category === cat }"
         @click="store.setCategory(cat)"
-      >{{ $t('osopt.category.' + cat) }}</button>
+      >{{ $t('osopt.category.' + cat) }}</Button>
     </div>
 
     <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <!-- 模板列表 -->
     <div class="card">
-      <h3>{{ $t('osopt.title') }}</h3>
+      <h3 class="card__title">{{ $t('osopt.title') }}</h3>
       <div v-if="store.loading && !store.templates.length" class="muted">{{ $t('osopt.loading') }}</div>
       <DataTable
         v-else
@@ -36,8 +38,8 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
-            <button class="xs outline" @click="onView(row.id)">{{ $t('osopt.view') }}</button>
-            <button class="xs primary" @click="onExecute(row.id)">{{ $t('osopt.execute') }}</button>
+            <Button variant="ghost" size="sm" @click="onView(row.id)">{{ $t('osopt.view') }}</Button>
+            <Button variant="primary" size="sm" @click="onExecute(row.id)">{{ $t('osopt.execute') }}</Button>
           </div>
         </template>
       </DataTable>
@@ -70,7 +72,7 @@
           </DataTable>
         </div>
         <div class="btnbar">
-          <button class="primary" @click="onExecute(tpl.id)">{{ $t('osopt.execute') }}</button>
+          <Button variant="primary" size="sm" @click="onExecute(tpl.id)">{{ $t('osopt.execute') }}</Button>
         </div>
       </div>
     </DetailDrawer>
@@ -80,7 +82,7 @@
       <div class="modal">
         <header class="modal-head">
           <h3>{{ $t('osopt.execTitle') }}</h3>
-          <button class="xs outline" @click="closeExec">✕</button>
+          <Button variant="ghost" size="sm" @click="closeExec">✕</Button>
         </header>
         <div class="modal-body">
           <p class="muted">{{ $t('osopt.execHint') }}</p>
@@ -109,8 +111,8 @@
             <textarea v-model="execForm.rawParams" rows="3" placeholder="param1&#10;param2"></textarea>
           </div>
           <div class="btnbar">
-            <button class="primary" @click="confirmExec" :disabled="executing">{{ $t('osopt.confirm') }}</button>
-            <button class="outline" @click="closeExec">{{ $t('osopt.cancel') }}</button>
+            <Button variant="primary" size="sm" @click="confirmExec" :disabled="executing">{{ $t('osopt.confirm') }}</Button>
+            <Button variant="ghost" size="sm" @click="closeExec">{{ $t('osopt.cancel') }}</Button>
           </div>
           <p v-if="execMsg" :class="['msg', execOk ? 'ok' : 'err']">{{ execMsg }}</p>
           <div v-if="execLog" class="log-block">
@@ -134,6 +136,7 @@ import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
+import { Button } from '@/components/ui'
 
 const store = useOSOptimizeStore()
 
@@ -304,6 +307,14 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.card {
+  background: var(--color-surface-1, var(--surface-l1, #ffffff));
+  border: 1px solid var(--color-hairline, var(--border-primary, #d3dbe8));
+  border-radius: var(--radius-md, 8px);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
 .cat-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
 .cat-btn {
   padding: 5px 12px; font-size: 12.5px; border-radius: 999px;

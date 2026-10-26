@@ -1,0 +1,73 @@
+# MongoDB 集群
+# 使用方法：docker compose -f docker-compose.mongodb.yml up -d
+version: "3.8"
+
+services:
+  mongodb-1:
+    image: mongo:7.0
+    container_name: mongodb-1
+    ports:
+      - "27017:27017"
+    command: mongod --replSet rs0 --bind_ip_all --auth
+    volumes:
+      - mongodb-1-data:/data/db
+    networks:
+      - mongo-net
+    healthcheck:
+      test: echo 'db.runCommand({ping:1}).ok' | mongosh --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  mongodb-2:
+    image: mongo:7.0
+    container_name: mongodb-2
+    ports:
+      - "27018:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=opsmesh
+    command: mongod --replSet rs0 --bind_ip_all --auth
+    volumes:
+      - mongodb-2-data:/data/db
+    depends_on:
+      - mongodb-1
+    networks:
+      - mongo-net
+
+  mongodb-3:
+    image: mongo:7.0
+    container_name: mongodb-3
+    ports:
+      - "27019:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=opsmesh
+    command: mongod --replSet rs0 --bind_ip_all --auth
+    volumes:
+      - mongodb-3-data:/data/db
+    depends_on:
+      - mongodb-1
+    networks:
+      - mongo-net
+
+  mongodb-config:
+    image: mongo:7.0
+    container_name: mongodb-config
+    ports:
+      - "27019:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=config
+    command: mongod --configsvr --replSet rs0 --bind_ip_all --auth
+    volumes:
+      - mongodb-config-data:/data/db
+    networks:
+      - mongo-net
+
+networks:
+  mongo-net:
+    driver: bridge
+
+volumes:
+  mongodb-1-data:
+  mongodb-2-data:
+  mongodb-3-data:
+  mongodb-config-data:

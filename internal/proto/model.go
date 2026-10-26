@@ -230,6 +230,15 @@ const (
 	TaskTypeFile    = "file"    // 写文件：Content 为内容，Path 为目标路径（原子写入）
 )
 
+// ScriptPathPlaceholder 是任务 Command 字段中「脚本文件路径」的占位符。
+//
+// 多行脚本任务（OS 优化模板 / 中间件部署模板）的 Command 形态为
+// `sh {script}`：控制面不感知 agent 侧临时文件的真实路径，只写占位符；
+// agent 执行前把占位符替换成自己落盘的临时脚本路径（见 internal/agent）。
+// 该 Command 仍会走 agent 端既有的元字符拦截与命令白名单校验（单行、无元字符），
+// 因此配置了 --agent-shell-whitelist 的节点需把 sh 列入白名单才能执行脚本类任务。
+const ScriptPathPlaceholder = "{script}"
+
 // Task 控制面下发给 agent 的自动化任务。
 //
 // ⚠️ 演进须同步：本 struct 字段变更须同步 canonical 契约 proto/opsmesh/task/v1/task.proto
@@ -279,6 +288,28 @@ type Task struct {
 	ApprovedAt       time.Time `json:"approvedAt"`
 	// BatchID 批量任务分组标识（批量下发时同一批次的任务共享同一 batch_id）。
 	BatchID string `json:"batchID,omitempty"`
+	// Priority 任务优先级（0-10，数字越大越优先）。调度器按优先级降序选取 pending 任务。
+	Priority int `json:"priority,omitempty"`
+	// IdempotencyKey 幂等键。客户端生成，控制面按 (tenantID, idempotencyKey) 去重；
+	// 同一 key 的重复 CreateTask 返回已存在任务，不重复下发。
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+	// StatusMachine 显式状态机枚举值，替代原始字符串 status。
+	// 枚举：pending|claimed|running|done|failed|cancelled|blocked|pending_approval|rejected|dead_letter
+	StatusMachine string `json:"statusMachine,omitempty"`
+	// ScriptBody 多行脚本体（独立于 Command 的第二条通道）。
+	//
+	// 为什么要有它：Command 走「内联单行命令」通道，agent 端 checkShellMetachars
+	// 会拦掉换行（"ls\nrm -rf /" 类拼接注入），而预置 OS 优化模板 / 中间件部署模板
+	// 天然是多行 bash（heredoc、函数定义、for 循环）——两者直接冲突，导致
+	// 「OS 优化」等模板 100% 失败。ScriptBody 承载整段脚本，**不参与内联换行禁令**：
+	// agent 把它落成临时文件后以 `sh <file>` 执行，执行完即删。
+	//
+	// 安全边界（与 Command 通道互不越界）：
+	//   - Command 字段仍按原样校验（元字符拦截 + 命令白名单），单行路径行为不变；
+	//   - ScriptBody 只由控制面模板路径写入（OS 模板 execute / 中间件 deploy/uninstall），
+	//     普通任务创建接口的请求体**不含**该字段，外部无法注入；
+	//   - 模板参数值在替换进脚本体之前统一过 presets.ValidateShellSafeValues。
+	ScriptBody string `json:"scriptBody,omitempty"`
 }
 
 // AuditEvent 内核产出的审计事件（等保三级：操作 100% 留痕）。
@@ -294,6 +325,10 @@ type AuditEvent struct {
 	Target    string    `json:"target"` // agentID / taskID
 	Detail    string    `json:"detail"`
 	CreatedAt time.Time `json:"createdAt"`
+	// HighRisk 标记本条审计事件是否为高风险操作（user_delete、firewall_add/del、service stop/start/restart、
+	// pkg install/remove/upgrade、task create/approve/reject、secret rotate/delete 等）。
+	// 控制面经 AuditHighRisk 写入时置 true，供 /api/v1/audit/high-risk 专项查询与链式校验。
+	HighRisk bool `json:"highRisk"`
 	// TraceID 关联 OTel 链路追踪的 trace_id（32 字符 hex），空串表示无关联（向后兼容）。
 	// 由控制面 handler / gRPC handler 在构造 AuditEvent 时从 ctx 提取注入。
 	TraceID string `json:"traceID,omitempty"`

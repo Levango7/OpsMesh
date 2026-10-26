@@ -100,7 +100,7 @@
 
 <script setup>
 import { reactive, ref } from 'vue'
-import { listFluxApps, createFluxApp, getFluxApp, updateFluxApp, deleteFluxApp, syncFluxApp } from '@/api/flux'
+import { listFluxApps, createFluxApp, updateFluxApp, deleteFluxApp, syncFluxApp } from '@/api/flux'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
 import DataTable from '@/components/DataTable.vue'
@@ -131,7 +131,7 @@ async function fetchApps() {
   try {
     const resp = await listFluxApps()
     apps.value = (resp && resp.apps) || []
-  } catch (e) {
+  } catch {
     apps.value = []
   } finally {
     loading.value = false

@@ -26,6 +26,7 @@ type User struct {
 	PasswordHash       string `json:"-"`
 	Status             string
 	RoleIDs            []string
+	TenantID           string
 	CreatedAt          time.Time
 	MustChangePassword bool
 }

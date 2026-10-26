@@ -88,6 +88,15 @@ func (s *Server) handleCreateOSTemplate(w http.ResponseWriter, r *http.Request) 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "commands is required"})
 		return
 	}
+	// 租户归属闸（P0 跨租户命令注入）：客户端可自带 ID，而 store 以 ID 为主键、
+	// 写入不校验归属 ⇒ 自带一个已属他租户的 ID（如 default 租户的共享预置行）会
+	// 直接覆盖对方模板，被所有租户执行。属他租户一律 404（不泄露存在性）。
+	if tpl.ID != "" {
+		if st := s.store.GetOSTemplate(tpl.ID); st != nil && st.TenantID != actx.TenantID {
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			return
+		}
+	}
 	// 基本字段校验：risk 必须为 low/medium/high（空则归一为 low）。
 	tpl.Risk = presets.NormalizeRisk(tpl.Risk)
 	st := osTemplateToStore(&tpl, actx.TenantID)
@@ -144,9 +153,16 @@ func (s *Server) handleUpdateOSTemplate(w http.ResponseWriter, r *http.Request, 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "commands is required"})
 		return
 	}
-	// 检查存在性（含回退预置模板：预置模板在 store 中已 seed，此处能查到）。
-	existing := s.store.GetOSTemplate(id)
+	// 租户归属闸（P0 跨租户命令注入）：模板行属他租户时按 404 拒绝（不泄露存在性）。
+	// store 以 ID 为主键、写入不校验归属，故此前任何持 os:write 的租户都能把恶意
+	// commands 写进 default 租户的共享预置行，被所有租户执行。
+	existing := s.getOSTemplateScoped(actx.TenantID, id)
 	if existing == nil {
+		if s.store.GetOSTemplate(id) != nil {
+			// 行存在但属他租户 → 404。
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			return
+		}
 		// 回退检查：若为预置模板 ID 且尚未 seed，允许"upsert"（首次写入 store）。
 		if preset := osTemplateByID(id); preset == nil {
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
@@ -190,8 +206,15 @@ func (s *Server) handleDeleteOSTemplate(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	existing := s.store.GetOSTemplate(id)
+	// 租户归属闸（P0 跨租户命令注入）：模板行属他租户时按 404 拒绝（不泄露存在性），
+	// 防止任一租户删除 default 租户的共享预置行（删除后他人执行即断链）。
+	existing := s.getOSTemplateScoped(actx.TenantID, id)
 	if existing == nil {
+		if s.store.GetOSTemplate(id) != nil {
+			// 行存在但属他租户 → 404。
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+			return
+		}
 		// 回退检查：预置模板 ID 但未 seed → 视为不存在。
 		if osTemplateByID(id) == nil {
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
@@ -229,14 +252,30 @@ func (s *Server) handleOSTemplateByID(w http.ResponseWriter, r *http.Request, id
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	_, ok := s.requireTenantContext(w, r)
+	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
 		return
 	}
 	if _, ok := s.requireProd(w, r, "os:read"); !ok {
 		return
 	}
-	t := s.getOSTemplateByID(id)
+	// 租户归属闸：先按本租户取（属他租户的行与不存在的行都返回 nil）。
+	t := s.getOSTemplateScoped(actx.TenantID, id)
+	if t == nil {
+		if st := s.store.GetOSTemplate(id); st != nil {
+			// 行存在但属他租户 → 404（不泄露存在性）。
+			// 例外：default 租户的**共享预置模板行**对所有租户只读可见——列表接口本就按
+			// 「当前租户 + default 租户」合并展示预置模板，详情接口须保持同一语义。
+			if st.TenantID != "default" || osTemplateByID(id) == nil {
+				paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
+				return
+			}
+			t = osTemplateFromStore(st)
+		} else {
+			// store 尚未 seed：回退到内存预置模板（与 getOSTemplateByID 同语义）。
+			t = osTemplateByID(id)
+		}
+	}
 	if t == nil {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 		return
@@ -285,7 +324,16 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 	// 参数验证与 command 拼接：
 	// - 新模式（模板有 Params 定义）：用 paramsMap 做占位符替换 + 验证；
 	// - 旧模式（无 Params 定义）：用 params []string 通过 `set --` 注入位置参数。
-	var command string
+	//
+	// 两条分支最终都经 presets.SplitScriptCommand 拆分：
+	//   - 脚本体多行（预置模板全是多行 bash）→ 脚本体进 ScriptBody 通道，
+	//     Command 退化成单行调用（`sh {script}`）；
+	//   - 脚本体单行 → 留在内联 Command 通道，行为与改造前一致。
+	// 内联命令通道对换行是硬拦截（agent 端 checkShellMetachars），多行内容留在那里必然被拒。
+	var (
+		command    string
+		scriptBody string
+	)
 	if len(tpl.Params) > 0 {
 		paramsMap := body.ParamsMap
 		if paramsMap == nil {
@@ -316,24 +364,37 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		command = presets.RenderOSScript(tpl.Commands, paramsMap)
+		scriptBody, command = presets.SplitScriptCommand(presets.RenderOSScript(tpl.Commands, paramsMap))
 	} else {
-		command = presets.BuildOSExecuteCommand(tpl.Commands, body.Params)
+		// 旧模式：位置参数同样要过 shell 元字符校验（值会被注入脚本体）。
+		if err := presets.ValidateShellSafeParamList(body.Params); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		scriptBody, command = presets.BuildOSExecuteCommand(tpl.Commands, body.Params)
 	}
 	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	// 统一走 requireTenantAgent 防线（P0-6 多租户隔离）。
 	targetTenant := actx.TenantID
-	agent := s.lookupAgent(body.AgentID)
-	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
-		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
+	if _, ok := s.requireTenantAgent(w, body.AgentID, actx.TenantID); !ok {
 		return
 	}
-	// 拼接最终 command：通过 `set --` 注入位置参数，使脚本内 $1/$2/... 可用。
+	// 下发任务：多行脚本体走 ScriptBody 通道（agent 落临时文件后以 sh <file> 执行），
+	// Command 保持单行（内联通道的元字符/白名单校验对它照常生效）。
 
+	// Quota gate: OS template execute creates a task.
+	if s.quotaMgr != nil {
+		if err := s.quotaMgr.CheckTask(actx.TenantID); err != nil {
+			paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	task, err := s.store.CreateTask(&proto.Task{
 		AgentID:    body.AgentID,
 		TenantID:   targetTenant,
 		Type:       proto.TaskTypeShell,
 		Command:    command,
+		ScriptBody: scriptBody,
 		MaxRetries: s.cfg.TaskMaxRetries,
 	})
 	if err != nil {

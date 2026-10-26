@@ -93,21 +93,155 @@ export const getK8sSecrets = (clusterID, namespace) =>
 export const getK8sNodes = (clusterID) =>
   getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/nodes`)
 
-// 兼容旧引用：聚合对象形式
-export const k8sApi = {
-  getK8sClusters,
-  createK8sCluster,
-  deleteK8sCluster,
-  testK8sCluster,
-  getK8sNamespaces,
-  getK8sPods,
-  getK8sPodLogs,
-  deleteK8sPod,
-  getK8sDeployments,
-  scaleK8sDeployment,
-  restartK8sDeployment,
-  getK8sServices,
-  getK8sConfigMaps,
-  getK8sSecrets,
-  getK8sNodes
-}
+// 列出 statefulset（按 namespace 过滤）
+export const getK8sStatefulSets = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/statefulsets`, namespace ? { namespace } : undefined)
+
+// 扩缩容 statefulset
+export const scaleK8sStatefulSet = (clusterID, ns, name, replicas) =>
+  postJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/statefulsets/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/scale`, { replicas })
+
+// 重启 statefulset
+export const restartK8sStatefulSet = (clusterID, ns, name) =>
+  postJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/statefulsets/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/restart`, {})
+
+// 列出 daemonset（按 namespace 过滤）
+export const getK8sDaemonSets = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/daemonsets`, namespace ? { namespace } : undefined)
+
+// 重启 daemonset
+export const restartK8sDaemonSet = (clusterID, ns, name) =>
+  postJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/daemonsets/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/restart`, {})
+
+// 列出 replicaset（按 namespace 过滤）
+export const getK8sReplicaSets = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/replicasets`, namespace ? { namespace } : undefined)
+
+// 列出 job（按 namespace 过滤）
+export const getK8sJobs = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/jobs`, namespace ? { namespace } : undefined)
+
+// 删除 job
+export const deleteK8sJob = (clusterID, ns, name) =>
+  deleteJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`)
+
+// 列出 cronjob（按 namespace 过滤）
+export const getK8sCronJobs = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/cronjobs`, namespace ? { namespace } : undefined)
+
+// 删除 cronjob
+export const deleteK8sCronJob = (clusterID, ns, name) =>
+  deleteJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/cronjobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`)
+
+// 列出 ingress（按 namespace 过滤）
+export const getK8sIngresses = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/ingresses`, namespace ? { namespace } : undefined)
+
+// 列出 pvc（按 namespace 过滤）
+export const getK8sPVCs = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/pvcs`, namespace ? { namespace } : undefined)
+
+// 列出 pv
+export const getK8sPVs = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/pvs`)
+
+// 列出 hpa（按 namespace 过滤）
+export const getK8sHPAs = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/hpas`, namespace ? { namespace } : undefined)
+
+// 列出 role（按 namespace 过滤）
+export const getK8sRoles = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/roles`, namespace ? { namespace } : undefined)
+
+// 列出 rolebinding（按 namespace 过滤）
+export const getK8sRoleBindings = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/rolebindings`, namespace ? { namespace } : undefined)
+
+// 列出 clusterrole
+export const getK8sClusterRoles = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/clusterroles`)
+
+// 列出 clusterrolebinding
+export const getK8sClusterRoleBindings = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/clusterrolebindings`)
+
+// 列出 crd
+export const getK8sCRDs = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/crds`)
+
+// ---------- K8s 资源管理（扩展资源类型） ----------
+
+// 列出 networkpolicy（按 namespace 过滤）
+export const getK8sNetworkPolicies = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/networkpolicies`, namespace ? { namespace } : undefined)
+
+// 列出 ingressclass（集群级）
+export const getK8sIngressClasses = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/ingressclasses`)
+
+// 列出 storageclass（集群级）
+export const getK8sStorageClasses = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/storageclasses`)
+
+// 列出 poddisruptionbudget（按 namespace 过滤）
+export const getK8sPDBs = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/pdbs`, namespace ? { namespace } : undefined)
+
+// 列出 serviceaccount（按 namespace 过滤）
+export const getK8sServiceAccounts = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/serviceaccounts`, namespace ? { namespace } : undefined)
+
+// 列出 endpointslice（按 namespace 过滤）
+export const getK8sEndpointSlices = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/endpointslices`, namespace ? { namespace } : undefined)
+
+// 列出 resourcequota（按 namespace 过滤）
+export const getK8sResourceQuotas = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/resourcequotas`, namespace ? { namespace } : undefined)
+
+// 列出 limitrange（按 namespace 过滤）
+export const getK8sLimitRanges = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/limitranges`, namespace ? { namespace } : undefined)
+
+// 列出 priorityclass（集群级）
+export const getK8sPriorityClasses = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/priorityclasses`)
+
+// 列出 runtimeclass（集群级）
+export const getK8sRuntimeClasses = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/runtimeclasses`)
+
+// 列出 lease（按 namespace 过滤）
+export const getK8sLeases = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/leases`, namespace ? { namespace } : undefined)
+
+// 列出 event（按 namespace 过滤）
+export const getK8sEvents = (clusterID, namespace) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/events`, namespace ? { namespace } : undefined)
+
+// 列出 mutatingwebhookconfiguration（集群级）
+export const getK8sMutatingWebhooks = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/mutatingwebhooks`)
+
+// 列出 validatingwebhookconfiguration（集群级）
+export const getK8sValidatingWebhooks = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/validatingwebhooks`)
+
+// 列出 certificatesigningrequest（集群级）
+export const getK8sCSRs = (clusterID) =>
+  getJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/csrs`)
+
+// 创建 namespace
+export const createK8sNamespace = (clusterID, name) =>
+  postJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/namespaces`, { name })
+
+// 删除 namespace
+export const deleteK8sNamespace = (clusterID, name) =>
+  deleteJSON(`/k8s/clusters/${encodeURIComponent(clusterID)}/namespaces/${encodeURIComponent(name)}`)
+
+// 部署 K8s 集群（裸机/VM → 完整集群）
+export const deployK8sCluster = (spec) => postJSON('/k8s/clusters/deploy', spec)
+
+// 查询部署状态
+export const getK8sClusterDeployStatus = (deployID) =>
+  getJSON('/k8s/clusters/deploy/status', { deployID })

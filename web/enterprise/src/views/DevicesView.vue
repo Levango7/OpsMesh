@@ -1,9 +1,13 @@
 <template>
-  <div>
-    <h2 data-testid="devices-title">{{ $t('devices.title') }}</h2>
-    <p class="muted">{{ $t('devices.subtitle') }}</p>
+  <div class="devices-view">
+    <div class="devices__header">
+      <h2 data-testid="devices-title" class="devices__title">{{ $t('devices.title') }}</h2>
+      <p class="devices__subtitle">{{ $t('devices.subtitle') }}</p>
+    </div>
 
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
+    <div v-if="store.error" class="poll-err">
+      <Icon name="warning" :size="14" /> {{ store.error }}
+    </div>
 
     <div v-if="store.loading && !segments.length" class="muted">{{ $t('common.loading') }}</div>
     <div v-else-if="!segments.length" class="muted" data-testid="devices-empty">
@@ -11,7 +15,7 @@
     </div>
 
     <div v-for="seg in segments" :key="seg.name" class="seg-block">
-      <h3>{{ $t('devices.segment', { name: seg.name, n: seg.devices.length }) }}</h3>
+      <h3 class="seg-title">{{ $t('devices.segment', { name: seg.name, n: seg.devices.length }) }}</h3>
       <DataTable
         :columns="columns"
         :rows="seg.devices"
@@ -33,48 +37,98 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
-            <button class="xs primary" @click="goDetail(row.deviceID)" :title="$t('devices.detail')" data-testid="device-detail-btn">
+            <Button
+              variant="primary"
+              size="sm"
+              @click="goDetail(row.deviceID)"
+              :title="$t('devices.detail')"
+              data-testid="device-detail-btn"
+            >
               {{ $t('devices.detail') }}
-            </button>
-            <button class="xs outline" @click="dispatchTask(row.deviceID)" :title="$t('devices.dispatch_task')" data-testid="device-dispatch-btn">
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              @click="dispatchTask(row.deviceID)"
+              :title="$t('devices.dispatch_task')"
+              data-testid="device-dispatch-btn"
+            >
               {{ $t('devices.dispatch_task') }}
-            </button>
+            </Button>
           </div>
         </template>
       </DataTable>
     </div>
 
-    <DetailDrawer :open="!!store.current" :title="drawerTitle" @close="store.closeDrawer()">
+    <Drawer
+      v-model="drawerOpen"
+      :title="drawerTitle"
+      @close="store.closeDrawer()"
+    >
       <div v-if="store.current">
-        <p>{{ $t('devices.ip_label') }}: {{ dev.ip }} ｜ {{ $t('devices.agent_label') }}: {{ dev.agentID }} ｜ {{ $t('devices.tenant_label') }}: {{ dev.tenantID }}</p>
-        <p>{{ $t('devices.state_label') }}: {{ dev.state }} ｜ {{ $t('devices.task_state_label') }}: {{ dev.taskState }}</p>
-        <p v-if="dev.lastResult" :class="['msg', dev.lastResult === 'failed' ? 'err' : 'ok']">
+        <p class="drawer__info">
+          {{ $t('devices.ip_label') }}: {{ dev.ip }} &nbsp;|&nbsp;
+          {{ $t('devices.agent_label') }}: {{ dev.agentID }} &nbsp;|&nbsp;
+          {{ $t('devices.tenant_label') }}: {{ dev.tenantID }}
+        </p>
+        <p class="drawer__info">
+          {{ $t('devices.state_label') }}: {{ dev.state }} &nbsp;|&nbsp;
+          {{ $t('devices.task_state_label') }}: {{ dev.taskState }}
+        </p>
+        <p
+          v-if="dev.lastResult"
+          class="drawer__msg"
+          :class="dev.lastResult === 'failed' ? 'drawer__msg--err' : 'drawer__msg--ok'"
+        >
           {{ $t('devices.col_last_result') }}: {{ dev.lastResult }} @ {{ fmtTime(dev.lastResultAt) }}
         </p>
         <div class="btnbar">
-          <button v-if="dev.state === 'discovered'" class="primary" @click="provision" data-testid="device-provision-btn">
+          <Button
+            v-if="dev.state === 'discovered'"
+            variant="primary"
+            size="sm"
+            @click="provision"
+            data-testid="device-provision-btn"
+          >
             {{ $t('devices.provision') }}
-          </button>
-          <button class="outline" @click="goDetail(dev.deviceID)">
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            @click="goDetail(dev.deviceID)"
+          >
             {{ $t('devices.view_metrics') }}
-          </button>
-          <button class="outline" @click="dispatchTask(dev.deviceID)">
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            @click="dispatchTask(dev.deviceID)"
+          >
             {{ $t('devices.dispatch_task') }}
-          </button>
+          </Button>
         </div>
 
-        <h4>{{ $t('devices.tasks_title') }}</h4>
-        <DataTable :columns="taskCols" :rows="store.current.tasks || []" row-key="taskID" :empty-text="$t('devices.no_tasks')">
+        <h4 class="drawer__section-title">{{ $t('devices.tasks_title') }}</h4>
+        <DataTable
+          :columns="taskCols"
+          :rows="store.current.tasks || []"
+          row-key="taskID"
+          :empty-text="$t('devices.no_tasks')"
+        >
           <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
         </DataTable>
 
-        <h4>{{ $t('devices.recent_results') }}</h4>
-        <DataTable :columns="resultCols" :rows="(store.current.results || []).slice(0, 5)" :empty-text="$t('devices.no_results')">
+        <h4 class="drawer__section-title">{{ $t('devices.recent_results') }}</h4>
+        <DataTable
+          :columns="resultCols"
+          :rows="(store.current.results || []).slice(0, 5)"
+          :empty-text="$t('devices.no_results')"
+        >
           <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
           <template #cell-stdout="{ value }"><code>{{ value }}</code></template>
         </DataTable>
       </div>
-    </DetailDrawer>
+    </Drawer>
   </div>
 </template>
 
@@ -86,12 +140,17 @@ import { useDeviceStore } from '@/stores/device'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import DetailDrawer from '@/components/DetailDrawer.vue'
+import { Button, Drawer } from '@/components/ui'
 import Icon from '@/components/Icon.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 
 const router = useRouter()
 const store = useDeviceStore()
+
+const drawerOpen = computed({
+  get: () => !!store.current,
+  set: (val) => { if (!val) store.closeDrawer() }
+})
 
 // 表格列定义：含 hostname / segment / state / os 字段 + 操作列
 const columns = [
@@ -155,18 +214,95 @@ async function provision() {
   }
 }
 
-
 onMounted(() => { if (!store.total) store.fetchDevices() })
 </script>
 
 <style scoped>
-.seg-block { margin-bottom: 18px; }
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
+.devices-view {
+  display: block;
 }
-.row-actions { display: inline-flex; gap: 6px; }
-:deep(.fail-row) { background: var(--fail-soft) !important; }
-:deep(.fail-row:hover) { background: var(--fail-bg) !important; }
+
+.devices__header {
+  margin-bottom: var(--space-6, 24px);
+}
+
+.devices__title {
+  margin: 0;
+  font-size: var(--font-size-base, 13px);
+  font-weight: 600;
+  color: var(--color-ink, #f7f8f8);
+}
+
+.devices__subtitle {
+  margin: 0 0 var(--space-4, 16px) 0;
+  font-size: var(--font-size-sm, 12px);
+  color: var(--color-ink-muted, #d0d6e0);
+}
+
+.seg-block {
+  margin-bottom: var(--space-4, 16px);
+}
+
+.seg-title {
+  margin: 0 0 var(--space-2, 8px) 0;
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 600;
+  color: var(--color-ink, #f7f8f8);
+}
+
+.poll-err {
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  margin: var(--space-1, 6px) 0;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-error-soft, #fef2f2);
+  border: 1px solid var(--color-error-light, #fecaca);
+  color: var(--color-error, #ef4444);
+  font-size: var(--font-size-sm, 12px);
+  font-weight: 500;
+}
+
+.row-actions {
+  display: inline-flex;
+  gap: var(--space-1, 4px);
+}
+
+:deep(.fail-row) {
+  background: var(--color-error-soft, #fef2f2) !important;
+}
+:deep(.fail-row:hover) {
+  background: var(--color-error-light, #fecaca) !important;
+}
+
+.drawer__info {
+  margin-bottom: var(--space-3, 12px);
+  font-size: var(--font-size-sm, 13px);
+  color: var(--color-ink, #f7f8f8);
+}
+
+.drawer__msg {
+  margin-bottom: var(--space-3, 12px);
+  font-size: var(--font-size-sm, 13px);
+  color: var(--color-ink-muted, #d0d6e0);
+}
+
+.drawer__msg--err {
+  color: var(--color-error, #ef4444);
+}
+
+.drawer__msg--ok {
+  color: var(--color-success, #27a644);
+}
+
+.drawer__section-title {
+  margin: var(--space-3, 12px) 0 var(--space-1, 6px) 0;
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 600;
+  color: var(--color-ink-muted, #d0d6e0);
+}
+
+.btnbar {
+  display: flex;
+  gap: var(--space-1, 4px);
+  margin-bottom: var(--space-3, 12px);
+}
 </style>

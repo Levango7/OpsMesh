@@ -7,6 +7,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/store/model"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
+	"github.com/Levango7/OpsMesh/internal/store/storekit"
 )
 
 // sql_secret.go 实现 SQLStore 的 SecretStore 子接口（P0.3 密钥管理，生产就绪）。
@@ -31,6 +32,18 @@ func scanSecretMeta(row rowScanner) *SecretMeta {
 	m.CreatedAt = createdAt
 	m.UpdatedAt = updatedAt
 	return &m
+}
+
+// scanSecretAccessLog 从一行扫描出 *SecretAccessLog。
+// 列顺序：key_name, tenant_id, accessed_by, action, accessed_at。
+func scanSecretAccessLog(row rowScanner) *SecretAccessLog {
+	var l SecretAccessLog
+	var accessedAt time.Time
+	if err := row.Scan(&l.Key, &l.TenantID, &l.AccessedBy, &l.Action, &accessedAt); err != nil {
+		return nil
+	}
+	l.AccessedAt = accessedAt
+	return &l
 }
 
 // GetSecret 按 (tenantID, key) 返回当前版本密钥明文项。
@@ -142,14 +155,136 @@ func (s *SQLStore) ListSecrets(tenantID string) []*SecretMeta {
 	return out
 }
 
-// RotateSecret 轮换密钥：用新值产生新版本，保留已有 KeyType。
-// 不存在则 KeyType 默认 passphrase。
-func (s *SQLStore) RotateSecret(tenantID, key, newValue string) *SecretMeta {
-	keyType := "passphrase"
-	if existing, ok := s.GetSecret(tenantID, key); ok {
-		keyType = existing.KeyType
+// RotateSecret 轮换密钥：SQL 事务内插入新版本行（version=MAX+1）并写入访问日志。
+// keyType 为空时沿用已有 KeyType（不存在则 passphrase）。rotatedBy 记入访问日志。
+// 不存在则等价于 SetSecret（Version=1）。返回新版本元信息；失败返回 error。
+func (s *SQLStore) RotateSecret(tenantID, key, newValue, keyType, rotatedBy string) (*SecretMeta, error) {
+	if tenantID == "" {
+		tenantID = "default"
 	}
-	return s.SetSecret(&SecretItem{Key: key, Value: newValue, KeyType: keyType}, tenantID)
+	if keyType == "" {
+		if existing, ok := s.GetSecret(tenantID, key); ok {
+			keyType = existing.KeyType
+		} else {
+			keyType = "passphrase"
+		}
+	}
+	// TD-88：只存引用，拒绝明文。
+	if err := model.RequireSecretReference(newValue); err != nil {
+		storefail.Record("[store] RotateSecret 拒绝非引用值 (tenant=%s key=%s): %v", tenantID, key, err)
+		return nil, err
+	}
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		storefail.Record("[store] RotateSecret 开启事务失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		return nil, err
+	}
+	defer tx.Rollback()
+	// 查当前最大版本号（无历史则 0，新版本 = max+1）。
+	var maxVersion sql.NullInt64
+	if err := tx.QueryRowContext(context.Background(),
+		`SELECT MAX(version) FROM secrets WHERE tenant_id=? AND key_name=?`,
+		tenantID, key).Scan(&maxVersion); err != nil {
+		storefail.Record("[store] RotateSecret 查询最大版本失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		return nil, err
+	}
+	newVersion := int(maxVersion.Int64) + 1
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(context.Background(),
+		`INSERT INTO secrets (tenant_id, key_name, version, value, key_type, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		tenantID, key, newVersion, newValue, keyType, now, now); err != nil {
+		storefail.Record("[store] RotateSecret 插入新版本失败 (tenant=%s key=%s version=%d): %v", tenantID, key, newVersion, err)
+		return nil, err
+	}
+	// 写入访问审计日志。
+	logID := storekit.MustRandHex(32)
+	if _, err := tx.ExecContext(context.Background(),
+		`INSERT INTO secret_access_logs (id, tenant_id, key_name, accessed_by, action, accessed_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		logID, tenantID, key, rotatedBy, "rotate", now); err != nil {
+		storefail.Record("[store] RotateSecret 写入访问日志失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		storefail.Record("[store] RotateSecret 提交事务失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		return nil, err
+	}
+	return &SecretMeta{
+		Key:       key,
+		KeyType:   keyType,
+		Version:   newVersion,
+		TenantID:  tenantID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, nil
+}
+
+// AddSecretAccessLog 记录一次密钥访问审计（get/rotate/delete）。
+func (s *SQLStore) AddSecretAccessLog(tenantID, key, accessedBy, action string) error {
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	if action == "" {
+		action = "get"
+	}
+	id := storekit.MustRandHex(32)
+	now := time.Now().UTC()
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO secret_access_logs (id, tenant_id, key_name, accessed_by, action, accessed_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		id, tenantID, key, accessedBy, action, now); err != nil {
+		storefail.Record("[store] AddSecretAccessLog 插入失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		return err
+	}
+	return nil
+}
+
+// GetSecretAccessLog 查询指定密钥的访问审计日志（按租户隔离，accessed_at 降序，分页）。
+// key 为空时返回该租户全部密钥的访问日志；limit<=0 表示不限制。
+func (s *SQLStore) GetSecretAccessLog(tenantID, key string, offset, limit int) ([]*SecretAccessLog, int, error) {
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	// 查总数。
+	var total int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM secret_access_logs WHERE tenant_id=? AND (? = '' OR key_name=?)`,
+		tenantID, key, key).Scan(&total); err != nil {
+		storefail.Record("[store] GetSecretAccessLog 计数失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		return nil, 0, err
+	}
+	// 查分页列表（accessed_at 降序）。
+	query := `SELECT key_name, tenant_id, accessed_by, action, accessed_at
+		  FROM secret_access_logs
+		  WHERE tenant_id=? AND (? = '' OR key_name=?)
+		  ORDER BY accessed_at DESC`
+	args := []interface{}{tenantID, key, key}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+		if offset > 0 {
+			query += ` OFFSET ?`
+			args = append(args, offset)
+		}
+	}
+	rows, err := s.db.QueryContext(context.Background(), query, args...)
+	if err != nil {
+		storefail.Record("[store] GetSecretAccessLog 查询失败 (tenant=%s key=%s): %v", tenantID, key, err)
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := make([]*SecretAccessLog, 0)
+	for rows.Next() {
+		if l := scanSecretAccessLog(rows); l != nil {
+			out = append(out, l)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		storefail.Record("[store] GetSecretAccessLog 遍历失败: %v", err)
+		return nil, 0, err
+	}
+	return out, total, nil
 }
 
 // SecretVersions 返回指定密钥的全部版本元信息（按 version 升序）。

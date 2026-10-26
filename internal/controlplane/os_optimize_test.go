@@ -558,23 +558,26 @@ func TestOSTemplateByID_NotFound(t *testing.T) {
 
 // TestBuildOSExecuteCommand 验证 presets.BuildOSExecuteCommand 拼接位置参数。
 func TestBuildOSExecuteCommand(t *testing.T) {
-	// 无参数：直接返回原脚本。
-	got := presets.BuildOSExecuteCommand("echo hi", nil)
-	if got != "echo hi" {
-		t.Fatalf("got=%q, want 'echo hi'", got)
+	// 无参数：单行脚本，command 为原脚本，scriptBody 为空。
+	scriptBody, command := presets.BuildOSExecuteCommand("echo hi", nil)
+	if command != "echo hi" {
+		t.Fatalf("command=%q, want 'echo hi'", command)
 	}
-	// 有参数：注入 set --。
-	got = presets.BuildOSExecuteCommand("echo hi", []string{"a", "b"})
-	if !strings.HasPrefix(got, "set -- 'a' 'b'\n") {
-		t.Fatalf("got=%q, want prefix \"set -- 'a' 'b'\\n\"", got)
+	if scriptBody != "" {
+		t.Fatalf("scriptBody=%q, want empty", scriptBody)
 	}
-	if !strings.HasSuffix(got, "echo hi") {
-		t.Fatalf("got=%q, want suffix 'echo hi'", got)
+	// 有参数：注入 set --，多行脚本体。
+	scriptBody, _ = presets.BuildOSExecuteCommand("echo hi", []string{"a", "b"})
+	if !strings.HasPrefix(scriptBody, "set -- 'a' 'b'\n") {
+		t.Fatalf("scriptBody=%q, want prefix \"set -- 'a' 'b'\\n\"", scriptBody)
+	}
+	if !strings.HasSuffix(scriptBody, "echo hi") {
+		t.Fatalf("scriptBody=%q, want suffix 'echo hi'", scriptBody)
 	}
 	// 单引号转义。
-	got = presets.BuildOSExecuteCommand("echo", []string{"it's"})
-	if !strings.Contains(got, `'it'\''s'`) {
-		t.Fatalf("got=%q, want escaped single quote", got)
+	scriptBody, _ = presets.BuildOSExecuteCommand("echo", []string{"it's"})
+	if !strings.Contains(scriptBody, `'it'\''s'`) {
+		t.Fatalf("scriptBody=%q, want escaped single quote", scriptBody)
 	}
 }
 

@@ -262,3 +262,21 @@ func RandWebhookID() string {
 	}
 	return "webhook-" + hex.EncodeToString(b)
 }
+
+// RandCloudAccountID 生成随机云账号 ID（"cloud-acct-" + 16 字节 hex）。
+func RandCloudAccountID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("cloud-acct-%d", time.Now().UnixNano())
+	}
+	return "cloud-acct-" + hex.EncodeToString(b)
+}
+
+// RandCloudResourceID 生成随机云资源 ID（"cloud-res-" + 16 字节 hex）。
+func RandCloudResourceID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("cloud-res-%d", time.Now().UnixNano())
+	}
+	return "cloud-res-" + hex.EncodeToString(b)
+}

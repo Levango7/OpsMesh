@@ -58,8 +58,10 @@ func quotaAdminAuth(s *Server) string {
 
 func TestHandleQuotas_List(t *testing.T) {
 	s := newQuotaTestServer()
+	auth := quotaAdminAuth(s)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/quotas", nil)
-	req.Header.Set("X-Tenant-ID", "t1")
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("X-User-Roles", "role-admin")
 	rec := httptest.NewRecorder()
 	s.handleQuotas(rec, req)
 	if rec.Code != http.StatusOK {

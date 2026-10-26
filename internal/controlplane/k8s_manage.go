@@ -84,7 +84,19 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 	}
 	switch resource {
 	case "namespaces":
-		s.handleListNamespaces(w, r, client)
+		if sub == "" {
+			if r.Method == http.MethodGet {
+				s.handleListNamespaces(w, r, client)
+				return
+			}
+			if r.Method == http.MethodPost {
+				s.handleCreateNamespace(w, r, client)
+				return
+			}
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleDeleteNamespace(w, r, client, sub)
 	case "pods":
 		s.routePods(w, r, client, sub)
 	case "deployments":
@@ -95,6 +107,106 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 		s.handleListConfigMaps(w, r, client)
 	case "secrets":
 		s.handleListSecrets(w, r, client)
+	case "statefulsets":
+		if sub == "" {
+			if r.Method != http.MethodGet {
+				paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				return
+			}
+			s.handleListStatefulSets(w, r, client)
+			return
+		}
+		s.handleStatefulSetSubPath(w, r, client, sub)
+	case "daemonsets":
+		if sub == "" {
+			if r.Method != http.MethodGet {
+				paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				return
+			}
+			s.handleListDaemonSets(w, r, client)
+			return
+		}
+		s.handleDaemonSetSubPath(w, r, client, sub)
+	case "replicasets":
+		if r.Method != http.MethodGet {
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleListReplicaSets(w, r, client)
+	case "jobs":
+		if sub == "" {
+			if r.Method != http.MethodGet {
+				paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				return
+			}
+			s.handleListJobs(w, r, client)
+			return
+		}
+		s.handleJobSubPath(w, r, client, sub)
+	case "cronjobs":
+		if sub == "" {
+			if r.Method != http.MethodGet {
+				paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				return
+			}
+			s.handleListCronJobs(w, r, client)
+			return
+		}
+		s.handleCronJobSubPath(w, r, client, sub)
+	case "ingresses":
+		if r.Method != http.MethodGet {
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleListIngresses(w, r, client)
+	case "pvcs":
+		if r.Method != http.MethodGet {
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleListPVCs(w, r, client)
+	case "pvs":
+		if r.Method != http.MethodGet {
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleListPVs(w, r, client)
+	case "hpas":
+		if r.Method != http.MethodGet {
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleListHPAs(w, r, client)
+	case "roles":
+		if r.Method != http.MethodGet {
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleListK8sRoles(w, r, client)
+	case "rolebindings":
+		if r.Method != http.MethodGet {
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleListRoleBindings(w, r, client)
+	case "clusterroles":
+		if r.Method != http.MethodGet {
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleListClusterRoles(w, r, client)
+	case "clusterrolebindings":
+		if r.Method != http.MethodGet {
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleListClusterRoleBindings(w, r, client)
+	case "crds":
+		if r.Method != http.MethodGet {
+			paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		s.handleListCRDs(w, r, client)
 	case "nodes":
 		s.routeNodes(w, r, client, sub)
 	case "dashboard":
@@ -102,6 +214,9 @@ func (s *Server) handleK8sResourceRouting(w http.ResponseWriter, r *http.Request
 	case "health":
 		s.handleClusterHealth(w, r, client)
 	default:
+		if s.dispatchK8sExtResource(w, r, resource, client) {
+			return
+		}
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown resource: " + resource})
 	}
 }

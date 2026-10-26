@@ -56,22 +56,30 @@ func NewEngine(secret string, accessTTL, refreshTTL time.Duration) *Engine {
 
 // IssueToken issues a JWT access token for the given user.
 //
-// 向后兼容封装：deviceFP 为空（不绑定设备）。新调用方应优先用 IssueTokenWithDeviceFP
-// 显式传入设备指纹以启用跨设备重放防护。
-func (e *Engine) IssueToken(userID, username string, roles, permissions []string) (string, int64, error) {
-	return e.IssueTokenWithDeviceFP(userID, username, roles, permissions, "", e.accessTTL)
+// 向后兼容封装：deviceFP 为空（不绑定设备），tenantID 缺省 "default"。
+// 新调用方应优先用 IssueTokenWithDeviceFP 显式传入设备指纹和租户 ID 以启用跨设备重放防护
+// 与多租户声明。
+func (e *Engine) IssueToken(userID, username, tenantID string, roles, permissions []string) (string, int64, error) {
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	return e.IssueTokenWithDeviceFP(userID, username, roles, permissions, "", e.accessTTL, tenantID)
 }
 
 // IssueTokenWithDeviceFP issues a JWT access token bound to a device fingerprint.
 //
 // deviceFP 非空时写入 claims.device_fp，ValidateToken 返回该值供调用方校验请求设备一致；
 // deviceFP 为空时不写入（omitempty），向后兼容旧客户端（不绑定设备）。
-func (e *Engine) IssueTokenWithDeviceFP(userID, username string, roles, permissions []string, deviceFP string, ttl time.Duration) (string, int64, error) {
+// tenantID 写入 claims.tenant_id；空串回退为 "default" 保持向后兼容。
+func (e *Engine) IssueTokenWithDeviceFP(userID, username string, roles, permissions []string, deviceFP string, ttl time.Duration, tenantID string) (string, int64, error) {
 	if len(e.secret) == 0 {
 		return "", 0, errors.New("auth: JWT secret is empty")
 	}
 	if ttl <= 0 {
 		return "", 0, errors.New("auth: token TTL must be positive")
+	}
+	if tenantID == "" {
+		tenantID = "default"
 	}
 	jti := randHex(16)
 	expiresAt := time.Now().Add(ttl)
@@ -86,7 +94,7 @@ func (e *Engine) IssueTokenWithDeviceFP(userID, username string, roles, permissi
 		Username:    username,
 		Roles:       roles,
 		Permissions: permissions,
-		TenantID:    "default",
+		TenantID:    tenantID,
 		DeviceFP:    deviceFP,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -102,9 +110,12 @@ func (e *Engine) IssueTokenWithDeviceFP(userID, username string, roles, permissi
 // 与常规 token 同结构同签名（ValidateToken 可校验），仅有效期更短且由调用方
 // 通过响应字段（MustChangePassword/ChangePasswordToken）区分用途，客户端不应用它访问受保护 API。
 //
-// 向后兼容封装：deviceFP 为空。新调用方应优先用 IssueTokenWithDeviceFP。
-func (e *Engine) IssueTokenWithTTL(userID, username string, roles, permissions []string, ttl time.Duration) (string, int64, error) {
-	return e.IssueTokenWithDeviceFP(userID, username, roles, permissions, "", ttl)
+// 向后兼容封装：deviceFP 为空、tenantID 缺省 "default"。新调用方应优先用 IssueTokenWithDeviceFP。
+func (e *Engine) IssueTokenWithTTL(userID, username, tenantID string, roles, permissions []string, ttl time.Duration) (string, int64, error) {
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	return e.IssueTokenWithDeviceFP(userID, username, roles, permissions, "", ttl, tenantID)
 }
 
 // ValidateToken validates a JWT token and returns the claims.

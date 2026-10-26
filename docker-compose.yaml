@@ -178,11 +178,19 @@ services:
     image: opsmesh/agent:dev
     command:
       - --mode=agent
-      - --control-addr=http://controlplane:8080
+      - --control-addr=http://controlplane:9090
       - --segment=default
     depends_on:
       controlplane:
         condition: service_healthy
+    environment:
+      - GOMAXPROCS=4
+    ulimits:
+      nproc: 1048576
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    user: "0:0"
     restart: unless-stopped
 
 volumes:

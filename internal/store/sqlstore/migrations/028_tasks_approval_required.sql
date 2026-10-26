@@ -1,0 +1,24 @@
+-- 028_tasks_approval_required.sql — 任务审批标记列（修复 SQL 生产库审批工作流失效）
+--
+-- 缺陷：tasks 表长期缺 approval_required 列，而 SQLStore.CreateTask 既不写该列、
+--   也不会把 ApprovalRequired=true 且 Status=="pending" 的任务翻成 pending_approval。
+--   结果生产库（MySQL）里每一条高风险任务一落库就是 pending，可被立即领取，
+--   ApproveTask/RejectTask 的 WHERE status='pending_approval' 匹配不到任何行，
+--   审批接口静默 404——审批工作流在生产上等于不存在（内存后端正确，故单测全绿）。
+--
+-- 方案：tasks 表增加 approval_required 列，与 internal/proto.Task.ApprovalRequired 对齐。
+--   内存后端 memory.go 的既有语义（ApprovalRequired && Status=="pending" → pending_approval）
+--   原样复刻到 SQLStore.CreateTask，两侧状态机一致。
+--
+-- 兼容性：TINYINT NOT NULL DEFAULT 0，存量任务 approval_required=0（无需审批），
+--   不影响既有逻辑；老库由 sql_legacy.go initSchemaExtra 的 alterColumnIfMissing 兜底补列。
+--
+-- 索引决策：不加索引。该列只有 0/1 两值，选择性接近 0，WHERE approval_required=1
+--   这类查询在当前读路径（按 agent_id / tenant_id 过滤）上不会走它；
+--   本仓其他低基数列（如 026 的 high_risk）建索引是配合独立的 /audit/high-risk
+--   专项查询路径，此处没有对应查询入口，故遵循"不加无谓索引"。
+--
+-- 幂等：MySQL 不支持 ADD COLUMN IF NOT EXISTS；迁移框架的 tolerateIdempotentDDLError
+-- 会对重复列（1060 ER_DUP_FIELDNAME）做 information_schema 二次核实后幂等放行，
+-- 因此本文件可重复重放、安全再执行。
+ALTER TABLE tasks ADD COLUMN approval_required TINYINT NOT NULL DEFAULT 0;

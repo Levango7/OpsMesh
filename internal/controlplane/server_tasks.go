@@ -133,6 +133,9 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Schedule         string `json:"schedule"`         // F4 可选：5 字段 cron，设定则成为模板任务（周期派生实例）
 		ApprovalRequired bool   `json:"approvalRequired"` // 修复 10：高风险任务需审批后才可执行
 		MaxRetries       *int   `json:"maxRetries"`       // F2 可选：单任务重试上限覆盖（nil=用全局默认）
+		Priority         *int   `json:"priority"`         // Wave 4-B：任务优先级 0-10，数字越大越优先
+		IdempotencyKey   string `json:"idempotencyKey"`   // Wave 4-B：幂等键，按 (tenantID, key) 去重
+		StatusMachine    string `json:"statusMachine"`    // Wave 4-B：显式状态机枚举值
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -156,11 +159,28 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
+	// 统一走 requireTenantAgent 防线（P0-6 多租户隔离）。
 	targetTenant := actx.TenantID
-	agent := s.lookupAgent(body.AgentID)
-	if agent == nil || (targetTenant != "" && agent.TenantID != targetTenant) {
-		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "agent not found or tenant mismatch"})
+	if _, ok := s.requireTenantAgent(w, body.AgentID, actx.TenantID); !ok {
 		return
+	}
+	// Wave 4-B：优先级范围校验（0-10）。
+	priority := 0
+	if body.Priority != nil {
+		priority = *body.Priority
+		if priority < 0 || priority > 10 {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "priority must be in range 0-10"})
+			return
+		}
+	}
+	// Wave 4-B：StatusMachine 若设置，必须是已知枚举值。
+	if body.StatusMachine != "" {
+		switch body.StatusMachine {
+		case "pending", "claimed", "running", "done", "failed", "cancelled", "blocked", "pending_approval", "rejected", "dead_letter":
+		default:
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid statusMachine: " + body.StatusMachine})
+			return
+		}
 	}
 	// F2 失败重试上限随任务下发（store 层按策略重入队/死信）。
 	// 单任务可经 body.maxRetries 覆盖（如测试用 0 即一次失败进死信）；nil 用全局默认。
@@ -171,15 +191,56 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 			maxRetries = 0
 		}
 	}
-	task, err := s.store.CreateTask(&proto.Task{
-		AgentID:          body.AgentID,
-		TenantID:         targetTenant,
-		Type:             body.Type,
-		Command:          body.Command,
-		Schedule:         body.Schedule, // F4 模板任务（cron）随创建下传
-		MaxRetries:       maxRetries,
-		ApprovalRequired: body.ApprovalRequired, // 修复 10：高风险任务需审批
-	})
+	// Quota gate: reject creation when tenant concurrent (non-terminal) task count reaches limit.
+	if s.quotaMgr != nil {
+		if err := s.quotaMgr.CheckTask(actx.TenantID); err != nil {
+			paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	var (
+		task *proto.Task
+		err  error
+	)
+	isExisting := false
+	// Wave 4-B 幂等：IdempotencyKey 设置时走 CreateTaskWithIdempotency，且已存在的 key
+	// 返回现有任务（200 而非 201）。
+	if body.IdempotencyKey != "" {
+		if existing := s.store.GetTaskByIdempotencyKey(targetTenant, body.IdempotencyKey); existing != nil {
+			task = existing
+			isExisting = true
+		} else {
+			task, err = s.store.CreateTaskWithIdempotency(r.Context(), &proto.Task{
+				AgentID:          body.AgentID,
+				TenantID:         targetTenant,
+				Type:             body.Type,
+				Command:          body.Command,
+				Schedule:         body.Schedule, // F4 模板任务（cron）随创建下传
+				MaxRetries:       maxRetries,
+				ApprovalRequired: body.ApprovalRequired, // 修复 10：高风险任务需审批
+				Priority:         priority,
+				IdempotencyKey:   body.IdempotencyKey,
+				StatusMachine:    body.StatusMachine,
+			})
+		}
+	} else {
+		task, err = s.store.CreateTask(&proto.Task{
+			AgentID:          body.AgentID,
+			TenantID:         targetTenant,
+			Type:             body.Type,
+			Command:          body.Command,
+			Schedule:         body.Schedule, // F4 模板任务（cron）随创建下传
+			MaxRetries:       maxRetries,
+			ApprovalRequired: body.ApprovalRequired, // 修复 10：高风险任务需审批
+			Priority:         priority,
+			StatusMachine:    body.StatusMachine,
+		})
+	}
+	// Wave 4-B 幂等命中：返回现有任务，状态码 200（而非 201）。
+	if isExisting {
+		paginate.WriteJSON(w, http.StatusOK, task)
+		return
+	}
 	if err != nil {
 		// 缺口 3：任务没落库 = 不会被执行，不能返回 201 让调用方拿着不存在的
 		// taskID 轮询结果（此前的假成功会让失败只在 storefail 日志里露一面）。
@@ -482,6 +543,13 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	// Quota gate (batch): single check for the whole batch — quota is on concurrent tasks.
+	if s.quotaMgr != nil {
+		if err := s.quotaMgr.CheckTask(actx.TenantID); err != nil {
+			paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	// 认证防御：强制使用头中的租户 ID，忽略 body 中的 tenantID，防 body 覆盖头租户越权。
 	targetTenant := actx.TenantID
 	created := make([]string, 0, len(body.Targets))
@@ -548,10 +616,13 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleTaskRouting 统一分派 /api/v1/tasks/{id}/... 子路径：
+//   - GET  /api/v1/tasks/{id}：任务详情（含执行输出，2026-10-21 修复）
 //   - POST /api/v1/tasks/{id}/cancel：取消任务（F3）
 //   - GET  /api/v1/tasks/{id}/result：查询单条执行结果（A5/F7）
 //   - POST /api/v1/tasks/{id}/approve：审批通过任务（修复 10）
 //   - POST /api/v1/tasks/{id}/reject：审批拒绝任务（修复 10）
+//   - POST /api/v1/tasks/{id}/retry：重新入队死信任务（Wave 4-D DLQ）
+//   - DELETE /api/v1/tasks/{id}/dead-letter：移除死信任务（Wave 4-D DLQ）
 func (s *Server) handleTaskRouting(w http.ResponseWriter, r *http.Request) {
 	idAndRest := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
 	parts := strings.SplitN(idAndRest, "/", 2)
@@ -561,6 +632,8 @@ func (s *Server) handleTaskRouting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case len(parts) == 1 && r.Method == http.MethodGet:
+		s.handleTaskDetail(w, r, id)
 	case len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost:
 		s.handleCancelTask(w, r, id)
 	case len(parts) == 2 && parts[1] == "result" && r.Method == http.MethodGet:
@@ -569,9 +642,101 @@ func (s *Server) handleTaskRouting(w http.ResponseWriter, r *http.Request) {
 		s.handleApproveTask(w, r, id)
 	case len(parts) == 2 && parts[1] == "reject" && r.Method == http.MethodPost:
 		s.handleRejectTask(w, r, id)
+	case len(parts) == 2 && parts[1] == "retry" && r.Method == http.MethodPost:
+		s.handleRetryDeadLetterTask(w, r, id)
+	case len(parts) == 2 && parts[1] == "dead-letter" && r.Method == http.MethodDelete:
+		s.handlePurgeDeadLetterTask(w, r, id)
 	default:
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
+}
+
+// taskDetailResponse GET /api/v1/tasks/{id} 的响应体。
+//
+// 契约来源：web/enterprise/src/api/task.js 的注释头
+// 「GET /api/v1/tasks/{taskID} → 200 {taskID, status, output, ...}」，
+// 消费方 OSOptimizeView.vue / MiddlewareDeployView.vue 每 3s 轮询，
+// 取 task.status（判终态）与 task.output（展示执行日志）。
+//
+// status 的两套词汇：存储层用 done/failed/cancelled，前端契约用 completed/failed
+// （见 src/i18n/locales/*/ops.json 的 taskStatus 只有 pending/running/completed/failed）。
+// 这里把 done 归一为 completed，原始值另存 rawStatus——既满足前端契约又不丢信息。
+type taskDetailResponse struct {
+	TaskID     string    `json:"taskID"`
+	AgentID    string    `json:"agentID"`
+	Type       string    `json:"type"`
+	Command    string    `json:"command"`
+	Status     string    `json:"status"`    // 前端契约：done → completed
+	RawStatus  string    `json:"rawStatus"` // 存储层原始状态（pending/running/done/failed/cancelled）
+	Output     string    `json:"output"`    // stdout+stderr 拼接（前端展示用）
+	Stdout     string    `json:"stdout"`
+	Stderr     string    `json:"stderr"`
+	ExitCode   int       `json:"exitCode"`
+	DurationMs int64     `json:"durationMs"`
+	ClaimedBy  string    `json:"claimedBy"`
+	ClaimedAt  time.Time `json:"claimedAt"`
+	CreatedAt  time.Time `json:"createdAt"`
+	RetryCount int       `json:"retryCount"`
+	DeadLetter bool      `json:"deadLetter"`
+}
+
+// normalizeTaskStatus 把存储层状态映射到前端契约词汇。
+// 只改 done → completed，其余（pending/running/failed/cancelled/空）原样透传。
+func normalizeTaskStatus(status string) string {
+	if status == "done" {
+		return "completed"
+	}
+	return status
+}
+
+// handleTaskDetail 处理 GET /api/v1/tasks/{id}：返回单条任务详情（含执行输出）。
+//
+// 为什么需要（2026-10-21 修复）：此前 handleTaskRouting 只分派 {id}/cancel|result|
+// approve|reject|retry|dead-letter，裸 GET /api/v1/tasks/{id} 恒 404。前端
+// OSOptimizeView.vue / MiddlewareDeployView.vue 的执行日志轮询（getTaskDetail）
+// 把 404 当异常吞掉 → 轮询 40 次后只报「poll timeout」，OS 优化/中间件部署的
+// 执行输出**永远不显示**。
+//
+// 租户隔离：任务不存在或不属于当前租户一律 404（不泄露他租户任务是否存在）。
+func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request, id string) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "task:read"); !ok {
+		return
+	}
+	t := s.store.TaskByID(id)
+	if t == nil {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+		return
+	}
+	if actx.TenantID != "" && t.TenantID != actx.TenantID {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+		return
+	}
+	resp := taskDetailResponse{
+		TaskID:     t.TaskID,
+		AgentID:    t.AgentID,
+		Type:       t.Type,
+		Command:    t.Command,
+		Status:     normalizeTaskStatus(t.Status),
+		RawStatus:  t.Status,
+		ClaimedBy:  t.ClaimedBy,
+		ClaimedAt:  t.ClaimedAt,
+		CreatedAt:  t.CreatedAt,
+		RetryCount: t.RetryCount,
+		DeadLetter: t.DeadLetter,
+	}
+	// 执行输出：agent 上报结果后才有；未上报时 output 为空串（前端显示空日志，不报错）。
+	if res := s.store.TaskResult(id); res != nil {
+		resp.Stdout = res.Stdout
+		resp.Stderr = res.Stderr
+		resp.ExitCode = res.ExitCode
+		resp.DurationMs = res.DurationMs
+		resp.Output = res.Stdout + res.Stderr
+	}
+	paginate.WriteJSON(w, http.StatusOK, resp)
 }
 
 // handleCancelTask 处理 POST /api/v1/tasks/{id}/cancel：取消 pending/running 任务（F3）。
@@ -606,6 +771,12 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request, id str
 		"taskID": id,
 		"status": "cancelled",
 	})
+	// 取消传播：将取消信号下发给执行该任务的 agent（SSE event type "task_cancel"）。
+	// agent 侧收到后中止本地执行（不回写 store，避免误触重试/死信）。
+	task := s.store.TaskByID(id)
+	if task != nil && task.AgentID != "" {
+		s.publishTaskCancel(r.Context(), task.AgentID, id, task.TenantID)
+	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "taskID": id})
 }
 
@@ -711,4 +882,166 @@ func (s *Server) handleRejectTask(w http.ResponseWriter, r *http.Request, id str
 		"status": "rejected",
 	})
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "rejected", "taskID": id})
+}
+
+// ============================================================================
+// Wave 4-D：死信队列（DLQ）API
+// ============================================================================
+
+// handleListDeadLetterTasks 处理 GET /api/v1/tasks/dead-letter：列出死信任务。
+// 死信任务：DeadLetter=true 且 status=failed。租户隔离 + 分页。
+func (s *Server) handleListDeadLetterTasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "task:read"); !ok {
+		return
+	}
+	tasks := s.store.AllTasks(actx.TenantID)
+	out := make([]*domain.Task, 0, len(tasks))
+	for _, t := range tasks {
+		if !t.DeadLetter || t.Status != "failed" {
+			continue
+		}
+		out = append(out, domain.TaskFromProto(t))
+	}
+	page, pageSize := paginate.ParsePagination(r.URL.Query())
+	if page == 0 {
+		paginate.WriteJSON(w, http.StatusOK, out)
+		return
+	}
+	total := len(out)
+	start := (page - 1) * pageSize
+	if start >= total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	paginate.WriteJSON(w, http.StatusOK, paginate.PaginateResult{
+		Data: out[start:end], Total: total, Page: page, PageSize: pageSize, HasMore: end < total,
+	})
+}
+
+// handleRetryDeadLetterTask 处理 POST /api/v1/tasks/{id}/retry：重新入队死信任务。
+// 重置 DeadLetter=false, status=pending, retry_count=0，清除 ClaimedBy/ClaimedAt。
+func (s *Server) handleRetryDeadLetterTask(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
+		return
+	}
+	if !s.store.RetryDeadLetterTask(id, actx.TenantID) {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "dead letter task not found or not retryable (not DeadLetter/failed / tenant mismatch)"})
+		return
+	}
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "retry_dead_letter", Target: id,
+		Detail: "dead letter retried via HTTP",
+	})
+	if s.bus != nil {
+		s.bus.Publish(r.Context(), events.Event{
+			TenantID: actx.TenantID, UserID: actx.UserID, Action: "retry_dead_letter", Target: id, Level: events.LevelInfo,
+		})
+	}
+	// SSE：通知前端任务已重新入队（status 翻 pending）。
+	s.publishEvent(r.Context(), "task_status", actx.TenantID, map[string]string{
+		"taskID": id,
+		"status": "pending",
+	})
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "retry", "taskID": id})
+}
+
+// handlePurgeDeadLetterTask 处理 DELETE /api/v1/tasks/{id}/dead-letter：移除死信任务。
+func (s *Server) handlePurgeDeadLetterTask(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodDelete {
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
+		return
+	}
+	if !s.store.DeleteTask(id, actx.TenantID) {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "dead letter task not found or tenant mismatch"})
+		return
+	}
+	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "purge_dead_letter", Target: id,
+		Detail: "dead letter purged via HTTP",
+	})
+	if s.bus != nil {
+		s.bus.Publish(r.Context(), events.Event{
+			TenantID: actx.TenantID, UserID: actx.UserID, Action: "purge_dead_letter", Target: id, Level: events.LevelInfo,
+		})
+	}
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "purged", "taskID": id})
+}
+
+// publishTaskCancel 将取消信号发布为 SSE event "task_cancel" 到目标 agent 的事件通道。
+// 租户隔离：携带 tenantID，仅同租户订阅者收到。事件不持久化，仅作实时下发。
+func (s *Server) publishTaskCancel(ctx context.Context, agentID, taskID, tenantID string) {
+	s.publishEvent(ctx, "task_cancel", tenantID, map[string]string{
+		"taskID":  taskID,
+		"agentID": agentID,
+	})
+}
+
+// ============================================================================
+// Wave 4-D：任务超时监控
+// ============================================================================
+
+// monitorTaskTimeouts 周期扫描 running 任务，若 now - createdAt > Timeout 秒则取消。
+// 每 30s 检查一次，仅 leader 执行（避免多副本重复取消）。ctx 取消即退出。
+func (s *Server) monitorTaskTimeouts(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !s.store.IsLeader() {
+				continue
+			}
+			now := time.Now()
+			for _, t := range s.store.AllTasks("") {
+				if t.Status != "running" || t.Timeout <= 0 {
+					continue
+				}
+				// 超时基准：优先 ClaimedAt（领取时刻），未领取（零值）才退回 CreatedAt。
+				// 旧实现恒用 CreatedAt：任务排队 5 分钟而 Timeout=60s 时，now-CreatedAt
+				// 早已越过阈值，任务一开跑就被 monitorTaskTimeouts 取消（领取即杀）。
+				deadline := t.CreatedAt
+				if !t.ClaimedAt.IsZero() {
+					deadline = t.ClaimedAt
+				}
+				if now.Sub(deadline) > time.Duration(t.Timeout)*time.Second {
+					s.store.CancelTask(t.TaskID, t.TenantID)
+					// 向 agent 下发取消信号。
+					if t.AgentID != "" {
+						s.publishTaskCancel(ctx, t.AgentID, t.TaskID, t.TenantID)
+					}
+					logx.Info(ctx, "任务超时已取消", "taskID", t.TaskID, "agentID", t.AgentID, "timeout", t.Timeout)
+				}
+			}
+		}
+	}
 }

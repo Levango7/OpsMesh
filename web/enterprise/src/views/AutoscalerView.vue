@@ -297,6 +297,12 @@ onMounted(() => {
 .bar-up { background: var(--ok); }
 .bar-down { background: var(--info); }
 
+.row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
 .modal-mask {
   position: fixed; inset: 0; z-index: 50;
   background: var(--modal-mask); display: flex; align-items: center; justify-content: center;

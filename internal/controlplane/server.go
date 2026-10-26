@@ -18,6 +18,11 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/aiops"
+	"github.com/Levango7/OpsMesh/internal/ai/agent"
+	"github.com/Levango7/OpsMesh/internal/ai/gateway"
+	"github.com/Levango7/OpsMesh/internal/cost"
+	"github.com/Levango7/OpsMesh/internal/k8slifecycle"
+	"github.com/Levango7/OpsMesh/internal/knowledge"
 	"github.com/Levango7/OpsMesh/internal/alertengine"
 	"github.com/Levango7/OpsMesh/internal/approval"
 	"github.com/Levango7/OpsMesh/internal/cmdb"
@@ -41,6 +46,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/otelx"
 	"github.com/Levango7/OpsMesh/internal/platform"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider"
 	"github.com/Levango7/OpsMesh/internal/secrets"
 	"github.com/Levango7/OpsMesh/internal/store"
 	"github.com/Levango7/OpsMesh/internal/tlsutil"
@@ -67,8 +73,13 @@ type Server struct {
 	logHandler    *logstore.Handler      // M6 日志检索处理器
 	deployHandler *deploy.Handler        // M3 部署中心处理器
 	orchHandler   *orchestration.Handler // M5 作业编排中心处理器
-	aiopsHandler  *aiops.Handler         // AIOps 故障分析与智能修复
-	aiopsEngine   *aiops.Engine          // AIOps 引擎实例（供告警→根因分析集成调用）
+	aiopsHandler     *aiops.Handler         // AIOps 故障分析与智能修复
+	aiopsEngine      *aiops.Engine          // AIOps 引擎实例（供告警→根因分析集成调用）
+	aiGatewayHandler *aigateway.AIGatewayHandler // AI 网关处理器（chat/embed/RAG/prompts）
+	agentHandler     *agent.AgentHandler        // AI Agent 编排处理器
+	knowledgeHandler *knowledge.KnowledgeHandler // 知识库处理器
+	costHandler      *cost.CostHandler          // 成本控制处理器
+	k8sLifecycleHandler *k8slifecycle.K8sLifecycleHandler // K8s 生命周期处理器
 	// 告警推送去重（notifyLoop 防重复）：按告警指纹（AlertID）记录已推送集合，
 	// 替代旧版全局单一时间高水位 lastAlertSent——时间水位对乱序插入/跨租户告警/
 	// 多副本时钟偏差不免疫（任一租户推送后水位前移，其它租户 CreatedAt 更早的
@@ -176,7 +187,8 @@ type Server struct {
 	// 由 NewServer 调用 secrets.FromConfig 构造；nil=未启用密钥外置（向后兼容）。
 	// 注入到 alertNotifier 与 buildChannel，使渠道构造支持 ${key} 格式密钥引用解析。
 	// 构造失败时：生产模式 fail-fast，非生产模式打 Warning 继续（保持本地体验兼容）。
-	secretProvider secrets.SecretProvider
+	secretProvider   secrets.SecretProvider
+	cloudProviderFactory *cloudprovider.AdapterFactory
 
 	// 集成：告警抑制器（基于活跃告警状态的动态抑制）。
 	// alertInhibitor 持有抑制规则与活跃告警集合，告警评估前检查 IsInhibited 跳过通知，
@@ -350,8 +362,18 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		logHandler:    factory.NewLogHandler(st, cfg),
 		deployHandler: deployHandler,
 		orchHandler:   orchHandler,
-		aiopsHandler:  aiops.NewHandler(aiops.NewEngine(cfg, st)),
-		aiopsEngine:   aiops.NewEngine(cfg, st),
+		aiopsHandler:     aiops.NewHandler(aiops.NewEngine(cfg, st)),
+		aiopsEngine:      aiops.NewEngine(cfg, st),
+		aiGatewayHandler: aigateway.NewAIGatewayHandler(aigateway.NewGateway(), aigateway.NewInMemoryVectorStore(), 5),
+		agentHandler:     agent.NewAgentHandler(
+			agent.NewOrchestrator(aigateway.NewGateway(), agent.DefaultToolRegistry(), agent.NewMemoryManager()),
+			aigateway.NewGateway(),
+			agent.NewMemoryManager(),
+		),
+		knowledgeHandler: knowledge.NewKnowledgeHandler(knowledge.NewInMemoryKnowledgeStore(), aigateway.NewGateway()),
+		costHandler:      cost.NewCostHandler(cost.NewBudgetManager(), cost.NewModelRouter(), cost.NewCostTracker()),
+		k8sLifecycleHandler: k8slifecycle.NewK8sLifecycleHandler(),
+		cloudProviderFactory: cloudprovider.NewAdapterFactory(),
 		eventSubs:     make(map[chan SSEEvent]struct{}), // SSE 订阅者集合
 		alertAggr:     notify.NewAlertAggregator(),      // 告警聚合器
 		alertChannels: &notify.Channels{ // 多通道（Webhook + Email）
@@ -711,6 +733,11 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// scheduleMgr 维护 ScheduleEntry 元数据；approvalEngine 来自 internal/approval 包。
 	// 预置审批流（DefaultFlows）在引擎构造后注入，使新租户开箱可用。
 	s.batches = newBatchStore()
+	// Wave 4-C：Server 启动时从 TaskRecord 恢复 batch/canary 状态（store 此时已就绪）。
+	// 首次运行 store 为空 ⇒ 恢复为空索引，向后兼容。
+	if err := s.recoverFromTaskRecords(); err != nil {
+		logx.Warn(context.Background(), "批次/灰度状态恢复跳过（索引为空）", "err", err)
+	}
 	s.scheduleMgr = cron.NewManager()
 	s.approvalEngine = approval.New()
 	for _, f := range approval.DefaultFlows {

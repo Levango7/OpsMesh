@@ -1,0 +1,163 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: externalk8sclusters.opsmesh.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: opsmesh.io
+  names:
+    kind: ExternalK8sCluster
+    listKind: ExternalK8sClusterList
+    plural: externalk8sclusters
+    singular: externalk8scluster
+    shortNames:
+      - extk8s
+      - extk8scluster
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: |-
+            ExternalK8sCluster is the Schema for the externalk8sclusters API.
+
+            An ExternalK8sCluster declaratively registers an external Kubernetes
+            cluster with OpsMesh. The operator watches these resources, connects
+            to the external cluster using the kubeconfig in the referenced
+            Secret, and reports connectivity and basic resource counts back onto
+            the CR status.
+          properties:
+            apiVersion:
+              type: string
+              description: |-
+                APIVersion defines the versioned schema of this representation of
+                an object. Servers should convert recognized schemas to the latest
+                internal value, and may reject unrecognized values.
+            kind:
+              type: string
+              description: |-
+                Kind is a string value representing the REST resource this object
+                represents. Servers may infer this from the endpoint the client
+                submits requests to.
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - clusterName
+                - kubeconfigSecretRef
+              properties:
+                clusterName:
+                  type: string
+                  default: my-external-cluster
+                  description: ClusterName is a human-readable name for the external cluster.
+                description:
+                  type: string
+                  description: Description is an optional free-text description of the cluster.
+                kubeconfigSecretRef:
+                  type: object
+                  required:
+                    - key
+                    - name
+                  properties:
+                    key:
+                      type: string
+                      description: The key of the secret to select from. Must be a valid secret key.
+                    name:
+                      type: string
+                      description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names'
+                    optional:
+                      type: boolean
+                      description: Specify whether the Secret or its key must be defined
+                  description: KubeconfigSecretRef references a Kubernetes Secret containing the kubeconfig YAML under the key "kubeconfig". The Secret must live in the same namespace as the ExternalK8sCluster.
+                syncIntervalSeconds:
+                  type: integer
+                  format: int32
+                  default: 300
+                  minimum: 30
+                  description: SyncIntervalSeconds controls how often the operator re-checks the external cluster's connectivity and resource counts.
+            status:
+              type: object
+              description: ExternalK8sClusterStatus defines the observed state of ExternalK8sCluster.
+              properties:
+                connectionState:
+                  type: string
+                  enum:
+                    - Connected
+                    - Disconnected
+                    - Error
+                  description: ConnectionState is the last observed connectivity state.
+                server:
+                  type: string
+                  description: Server is the external cluster's API server URL (parsed from kubeconfig).
+                nodeCount:
+                  type: integer
+                  format: int32
+                  description: NodeCount is the number of nodes in the external cluster.
+                lastSyncTime:
+                  type: string
+                  format: date-time
+                  description: LastSyncTime is the timestamp of the last successful sync.
+                message:
+                  type: string
+                  description: Message carries a human-readable detail about the current state.
+                conditions:
+                  type: array
+                  description: Conditions describe the observed reconciliation state of the resource.
+                  items:
+                    type: object
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                  x-kubernetes-list-map-keys:
+                    - type
+                  x-kubernetes-list-type: map
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: ClusterName
+          type: string
+          jsonPath: .spec.clusterName
+        - name: Server
+          type: string
+          jsonPath: .status.server
+        - name: ConnectionState
+          type: string
+          jsonPath: .status.connectionState
+        - name: NodeCount
+          type: integer
+          format: int32
+          jsonPath: .status.nodeCount
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="ConnectionReady")].status
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

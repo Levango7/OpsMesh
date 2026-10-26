@@ -100,7 +100,7 @@ func (s *Service) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.
 	if u.MustChangePassword {
 		return s.issueChangePasswordTokens(u)
 	}
-	return s.issueTokens(u, "")
+	return s.issueTokens(u, "", resolveTenantID(req.GetTenantId()))
 }
 
 // LoginWithFP 带设备指纹的登录（A1 HTTP 网关专用——gRPC proto 不含 FP 字段，
@@ -119,7 +119,7 @@ func (s *Service) LoginWithFP(ctx context.Context, req *authv1.LoginRequest, dev
 	if u.MustChangePassword {
 		return s.issueChangePasswordTokens(u)
 	}
-	return s.issueTokens(u, deviceFP)
+	return s.issueTokens(u, deviceFP, resolveTenantID(req.GetTenantId()))
 }
 
 // issueChangePasswordTokens issues a short-lived change-password-only token set
@@ -128,7 +128,7 @@ func (s *Service) LoginWithFP(ctx context.Context, req *authv1.LoginRequest, dev
 // 客户端应据 MustChangePassword=true 走 ChangePassword 流程后重新 Login。
 func (s *Service) issueChangePasswordTokens(u *store.User) (*authv1.TokenResponse, error) {
 	permissions := s.expandPermissions(u)
-	accessToken, expiresIn, err := s.jwtEngine.IssueTokenWithTTL(u.ID, u.Username, u.RoleIDs, permissions, changePasswordTokenTTL)
+	accessToken, expiresIn, err := s.jwtEngine.IssueTokenWithTTL(u.ID, u.Username, u.TenantID, u.RoleIDs, permissions, changePasswordTokenTTL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to issue change-password token: %w", err)
 	}
@@ -162,16 +162,16 @@ func (s *Service) Logout(ctx context.Context, req *authv1.LogoutRequest) (*empty
 // mustChangePassword=true 的用户即使持有效 refresh token 也不签发常规全量 token
 // （与 Login 同语义，防止经刷新通道绕过首登强制改密）。
 func (s *Service) RefreshToken(ctx context.Context, req *authv1.RefreshTokenRequest) (*authv1.TokenResponse, error) {
-	return s.refreshTokenFP(ctx, req.RefreshToken, "")
+	return s.refreshTokenFP(ctx, req.RefreshToken, "", "")
 }
 
 // RefreshTokenWithFP 带设备指纹的刷新（A1 HTTP 网关专用）：FP 非空且与签发时不匹配
 // → 拒绝（防 rt 被盗后跨设备重放；空 FP 兼容旧客户端，controlplane 同语义）。
-func (s *Service) RefreshTokenWithFP(ctx context.Context, refreshToken, deviceFP string) (*authv1.TokenResponse, error) {
-	return s.refreshTokenFP(ctx, refreshToken, deviceFP)
+func (s *Service) RefreshTokenWithFP(ctx context.Context, refreshToken, deviceFP, tenantID string) (*authv1.TokenResponse, error) {
+	return s.refreshTokenFP(ctx, refreshToken, deviceFP, tenantID)
 }
 
-func (s *Service) refreshTokenFP(_ context.Context, refreshToken, deviceFP string) (*authv1.TokenResponse, error) {
+func (s *Service) refreshTokenFP(_ context.Context, refreshToken, deviceFP, tenantID string) (*authv1.TokenResponse, error) {
 	tokenHash := auth.HashRefreshToken(refreshToken)
 	rt, ok := s.store.ConsumeRefreshToken(tokenHash)
 	if !ok {
@@ -192,7 +192,14 @@ func (s *Service) refreshTokenFP(_ context.Context, refreshToken, deviceFP strin
 	if u.MustChangePassword {
 		return nil, ErrTokenInvalid
 	}
-	return s.issueTokens(u, deviceFP)
+	// tenantID 优先级：调用方显式传入 > refresh token 记录中的 tenant_id > "default" 兜底。
+	if tenantID == "" {
+		tenantID = rt.TenantID
+	}
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	return s.issueTokens(u, deviceFP, tenantID)
 }
 
 // ValidateToken validates an access token.
@@ -256,11 +263,10 @@ func (s *Service) CreateUser(ctx context.Context, req *authv1.CreateUserRequest)
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 	_, err = s.store.CreateUser(&store.User{
-		Username: req.Username,
-		Email:    req.Email,
-		RoleIDs:  req.RoleIds,
-		// 首登强制改密（TD-60 搬迁）：透传建号请求里的开关，使一次性口令建号的
-		// 用户必须改密后才能取得常规会话；缺省 false 保持既有行为。
+		Username:           req.Username,
+		Email:              req.Email,
+		RoleIDs:            req.RoleIds,
+		TenantID:           resolveTenantID(req.GetTenantId()),
 		MustChangePassword: req.MustChangePassword,
 	})
 	if err != nil {
@@ -308,6 +314,7 @@ func (s *Service) RegisterUser(ctx context.Context, req *authv1.CreateUserReques
 		Email:    req.Email,
 		RoleIDs:  req.RoleIds, // 自注册默认角色（role-viewer，只读）由网关显式传入
 		Status:   "pending",
+		TenantID: resolveTenantID(req.GetTenantId()),
 		// 自注册路径暂不置 MustChangePassword：注册口令由用户自选、且需管理员
 		// 审批，行为与既往一致；是否改为「首登强制改密」属产品决策，不在本提交。
 		MustChangePassword: false,
@@ -572,10 +579,14 @@ func (s *Service) ListPermissions(ctx context.Context, _ *emptypb.Empty) (*authv
 // issueTokens issues access and refresh tokens for a user.
 // deviceFP 为设备指纹（A1 安全对齐 controlplane）：签发 at/rt 时均绑定——非空时
 // 刷新与请求校验必须匹配（防 token 被盗后跨设备重放）；空=旧客户端兼容不校验（controlplane 同语义）。
-func (s *Service) issueTokens(u *store.User, deviceFP string) (*authv1.TokenResponse, error) {
+// tenantID 写入 JWT claims.tenant_id 和 refresh token 记录；空串回退为 "default"。
+func (s *Service) issueTokens(u *store.User, deviceFP string, tenantID string) (*authv1.TokenResponse, error) {
 	permissions := s.expandPermissions(u)
+	if tenantID == "" {
+		tenantID = "default"
+	}
 	// at 绑定 deviceFP：ValidateToken 返回 DeviceFP 供调用方校验请求设备一致。
-	accessToken, expiresIn, err := s.jwtEngine.IssueTokenWithDeviceFP(u.ID, u.Username, u.RoleIDs, permissions, deviceFP, s.jwtEngine.AccessTokenTTL())
+	accessToken, expiresIn, err := s.jwtEngine.IssueTokenWithDeviceFP(u.ID, u.Username, u.RoleIDs, permissions, deviceFP, s.jwtEngine.AccessTokenTTL(), u.TenantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to issue token: %w", err)
 	}
@@ -586,7 +597,7 @@ func (s *Service) issueTokens(u *store.User, deviceFP string) (*authv1.TokenResp
 	s.store.SaveRefreshToken(&store.RefreshToken{
 		TokenHash: auth.HashRefreshToken(refreshToken),
 		UserID:    u.ID,
-		TenantID:  "default",
+		TenantID:  tenantID,
 		DeviceFP:  deviceFP,
 		ExpiresAt: time.Now().Add(s.jwtEngine.RefreshTokenTTL()),
 		CreatedAt: time.Now(),
@@ -597,6 +608,14 @@ func (s *Service) issueTokens(u *store.User, deviceFP string) (*authv1.TokenResp
 		ExpiresIn:    expiresIn,
 		User:         toProtoUser(u),
 	}, nil
+}
+
+// resolveTenantID 将租户 ID 归一化，空串回退 "default"。
+func resolveTenantID(tenantID string) string {
+	if tenantID == "" {
+		return "default"
+	}
+	return tenantID
 }
 
 // expandPermissions expands role IDs to permission strings.
@@ -628,8 +647,17 @@ func toProtoUser(u *store.User) *authv1.User {
 		Username:           u.Username,
 		Email:              u.Email,
 		Status:             u.Status,
+		TenantId:           u.TenantID,
 		RoleIds:            u.RoleIDs,
 		CreatedAt:          timestamppb.New(u.CreatedAt),
 		MustChangePassword: u.MustChangePassword,
 	}
+}
+
+// defaultTenantID 空租户 ID 回退为 "default"（向后兼容）。
+func defaultTenantID(t string) string {
+	if t == "" {
+		return "default"
+	}
+	return t
 }

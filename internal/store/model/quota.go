@@ -17,9 +17,10 @@ import "time"
 //   - 字段均为值类型，浅拷贝即深拷贝，便于并发安全返回拷贝；
 //   - JSON 标签用于 API 响应序列化（GET /api/v1/quotas/{tenantID}）。
 type QuotaConfig struct {
-	MaxDevices int `json:"maxDevices"` // 最大设备数（0=不限）
-	MaxTasks   int `json:"maxTasks"`   // 最大任务数（0=不限）
-	MaxAlerts  int `json:"maxAlerts"`  // 最大告警数（0=不限）
+	TenantID   string `json:"tenantID"`   // 租户 ID (用于跨租户列表)
+	MaxDevices int    `json:"maxDevices"` // 最大设备数（0=不限）
+	MaxTasks   int    `json:"maxTasks"`   // 最大任务数（0=不限）
+	MaxAlerts  int    `json:"maxAlerts"`  // 最大告警数（0=不限）
 }
 
 // Usage 租户资源用量统计。

@@ -220,7 +220,7 @@ async function load() {
     healthyPct.value = Math.round((healthyCount.value / total) * 100)
     degradedPct.value = Math.round((degradedCount.value / total) * 100)
     missingPct.value = Math.round((missingCount.value / total) * 100)
-  } catch (_e) {
+  } catch {
     // 错误由全局 request.js toast 提示
   } finally {
     loading.value = false

@@ -383,6 +383,8 @@ var helperScanTables = map[string]string{
 	"scanAutomationRule":     "automation_rules",
 	"scanBackupRecord":       "backup_records",
 	"scanBillingPlan":        "billing_plans",
+	"scanCloudAccount":       "cloud_accounts",
+	"scanCloudResource":      "cloud_resources",
 	"scanComplianceReport":   "compliance_reports",
 	"scanConfigItem":         "configs",
 	"scanInvoice":            "invoices",
@@ -401,6 +403,7 @@ var helperScanTables = map[string]string{
 	"scanScript":             "scripts",
 	"scanScriptExecution":    "script_executions",
 	"scanSecretMeta":         "secrets",
+	"scanSecretAccessLog":    "secret_access_logs",
 	"scanServiceInstance":    "services",
 	"scanTaskRecord":         "task_records",
 	"scanGatewayRoute":       "gateway_routes",
@@ -439,10 +442,10 @@ var scanSiteExemptions = map[string]string{
 // 为什么用棘轮而不是百分比：百分比会随代码量涨跌而失去意义，而下限一旦被调低，
 // 必须有人为"为什么变差了"写下理由——这正是防"门禁悄悄失去牙齿"的那道刹车。
 //
-// 56 = 接手时的实测值（全包 87 个 Scan 站点；其中参数 >=3 的宽扫描已全部
+// 58 = 接手时的实测值（全包 87 个 Scan 站点；其中参数 >=3 的宽扫描已全部
 // 「参与判定」或「进豁免账」，剩下的 31 处是 args<=2 的标量/聚合读取，如 COUNT(*)、
 // SELECT version, checksum）。上调它之前先确认新站点是真的进了判定而不是被顺手豁免。
-const judgedSitesFloor = 56
+const judgedSitesFloor = 58
 
 // camelToSnakeOf 供豁免账目匹配使用（文件名#函数名 形态的键）。
 func siteKey(file, fn string) string {

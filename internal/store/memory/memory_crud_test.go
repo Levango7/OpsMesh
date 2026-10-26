@@ -170,8 +170,9 @@ func TestMemoryStore_TaskResult_Query(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	m.ClaimTask(a.AgentID)
-	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0, Stdout: "hi"})
+	claimed := m.ClaimTask(a.AgentID)
+	// 防双跑：携带领取时颁发的 ClaimEpoch（与 internal/agent/agent.go execute() 同源）。
+	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0, Stdout: "hi", ClaimEpoch: claimed.ClaimEpoch})
 
 	got := m.TaskResult(tk.TaskID)
 	if got == nil || got.Stdout != "hi" {
@@ -292,8 +293,9 @@ func TestMemoryStore_CancelTask_AlreadyDone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	m.ClaimTask(a.AgentID)
-	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0})
+	claimed := m.ClaimTask(a.AgentID)
+	// 防双跑：携带领取时颁发的 ClaimEpoch（与 internal/agent/agent.go execute() 同源）。
+	m.SubmitResult(&proto.TaskResult{TaskID: tk.TaskID, AgentID: a.AgentID, ExitCode: 0, ClaimEpoch: claimed.ClaimEpoch})
 
 	// 已 done 不可取消
 	if m.CancelTask(tk.TaskID, "t1") {
@@ -569,15 +571,19 @@ func TestMemoryStore_AlertRule_CRUD(t *testing.T) {
 	}
 
 	// Delete
-	if !m.DeleteAlertRule(r1.ID) {
+	if !m.DeleteAlertRule(r1.ID, "default") {
 		t.Fatal("DeleteAlertRule 应返回 true")
 	}
 	if m.GetAlertRule(r1.ID) != nil {
 		t.Fatal("删除后 GetAlertRule 应返回 nil")
 	}
 	// Delete 不存在
-	if m.DeleteAlertRule("nope") {
+	if m.DeleteAlertRule("nope", "default") {
 		t.Fatal("DeleteAlertRule 不存在应返回 false")
+	}
+	// Delete 越权
+	if m.DeleteAlertRule(r2.ID, "default") {
+		t.Fatal("DeleteAlertRule 越权应返回 false")
 	}
 }
 
