@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2 data-testid="network-devices-title">{{ $t('network.devices_title') }}</h2>
-    <p class="muted">{{ $t('network.devices_subtitle') }}</p>
-
+  <PageShell :title="$t('network.devices_title')" :desc="$t('network.devices_subtitle')" testid="network-devices" :error="store.error">
     <!-- Tab 切换 -->
     <div class="tabbar">
       <button
@@ -13,8 +10,6 @@
         @click="switchTab(tab.key)"
       >{{ $t(tab.label) }}</button>
     </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <!-- ========== Tab 1: 设备列表 ========== -->
     <div v-show="activeTab === 'devices'">
@@ -185,11 +180,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 网络设备页 — 两 Tab：设备列表 CRUD + 指标查看 + 配置下发 / 网络发现
+import PageShell from '@/components/PageShell.vue'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useNetworkStore } from '@/stores/network'
 import { t } from '@/i18n'
@@ -383,12 +379,6 @@ onMounted(() => {
 .field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .btnbar { margin-top: 8px; }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 @media (max-width: 768px) { .row-2 { grid-template-columns: 1fr; } }
 </style>

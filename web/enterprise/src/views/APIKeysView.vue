@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('apikeys.title') }}</h2>
-    <p class="muted">{{ $t('apikeys.subtitle') }}</p>
-
+  <PageShell :title="$t('apikeys.title')" :desc="$t('apikeys.subtitle')" testid="api-keys" :error="loadErr">
     <div class="btnbar">
       <button class="primary" data-testid="apikeys-add-btn" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -106,12 +103,13 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // API Key 管理页 — 列表 + 新增/编辑/删除 + 启停
 // 创建成功后后端返回明文 key（plainKey），仅此一次，用 info 弹窗展示给用户复制。
+import PageShell from '@/components/PageShell.vue'
 import { ref, reactive, onMounted } from 'vue'
 import { listAPIKeys, createAPIKey, updateAPIKey, deleteAPIKey, enableAPIKey, disableAPIKey } from '@/api/apikeys'
 import { t } from '@/i18n'
@@ -127,6 +125,7 @@ const keys = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 删除确认弹窗（替代 confirm）
 const deleteConfirm = reactive({ show: false, row: null })
@@ -162,11 +161,14 @@ const columns = [
 
 async function fetchKeys() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await listAPIKeys()
     keys.value = (r && r.apiKeys) || r || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     keys.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

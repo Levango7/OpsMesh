@@ -1,8 +1,5 @@
 <template>
-  <div data-testid="cmdb-view">
-    <h2 data-testid="cmdb-title">{{ $t('cmdb.title') }}</h2>
-    <p class="muted">{{ $t('cmdb.subtitle') }}</p>
-
+  <PageShell :title="$t('cmdb.title')" :desc="$t('cmdb.subtitle')" testid="cmdb">
     <div class="row">
       <!-- 左：实例列表 -->
       <div class="col">
@@ -103,10 +100,12 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { computed, onMounted, reactive, ref, defineAsyncComponent } from 'vue'
 import { useCmdbStore } from '@/stores/cmdb'
 import { t } from '@/i18n'

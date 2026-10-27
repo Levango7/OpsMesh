@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('tenants.title') }}</h2>
-    <p class="muted">{{ $t('tenants.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('tenants.title')"
+    :desc="$t('tenants.subtitle')"
+    testid="tenants"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -92,10 +94,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 租户管理页 — CRUD + 暂停/激活生命周期操作
 import { ref, reactive, onMounted } from 'vue'
 import * as tenantApi from '@/api/tenant'
@@ -111,6 +115,7 @@ const tenants = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 暂停确认弹窗
 const suspendConfirm = reactive({ show: false, row: null })
@@ -139,11 +144,14 @@ function usageText(row) {
 
 async function fetchTenants() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await tenantApi.listTenants()
     tenants.value = (r && r.tenants) || []
-  } catch {
+  } catch (e) {
     tenants.value = []
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

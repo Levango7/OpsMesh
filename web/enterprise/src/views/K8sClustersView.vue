@@ -1,13 +1,7 @@
 <template>
-  <div class="k8s-page">
-    <div class="k8s-page__head">
-      <h2 class="k8s-page__title" data-testid="k8s-title">{{ $t('k8s.clusters') }}</h2>
-      <p class="k8s-page__desc">{{ $t('k8s.clustersHint') }}</p>
-    </div>
-
+  <PageShell :title="$t('k8s.clusters')" :desc="$t('k8s.clustersHint')" testid="k8s" :error="store.error">
+    <!-- 子页签：集群管理 / 资源管理（保留原位，位于骨架头部之下） -->
     <K8sSubNav />
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <div class="card">
       <div class="flowbar">
@@ -88,10 +82,12 @@
       :message="$t('k8s.deleteClusterConfirm')"
       @confirm="onDeleteConfirm"
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // K8s 集群管理子页 — 集群注册 / 测试连接 / 删除 / 跳转到资源视图
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -224,11 +220,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.k8s-page { max-width: 1100px; margin: 0 auto; }
-.k8s-page__head { margin-bottom: 20px; }
-.k8s-page__title { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
-.k8s-page__desc { margin: 0; color: var(--color-ink-muted, #6b7280); font-size: 13px; }
-
 .card {
   background: var(--color-surface-1, #ffffff);
   border: 1px solid var(--color-hairline, #d3dbe8);
@@ -306,17 +297,6 @@ onMounted(() => {
 .muted {
   color: var(--color-ink-muted, #6b7280);
   font-size: 12.5px;
-}
-
-.poll-err {
-  padding: 8px 12px;
-  margin: 6px 0 12px;
-  border-radius: var(--radius-sm, 6px);
-  background: var(--color-error-soft, #fef2f2);
-  border: 1px solid var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444);
-  font-size: 12.5px;
-  font-weight: 500;
 }
 
 /* Modal overlay + box */

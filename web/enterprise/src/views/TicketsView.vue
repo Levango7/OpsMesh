@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('tickets.title') }}</h2>
-    <p class="muted">{{ $t('tickets.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('tickets.title')"
+    :desc="$t('tickets.subtitle')"
+    testid="tickets"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -109,10 +111,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 工单管理页 — 列表 + 创建/编辑 + 关闭工单
 import { ref, computed, reactive, onMounted } from 'vue'
 import { getTickets, createTicket, updateTicket, closeTicket } from '@/api/ticket'
@@ -128,6 +132,7 @@ const tickets = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 关闭确认弹窗（替代 confirm）
 const closeConfirm = reactive({ show: false, row: null })
@@ -170,11 +175,14 @@ function categoryText(c) {
 
 async function fetchTickets() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await getTickets()
     tickets.value = (r && r.tickets) || []
-  } catch {
+  } catch (e) {
     tickets.value = []
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

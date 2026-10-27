@@ -1,12 +1,10 @@
 <template>
-  <div class="device-discovery-page">
-    <div class="page-head">
-      <h2 class="page-title">{{ $t('deviceDiscovery.title') }}</h2>
-      <p class="page-desc">{{ $t('deviceDiscovery.desc') }}</p>
-    </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('deviceDiscovery.title')"
+    :desc="$t('deviceDiscovery.desc')"
+    testid="device-discovery"
+    :error="store.error || loadErr"
+  >
     <!-- 启动发现任务 -->
     <div class="card">
       <div class="flowbar">
@@ -76,16 +74,17 @@
       </DataTable>
       <div v-else class="muted">{{ $t('deviceDiscovery.noDevices') }}</div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { ref, computed } from 'vue'
 import { useDeviceStore } from '@/stores/device'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
 
 const store = useDeviceStore()
@@ -94,6 +93,8 @@ const cidr = ref('')
 const discovering = ref(false)
 const discoveryMsg = ref('')
 const discoveryMsgOk = ref(false)
+// 刷新类操作此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
+const loadErr = ref('')
 
 const jobRows = computed(() => {
   return Object.values(store.discoveryJobs).sort((a, b) => (b.createdAt || '') - (a.createdAt || ''))
@@ -157,19 +158,19 @@ async function startDiscovery() {
 async function refreshJobs() {
   for (const job of jobRows.value) {
     if (job.status === 'running' || job.status === 'pending') {
-      try { await store.getDiscoveryStatus(job.jobID || job.ID) } catch { /* ignore */ }
+      try { await store.getDiscoveryStatus(job.jobID || job.ID) } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
     }
   }
 }
 
 async function refreshJob(jobID) {
-  try { await store.getDiscoveryStatus(jobID) } catch { /* ignore */ }
+  try { await store.getDiscoveryStatus(jobID) } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 async function viewDevices(_jobID) {
   try {
     await store.getDiscoveredDevices('default')
-  } catch { /* ignore */ }
+  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 async function provisionDiscovered(row) {
@@ -186,19 +187,11 @@ async function provisionDiscovered(row) {
 </script>
 
 <style scoped>
-.page-head { margin-bottom: 20px; }
-.page-title { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
-.page-desc { margin: 0; color: var(--color-ink-muted, #6b7280); font-size: 13px; }
 .cidr-input { width: 260px; }
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
 .row-actions { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
-.poll-err {
-  padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm);
-  background: var(--color-error-soft, #fef2f2); border: 1px solid var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444); font-size: 12.5px; font-weight: 500;
-}
 .msg { margin-top: 8px; font-size: 12.5px; }
 .msg.ok { color: var(--color-success, #059669); }
 .msg.err { color: var(--color-error, #ef4444); }

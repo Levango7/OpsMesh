@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('roles.title') }}</h2>
-    <p class="muted">{{ $t('roles.subtitle') }}</p>
-
+  <PageShell :title="$t('roles.title')" :desc="$t('roles.subtitle')" testid="roles" :error="loadErr">
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -79,11 +76,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 角色管理页 — 列表 + 新增/编辑/删除 + 权限分配
+import PageShell from '@/components/PageShell.vue'
 import { ref, computed, reactive, onMounted } from 'vue'
 import { authApi } from '@/api/auth'
 import { t } from '@/i18n'
@@ -98,6 +96,7 @@ const permissions = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 删除确认弹窗（替代 confirm）
 const deleteConfirm = reactive({ show: false, row: null })
@@ -125,11 +124,14 @@ const permissionGroups = computed(() => {
 
 async function fetchRoles() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await authApi.listRoles()
     roles.value = (r && r.roles) || r || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     roles.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -139,8 +141,10 @@ async function fetchPermissions() {
   try {
     const r = await authApi.listPermissions()
     permissions.value = (r && r.permissions) || r || []
-  } catch {
+  } catch (e) {
+    // 权限清单仅供编辑抽屉勾选，失败同样在骨架横幅可见化
     permissions.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   }
 }
 

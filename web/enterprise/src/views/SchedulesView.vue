@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('schedules.title') }}</h2>
-    <p class="muted">{{ $t('schedules.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('schedules.title')"
+    :desc="$t('schedules.subtitle')"
+    testid="schedules"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -83,10 +85,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 定时任务管理页 — cron 调度列表 + 新增/编辑/删除 + 暂停/恢复
 import { ref, computed, reactive, onMounted } from 'vue'
 import {
@@ -105,6 +109,7 @@ const schedules = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 删除确认弹窗（替代 confirm）
 const deleteConfirm = reactive({ show: false, row: null })
@@ -129,11 +134,14 @@ function statusText(s) {
 
 async function fetchSchedules() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await getSchedules()
     schedules.value = (r && r.schedules) || []
-  } catch {
+  } catch (e) {
     schedules.value = []
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

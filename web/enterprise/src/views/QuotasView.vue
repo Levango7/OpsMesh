@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('quotas.title') }}</h2>
-    <p class="muted">{{ $t('quotas.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('quotas.title')"
+    :desc="$t('quotas.subtitle')"
+    testid="quotas"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="primary" @click="openEdit">
         <Icon name="edit" :size="14" />
@@ -65,10 +67,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 租户配额页 — 当前租户配额/用量视图 + 编辑（PUT）+ 重置（DELETE，回退默认）
 // GET /quotas 返回 {enabled, current: QuotaUsage}（MVP：当前租户视图）
 import { ref, reactive, computed, onMounted } from 'vue'
@@ -84,6 +88,7 @@ const enabled = ref(false)
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 重置确认弹窗
 const deleteConfirm = reactive({ show: false })
@@ -119,12 +124,15 @@ function overRatio(k) {
 
 async function fetchQuota() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await quotaApi.listQuotas()
     enabled.value = !!(r && r.enabled)
     usage.value = (r && r.current) || null
-  } catch {
+  } catch (e) {
     usage.value = null
+    // 此前静默吞错（只见空态）——统一骨架批次补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

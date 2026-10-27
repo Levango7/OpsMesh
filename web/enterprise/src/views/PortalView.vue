@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="portal-title">{{ $t('portal.title') }}</h2>
-    <p class="muted">{{ $t('portal.desc') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('portal.title')"
+    :desc="$t('portal.desc')"
+    testid="portal"
+    :error="store.error"
+  >
     <!-- 成本概览 -->
     <div class="metrics-row">
       <MetricsCard :title="$t('portal.totalCost')" icon="cmdb" accent="--accent">
@@ -116,17 +116,18 @@
       :message="approveConfirm.action === 'reject' ? $t('portal.rejectConfirm') : $t('portal.approveConfirm')"
       @confirm="onApproveConfirm"
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { computed, onMounted, reactive, ref } from 'vue'
 import { usePortalStore } from '@/stores/portal'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
-import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { toast } from '@/utils/toast'
 
@@ -257,11 +258,6 @@ onMounted(() => {
 .row .col:nth-child(1) { flex: 40; }
 .row .col:nth-child(2) { flex: 60; }
 
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .row-actions { display: inline-flex; gap: 6px; }
 .metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }

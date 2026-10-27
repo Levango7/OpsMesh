@@ -1,33 +1,28 @@
 <template>
-  <div class="device-detail">
-    <!-- 顶部操作栏 -->
-    <div class="detail-topbar">
-      <div class="topbar-left">
-        <Button variant="ghost" size="sm" @click="goBack">
-          <span style="display:inline-flex;align-items:center;gap:4px;"><Icon name="arrow-left" :size="14" /> {{ $t('common.back') }}</span>
-        </Button>
-        <h2>{{ $t('device_detail.title') }}</h2>
-        <code v-if="metrics">{{ metrics.deviceID }}</code>
-      </div>
-      <div class="topbar-right">
-        <span class="refresh-tag" :class="{ active: autoRefresh }">
-          <span class="dot" />
-          {{ autoRefresh ? $t('device_detail.auto_refresh_on') : $t('device_detail.auto_refresh_off') }}
+  <PageShell
+    :title="metrics?.deviceID || deviceId || $t('device_detail.title')"
+    testid="device-detail"
+    :error="store.metricsError"
+  >
+    <!-- 头部操作区：返回 + 自动刷新指示 + 采集时间 + 刷新（原顶部操作栏整体迁入 #actions） -->
+    <template #actions>
+      <Button variant="ghost" size="sm" @click="goBack">
+        <span style="display:inline-flex;align-items:center;gap:4px;"><Icon name="arrow-left" :size="14" /> {{ $t('common.back') }}</span>
+      </Button>
+      <span class="refresh-tag" :class="{ active: autoRefresh }">
+        <span class="dot" />
+        {{ autoRefresh ? $t('device_detail.auto_refresh_on') : $t('device_detail.auto_refresh_off') }}
+      </span>
+      <span v-if="metrics" class="muted collected">
+        {{ $t('device_detail.collected_at') }}: {{ fmtTime(metrics.collectedAt, '—') }}
+      </span>
+      <Button variant="ghost" size="sm" :disabled="store.metricsLoading" @click="refresh">
+        <span style="display:inline-flex;align-items:center;gap:4px;">
+          <Icon name="refresh" :size="14" />
+          {{ $t('common.refresh') }}
         </span>
-        <span v-if="metrics" class="muted collected">
-          {{ $t('device_detail.collected_at') }}: {{ fmtTime(metrics.collectedAt, '—') }}
-        </span>
-        <Button variant="ghost" size="sm" :disabled="store.metricsLoading" @click="refresh">
-          <span style="display:inline-flex;align-items:center;gap:4px;">
-            <Icon name="refresh" :size="14" />
-            {{ $t('common.refresh') }}
-          </span>
-        </Button>
-      </div>
-    </div>
-
-    <!-- 错误提示 -->
-    <div v-if="store.metricsError" class="poll-err"><Icon name="warning" :size="14" /> {{ store.metricsError }}</div>
+      </Button>
+    </template>
 
     <!-- 加载中 / 空态 -->
     <div v-if="store.metricsLoading && !metrics" class="muted loading-block">
@@ -257,10 +252,12 @@
         </div>
       </div>
     </template>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 设备详情页 — 监控指标仪表盘
 // 路由：/devices/:id
 // 自动每 30 秒刷新一次指标
@@ -442,36 +439,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.device-detail {
-  display: block;
-}
-
-/* 顶部操作栏 */
-.detail-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3, 12px);
-  flex-wrap: wrap;
-  margin-bottom: var(--space-4, 16px);
-}
-.topbar-left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 8px);
-}
-.topbar-left h2 {
-  margin: 0;
-  font-size: var(--font-size-base, 13px);
-  font-weight: 600;
-  color: var(--color-ink, #f7f8f8);
-}
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 8px);
-  flex-wrap: wrap;
-}
 .refresh-tag {
   display: inline-flex;
   align-items: center;
@@ -504,16 +471,6 @@ onUnmounted(() => {
   font-size: var(--font-size-xs, 11px);
 }
 
-.poll-err {
-  padding: var(--space-2, 8px) var(--space-3, 12px);
-  margin: var(--space-1, 6px) 0 var(--space-3, 12px) 0;
-  border-radius: var(--radius-sm, 6px);
-  background: var(--color-error-soft, #fef2f2);
-  border: 1px solid var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444);
-  font-size: var(--font-size-sm, 12px);
-  font-weight: 500;
-}
 .loading-block {
   padding: var(--space-6, 24px) 0;
   text-align: center;

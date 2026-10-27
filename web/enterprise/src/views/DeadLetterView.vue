@@ -1,16 +1,16 @@
 <template>
-  <div>
-    <h2 data-testid="dead-letter-title">{{ $t('dead_letter.title') }}</h2>
-    <p class="muted">{{ $t('dead_letter.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('dead_letter.title')"
+    :desc="$t('dead_letter.subtitle')"
+    testid="dead-letter"
+    :error="store.error"
+  >
     <div class="card">
       <div class="flowbar">
         <Button variant="ghost" size="sm" data-testid="dead-letter-refresh-btn" @click="store.fetchDeadLetterTasks()">
           <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
         </Button>
       </div>
-
-      <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
       <DataTable
         :columns="columns"
@@ -39,10 +39,12 @@
         </template>
       </DataTable>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { onMounted } from 'vue'
 import { useDeadLetterStore } from '@/stores/dead-letter'
 import DataTable from '@/components/DataTable.vue'
@@ -93,8 +95,5 @@ onMounted(() => {
   margin-bottom: 16px;
 }
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.poll-err { padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm); background: var(--fail-soft); border: 1px solid var(--fail-bg); color: var(--fail); font-size: 12.5px; font-weight: 500; }
 .row-actions { display: flex; gap: 4px; }
-.muted { color: var(--text-3, #6b7280); font-size: 12.5px; }
 </style>
-EOF

@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('notify.title') }}</h2>
-    <p class="muted">{{ $t('notify.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('notify.title')"
+    :desc="$t('notify.subtitle')"
+    testid="notify-channels"
+    :error="loadErr"
+  >
     <!-- tab 分区：通知渠道 / 通知模板 -->
     <div class="btnbar tabs">
       <button :class="['tab-btn', { active: tab === 'channels' }]" @click="tab = 'channels'">
@@ -168,10 +170,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 通知渠道管理页 — tab 两区：渠道列表（CRUD + 测试发送）/ 模板列表（CRUD）
 import { ref, reactive, watch, onMounted } from 'vue'
 import {
@@ -190,6 +194,7 @@ import { fmtTime } from '@/composables/useFormatTime'
 const tab = ref('channels')
 const loading = ref(false)
 const formError = ref('')
+const loadErr = ref('')
 
 const channels = ref([])
 const templates = ref([])
@@ -228,12 +233,15 @@ function fmtChannelType(v) {
 // ============ 数据拉取 ============
 async function fetchChannels() {
   loading.value = true
+  loadErr.value = ''
   try {
     // 后端返回数组（Config 已脱敏）
     const r = await listChannels()
     channels.value = Array.isArray(r) ? r : (r && r.channels) || []
-  } catch {
+  } catch (e) {
     channels.value = []
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -241,11 +249,14 @@ async function fetchChannels() {
 
 async function fetchTemplates() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await listTemplates()
     templates.value = Array.isArray(r) ? r : (r && r.templates) || []
-  } catch {
+  } catch (e) {
     templates.value = []
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

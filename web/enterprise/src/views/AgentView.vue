@@ -1,12 +1,5 @@
 <template>
-  <div class="agent-page">
-    <div class="page-head">
-      <h2 class="page-title">{{ $t('agent.title') }}</h2>
-      <p class="page-desc">{{ $t('agent.desc') }}</p>
-    </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell :title="$t('agent.title')" :desc="$t('agent.desc')" testid="agent" :error="store.error || loadErr">
     <!-- 意图分类 -->
     <div class="card">
       <div class="flowbar">
@@ -86,15 +79,16 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { ref } from 'vue'
 import { useAgentStore } from '@/stores/agent'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
-import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
 
 const store = useAgentStore()
@@ -103,6 +97,8 @@ const input = ref('')
 const classifying = ref(false)
 const decomposing = ref(false)
 const useDAG = ref(false)
+// 操作类调用此前静默吞错——统一骨架批次补上可见错误（store.error 已置错时优先展示它）
+const loadErr = ref('')
 
 const taskColumns = [
   { key: 'id', title: 'ID' },
@@ -115,29 +111,25 @@ const taskColumns = [
 async function classify() {
   classifying.value = true
   try { await store.classify(input.value) }
-  catch { /* ignore */ }
+  catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
   finally { classifying.value = false }
 }
 
 async function decompose() {
   decomposing.value = true
   try { await store.decompose(input.value) }
-  catch { /* ignore */ }
+  catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
   finally { decomposing.value = false }
 }
 
 async function execute() {
   try {
     await store.execute(input.value, 'admin', 'default', 'session-1', useDAG.value)
-  } catch { /* ignore */ }
+  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 </script>
 
 <style scoped>
-.agent-page { max-width: 900px; margin: 0 auto; }
-.page-head { margin-bottom: 20px; }
-.page-title { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
-.page-desc { margin: 0; color: var(--color-ink-muted, #6b7280); font-size: 13px; }
 .card { background: var(--color-surface-1, #ffffff); border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); padding: 16px 18px; margin-bottom: 16px; }
 .card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
 .row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -165,9 +157,4 @@ async function execute() {
 .tool-card .tool-name { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .tool-card .tool-desc { font-size: 11px; color: var(--color-ink-muted, #6b7280); }
 .muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
-.poll-err {
-  padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm, 6px);
-  background: var(--color-error-soft, #fef2f2); border: 1px solid var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444); font-size: 12.5px; font-weight: 500;
-}
 </style>

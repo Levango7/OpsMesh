@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="runbook-title">{{ $t('runbook.title') }}</h2>
-    <p class="muted">{{ $t('runbook.desc') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('runbook.title')"
+    :desc="$t('runbook.desc')"
+    testid="runbook"
+    :error="store.error"
+  >
     <div class="row">
       <!-- 左：Runbook 列表 -->
       <div class="col">
@@ -116,16 +116,17 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { computed, onMounted, ref } from 'vue'
 import { useRunbookStore } from '@/stores/runbook'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import Icon from '@/components/Icon.vue'
 
 const store = useRunbookStore()
 const editorContent = ref('')
@@ -266,11 +267,6 @@ onMounted(() => {
   margin-bottom: 16px;
 }
 
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .row-actions { display: inline-flex; gap: 6px; }
 

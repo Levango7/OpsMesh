@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('permissions.title') }}</h2>
-    <p class="muted">{{ $t('permissions.subtitle') }}</p>
-
+  <PageShell :title="$t('permissions.title')" :desc="$t('permissions.subtitle')" testid="permissions" :error="loadErr">
     <div class="btnbar">
       <button class="outline" @click="fetchPermissions">
         <Icon name="refresh" :size="14" />
@@ -24,11 +21,12 @@
         </DataTable>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 权限管理页 — 按功能组分类展示所有权限项
+import PageShell from '@/components/PageShell.vue'
 import { ref, computed, onMounted } from 'vue'
 import { authApi } from '@/api/auth'
 import { t } from '@/i18n'
@@ -37,6 +35,7 @@ import Icon from '@/components/Icon.vue'
 
 const permissions = ref([])
 const loading = ref(false)
+const loadErr = ref('')
 
 const columns = [
   { key: 'name', title: t('permissions.name'), slot: 'cell-name' },
@@ -56,11 +55,14 @@ const groups = computed(() => {
 
 async function fetchPermissions() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await authApi.listPermissions()
     permissions.value = (r && r.permissions) || r || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空态）——统一骨架批次补上可见的加载错误
     permissions.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

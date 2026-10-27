@@ -1,12 +1,10 @@
 <template>
-  <div class="k8s-deploy-page">
-    <div class="page-head">
-      <h2 class="page-title">{{ $t('k8sDeploy.title') }}</h2>
-      <p class="page-desc">{{ $t('k8sDeploy.desc') }}</p>
-    </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('k8sDeploy.title')"
+    :desc="$t('k8sDeploy.desc')"
+    testid="k8s-cluster-deploy"
+    :error="store.error || loadErr"
+  >
     <!-- 部署表单 -->
     <div class="card">
       <div class="flowbar">
@@ -136,15 +134,16 @@
       </div>
       <div v-if="deployStatus.error" class="poll-err">{{ deployStatus.error }}</div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { ref, reactive } from 'vue'
 import { useK8sStore } from '@/stores/k8s'
 import { t } from '@/i18n'
 import { deployK8sCluster, getK8sClusterDeployStatus } from '@/api/k8s'
-import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
 
 const store = useK8sStore()
@@ -167,6 +166,8 @@ const msg = ref('')
 const msgOk = ref(false)
 const deployStatus = ref(null)
 const pollTimer = ref(null)
+// 轮询状态拉取此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
+const loadErr = ref('')
 
 function addCPNode() {
   form.controlPlaneNodes.push({ host: '', user: 'root', sshKey: '' })
@@ -239,18 +240,14 @@ function startPolling(deployID) {
         clearInterval(pollTimer.value)
         pollTimer.value = null
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      loadErr.value = e.j?.error || t('common.load_failed')
     }
   }, 3000)
 }
 </script>
 
 <style scoped>
-.k8s-deploy-page { max-width: 900px; margin: 0 auto; }
-.page-head { margin-bottom: 20px; }
-.page-title { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
-.page-desc { margin: 0; color: var(--color-ink-muted, #6b7280); font-size: 13px; }
 .card {
   background: var(--color-surface-1, #ffffff);
   border: 1px solid var(--color-hairline, #d3dbe8);

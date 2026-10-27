@@ -1,11 +1,11 @@
 <template>
-  <div>
-    <h2>{{ $t('mwdep.title') }}</h2>
-    <p class="muted">{{ $t('mwdep.desc') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
-    <!-- 单卡片 + 顶部视图切换：模板目录 / 已部署实例 -->
+  <PageShell
+    :title="$t('mwdep.title')"
+    :desc="$t('mwdep.desc')"
+    testid="mwdep"
+    :error="store.error || loadErr"
+  >
+    <!-- 单卡片 + 顶部视图切换：模板目录 / 已部署实例（分段开关保留原位，不做页面级 .btnbar） -->
     <div class="card">
       <div class="view-head">
         <div class="segmented" role="tablist">
@@ -260,10 +260,12 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 中间件部署 — 单面板视图切换（模板目录 / 已部署实例）+ 分类筛选 + 详情 + 多版本部署 + 卸载
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useMiddlewareStore } from '@/stores/middleware'
@@ -273,10 +275,11 @@ import { t, currentLang } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
-import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
 
 const store = useMiddlewareStore()
+// 模板详情加载失败此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
+const loadErr = ref('')
 
 // 视图切换：模板目录 / 已部署实例（分段开关）
 const view = ref('templates')   // 'templates' | 'instances'
@@ -440,8 +443,9 @@ async function onDeploy(id) {
       params[p.name] = p.default != null ? String(p.default) : ''
     })
     deployForm.value.params = params
-  } catch {
+  } catch (e) {
     deployTpl.value = null
+    loadErr.value = e.j?.error || t('common.load_failed')
   }
   if (!store.devices.length) store.fetchDevices()
 }
@@ -675,11 +679,6 @@ onUnmounted(() => {
 .cat-btn:hover { background: var(--bg-soft); color: var(--text); }
 .cat-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .row-actions { display: inline-flex; gap: 6px; }
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
 .detail-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .field-hint { font-size: 11.5px; color: var(--text-3); margin-right: 6px; }

@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="cmdb-attr-templates-title">{{ $t('cmdbAttrTemplates.title') }}</h2>
-    <p class="muted">{{ $t('cmdbAttrTemplates.subtitle') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('cmdbAttrTemplates.title')"
+    :desc="$t('cmdbAttrTemplates.subtitle')"
+    testid="cmdb-attr-templates"
+    :error="store.error"
+  >
     <div class="btnbar">
       <button class="primary" @click="openCreate" data-testid="cmdb-attr-template-create-btn">
         <Icon name="add" :size="14" /> {{ $t('cmdbAttrTemplates.add') }}
@@ -96,10 +96,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // CMDB 属性模板页 — CRUD（列表 + 创建/编辑 modal + 删除）
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useCMDBAdvancedStore } from '@/stores/cmdb-advanced'
@@ -209,12 +211,6 @@ onMounted(() => {
 .field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .options-cell { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 @media (max-width: 768px) {
   .row-2 { grid-template-columns: 1fr; }

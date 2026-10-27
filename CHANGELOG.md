@@ -4,6 +4,43 @@
 
 > 当前最新已发布版本：`v0.16.0`（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局统一专项：181 条「后端有/前端无」缺口闭合、InfraConsole 契约断链与 K8s 两页 i18n 裸键修复、PageShell 棘轮 63 页迁移）
+
+- **背景（用户指派）**：两大担忧——① 后端能力做了、前端没做或做残；② 各页面布局各行其是。
+  专项审计方法：468 条后端 REST 路由 ×（前端静态调用 + 动态目录枚举）⇒ 181 条缺口定性，
+  按域拆为目录分片补齐；布局走「统一骨架 + 棘轮门禁」。
+- **运维能力目录补全（60 域 / 333 动作）**：InfraConsole 数据驱动目录新增 6 个分片文件
+  （`web/enterprise/src/api/infra-catalog/`，与既有 CORE 目录合并导出）：os 30 端点、
+  search 33、mq-deep 79、cache-gpu 29、ops-suite 34、graph-domestic 8（图库扩展
+  monitor/scale/upgrade/user/index/schema + db/domestic + middleware/domestic）。
+  这些后端端点此前无任何前端入口；字段与枚举逐条从 handler req struct 抄录，
+  handler 声明但未读取的字段显式标注「预留」，不虚构枚举。
+- **InfraConsole 契约断链（真缺陷，用户级）**：任务卡片/轮询/复制读 `result.data.id`，
+  而 API 层返回 `{s,j}` 包装、后端 202 体是 `{taskID}` ⇒ **全部 task 型动作（100+ 条）的
+  「任务已下发」卡片无任务号、「查询结果」拉不到输出**。已修：视图改读 `data.j.taskID`，
+  spec mock 与真实 API 形状对齐。教训入册：**mock 必须从真实 API 层抄形状，不得手编**。
+- **K8s 部署 / 生命周期两页 i18n 裸键（真缺陷，用户级）**：视图调用 `k8sDeploy.*` /
+  `k8sLifecycle.*`，而翻译被埋在 `k8s.col.*` / `k8s.lifecycle.*`（前者还混着部署表单键）
+  ⇒ 两页头部与全部标签渲染成原始键名。已修：翻译迁到视图调用中的顶层命名空间
+  （k8sDeploy 27 键含补写 title/desc、k8sLifecycle 23 键），k8s.col 保留 79 个真正的
+  表格列键；49/49 视图键解析验证通过。
+- **K8sLifecycleView 裸 fetch 收编（残缺修复）**：6 处 `fetch('/api/v1/…')` 绕过统一 API 层
+  ⇒ 会话过期不触发静默刷新/重定向、无超时、错误归一失效（401 响应体被当结果渲染）。
+  已在 `src/api/k8s.js` 增 6 个 lifecycle 包装（契约注释含请求/响应形状），视图全部改走包装。
+- **K8s 集群部署路由双形注册（后端真缺陷）**：`/k8s/clusters/deploy` 曾只注册带 `{id}` 形式，
+  id-less 前端调用 404；改为两种形式都注册（前端 `deployK8sCluster` 走 id-less）。
+- **布局统一专项（PageShell 棘轮）**：新增 `PageShell` 组件 + `pages.css` 骨架层 +
+  `page-conventions.spec.js` 门禁（①非合规视图⊆豁免清单；②已合规豁免条目必须删除——
+  豁免不许变永久）；三波迁移 63 页（Wave1 24、Wave2 26、Wave3 13：K8s 家族/CMDB 家族/
+  设备家族/Tasks/Users/Alerts 等），豁免账 82 → 18（余 15 页待迁 + 3 个全屏认证页为
+  永久豁免——它们位于 app 壳之外）；统一规则五条入 `docs/ui-design.md`。
+  迁移顺带收编 7 处静默 catch 为可见错误（轮询/详情加载等）。
+- **i18n zh/en 键差 45 → 0**：本轮另迁 50 键（k8sDeploy/k8sLifecycle），两语言扁平键集逐键一致。
+- **协作线并入（workbuddy，`a644647`）**：agent 的 CMDB 中间件进程探测加 10s 超时兜底
+  （沿 collectEnvs 范式、进程表可注入），修 tasklist 慢机（实测 11–21s/偶挂）拖死采集
+  与整包测试的问题；单测 hermetic 化（NoPanic/Detects/CommandError 三例）。
+- **验证**：全量 vitest **58 文件 / 1179 用例全绿**；eslint 0；`npm run build` 通过。
+
 ## [Unreleased] — 2026-10-27（迁移 DDL 的 MDL 锁等待上限：升级演练建议二落地，migrate 不再无限期挂住目标表写入）
 
 - **背景**：存量库升级演练（v0.16.0→main 六条迁移）实证：客户升级窗口里旧版本容器的长事务

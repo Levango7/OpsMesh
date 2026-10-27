@@ -1,10 +1,10 @@
 <template>
-  <div class="k8s-lifecycle-page">
-    <div class="page-head">
-      <h2 class="page-title">{{ $t('k8sLifecycle.title') }}</h2>
-      <p class="page-desc">{{ $t('k8sLifecycle.desc') }}</p>
-    </div>
-
+  <PageShell
+    :title="$t('k8sLifecycle.title')"
+    :desc="$t('k8sLifecycle.desc')"
+    testid="k8s-lifecycle"
+    :error="loadErr"
+  >
     <div class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('k8sLifecycle.upgrade_title') }}</h3>
@@ -115,12 +115,26 @@
         <pre class="code-block">{{ JSON.stringify(scaleResult, null, 2) }}</pre>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { ref } from 'vue'
+import { t } from '@/i18n'
+import {
+  planK8sUpgrade,
+  upgradeK8sCluster,
+  rotateK8sCerts,
+  scaleK8sNodes,
+  backupK8sEtcd,
+  listK8sEtcdBackups
+} from '@/api/k8s'
 import { Button } from '@/components/ui'
+
+// 六个操作此前静默吞错——统一骨架批次补上可见错误横幅
+const loadErr = ref('')
 
 const planning = ref(false)
 const upgrading = ref(false)
@@ -143,73 +157,59 @@ const scaleResult = ref(null)
 async function planUpgrade() {
   planning.value = true
   try {
-    const r = await fetch('/api/v1/k8s/lifecycle/upgrade/plan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clusterId: upgradeForm.value.clusterId,
-        targetVersion: upgradeForm.value.targetVersion,
-        host: upgradeForm.value.cpNode,
-        user: upgradeForm.value.user,
-        sshKey: upgradeForm.value.sshKey
-      })
+    const r = await planK8sUpgrade({
+      clusterId: upgradeForm.value.clusterId,
+      targetVersion: upgradeForm.value.targetVersion,
+      host: upgradeForm.value.cpNode,
+      user: upgradeForm.value.user,
+      sshKey: upgradeForm.value.sshKey
     })
-    upgradePlan.value = await r.json()
-  } catch { /* ignore */ }
+    upgradePlan.value = r.j
+  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
   finally { planning.value = false }
 }
 
 async function doUpgrade() {
   upgrading.value = true
   try {
-    const r = await fetch('/api/v1/k8s/lifecycle/upgrade', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clusterId: upgradeForm.value.clusterId,
-        targetVersion: upgradeForm.value.targetVersion
-      })
+    const r = await upgradeK8sCluster({
+      clusterId: upgradeForm.value.clusterId,
+      targetVersion: upgradeForm.value.targetVersion
     })
-    upgradeStatus.value = await r.json()
-  } catch { /* ignore */ }
+    upgradeStatus.value = r.j
+  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
   finally { upgrading.value = false }
 }
 
 async function doBackup() {
   backing.value = true
   try {
-    const r = await fetch('/api/v1/k8s/lifecycle/etcd-backup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clusterId: 'cluster-1',
-        cpNode: etcdForm.value.cpNode,
-        backupDir: etcdForm.value.backupDir
-      })
+    const r = await backupK8sEtcd({
+      clusterId: 'cluster-1',
+      cpNode: etcdForm.value.cpNode,
+      backupDir: etcdForm.value.backupDir
     })
-    backupResult.value = await r.json()
-  } catch { /* ignore */ }
+    backupResult.value = r.j
+  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
   finally { backing.value = false }
 }
 
 async function listBackups() {
   try {
-    const r = await fetch(`/api/v1/k8s/lifecycle/etcd-backups?cpNode=${encodeURIComponent(etcdForm.value.cpNode)}&backupDir=${encodeURIComponent(etcdForm.value.backupDir)}`)
-    const data = await r.json()
-    backupList.value = data.backups || []
-  } catch { /* ignore */ }
+    const j = await listK8sEtcdBackups({
+      cpNode: etcdForm.value.cpNode,
+      backupDir: etcdForm.value.backupDir
+    })
+    backupList.value = j.backups || []
+  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 async function doCertRotate() {
   rotating.value = true
   try {
-    const r = await fetch('/api/v1/k8s/lifecycle/cert-rotate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clusterId: certForm.value.clusterId })
-    })
-    certStatus.value = await r.json()
-  } catch { /* ignore */ }
+    const r = await rotateK8sCerts({ clusterId: certForm.value.clusterId })
+    certStatus.value = r.j
+  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
   finally { rotating.value = false }
 }
 
@@ -217,28 +217,20 @@ async function doNodeScale() {
   scaling.value = true
   try {
     const nodes = scaleForm.value.nodes.split(',').map(s => s.trim()).filter(Boolean)
-    const r = await fetch('/api/v1/k8s/lifecycle/node-scale', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clusterId: 'cluster-1',
-        action: scaleForm.value.action,
-        nodes,
-        cpNode: scaleForm.value.cpNode,
-        joinCmd: scaleForm.value.joinCmd
-      })
+    const r = await scaleK8sNodes({
+      clusterId: 'cluster-1',
+      action: scaleForm.value.action,
+      nodes,
+      cpNode: scaleForm.value.cpNode,
+      joinCmd: scaleForm.value.joinCmd
     })
-    scaleResult.value = await r.json()
-  } catch { /* ignore */ }
+    scaleResult.value = r.j
+  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
   finally { scaling.value = false }
 }
 </script>
 
 <style scoped>
-.k8s-lifecycle-page { max-width: 900px; margin: 0 auto; }
-.page-head { margin-bottom: 20px; }
-.page-title { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
-.page-desc { margin: 0; color: var(--color-ink-muted, #6b7280); font-size: 13px; }
 .card { background: var(--color-surface-1, #ffffff); border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); padding: 16px 18px; margin-bottom: 16px; }
 .card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
 .row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }

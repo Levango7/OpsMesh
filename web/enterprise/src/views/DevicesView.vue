@@ -1,14 +1,5 @@
 <template>
-  <div class="devices-view">
-    <div class="devices__header">
-      <h2 data-testid="devices-title" class="devices__title">{{ $t('devices.title') }}</h2>
-      <p class="devices__subtitle">{{ $t('devices.subtitle') }}</p>
-    </div>
-
-    <div v-if="store.error" class="poll-err">
-      <Icon name="warning" :size="14" /> {{ store.error }}
-    </div>
-
+  <PageShell :title="$t('devices.title')" :desc="$t('devices.subtitle')" testid="devices" :error="store.error">
     <div v-if="store.loading && !segments.length" class="muted">{{ $t('common.loading') }}</div>
     <div v-else-if="!segments.length" class="muted" data-testid="devices-empty">
       {{ $t('devices.empty') }}
@@ -129,10 +120,12 @@
         </DataTable>
       </div>
     </Drawer>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 设备纳管列表 — 按网段分组，行内可跳转详情 / 下发任务
 import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -141,7 +134,6 @@ import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { Button, Drawer } from '@/components/ui'
-import Icon from '@/components/Icon.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 
 const router = useRouter()
@@ -218,27 +210,6 @@ onMounted(() => { if (!store.total) store.fetchDevices() })
 </script>
 
 <style scoped>
-.devices-view {
-  display: block;
-}
-
-.devices__header {
-  margin-bottom: var(--space-6, 24px);
-}
-
-.devices__title {
-  margin: 0;
-  font-size: var(--font-size-base, 13px);
-  font-weight: 600;
-  color: var(--color-ink, #f7f8f8);
-}
-
-.devices__subtitle {
-  margin: 0 0 var(--space-4, 16px) 0;
-  font-size: var(--font-size-sm, 12px);
-  color: var(--color-ink-muted, #d0d6e0);
-}
-
 .seg-block {
   margin-bottom: var(--space-4, 16px);
 }
@@ -248,17 +219,6 @@ onMounted(() => { if (!store.total) store.fetchDevices() })
   font-size: var(--font-size-sm, 13px);
   font-weight: 600;
   color: var(--color-ink, #f7f8f8);
-}
-
-.poll-err {
-  padding: var(--space-2, 8px) var(--space-3, 12px);
-  margin: var(--space-1, 6px) 0;
-  border-radius: var(--radius-sm, 6px);
-  background: var(--color-error-soft, #fef2f2);
-  border: 1px solid var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444);
-  font-size: var(--font-size-sm, 12px);
-  font-weight: 500;
 }
 
 .row-actions {

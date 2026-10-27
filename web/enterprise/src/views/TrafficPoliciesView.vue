@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('traffic.title') }}</h2>
-    <p class="muted">{{ $t('traffic.subtitle') }}</p>
-
+  <PageShell :title="$t('traffic.title')" :desc="$t('traffic.subtitle')" testid="traffic-policies" :error="loadErr">
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -96,11 +93,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 流量策略管理页 — CRUD + 启用/禁用（灰度/超时/重试/熔断/镜像）
+import PageShell from '@/components/PageShell.vue'
 import { ref, computed, reactive, onMounted } from 'vue'
 import {
   getTrafficPolicies, createTrafficPolicy, updateTrafficPolicy, deleteTrafficPolicy,
@@ -117,6 +115,7 @@ const policies = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 删除确认弹窗（替代 confirm）
 const deleteConfirm = reactive({ show: false, row: null })
@@ -147,11 +146,14 @@ function statusText(v) {
 
 async function fetchPolicies() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await getTrafficPolicies()
     policies.value = (r && r.policies) || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     policies.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

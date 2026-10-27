@@ -245,3 +245,18 @@ export const deployK8sCluster = (spec) => postJSON('/k8s/clusters/deploy', spec)
 // 查询部署状态
 export const getK8sClusterDeployStatus = (deployID) =>
   getJSON('/k8s/clusters/deploy/status', { deployID })
+
+// ---------- K8s 生命周期（契约：internal/k8slifecycle/handler.go） ----------
+//   POST /api/v1/k8s/lifecycle/upgrade/plan  {clusterId,targetVersion,host,user,sshKey} → 200 {currentVersion,targetVersion,planOutput,available}
+//   POST /api/v1/k8s/lifecycle/upgrade       {clusterId,targetVersion}                  → 202 UpgradeStatus {phase,progress,currentStep,…}
+//   POST /api/v1/k8s/lifecycle/cert-rotate   {clusterId}                                → 202 CertRotationStatus {phase,progress,currentStep,…}
+//   POST /api/v1/k8s/lifecycle/node-scale    {clusterId,action(add|remove),nodes,joinCmd?,cpNode?} → 200 {added:[…]|removed:[…]}
+//   POST /api/v1/k8s/lifecycle/etcd-backup   {clusterId,cpNode,backupDir}               → 200 {backupPath,size,timestamp}
+//   GET  /api/v1/k8s/lifecycle/etcd-backups  ?cpNode&backupDir                          → 200 {backups:[…]}
+// silent=true：调用方（K8sLifecycleView）自行经页面错误横幅展示，避免全局 toast 双提示。
+export const planK8sUpgrade = (spec) => postJSON('/k8s/lifecycle/upgrade/plan', spec, true)
+export const upgradeK8sCluster = (spec) => postJSON('/k8s/lifecycle/upgrade', spec, true)
+export const rotateK8sCerts = (spec) => postJSON('/k8s/lifecycle/cert-rotate', spec, true)
+export const scaleK8sNodes = (spec) => postJSON('/k8s/lifecycle/node-scale', spec, true)
+export const backupK8sEtcd = (spec) => postJSON('/k8s/lifecycle/etcd-backup', spec, true)
+export const listK8sEtcdBackups = (params) => getJSON('/k8s/lifecycle/etcd-backups', params, true)

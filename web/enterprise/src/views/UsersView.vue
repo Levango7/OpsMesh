@@ -1,8 +1,5 @@
 <template>
-  <div data-testid="users-view">
-    <h2 data-testid="users-title">{{ $t('users.title') }}</h2>
-    <p class="muted">{{ $t('users.subtitle') }}</p>
-
+  <PageShell :title="$t('users.title')" :desc="$t('users.subtitle')" testid="users" :error="loadErr">
     <div class="btnbar">
       <button class="primary" data-testid="users-add-btn" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -97,11 +94,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 用户管理页 — 列表 + 新增/编辑/删除，复用 DataTable / DetailDrawer / StatusBadge
+import PageShell from '@/components/PageShell.vue'
 import { reactive, ref, onMounted } from 'vue'
 import { authApi } from '@/api/auth'
 import { t } from '@/i18n'
@@ -117,6 +115,7 @@ const roles = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 删除确认弹窗（替代 confirm）
 const deleteConfirm = reactive({ show: false, row: null })
@@ -134,11 +133,14 @@ const columns = [
 
 async function fetchUsers() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await authApi.listUsers()
     users.value = (r && r.users) || r || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     users.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -148,8 +150,10 @@ async function fetchRoles() {
   try {
     const r = await authApi.listRoles()
     roles.value = (r && r.roles) || r || []
-  } catch {
+  } catch (e) {
+    // 角色列表仅供分配/名称回显，失败同样在骨架横幅可见化
     roles.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   }
 }
 

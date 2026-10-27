@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="bot-title">{{ $t('bot.title') }}</h2>
-    <p class="muted">{{ $t('bot.desc') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('bot.title')"
+    :desc="$t('bot.desc')"
+    testid="bot"
+    :error="store.error"
+  >
     <div class="row">
       <!-- 左：命令面板 -->
       <div class="col">
@@ -90,15 +90,16 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { onMounted, ref } from 'vue'
 import { useBotStore } from '@/stores/bot'
 
 import StatusBadge from '@/components/StatusBadge.vue'
-import Icon from '@/components/Icon.vue'
 
 const store = useBotStore()
 const commandInput = ref('')
@@ -146,11 +147,6 @@ onMounted(() => {
 .row .col:nth-child(1) { flex: 55; }
 .row .col:nth-child(2) { flex: 45; }
 
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .flowbar .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 0; min-width: 200px; }
 .flowbar .field label { margin: 0; }

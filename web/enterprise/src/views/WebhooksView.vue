@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('webhooks.title') }}</h2>
-    <p class="muted">{{ $t('webhooks.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('webhooks.title')"
+    :desc="$t('webhooks.subtitle')"
+    testid="webhooks"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -100,10 +102,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // Webhook 管理页 — CRUD + 测试投递 + 投递记录查看
 import { ref, computed, reactive, onMounted } from 'vue'
 import {
@@ -122,6 +126,7 @@ const webhooks = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 投递记录抽屉状态
 const deliveryRow = ref(null)
@@ -150,11 +155,14 @@ const deliveryColumns = computed(() => [
 
 async function fetchWebhooks() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await getWebhooks()
     webhooks.value = (r && r.webhooks) || []
-  } catch {
+  } catch (e) {
     webhooks.value = []
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -223,8 +231,10 @@ async function openDeliveries(row) {
   try {
     const r = await getWebhookDeliveries(row.id)
     deliveries.value = (r && r.deliveries) || []
-  } catch {
+  } catch (e) {
     deliveries.value = []
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     deliveriesLoading.value = false
   }

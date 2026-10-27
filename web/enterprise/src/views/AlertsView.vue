@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2 data-testid="alerts-title">{{ $t('alerts.title') }}</h2>
-    <p class="muted">{{ $t('alerts.subtitle') }}</p>
-
+  <PageShell :title="$t('alerts.title')" :desc="$t('alerts.subtitle')" testid="alerts" :error="store.error">
     <div class="stats">
       <div class="stat rose">
         <div class="stat-v">{{ store.critical.length }}</div>
@@ -26,8 +23,7 @@
       <button @click="store.fetchAlerts()" data-testid="alerts-refresh-btn">↻ {{ $t('common.refresh') }}</button>
     </div>
 
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-    <div v-else-if="store.loading && !store.list.length" class="muted" data-testid="alerts-loading">{{ $t('common.loading') }}</div>
+    <div v-if="store.loading && !store.list.length" class="muted" data-testid="alerts-loading">{{ $t('common.loading') }}</div>
     <div v-else-if="!store.list.length" class="muted" data-testid="alerts-empty"><Icon name="success" :size="14" /> {{ $t('alerts.empty') }}</div>
 
     <div
@@ -65,36 +61,37 @@
         </span>
       </div>
     </div>
-  </div>
 
-  <!-- 静默时长输入（替代 prompt） -->
-  <PromptModal
-    v-model="durationModal.show"
-    test-id="silence-duration-modal"
-    :title="$t('alerts.silence_duration_title')"
-    :message="$t('alerts.silence_duration_prompt')"
-    :default-value="'1440'"
-    placeholder="1440"
-    @confirm="onDurationConfirm"
-  />
-  <!-- 静默备注输入（替代 prompt） -->
-  <PromptModal
-    v-model="commentModal.show"
-    test-id="silence-comment-modal"
-    :title="$t('alerts.silence_comment_title')"
-    :message="$t('alerts.silence_comment_prompt')"
-    @confirm="onCommentConfirm"
-  />
-  <!-- 错误提示（替代 alert） -->
-  <ConfirmModal
-    v-model="confirmState.show"
-    :title="confirmState.title"
-    :message="confirmState.message"
-    info
-  />
+    <!-- 静默时长输入（替代 prompt） -->
+    <PromptModal
+      v-model="durationModal.show"
+      test-id="silence-duration-modal"
+      :title="$t('alerts.silence_duration_title')"
+      :message="$t('alerts.silence_duration_prompt')"
+      :default-value="'1440'"
+      placeholder="1440"
+      @confirm="onDurationConfirm"
+    />
+    <!-- 静默备注输入（替代 prompt） -->
+    <PromptModal
+      v-model="commentModal.show"
+      test-id="silence-comment-modal"
+      :title="$t('alerts.silence_comment_title')"
+      :message="$t('alerts.silence_comment_prompt')"
+      @confirm="onCommentConfirm"
+    />
+    <!-- 错误提示（替代 alert） -->
+    <ConfirmModal
+      v-model="confirmState.show"
+      :title="confirmState.title"
+      :message="confirmState.message"
+      info
+    />
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
 import { computed, reactive, onMounted, defineAsyncComponent } from 'vue'
 import { useAlertStore } from '@/stores/alert'
 import { useRouter } from 'vue-router'
@@ -201,11 +198,6 @@ onMounted(() => { if (!store.list.length) store.fetchAlerts() })
 .alert-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .alert-actions { margin-top: 8px; display: flex; gap: 8px; align-items: center; }
 
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .root-cause {
   margin-top: 6px; padding: 6px 10px; background: var(--muted-soft);
   border-radius: var(--radius-sm); font-size: 12.5px;

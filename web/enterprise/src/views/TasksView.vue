@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="tasks-title">{{ $t('tasks.title') }}</h2>
-    <p class="muted">{{ $t('tasks.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('tasks.title')"
+    :desc="$t('tasks.subtitle')"
+    testid="tasks"
+    :error="store.error"
+  >
     <div class="card" v-if="authStore.hasPerm('task:write')">
       <h3 class="card__title" data-testid="task-form-title">{{ $t('tasks.dispatch_form_title') }}</h3>
       <form @submit.prevent="onSubmit">
@@ -70,8 +72,6 @@
         </Button>
       </div>
 
-      <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
       <DataTable data-testid="tasks-table" :columns="columns" :rows="store.list" row-key="taskID" :loading="store.loading" :empty-text="$t('tasks.empty')">
         <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
         <template #cell-command="{ value }"><code>{{ truncateCmd(value) }}</code></template>
@@ -110,19 +110,21 @@
         </template>
       </DataTable>
     </div>
-  </div>
 
-  <!-- 取消确认（替代 confirm） -->
-  <ConfirmModal
-    v-model="cancelConfirm.show"
-    data-testid="task-cancel-confirm-modal"
-    :title="$t('tasks.cancel')"
-    :message="$t('tasks.confirm_cancel')"
-    @confirm="onCancelConfirm"
-  />
+    <!-- 取消确认（替代 confirm） -->
+    <ConfirmModal
+      v-model="cancelConfirm.show"
+      data-testid="task-cancel-confirm-modal"
+      :title="$t('tasks.cancel')"
+      :message="$t('tasks.confirm_cancel')"
+      @confirm="onCancelConfirm"
+    />
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useTaskStore } from '@/stores/task'
 import { useAuthStore } from '@/stores/auth'
@@ -259,11 +261,6 @@ function onTaskStatus() {
 .row-actions { display: inline-flex; gap: 6px; align-items: center; }
 .btnbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
 .muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
-.poll-err {
-  padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm);
-  background: var(--color-error-soft, #fef2f2); border: 1px solid var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444); font-size: 12.5px; font-weight: 500;
-}
 .msg { margin-top: 8px; font-size: 12.5px; }
 .msg.ok { color: var(--color-success, #059669); }
 .msg.err { color: var(--color-error, #ef4444); }

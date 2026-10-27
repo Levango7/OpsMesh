@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('gateway_routes.title') }}</h2>
-    <p class="muted">{{ $t('gateway_routes.subtitle') }}</p>
-
+  <PageShell :title="$t('gateway_routes.title')" :desc="$t('gateway_routes.subtitle')" testid="gateway-routes" :error="loadErr">
     <!-- 网关统计卡片（只读） -->
     <div class="stats-grid">
       <div class="stat-card">
@@ -122,11 +119,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // API 网关路由管理页 — 路由规则列表 + 新增/编辑/删除 + 启停 + 网关统计
+import PageShell from '@/components/PageShell.vue'
 import { ref, reactive, onMounted } from 'vue'
 import { listRoutes, createRoute, updateRoute, deleteRoute, enableRoute, disableRoute, getStats } from '@/api/gateway'
 import { t } from '@/i18n'
@@ -143,6 +141,7 @@ const stats = ref({})
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 删除确认弹窗（替代 confirm）
 const deleteConfirm = reactive({ show: false, row: null })
@@ -164,11 +163,14 @@ const columns = [
 
 async function fetchRoutes() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await listRoutes()
     routes.value = (r && r.routes) || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     routes.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -177,8 +179,10 @@ async function fetchRoutes() {
 async function fetchStats() {
   try {
     stats.value = (await getStats()) || {}
-  } catch {
+  } catch (e) {
+    // 统计卡片此前静默吞错（只见占位“—”）——同样在骨架横幅可见化
     stats.value = {}
+    loadErr.value = e.j?.error || t('common.load_failed')
   }
 }
 

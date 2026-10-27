@@ -13,6 +13,7 @@ import { SEARCH_DOMAINS } from './infra-catalog/search'
 import { MQ_DEEP_DOMAINS } from './infra-catalog/mq-deep'
 import { CACHE_GPU_DOMAINS } from './infra-catalog/cache-gpu'
 import { OPS_SUITE_DOMAINS } from './infra-catalog/ops-suite'
+import { GRAPH_DOMESTIC_DOMAINS } from './infra-catalog/graph-domestic'
 
 // 字段类型枚举（视图层动态渲染）：
 //   device  — 设备下拉（从 /devices 拉取）
@@ -1576,5 +1577,6 @@ export const INFRA_DOMAINS = [
   ...SEARCH_DOMAINS,
   ...MQ_DEEP_DOMAINS,
   ...CACHE_GPU_DOMAINS,
-  ...OPS_SUITE_DOMAINS
+  ...OPS_SUITE_DOMAINS,
+  ...GRAPH_DOMESTIC_DOMAINS
 ]

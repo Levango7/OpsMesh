@@ -1,10 +1,5 @@
 <template>
-  <div>
-    <h2 data-testid="network-topology-title">{{ $t('network.topology_title') }}</h2>
-    <p class="muted">{{ $t('network.topology_subtitle') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell :title="$t('network.topology_title')" :desc="$t('network.topology_subtitle')" testid="network-topology" :error="store.error">
     <div class="btnbar">
       <button class="primary" @click="refresh" data-testid="network-topology-refresh-btn">
         <Icon name="refresh" :size="14" /> {{ $t('network.refresh_topology') }}
@@ -71,11 +66,13 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 网络拓扑页 — 拓扑图展示（nodes/edges SVG 渲染）+ 刷新按钮 + 缓存拓扑
+// 特殊页：SVG 画布/矩阵为内层图形布局，本次仅换外层骨架与标题，画布不动
+import PageShell from '@/components/PageShell.vue'
 import { reactive, computed, onMounted } from 'vue'
 import { useNetworkStore } from '@/stores/network'
 import { t } from '@/i18n'
@@ -189,10 +186,4 @@ onMounted(() => {
 
 .edge { stroke: var(--border); stroke-width: 1.5; }
 .edge-label { font-size: 9.5px; fill: var(--text-3); text-anchor: middle; }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 </style>

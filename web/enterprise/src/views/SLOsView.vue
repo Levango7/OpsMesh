@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('slos.title') }}</h2>
-    <p class="muted">{{ $t('slos.subtitle') }}</p>
-
+  <PageShell :title="$t('slos.title')" :desc="$t('slos.subtitle')" testid="slos" :error="loadErr">
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -92,11 +89,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // SLO 目标管理页 — CRUD + SLI 状态查看
+import PageShell from '@/components/PageShell.vue'
 import { ref, computed, reactive, onMounted } from 'vue'
 import { getSLOs, createSLO, updateSLO, deleteSLO, getSLOStatus } from '@/api/slo'
 import { t } from '@/i18n'
@@ -110,6 +108,7 @@ const slos = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // SLI 状态抽屉状态
 const statusRow = ref(null)
@@ -139,11 +138,14 @@ const statusColumns = computed(() => [
 
 async function fetchSLOs() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await getSLOs()
     slos.value = (r && r.slos) || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     slos.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -194,8 +196,10 @@ async function openStatus(row) {
     const r = await getSLOStatus(row.id)
     // 契约：{sliStatus: [...]} 或裸数组，两态兼容
     sliStatus.value = (r && (r.sliStatus || r.sliStatuses || r.slis)) || (Array.isArray(r) ? r : []) || []
-  } catch {
+  } catch (e) {
+    // SLI 状态此前静默吞错（抽屉只见空表）——并入骨架横幅可见化
     sliStatus.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     statusLoading.value = false
   }

@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2 data-testid="network-diagnose-title">{{ $t('network.diagnose_title') }}</h2>
-    <p class="muted">{{ $t('network.diagnose_subtitle') }}</p>
-
+  <PageShell :title="$t('network.diagnose_title')" :desc="$t('network.diagnose_subtitle')" testid="network-diagnose" :error="store.error">
     <!-- Tab 切换 -->
     <div class="tabbar">
       <button
@@ -13,8 +10,6 @@
         @click="switchTab(tab.key)"
       >{{ $t(tab.label) }}</button>
     </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <!-- ========== Tab 1: 诊断工具 ========== -->
     <div v-show="activeTab === 'diagnose'">
@@ -131,7 +126,7 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
@@ -139,8 +134,8 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useNetworkStore } from '@/stores/network'
 import { t } from '@/i18n'
+import PageShell from '@/components/PageShell.vue'
 import DataTable from '@/components/DataTable.vue'
-import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const store = useNetworkStore()
@@ -289,12 +284,6 @@ onMounted(() => {})
 }
 .status-pill.ok { background: var(--accent-soft); color: var(--accent); }
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 @media (max-width: 768px) { .row-2 { grid-template-columns: 1fr; } }
 </style>

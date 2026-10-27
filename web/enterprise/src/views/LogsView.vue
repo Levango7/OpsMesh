@@ -1,8 +1,6 @@
 <template>
-  <div data-testid="logs-view">
-    <h2 data-testid="logs-title">{{ $t('logs.title') }}</h2>
-    <p class="muted">{{ $t('logs.subtitle') }}</p>
-
+  <!-- 特殊页：日志检索为筛选栏 + 结果面板结构，本次仅换骨架与标题，面板/画布内层保持原样 -->
+  <PageShell :title="$t('logs.title')" :desc="$t('logs.subtitle')" testid="logs">
     <div class="card" data-testid="logs-search-card">
       <!-- 模式切换 Tab -->
       <div class="mode-tabs" role="tablist" data-testid="logs-mode-tabs">
@@ -176,10 +174,11 @@
         @next="store.next()"
       />
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
 import { ref } from 'vue'
 import { onMounted } from 'vue'
 import { useLogStore } from '@/stores/log'

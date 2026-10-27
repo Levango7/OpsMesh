@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('scripts.title') }}</h2>
-    <p class="muted">{{ $t('scripts.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('scripts.title')"
+    :desc="$t('scripts.subtitle')"
+    testid="scripts"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -109,10 +111,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 自定义脚本管理页 — 脚本 CRUD + 下发执行 + 执行记录查看
 import { ref, computed, reactive, onMounted } from 'vue'
 import {
@@ -131,6 +135,7 @@ const scripts = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 执行抽屉 / 执行记录抽屉状态
 const execForm = ref(null)
@@ -160,11 +165,14 @@ const execColumns = computed(() => [
 
 async function fetchScripts() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await getScripts()
     scripts.value = (r && r.scripts) || []
-  } catch {
+  } catch (e) {
     scripts.value = []
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -236,8 +244,10 @@ async function openExecutions(row) {
   try {
     const r = await getScriptExecutions(row.id)
     executions.value = (r && r.executions) || []
-  } catch {
+  } catch (e) {
     executions.value = []
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     execLoading.value = false
   }

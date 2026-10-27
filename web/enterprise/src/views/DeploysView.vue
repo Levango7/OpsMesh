@@ -1,8 +1,5 @@
 <template>
-  <div data-testid="deploys-view">
-    <h2 data-testid="deploys-title">{{ $t('deploys.title') }}</h2>
-    <p class="muted">{{ $t('deploys.subtitle') }}</p>
-
+  <PageShell :title="$t('deploys.title')" :desc="$t('deploys.subtitle')" testid="deploys" :error="store.error">
     <div class="row">
       <!-- 左：登记 -->
       <div class="col">
@@ -67,8 +64,6 @@
             <button data-testid="deploys-refresh-btn" @click="store.fetchList()">↻ {{ $t('common.refresh') }}</button>
           </div>
 
-          <div v-if="store.error" class="poll-err" data-testid="deploys-error-msg"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
           <DataTable :columns="columns" :rows="store.list" row-key="id" :loading="store.loading" :empty-text="$t('deploys.empty')" data-testid="deploys-table">
             <template #cell-id="{ value }"><code>{{ value }}</code></template>
             <template #cell-target_ids="{ value }"><code>{{ (value || '').replace(/,/g, ', ') }}</code></template>
@@ -109,17 +104,17 @@
       :message="actionConfirm.message"
       @confirm="onActionConfirm"
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
 import { computed, onMounted, reactive } from 'vue'
 import { useDeployStore } from '@/stores/deploy'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
-import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 
@@ -197,11 +192,6 @@ onMounted(() => { store.fetchList() })
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
 .field label { margin: 0; }
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .row {
   display: flex;
   gap: 16px;

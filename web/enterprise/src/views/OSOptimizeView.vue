@@ -1,9 +1,11 @@
 <template>
-  <div>
-    <h2>{{ $t('osopt.title') }}</h2>
-    <p class="muted">{{ $t('osopt.desc') }}</p>
-
-    <!-- 分类筛选 -->
+  <PageShell
+    :title="$t('osopt.title')"
+    :desc="$t('osopt.desc')"
+    testid="os-optimize"
+    :error="store.error || loadErr"
+  >
+    <!-- 分类筛选：保留原位（骨架默认插槽内，头部之下） -->
     <div class="cat-filter">
       <Button
         v-for="cat in categories"
@@ -15,8 +17,6 @@
         @click="store.setCategory(cat)"
       >{{ $t('osopt.category.' + cat) }}</Button>
     </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <!-- 模板列表 -->
     <div class="card">
@@ -122,10 +122,12 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // OS 基础环境优化 — 模板列表 + 分类筛选 + 详情抽屉 + 执行对话框 + 日志轮询
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useOSOptimizeStore } from '@/stores/os-optimize'
@@ -135,10 +137,11 @@ import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
-import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
 
 const store = useOSOptimizeStore()
+// 模板详情加载失败此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
+const loadErr = ref('')
 
 // 分类列表（与个人版对齐：内核/网络/安全/时间/SSH/磁盘/系统/用户/存储/服务/监控）
 const categories = ['all', 'kernel', 'network', 'security', 'time', 'ssh', 'disk', 'system', 'user', 'storage', 'service', 'monitor']
@@ -197,8 +200,9 @@ async function onExecute(id) {
       params[p.name] = p.default != null ? String(p.default) : ''
     })
     execForm.value.params = params
-  } catch {
+  } catch (e) {
     execTpl.value = null
+    loadErr.value = e.j?.error || t('common.load_failed')
   }
   // 加载设备列表
   if (!store.devices.length) store.fetchDevices()
@@ -324,11 +328,6 @@ onUnmounted(() => {
 .cat-btn:hover { background: var(--bg-soft); color: var(--text); }
 .cat-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .row-actions { display: inline-flex; gap: 6px; }
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .detail-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .field-hint { font-size: 11.5px; color: var(--text-3); margin-right: 6px; }
 .badge { display: inline-flex; align-items: center; height: 20px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; margin-right: 4px; }
