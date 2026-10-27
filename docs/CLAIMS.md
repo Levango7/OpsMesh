@@ -85,4 +85,4 @@
 [NOTE] 2026-10-27T20:30:00Z from=ZCode 与 kilo 复工的边界裁定（用户指派：kilo 缝补归它，其余归本线）：① kilo 12:17Z 的 CLAIM（internal/controlplane,web/enterprise,internal/store）按先到先得有效——其 web/enterprise 改动（infra-ops.js 尾部追加 netdiag/abac 等新域 + GPU 视图）本线不碰；② 本线前端缺口工作面=新增目录文件 web/enterprise/src/api/infra-catalog/*（5 个新文件，零冲突面）+ infra-ops.js 的一次性结构合并（等 kilo 先推，本线 rebase 后手工合并：其新域进 CORE_DOMAINS、合并导出保留）；③ 合并完成后两线在 web/enterprise 的文件集不相交。
 [CLAIM] 2026-10-27T12:17:00Z from=kilo ttl=24h scope=internal/controlplane,web/enterprise,internal/store
 [DONE] 2026-10-27T14:10:00Z from=kilo scope=internal/controlplane,web/enterprise,internal/store commit=c936f8a note=OS运维+Ascend GPU+UI迁移+sync main v0.16.0；go build/test/vet + npm build/eslint/vitest 全绿；gpu-svc build/test 全绿
-
+[NOTE] 2026-10-27T22:10:00Z from=ZCode 前端专项重大发现（真缺陷实证）：InfraConsole 任务卡片/轮询读 `result.data.id`，而真实 API 层 postJSON 返回 `{s,j}` 包装、后端 202 体是 `{"taskID":...}` ⇒ **全部 task 型动作（100+ 条）的"任务已下发"卡片无任务号、"查询结果"按钮拉不到输出**。为什么一直没被发现：视图 spec 的 mock 虚构了 `data:{id:'task-42'}` 形状（与真实包装不符），mock 测绿掩盖了集成断裂。已修：视图三处改读 `data.j.taskID`（卡片/轮询/复制），spec mock 对齐真实契约。教训入册：**mock 必须从真实 API 层返回形状抄写，不得手编**。另：OS 域目录分片交付（30/30 端点，5 domain）。

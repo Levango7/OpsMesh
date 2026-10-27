@@ -135,8 +135,8 @@
             <template v-else>
               <div class="flowbar">
                 <h4 style="margin: 0">{{ L('任务已下发', 'Task Dispatched') }}</h4>
-                <span v-if="result.data?.id" class="tag ok">ID: {{ result.data.id }}</span>
-                <span v-if="result.data?.state" class="tag">{{ L('状态', 'State') }}: {{ result.data.state }}</span>
+                <span v-if="result.data?.j?.taskID" class="tag ok" data-testid="task-id">ID: {{ result.data.j.taskID }}</span>
+                <span v-if="result.data?.s" class="tag">HTTP: {{ result.data.s }}</span>
                 <button class="xs outline" @click="pollTaskResult" :disabled="polling">
                   <Icon name="refresh" :size="12" /> {{ L('查询结果', 'Fetch Result') }}
                 </button>
@@ -279,7 +279,7 @@ async function submit() {
 }
 
 async function pollTaskResult() {
-  const taskID = result.value?.data?.id
+  const taskID = result.value?.data?.j?.taskID
   if (!taskID) return
   polling.value = true
   try {
@@ -295,7 +295,8 @@ async function pollTaskResult() {
 
 async function copyResult() {
   try {
-    await navigator.clipboard.writeText(taskOutput.value || prettyJSON(result.value?.data))
+    const payload = result.value?.data?.j ?? result.value?.data
+    await navigator.clipboard.writeText(taskOutput.value || prettyJSON(payload))
     toast.success(L('已复制', 'Copied'))
   } catch {
     toast.error(L('复制失败', 'Copy failed'))

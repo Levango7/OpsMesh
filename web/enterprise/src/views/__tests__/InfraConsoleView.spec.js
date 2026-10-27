@@ -106,7 +106,7 @@ describe('InfraConsoleView', () => {
   })
 
   it('提交动作调用 submitInfraAction 并展示任务卡片', async () => {
-    mockSubmit.mockResolvedValueOnce({ kind: 'task', data: { id: 'task-42', state: 'pending' } })
+    mockSubmit.mockResolvedValueOnce({ kind: 'task', data: { s: 202, j: { taskID: 'task-42', action: 'lifecycle' } } })
     const w = mountView()
     await w.find('[data-testid="device-select"]').setValue('dev-1')
     // 选一个必填字段少的动作：中间件 lifecycle（type/action 必填）
@@ -131,7 +131,7 @@ describe('InfraConsoleView', () => {
   })
 
   it('task 类型可拉取任务结果', async () => {
-    mockSubmit.mockResolvedValueOnce({ kind: 'task', data: { id: 'task-7', state: 'done' } })
+    mockSubmit.mockResolvedValueOnce({ kind: 'task', data: { s: 202, j: { taskID: 'task-7', action: 'lifecycle' } } })
     mockTaskResult.mockResolvedValueOnce({ output: 'hello from agent' })
     const w = mountView()
     await w.find('[data-testid="device-select"]').setValue('dev-1')
