@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -50,9 +51,11 @@ func parseAscendOutput(output string) []GPUInfo {
 				memStr := strings.TrimSpace(fields[1])
 				memStr = strings.TrimSuffix(memStr, "MB")
 				memStr = strings.TrimSpace(memStr)
-				var mem int
-				fmt.Sscanf(memStr, "%d", &mem)
-				current.MemoryTotalMB = mem
+				// 与 nvidia 解析器同口径：解析成功才赋值。旧实现忽略 Sscanf 的 err，
+				// 且 %d 会把 "72.5" 这类小数截断——指标宁可保持零值，也不要写进一个错的数。
+				if v, perr := strconv.ParseFloat(memStr, 64); perr == nil {
+					current.MemoryTotalMB = int(v)
+				}
 			}
 		}
 		if strings.Contains(line, "Temperature") {
@@ -61,9 +64,9 @@ func parseAscendOutput(output string) []GPUInfo {
 				tempStr := strings.TrimSpace(fields[1])
 				tempStr = strings.TrimSuffix(tempStr, "C")
 				tempStr = strings.TrimSpace(tempStr)
-				var temp int
-				fmt.Sscanf(tempStr, "%d", &temp)
-				current.Temperature = float64(temp)
+				if v, perr := strconv.ParseFloat(tempStr, 64); perr == nil {
+					current.Temperature = v
+				}
 			}
 		}
 		if strings.Contains(line, "Power") {
@@ -72,9 +75,9 @@ func parseAscendOutput(output string) []GPUInfo {
 				powerStr := strings.TrimSpace(fields[1])
 				powerStr = strings.TrimSuffix(powerStr, "W")
 				powerStr = strings.TrimSpace(powerStr)
-				var power int
-				fmt.Sscanf(powerStr, "%d", &power)
-				current.PowerDraw = float64(power)
+				if v, perr := strconv.ParseFloat(powerStr, 64); perr == nil {
+					current.PowerDraw = v
+				}
 			}
 		}
 	}
