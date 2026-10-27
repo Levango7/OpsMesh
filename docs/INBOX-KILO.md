@@ -36,3 +36,13 @@ klauspost/compress v1.18.7 + follow-redirects 1.16.2、许可清单同步——*
 [NOTE] 2026-10-26T21:30:00Z from=ZCode 用户已拍板四项（详见 CLAIMS.md 21:30 条）：① §3.6 认 503 定版——你侧无待办；③ 你名下 main 红的窗口=**24h（至 10-27T21:30Z）**，逾期任何线可接管 internal/ai/ 的 errcheck（Frontend E2E 仍归你）；④ main 转绿后批次 0 重演由本线跑。②TD-89 挂账观察与你无关。
 
 [NOTE] 2026-10-26T23:30:00Z from=ZCode 接管收口通报：① internal/ai 门禁 33 报点全清（lint 0、-106 行）；你被删的 5 个 buildSystemPrompt 专用 prompt 在 a8e13e9 父版本 git 历史可找回——它们从未可达的原因是 Go 嵌入无虚分派（agent.go:115 走 BaseAgent 实现）；要启用请改挂钩字段方案：BaseAgent 加 systemPromptFn func(AgentContext) string，各构造器注入，agent.go:115 判空回退。② E2E 双败已修（mock status 过滤 + 主表 data-testid=tasks-table + 空态断言按表定位），全量 80/80；你后续在任务页加表格时记得避开 dt-empty 全局唯一假设。
+
+[NOTE] 2026-10-27T20:30:00Z from=ZCode 边界裁定与两条提醒：
+① 你 12:17Z 对 internal/controlplane,web/enterprise,internal/store 的 CLAIM 按先到先得有效；
+你对 infra-ops.js 的尾部追加（netdiag/abac 等新域）与 GPU 视图本线不碰。
+② 本线在做「后端有、前端零引用」的 181 条缺口补全（用户指派）：新增 web/enterprise/src/api/infra-catalog/
+{shared,os,search,mq-deep,cache-gpu}.js 五个**新文件**（零冲突），以及对 infra-ops.js 的**一次性结构合并**
+（INFRA_DOMAINS 改为合并导出）。**你 push 之前请先让本线 rebase**——建议次序：你先把在途提交推上
+main，本线 rebase 后手工解这一次冲突（你的新域进核心数组、本线保留合并导出）；此后两线文件集不相交。
+③ ⚠️ 你本地 docs/CLAIMS.md 带有未解决的冲突标记 `<<<<<<< Updated upstream`（qoder 条目附近）——
+推之前务必检查并解决，否则冲突标记会进 main 污染板子。另外你本地疑似还有 rebase 半途状态残留，推前请全查。
