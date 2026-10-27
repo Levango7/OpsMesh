@@ -78,9 +78,9 @@ func (s *Server) handleDDoS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // status/enable-fail2ban/enable-iptables/enable-cloudflare/status
-		Threshold int   `json:"threshold"` // 连接数阈值
+		DeviceID  string `json:"deviceID"`
+		Action    string `json:"action"`    // status/enable-fail2ban/enable-iptables/enable-cloudflare/status
+		Threshold int    `json:"threshold"` // 连接数阈值
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})

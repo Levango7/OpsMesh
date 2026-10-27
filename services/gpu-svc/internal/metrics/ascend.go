@@ -125,12 +125,12 @@ func parseAscendMetrics(output, nodeID string) *models.GPUMetrics {
 	if len(m.GPUs) == 0 {
 		// Fallback
 		m.GPUs = append(m.GPUs, models.GPUMetricsPerGPU{
-			Index:           0,
-			UtilizationPct:  0,
-			MemoryUsedMB:    0,
-			MemoryTotalMB:   0,
-			TemperatureC:    0,
-			PowerDrawW:      0,
+			Index:          0,
+			UtilizationPct: 0,
+			MemoryUsedMB:   0,
+			MemoryTotalMB:  0,
+			TemperatureC:   0,
+			PowerDrawW:     0,
 		})
 	}
 	return m

@@ -18,8 +18,8 @@ func (s *Server) handleIaC(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"`   // init/plan/apply/destroy/status
-		Tool     string `json:"tool"`     // terraform/pulumi
+		Action   string `json:"action"` // init/plan/apply/destroy/status
+		Tool     string `json:"tool"`   // terraform/pulumi
 		WorkDir  string `json:"workDir"`
 		Args     string `json:"args"`
 	}

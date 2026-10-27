@@ -17,10 +17,10 @@ func (s *Server) handleContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // list/inspect/start/stop/restart/remove/logs
+		DeviceID  string `json:"deviceID"`
+		Action    string `json:"action"` // list/inspect/start/stop/restart/remove/logs
 		Container string `json:"container"`
-		Image    string `json:"image"`
+		Image     string `json:"image"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -89,12 +89,12 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // list/pull/push/build/scan/sign/tag
-		Image    string `json:"image"`
-		Tag      string `json:"tag"`
+		DeviceID   string `json:"deviceID"`
+		Action     string `json:"action"` // list/pull/push/build/scan/sign/tag
+		Image      string `json:"image"`
+		Tag        string `json:"tag"`
 		Dockerfile string `json:"dockerfile"`
-		Context  string `json:"context"`
+		Context    string `json:"context"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})

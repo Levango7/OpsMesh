@@ -17,7 +17,7 @@ func (s *Server) handleIdentity(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // ldap-status/ldap-config/sso-status/sso-config
+		Action   string `json:"action"`   // ldap-status/ldap-config/sso-status/sso-config
 		Provider string `json:"provider"` // ldap/ad/saml/oidc
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

@@ -16,10 +16,10 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // status/components/incidents/maintenance
+		DeviceID  string `json:"deviceID"`
+		Action    string `json:"action"` // status/components/incidents/maintenance
 		Component string `json:"component"`
-		Status   string `json:"status"` // operational/degraded/down
+		Status    string `json:"status"` // operational/degraded/down
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})

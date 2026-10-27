@@ -17,9 +17,9 @@ func (s *Server) handleK8sGatewayAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // list-gatewayclasses/list-gateways/list-httproutes/list-grpcroutes/list-tcproutes/status
-		Name     string `json:"name"`
+		DeviceID  string `json:"deviceID"`
+		Action    string `json:"action"` // list-gatewayclasses/list-gateways/list-httproutes/list-grpcroutes/list-tcproutes/status
+		Name      string `json:"name"`
 		Namespace string `json:"namespace"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

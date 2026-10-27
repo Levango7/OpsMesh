@@ -533,7 +533,7 @@ func (s *Server) handleAscendVirtualization(w http.ResponseWriter, r *http.Reque
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // enable/disable/list/create/delete
+		Action   string `json:"action"`  // enable/disable/list/create/delete
 		Profile  string `json:"profile"` // vNPU profile
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

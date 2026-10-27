@@ -17,12 +17,12 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // policy-list/policy-create/policy-delete/evaluate
-		Subject  string `json:"subject"` // subject attributes (JSON)
-		Resource string `json:"resource"` // resource attributes (JSON)
+		DeviceID   string `json:"deviceID"`
+		Action     string `json:"action"`     // policy-list/policy-create/policy-delete/evaluate
+		Subject    string `json:"subject"`    // subject attributes (JSON)
+		Resource   string `json:"resource"`   // resource attributes (JSON)
 		ActionAttr string `json:"actionAttr"` // action attribute
-		Context  string `json:"context"`  // environment context (JSON)
+		Context    string `json:"context"`    // environment context (JSON)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
