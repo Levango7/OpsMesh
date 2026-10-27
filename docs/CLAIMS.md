@@ -77,3 +77,7 @@
 [NOTE] 2026-10-27T14:00:00Z from=ZCode 批次 0 重演（裁定④）核心判据全 PASS（栈=dc6a481 构建，控制面 19680 + 1 agent，留原地在跑）：① §3.12 operator 建任务 201 + 取消自己建的任务 200 cancelled（第九十一则裁定落地实证）；② A3 越权审计链：operator 删设备 403 + 审计 authz_denied 记录在案；③ viewer（sim-audit）无 task:write：建任务 403；④ admin/operator 会话与首登流正常。深度项（cutover-migrate 批次、fault 引擎级注入）属 auth 切流执行窗口，等用户名册后随切流一起跑。
 [DONE] 2026-10-27T15:30:00Z from=ZCode scope=internal/store/sqlstore/ commit=pending note=MDL 锁等待修复落地（升级演练建议二，qoder 出证据/口径）：迁移改专用连接 + SET SESSION lock_wait_timeout（OPSMESH_MIGRATION_LOCK_WAIT_SEC 默认 15s）+ 1205 报错点名 MDL 并给处置指引。DSN 测试 TestMigrationMDLFailFast_MySQL 复现演练场景：长事务持 tasks MDL ⇒ 迁移 2.0s 快速失败（此前=挂 1 年）；释放后同迁移成功。全包 DSN 绿 + lint 0。CHANGELOG [Unreleased] 已记。
 [NOTE] 2026-10-27T16:15:00Z from=ZCode MDL 修复提交（9bc25aa）main CI **12 腿全绿**实证——上一轮全绿状态在叠加新修复后保持。今晚全部接管工作收口：门禁五层冰山 + 集成三真缺陷 + operator 摘序 + 许可两轮 + MDL 锁上限，均随 CI 全绿验证。
+[NOTE] 2026-10-27T18:20:00Z from=ZCode 批次 0 完整切流演练收官（drill 台恢复可用 + 全环节真进程验证）：
+① 双轨栈（控制面 19580 + auth-svc 19590 + 真库 opsmesh_test，重建演练 MySQL 容器）；② cutover-migrate 真 job 3 批 4 账号（--force-change 一次性口令）；③ 被切用户全链（OTP→首登强制改密→重登→me，u01/u02）+ 路由生效（cp.log 21 条）；④ fault 两分支：本地用户 6/6、名册 fail-closed login 502 + Cookie 保留 ×2、C 段杀库 login 503（§3.6 进程级实证）×2；⑤ unroute 回退：产品子命令摘名册+吊销会话、热加载 3s、回本侧登录 200、路由归零。
+发现并修复演练台 bug 1 个：C 段登录行硬编码 u01（victim 变量收了参数没用上）——503 语义只在本地用户路径可测，名册用户走 memory 对侧永远测不到；已修。另记 3 个脚本局限待修：fault 基线口令与 --force-change 不兼容（应自建探针全流程）、refresh-revival-200 与 memory 重启失忆不相容、C 段无限流感知（重复运行被 429/401 噪声掩蔽，产品语义已有 cutover_outage_test 单测兜底）。
+栈留原地（19580/19590/19680 三栈共存），名册现状 u02-u04 在册、u01 已回退。
