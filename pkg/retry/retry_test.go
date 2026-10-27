@@ -314,6 +314,16 @@ func TestDoWithConfigNegativeBackoff(t *testing.T) {
 	}
 }
 
+// recordSleeps 临时把 sleep 换成记录器（不真实等待），返回记录到的退避时长。
+func recordSleeps(t *testing.T) *[]time.Duration {
+	t.Helper()
+	orig := sleep
+	var got []time.Duration
+	sleep = func(d time.Duration) { got = append(got, d) }
+	t.Cleanup(func() { sleep = orig })
+	return &got
+}
+
 func TestDoWithConfigJitterBounds(t *testing.T) {
 	cfg := Config{
 		MaxRetries:    100,
@@ -322,6 +332,9 @@ func TestDoWithConfigJitterBounds(t *testing.T) {
 		BackoffFactor: 1.0,
 		Jitter:        0.5,
 	}
+	// 名实相符：记录每次退避时长并断言落在 jitter 区间 [0.5ms, 1.5ms]。
+	// 原实现连跑 100×100 次真实 sleep（实测 16s）却只数调用次数、没验证 jitter 边界。
+	got := recordSleeps(t)
 	for i := 0; i < 100; i++ {
 		calls := 0
 		_ = DoWithConfig(func() error {
@@ -330,6 +343,16 @@ func TestDoWithConfigJitterBounds(t *testing.T) {
 		}, cfg)
 		if calls != 101 {
 			t.Fatalf("calls = %d, want 101", calls)
+		}
+	}
+	if want := 100 * 100; len(*got) != want {
+		t.Fatalf("记录到 %d 次退避，want %d", len(*got), want)
+	}
+	lo := time.Duration(float64(cfg.InitialDelay) * (1 - cfg.Jitter)) // 0.5ms
+	hi := time.Duration(float64(cfg.InitialDelay) * (1 + cfg.Jitter)) // 1.5ms
+	for i, d := range *got {
+		if d < lo || d > hi {
+			t.Fatalf("第 %d 次退避 %v 超出 jitter 区间 [%v, %v]", i, d, lo, hi)
 		}
 	}
 }

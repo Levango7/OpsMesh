@@ -76,6 +76,11 @@ func Do(fn func() error, maxRetries int, initialDelay time.Duration) error {
 	return DoWithConfig(fn, cfg)
 }
 
+// sleep 是可注入的等待函数：生产恒为 time.Sleep。抽成包级变量是为了让测试能记录
+// 退避时长而不真的等待——否则"断言 jitter 边界"的测试只能靠成千上万次真实 sleep，
+// 既慢（实测 16s）又什么都没断言到。测试替换后必须在 Cleanup 里还原。
+var sleep = time.Sleep
+
 // DoWithConfig executes fn with the provided retry configuration.
 func DoWithConfig(fn func() error, cfg Config) error {
 	if cfg.BackoffFactor <= 0 {
@@ -91,7 +96,7 @@ func DoWithConfig(fn func() error, cfg Config) error {
 	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
 			wait := applyJitter(delay, cfg.Jitter)
-			time.Sleep(wait)
+			sleep(wait)
 			delay = time.Duration(float64(delay) * cfg.BackoffFactor)
 			if delay > cfg.MaxDelay {
 				delay = cfg.MaxDelay
