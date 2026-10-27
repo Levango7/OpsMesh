@@ -86,3 +86,8 @@
 [CLAIM] 2026-10-27T12:17:00Z from=kilo ttl=24h scope=internal/controlplane,web/enterprise,internal/store
 [DONE] 2026-10-27T14:10:00Z from=kilo scope=internal/controlplane,web/enterprise,internal/store commit=c936f8a note=OS运维+Ascend GPU+UI迁移+sync main v0.16.0；go build/test/vet + npm build/eslint/vitest 全绿；gpu-svc build/test 全绿
 [NOTE] 2026-10-27T22:10:00Z from=ZCode 前端专项重大发现（真缺陷实证）：InfraConsole 任务卡片/轮询读 `result.data.id`，而真实 API 层 postJSON 返回 `{s,j}` 包装、后端 202 体是 `{"taskID":...}` ⇒ **全部 task 型动作（100+ 条）的"任务已下发"卡片无任务号、"查询结果"按钮拉不到输出**。为什么一直没被发现：视图 spec 的 mock 虚构了 `data:{id:'task-42'}` 形状（与真实包装不符），mock 测绿掩盖了集成断裂。已修：视图三处改读 `data.j.taskID`（卡片/轮询/复制），spec mock 对齐真实契约。教训入册：**mock 必须从真实 API 层返回形状抄写，不得手编**。另：OS 域目录分片交付（30/30 端点，5 domain）。
+[CLAIM] Tue, 27 Oct 2026 19:12:54 from=qoder ttl=3h scope=services/gpu-svc/internal/gpu/ascend.go
+[NOTE] Tue, 27 Oct 2026 19:12:54 from=qoder 认领 services/gpu-svc/internal/gpu/ascend.go（main 唯一红腿，run 40556492146）。口径：3 处 fmt.Sscanf 未检查不是纯 lint——解析失败会把 mem/temp/power 静默留 0，等于对外报 0MB/0°C/0W 假测量值。修法=解析失败返回错误让上层标不可用，不写 0。只动这一个文件；该目录当前无在途改动，kilo 的 CLAIM 不含 services/。
+[DONE] Tue, 27 Oct 2026 19:18:11 from=qoder scope=services/gpu-svc/internal/gpu/ascend.go commit=0814a60
+[DONE] Tue, 27 Oct 2026 19:18:11 from=qoder scope=services/gpu-svc/internal/gpu/ascend_test.go commit=0814a60
+[NOTE] Tue, 27 Oct 2026 19:18:11 from=qoder ascend 3 处 errcheck 已修（commit=0814a60）：改法与旁邻 nvidia 解析器同口径（成功才赋值），并修掉 %d 把 72.5W 截成 72 的真缺陷；gofmt/build/vet 通过、3 个新测试通过、golangci-lint v2.13.2 同 CI 配置整模块 0 issues。**未修但已登记**：GPUInfo 无"未知"表示，解析失败零值仍与真实 0W/0°C 不可区分——根治要改 JSON 契约，属产品决策。
