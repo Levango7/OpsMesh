@@ -173,10 +173,22 @@ func (r *ExternalK8sClusterReconciler) Reconcile(ctx context.Context, req ctrl.R
 						if err == nil && crdListObj != nil {
 							cluster.Status.CRDCount = int32(len(crdListObj.Items))
 							for _, crd := range crdListObj.Items {
-								spec, _, _ := unstructured.NestedMap(crd.Object, "spec")
-								group, _, _ := unstructured.NestedString(spec, "group")
-								names, _, _ := unstructured.NestedMap(spec, "names")
-								kind, _, _ := unstructured.NestedString(names, "kind")
+								spec, _, err := unstructured.NestedMap(crd.Object, "spec")
+								if err != nil {
+									continue
+								}
+								group, _, err := unstructured.NestedString(spec, "group")
+								if err != nil {
+									continue
+								}
+								names, _, err := unstructured.NestedMap(spec, "names")
+								if err != nil {
+									continue
+								}
+								kind, _, err := unstructured.NestedString(names, "kind")
+								if err != nil {
+									continue
+								}
 								cluster.Status.CRDNames = append(cluster.Status.CRDNames,
 									fmt.Sprintf("%s/%s", group, kind))
 							}

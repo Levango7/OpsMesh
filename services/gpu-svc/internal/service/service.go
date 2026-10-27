@@ -178,7 +178,9 @@ func (s *Service) CancelWorkload(id string) error {
 	for _, nodeID := range wl.NodeIDs {
 		if n, err := s.nodes.Get(nodeID); err == nil {
 			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
-			_ = s.nodes.Update(n)
+			if err := s.nodes.Update(n); err != nil {
+				log.Printf("[service] update node %s: %v", n.ID, err)
+			}
 		}
 	}
 
@@ -213,7 +215,9 @@ func (s *Service) CompleteWorkload(id string) error {
 	for _, nodeID := range wl.NodeIDs {
 		if n, err := s.nodes.Get(nodeID); err == nil {
 			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
-			_ = s.nodes.Update(n)
+			if err := s.nodes.Update(n); err != nil {
+				log.Printf("[service] update node %s: %v", n.ID, err)
+			}
 		}
 	}
 
@@ -243,7 +247,9 @@ func (s *Service) FailWorkload(id, errMsg string) error {
 	for _, nodeID := range wl.NodeIDs {
 		if n, err := s.nodes.Get(nodeID); err == nil {
 			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
-			_ = s.nodes.Update(n)
+			if err := s.nodes.Update(n); err != nil {
+				log.Printf("[service] update node %s: %v", n.ID, err)
+			}
 		}
 	}
 
@@ -279,7 +285,9 @@ func (s *Service) TriggerScheduling() []*models.ScheduleResult {
 			for _, nodeID := range result.NodeIDs {
 				if n, err := s.nodes.Get(nodeID); err == nil {
 					s.scheduler.AssignNodeResources(n, vramPerWorkload)
-					_ = s.nodes.Update(n)
+					if err := s.nodes.Update(n); err != nil {
+						log.Printf("[service] update node %s: %v", n.ID, err)
+					}
 				}
 			}
 			if err := s.quotas.RecordAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {

@@ -196,7 +196,7 @@ func (s *SQLStore) GetTasks(agentID string) []*proto.Task {
 	// script_body：多行脚本体（列由 migrations/029_tasks_script_body.sql 提供）——
 	//   模板类任务（OS 优化 / 中间件部署）的脚本正文走这一列，agent 据此落临时文件执行。
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at, claimed_at, approval_required, priority, script_body FROM tasks WHERE agent_id=? AND (status IS NULL OR status='pending')`, agentID)
+		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at, claimed_at, approval_required, priority, script_body, dead_letter, retry_count, max_retries FROM tasks WHERE agent_id=? AND (status IS NULL OR status='pending')`, agentID)
 	if err != nil {
 		storefail.Record("[store] GetTasks 查询失败 %s: %v", agentID, err)
 		return nil
@@ -264,7 +264,7 @@ INSERT INTO task_results (task_id, agent_id, exit_code, stdout, stderr, finished
 VALUES (?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE
 	exit_code=VALUES(exit_code), stdout=VALUES(stdout), stderr=VALUES(stderr), finished_at=VALUES(finished_at)
-`, res.TaskID, res.AgentID, res.ExitCode, res.Stdout, res.Stderr, res.FinishedAt.UTC()); err != nil {
+`, res.TaskID, res.AgentID, res.ExitCode, res.Stdout, res.Stderr, nullTime(res.FinishedAt)); err != nil {
 		storefail.Record("[store] SubmitResult 写入 task_results 失败 %s: %v", res.TaskID, err)
 	}
 
@@ -467,7 +467,7 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 func (s *SQLStore) AllTasks(tenantID string) []*proto.Task {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	q := `SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at, claimed_at, approval_required, priority, script_body FROM tasks`
+	q := `SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at, claimed_at, approval_required, priority, script_body, dead_letter, retry_count, max_retries FROM tasks`
 	var args []interface{}
 	if tenantID != "" {
 		q += ` WHERE tenant_id=?`
@@ -500,7 +500,7 @@ func (s *SQLStore) TaskByID(taskID string) *proto.Task {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	row := s.db.QueryRowContext(ctx,
-		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at, claimed_at, approval_required, priority, script_body FROM tasks WHERE task_id=?`, taskID)
+		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at, claimed_at, approval_required, priority, script_body, dead_letter, retry_count, max_retries FROM tasks WHERE task_id=?`, taskID)
 	var t proto.Task
 	if err := scanTaskListRow(row, &t); err != nil {
 		if err != sql.ErrNoRows {
@@ -516,7 +516,7 @@ func (s *SQLStore) GetTaskByIdempotencyKey(tenantID, key string) *proto.Task {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	row := s.db.QueryRowContext(ctx,
-		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at, claimed_at, approval_required, priority, script_body FROM tasks WHERE tenant_id=? AND idempotency_key=? LIMIT 1`,
+		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at, claimed_at, approval_required, priority, script_body, dead_letter, retry_count, max_retries FROM tasks WHERE tenant_id=? AND idempotency_key=? LIMIT 1`,
 		tenantID, key)
 	var t proto.Task
 	if err := scanTaskListRow(row, &t); err != nil {
@@ -548,7 +548,7 @@ func (s *SQLStore) ListTasksByPriority(tenantID string, offset, limit int) ([]*p
 		return nil, total, nil
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at, claimed_at, approval_required, priority, script_body FROM tasks WHERE (tenant_id=? OR ?='') ORDER BY priority DESC, created_at ASC, task_id ASC LIMIT ? OFFSET ?`,
+		`SELECT task_id, agent_id, tenant_id, type, command, content, path, status, created_at, claimed_at, approval_required, priority, script_body, dead_letter, retry_count, max_retries FROM tasks WHERE (tenant_id=? OR ?='') ORDER BY priority DESC, created_at ASC, task_id ASC LIMIT ? OFFSET ?`,
 		tenantID, tenantID, limit, offset)
 	if err != nil {
 		storefail.Record("[store] ListTasksByPriority 查询失败: %v", err)
@@ -596,10 +596,9 @@ type taskRowScanner interface {
 func scanTaskListRow(row taskRowScanner, t *proto.Task) error {
 	var agentID, tenantID, typ, command, content, path, status sql.NullString
 	var createdAt, claimedAt sql.NullTime
-	var approvalRequired sql.NullInt64
-	var priority sql.NullInt64
+	var approvalRequired, priority, deadLetter, retryCount, maxRetries sql.NullInt64
 	var scriptBody sql.NullString
-	if err := row.Scan(&t.TaskID, &agentID, &tenantID, &typ, &command, &content, &path, &status, &createdAt, &claimedAt, &approvalRequired, &priority, &scriptBody); err != nil {
+	if err := row.Scan(&t.TaskID, &agentID, &tenantID, &typ, &command, &content, &path, &status, &createdAt, &claimedAt, &approvalRequired, &priority, &scriptBody, &deadLetter, &retryCount, &maxRetries); err != nil {
 		return err
 	}
 	t.AgentID, t.TenantID, t.Type = agentID.String, tenantID.String, typ.String
@@ -608,6 +607,9 @@ func scanTaskListRow(row taskRowScanner, t *proto.Task) error {
 	t.ApprovalRequired = approvalRequired.Int64 != 0
 	t.Priority = int(priority.Int64)
 	t.ScriptBody = scriptBody.String
+	t.DeadLetter = deadLetter.Int64 != 0
+	t.RetryCount = int(retryCount.Int64)
+	t.MaxRetries = int(maxRetries.Int64)
 	return nil
 }
 
@@ -679,17 +681,26 @@ func (s *SQLStore) CreateTask(t *proto.Task) (*proto.Task, error) {
 	if t.ApprovalRequired {
 		approvalRequired = 1
 	}
+	// M5 作业编排：depends_on 必须落库（JSON 数组，releaseDeps 由此列读依赖边）。
+	// 缺此列写入 ⇒ 依赖边在 SQL 后端静默丢失：releaseDeps 把含依赖的 blocked 任务当无依赖释放，
+	// 上游失败时下游 pending 卡死（sql_tasks_fixes_test FIX 5 抓出的假装持久化，TD-68 同族）。
+	var dependsOnJSON interface{}
+	if len(t.DependsOn) > 0 {
+		if b, jerr := json.Marshal(t.DependsOn); jerr == nil {
+			dependsOnJSON = string(b)
+		}
+	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, retry_count, max_retries, dead_letter, schedule, parent_id, created_at, timeout, retry_delay, priority, idempotency_key, approval_required, script_body)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, content, path, status, retry_count, max_retries, dead_letter, schedule, parent_id, created_at, timeout, retry_delay, priority, idempotency_key, approval_required, script_body, depends_on)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE type=VALUES(type), command=VALUES(command), content=VALUES(content),
 		   path=VALUES(path), status=VALUES(status), schedule=VALUES(schedule), parent_id=VALUES(parent_id),
 		   max_retries=VALUES(max_retries), timeout=VALUES(timeout), retry_delay=VALUES(retry_delay),
 		   priority=VALUES(priority), idempotency_key=VALUES(idempotency_key), approval_required=VALUES(approval_required),
-		   script_body=VALUES(script_body)`,
+		   script_body=VALUES(script_body), depends_on=VALUES(depends_on)`,
 		t.TaskID, t.AgentID, t.TenantID, t.Type, t.Command, t.Content, t.Path, t.Status,
 		t.RetryCount, t.MaxRetries, t.DeadLetter, t.Schedule, t.ParentID, t.CreatedAt,
-		t.Timeout, t.RetryDelay, t.Priority, t.IdempotencyKey, approvalRequired, t.ScriptBody); err != nil {
+		t.Timeout, t.RetryDelay, t.Priority, t.IdempotencyKey, approvalRequired, t.ScriptBody, dependsOnJSON); err != nil {
 		storefail.Record("[store] CreateTask 失败 %s: %v", t.TaskID, err)
 		return nil, fmt.Errorf("[store] CreateTask 落库失败 task=%s: %w", t.TaskID, err)
 	}

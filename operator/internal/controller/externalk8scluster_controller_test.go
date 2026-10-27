@@ -57,12 +57,6 @@ func TestExternalK8sClusterReconcile_FinalizerAdded(t *testing.T) {
 		},
 	}
 
-	cl := fakeclient.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(instance, secret).
-		WithStatusSubresource(&opsmeshv1alpha1.ExternalK8sCluster{}).
-		Build()
-
 	r := &controller.ExternalK8sClusterReconciler{Client: cl, Scheme: scheme}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

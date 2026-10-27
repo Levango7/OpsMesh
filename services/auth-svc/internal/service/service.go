@@ -653,11 +653,3 @@ func toProtoUser(u *store.User) *authv1.User {
 		MustChangePassword: u.MustChangePassword,
 	}
 }
-
-// defaultTenantID 空租户 ID 回退为 "default"（向后兼容）。
-func defaultTenantID(t string) string {
-	if t == "" {
-		return "default"
-	}
-	return t
-}

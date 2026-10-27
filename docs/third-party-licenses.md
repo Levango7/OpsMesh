@@ -164,6 +164,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/evanphx/json-patch/v5` | v5.9.0 | 间接 |
 | `github.com/fsnotify/fsnotify` | v1.10.1 | 直接 |
 | `github.com/gogo/protobuf` | v1.3.2 | 间接 |
+| `github.com/aliyun/alibaba-cloud-sdk-go` | v1.61.18 | 直接 |
 | `github.com/golang/protobuf` | v1.5.4 | 间接 |
 | `github.com/google/go-cmp` | v0.7.0 | 间接 |
 | `github.com/google/uuid` | v1.6.0 | 直接 |

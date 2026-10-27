@@ -317,7 +317,7 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		Email    string `json:"email"`
-		TenantId string `json:"tenant_id"`
+		TenantID string `json:"tenant_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" || body.Password == "" {
 		writeError(w, http.StatusBadRequest, "username and password are required")
@@ -347,7 +347,7 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Password: body.Password,
 		Email:    body.Email,
 		RoleIds:  []string{"role-viewer"},
-		TenantId: body.TenantId,
+		TenantId: body.TenantID,
 	})
 	if err != nil {
 		if err == service.ErrUserExists {
@@ -645,7 +645,7 @@ func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 			RoleIDs            []string `json:"role_ids"`
 			RoleIDsCamel       []string `json:"roleIDs"`
 			MustChangePassword bool     `json:"mustChangePassword"`
-			TenantId           string   `json:"tenant_id"`
+			TenantID           string   `json:"tenant_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" || body.Password == "" {
 			writeError(w, http.StatusBadRequest, "username and password are required")
@@ -673,7 +673,7 @@ func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
 			Email:              body.Email,
 			RoleIds:            roles,
 			MustChangePassword: body.MustChangePassword,
-			TenantId:           body.TenantId,
+			TenantId:           body.TenantID,
 		}); err != nil {
 			if err == service.ErrUserExists {
 				writeError(w, http.StatusConflict, "username already exists")

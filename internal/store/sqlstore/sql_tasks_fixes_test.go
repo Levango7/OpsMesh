@@ -17,6 +17,7 @@ package sqlstore
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
@@ -366,6 +367,16 @@ func TestReclaimStaleTasks_DeadLettersAfterBudget_MySQL(t *testing.T) {
 	const maxAge = 60 // 秒；claimed_at 拨到 1 小时前确保超期
 	// 第一次回收：预算 0→1，回 pending。
 	claimAndAge(t, s, agentID, "task-fix-poison")
+	// 内存版语义（情况 2）：agent 心跳也要失联才回收——活 agent 持有超期任务不回收（防双跑）。
+	if _, err := s.db.Exec(`UPDATE agents SET last_seen = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR) WHERE agent_id=?`, agentID); err != nil {
+		t.Fatalf("拨旧 agent last_seen: %v", err)
+	}
+	// fence：回收仅 leader 可做。先拨旧存量租约（上一测试实例的租约可能仍有效且 holder 不同，
+	// 生产语义=过期才可接管），再用生产同款 RenewLeadership 抢占。
+	if _, err := s.db.Exec(`UPDATE leader_lease SET expires_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)`); err != nil {
+		t.Fatalf("拨旧 leader 租约: %v", err)
+	}
+	s.RenewLeadership(time.Minute)
 	if n := s.ReclaimStaleTasks(maxAge); n != 1 {
 		t.Fatalf("第一次 ReclaimStaleTasks = %d, want 1", n)
 	}
@@ -376,6 +387,16 @@ func TestReclaimStaleTasks_DeadLettersAfterBudget_MySQL(t *testing.T) {
 
 	// 第二次回收：预算 1→2 达上限 ⇒ failed + dead_letter。
 	claimAndAge(t, s, agentID, "task-fix-poison")
+	// 内存版语义（情况 2）：agent 心跳也要失联才回收——活 agent 持有超期任务不回收（防双跑）。
+	if _, err := s.db.Exec(`UPDATE agents SET last_seen = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR) WHERE agent_id=?`, agentID); err != nil {
+		t.Fatalf("拨旧 agent last_seen: %v", err)
+	}
+	// fence：回收仅 leader 可做。先拨旧存量租约（上一测试实例的租约可能仍有效且 holder 不同，
+	// 生产语义=过期才可接管），再用生产同款 RenewLeadership 抢占。
+	if _, err := s.db.Exec(`UPDATE leader_lease SET expires_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)`); err != nil {
+		t.Fatalf("拨旧 leader 租约: %v", err)
+	}
+	s.RenewLeadership(time.Minute)
 	if n := s.ReclaimStaleTasks(maxAge); n != 1 {
 		t.Fatalf("第二次 ReclaimStaleTasks = %d, want 1", n)
 	}
@@ -420,6 +441,15 @@ func TestReclaimStaleTasks_HeadroomStaysPending_MySQL(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 	claimAndAge(t, s, agentID, "task-fix-roomy")
+	// 同上：agent 心跳失联 + leader 租约，回收条件才齐（内存版情况 2 语义）。
+	if _, err := s.db.Exec(`UPDATE agents SET last_seen = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR) WHERE agent_id=?`, agentID); err != nil {
+		t.Fatalf("拨旧 agent last_seen: %v", err)
+	}
+	// 拨旧存量租约（上一测试实例可能仍持有），再抢占。
+	if _, err := s.db.Exec(`UPDATE leader_lease SET expires_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)`); err != nil {
+		t.Fatalf("拨旧 leader 租约: %v", err)
+	}
+	s.RenewLeadership(time.Minute)
 	if n := s.ReclaimStaleTasks(60); n != 1 {
 		t.Fatalf("ReclaimStaleTasks = %d, want 1", n)
 	}
