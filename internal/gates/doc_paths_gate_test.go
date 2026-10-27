@@ -48,6 +48,8 @@ var docPathWhitelist = []string{
 	"docs/product-roadmap.md",
 	"docs/security-mechanism.md",
 	"docs/test-specification.md",
+	"docs/upgrade-guide.md",
+	"docs/upgrade-rehearsal-2026-10-27.md",
 	"plugins/remote-example/README.md",
 	"proto/README.md",
 }

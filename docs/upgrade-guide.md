@@ -26,6 +26,39 @@ SELECT COUNT(*), SUM(LENGTH(CAST(attrs AS CHAR))) FROM ci_items;
 1845（必须整表 COPY），FULLTEXT 建索引对 `LOCK=NONE` 报 1846（requires a lock）——
 即这类迁移无法在线无锁完成。
 
+## 1.5 升级前必查：库里不能有在跑的事务（2026-10-27 实测新增）
+
+`024–029` 这轮演练量到的不是"迁移慢"，而是**迁移等锁时把业务写入一起挂住**：
+
+- 加列是 `ALGORITHM=INSTANT`（100 万行实测 44–83ms），建索引是 `INPLACE`（实测 2.6s，
+  期间同表 150 次 INSERT 平均间隔 15.1ms vs 无 DDL 对照 16.4ms ⇒ **不阻塞 DML**）。
+- 但反过来：只要有一个事务**已经持有该表的元数据锁**，迁移的 `ALTER` 就排队，
+  而排在 `ALTER` 后面的写入全部等待。实测同库 `tasks` 上有事务时，
+  **10 条 INSERT 耗时 23.0s**（基线约 0.4s）。
+- 更糟的是默认没有上限：`@@global.lock_wait_timeout = 31536000`（1 年），
+  而迁移连接**从未**显式设小它（`grep -rn lock_wait_timeout --include=*.go .` 实测 0 命中）
+  ⇒ 一个卡住的事务能让迁移无限期挂住并连带冻结该表写入。
+
+升级前执行（返回 0 行才继续）：
+
+```sql
+SELECT trx_mysql_thread_id, timestampdiff(second, trx_started, now(3)) AS age_s, trx_query
+  FROM information_schema.innodb_trx
+ WHERE timestampdiff(second, trx_started, now(3)) >= 1;
+```
+
+非空的处置顺序：**停控制面写入 → 等事务结束 → 或 `KILL <trx_mysql_thread_id>`**（后者会回滚该事务，
+需业务方确认）。做不到就换窗口，不要硬升。
+
+演练与判据本身已可复跑（含 ① 前置体检、④ "升级库 ≡ 新装库"结构等价不变式、⑤ 幂等重放）：
+
+```bash
+bash deploy/scripts/upgrade-rehearsal.sh --selftest   # 判据自测，不需要二进制
+bash deploy/scripts/upgrade-rehearsal.sh --rows 200000
+```
+
+实测记录与未覆盖项见 `docs/upgrade-rehearsal-2026-10-27.md`。
+
 ## 2. 标准升级流程
 
 ```bash

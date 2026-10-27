@@ -2417,6 +2417,83 @@ PY4
     fi
 fi
 
+# ---------------------------------------------------------------
+sec "25. 存量库升级演练：脚本可跑 + 判据有射程 + 结论已落文档"
+# ---------------------------------------------------------------
+# 为什么钉这一条：演练脚本是"切版前最后一道只有真库才能给的判据"。它一旦坏掉/被改成空转，
+# 症状是"绿"——比没有更危险。所以本节不仅查它存在，还查它**能不能判红**：
+#   · 判据样本数（红/绿分别钉死，少一条即判红）；
+#   · 四个 judge_* 在主流程里**真的被调用**（函数存在 ≠ 被接线）；
+#   · 无 BASE_DSN 时 --selftest 必须拒跑（exit 2），防止"没有库也判绿"。
+REHEARSAL=deploy/scripts/upgrade-rehearsal.sh
+REHEARSAL_DOC=docs/upgrade-rehearsal-2026-10-27.md
+if [[ ! -f "$REHEARSAL" ]]; then
+    bad "缺少 $REHEARSAL（第 25 节无从核对，判红）"
+else
+    # 数 CR 字节而不是 grep 模式：grep -c 对 CR pattern 的行为在本机和 CI 不一致
+    # （实测 Git Bash 下会把"匹配所有行"读成"全是 CRLF"）。
+    CR_N="$(tr -d -c '\r' < "$REHEARSAL" | wc -c | tr -d ' ')"
+    if [[ "${CR_N:-0}" -eq 0 ]]; then
+        ok "演练脚本行尾为 LF（CRLF=$CR_N）"
+    else
+        bad "演练脚本含 ${CR_N} 行 CRLF ⇒ 容器/CI 里 bash 会把 CR 读进字符串，判据会静默跑偏"
+    fi
+    if bash -n "$REHEARSAL" 2>/dev/null; then
+        ok "演练脚本语法通过（bash -n）"
+    else
+        bad "演练脚本语法不过（bash -n）"
+    fi
+    if command -v shellcheck >/dev/null 2>&1; then
+        SCH="$(shellcheck -S info "$REHEARSAL" 2>&1 | grep -c '^In ' || true)"
+        if [[ "${SCH:-1}" -eq 0 ]]; then
+            ok "演练脚本 shellcheck -S info 0 findings"
+        else
+            bad "演练脚本 shellcheck 有 ${SCH} 处 info 及以上（与 CI 同档）"
+        fi
+    else
+        bad "本机没有 shellcheck，第 25 节无法判定（判红而不是跳过）"
+    fi
+    # 样本数钉死：红 13 / 绿 5 / 合计 18。少一条就意味着有人删了判据样本而门还在判绿。
+    # 锚到行首（缩进后）：注释行 "# expect_verdict <期望…" 不是样本，按子串数会多数一条。
+    EV_ALL="$(grep -cE '^[[:space:]]*expect_verdict (green|red) ' "$REHEARSAL" || true)"
+    EV_RED="$(grep -cE '^[[:space:]]*expect_verdict red ' "$REHEARSAL" || true)"
+    EV_GREEN="$(grep -cE '^[[:space:]]*expect_verdict green ' "$REHEARSAL" || true)"
+    if [[ "${EV_RED:-0}" -eq 13 && "${EV_GREEN:-0}" -eq 5 && "${EV_ALL:-0}" -eq 18 ]]; then
+        ok "判据自测样本数符合（红=$EV_RED 绿=$EV_GREEN 合计=$EV_ALL，红多于绿）"
+    else
+        bad "判据自测样本数变了（实得 红=${EV_RED:-?} 绿=${EV_GREEN:-?} 合计=${EV_ALL:-?}，约定 13/5/18）⇒ 有人删样本而门禁还判绿，或新增样本未同步本节"
+    fi
+    # 接线：四个判据必须在主流程里被真正调用（传值的调用点，缩进也算），而不是只有定义。
+    WIRED="$(grep -cE '^[[:space:]]*judge_(trx|data|equiv|replay) ["$]' "$REHEARSAL" || true)"
+    if [[ "${WIRED:-0}" -eq 4 ]]; then
+        ok "四个 judge_* 都已接线到主流程（传值调用点 4 处）"
+    else
+        bad "judge_* 主流程调用点实得 ${WIRED:-0} 处（约定 4）⇒ 判据写了却没被调用，演练等于空跑"
+    fi
+    # 没有 DSN 时自测必须拒跑，不能"没库也判绿"。
+    BASE_DSN='' bash "$REHEARSAL" --selftest >/dev/null 2>&1
+    ST_RC=$?
+    if [[ "$ST_RC" -eq 2 ]]; then
+        ok "无 BASE_DSN 时 --selftest 以 2 拒跑（不会在没有库的情况下判绿）"
+    else
+        bad "无 BASE_DSN 时 --selftest 退出码为 $ST_RC（约定 2=前置条件缺失）⇒ 空转风险"
+    fi
+fi
+if [[ ! -f "$REHEARSAL_DOC" ]]; then
+    bad "缺少演练报告 $REHEARSAL_DOC（结论必须落盘，否则下轮又要从零开始问）"
+else
+    if grep -q 'approval_required' "$REHEARSAL_DOC" && grep -q 'lock_wait_timeout' "$REHEARSAL_DOC"; then
+        ok "演练报告含两项关键结论（升级/新装结构漂移、迁移等 MDL 无上限）"
+    else
+        bad "演练报告丢了关键结论段（approval_required 漂移 / lock_wait_timeout 无限期）"
+    fi
+    if grep -q 'innodb_trx' docs/upgrade-guide.md; then
+        ok "升级指南已带'在跑事务'前置检查（判据从报告回写到客户可见文档）"
+    else
+        bad "docs/upgrade-guide.md 没有 innodb_trx 前置检查 ⇒ 演练结论没有交付到操作面"
+    fi
+fi
+
 echo ""
 echo "==================================================="
 echo "  部署资产门禁：PASS=${PASS}  FAIL=${FAIL}  SKIP=${SKIP}"
