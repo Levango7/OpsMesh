@@ -15,12 +15,12 @@ import (
 type AgentType string
 
 const (
-	AgentTypeRootCause    AgentType = "root_cause"    // 根因分析
-	AgentTypeNoise        AgentType = "noise"          // 智能降噪
-	AgentTypeNLQuery      AgentType = "nl_query"       // 自然语言查询
-	AgentTypeRemediation  AgentType = "remediation"    // 自动修复
-	AgentTypeCapacity     AgentType = "capacity"       // 容量规划
-	AgentTypeGeneral      AgentType = "general"        // 通用 Agent
+	AgentTypeRootCause   AgentType = "root_cause"  // 根因分析
+	AgentTypeNoise       AgentType = "noise"       // 智能降噪
+	AgentTypeNLQuery     AgentType = "nl_query"    // 自然语言查询
+	AgentTypeRemediation AgentType = "remediation" // 自动修复
+	AgentTypeCapacity    AgentType = "capacity"    // 容量规划
+	AgentTypeGeneral     AgentType = "general"     // 通用 Agent
 )
 
 // AgentConfig Agent 配置
@@ -28,9 +28,9 @@ type AgentConfig struct {
 	Type        AgentType `json:"type"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
-	Model       string    `json:"model"`       // 使用的 LLM 模型
-	MaxSteps    int       `json:"maxSteps"`    // 最大 ReAct 步数
-	Tools       []string  `json:"tools"`       // 可用工具列表
+	Model       string    `json:"model"`    // 使用的 LLM 模型
+	MaxSteps    int       `json:"maxSteps"` // 最大 ReAct 步数
+	Tools       []string  `json:"tools"`    // 可用工具列表
 	Temperature float64   `json:"temperature"`
 }
 
@@ -44,15 +44,15 @@ type AgentContext struct {
 
 // AgentResult Agent 执行结果
 type AgentResult struct {
-	AgentType   AgentType              `json:"agentType"`
-	Success     bool                   `json:"success"`
-	Output      string                 `json:"output"`
-	Steps       []ReActStep            `json:"steps"`
-	ToolCalls   []ToolCallRecord       `json:"toolCalls"`
-	Duration    time.Duration          `json:"duration"`
-	TokenUsage  int                    `json:"tokenUsage"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	Error       string                 `json:"error,omitempty"`
+	AgentType  AgentType              `json:"agentType"`
+	Success    bool                   `json:"success"`
+	Output     string                 `json:"output"`
+	Steps      []ReActStep            `json:"steps"`
+	ToolCalls  []ToolCallRecord       `json:"toolCalls"`
+	Duration   time.Duration          `json:"duration"`
+	TokenUsage int                    `json:"tokenUsage"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	Error      string                 `json:"error,omitempty"`
 }
 
 // ReActStep ReAct 单步
@@ -66,12 +66,12 @@ type ReActStep struct {
 
 // ToolCallRecord 工具调用记录
 type ToolCallRecord struct {
-	ToolName   string                 `json:"toolName"`
-	Input      map[string]interface{} `json:"input"`
-	Output     interface{}            `json:"output"`
-	Duration   time.Duration          `json:"duration"`
-	Error      string                 `json:"error,omitempty"`
-	Timestamp  time.Time              `json:"timestamp"`
+	ToolName  string                 `json:"toolName"`
+	Input     map[string]interface{} `json:"input"`
+	Output    interface{}            `json:"output"`
+	Duration  time.Duration          `json:"duration"`
+	Error     string                 `json:"error,omitempty"`
+	Timestamp time.Time              `json:"timestamp"`
 }
 
 // Agent Agent 接口
@@ -83,22 +83,22 @@ type Agent interface {
 
 // BaseAgent 基础 Agent 实现
 type BaseAgent struct {
-	config   AgentConfig
-	gateway  *gateway.Gateway
-	tools    *ToolRegistry
-	memory   *MemoryManager
+	config  AgentConfig
+	gateway *gateway.Gateway
+	tools   *ToolRegistry
+	memory  *MemoryManager
 }
 
 func NewBaseAgent(cfg AgentConfig, gw *gateway.Gateway, tools *ToolRegistry, mem *MemoryManager) *BaseAgent {
 	return &BaseAgent{
-		config:   cfg,
-		gateway:  gw,
-		tools:    tools,
-		memory:   mem,
+		config:  cfg,
+		gateway: gw,
+		tools:   tools,
+		memory:  mem,
 	}
 }
 
-func (a *BaseAgent) Type() AgentType { return a.config.Type }
+func (a *BaseAgent) Type() AgentType     { return a.config.Type }
 func (a *BaseAgent) Config() AgentConfig { return a.config }
 
 // Run 执行 ReAct 循环
@@ -215,10 +215,12 @@ func (a *BaseAgent) buildSystemPrompt(agentCtx AgentContext) string {
 func (a *BaseAgent) executeTool(ctx context.Context, action, actionInput string, agentCtx AgentContext) (string, *ToolCallRecord, error) {
 	start := time.Now()
 
-	// 解析 action input 为 map
+	// 解析 action input 为 map；LLM 输出的 JSON 可能非法，解析失败按空入参继续（工具侧再校验必填键）
 	var input map[string]interface{}
 	if actionInput != "" {
-		json.Unmarshal([]byte(actionInput), &input)
+		if err := json.Unmarshal([]byte(actionInput), &input); err != nil {
+			input = nil
+		}
 	}
 	if input == nil {
 		input = make(map[string]interface{})
@@ -237,11 +239,11 @@ func (a *BaseAgent) executeTool(ctx context.Context, action, actionInput string,
 	// 执行
 	output, err := tool.Execute(ctx, input, agentCtx)
 	record := &ToolCallRecord{
-		ToolName:   action,
-		Input:      input,
-		Output:     output,
-		Duration:   time.Since(start),
-		Timestamp:  time.Now(),
+		ToolName:  action,
+		Input:     input,
+		Output:    output,
+		Duration:  time.Since(start),
+		Timestamp: time.Now(),
 	}
 	if err != nil {
 		record.Error = err.Error()
@@ -365,9 +367,9 @@ func (ic *IntentClassifier) DecomposePrompt(ctx context.Context, input string) (
 
 // SubTask 子任务
 type SubTask struct {
-	ID           string   `json:"id"`
-	Description  string   `json:"description"`
+	ID           string    `json:"id"`
+	Description  string    `json:"description"`
 	AgentType    AgentType `json:"agentType"`
-	Dependencies []string `json:"dependencies"`
-	Priority     int      `json:"priority"`
+	Dependencies []string  `json:"dependencies"`
+	Priority     int       `json:"priority"`
 }

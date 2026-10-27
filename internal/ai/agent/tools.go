@@ -17,6 +17,16 @@ type Tool interface {
 	Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error)
 }
 
+// stringArg 从工具入参取字符串；缺键或类型不符时回退零值（与 `v, _ := input[k].(string)` 同义，
+// 显式判 ok 是为了过 errcheck 的 check-type-assertions 门禁）。
+func stringArg(input map[string]interface{}, key string) string {
+	v, ok := input[key].(string)
+	if !ok {
+		return ""
+	}
+	return v
+}
+
 // ToolRegistry 工具注册表
 type ToolRegistry struct {
 	mu    sync.RWMutex
@@ -90,7 +100,7 @@ func (t *QueryDeviceTool) Parameters() map[string]interface{} {
 }
 func (t *QueryDeviceTool) CheckPermission(agentCtx AgentContext) bool { return true }
 func (t *QueryDeviceTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	deviceID, _ := input["device_id"].(string)
+	deviceID := stringArg(input, "device_id")
 	// 实际调用 device-svc API
 	return map[string]interface{}{
 		"device_id": deviceID,
@@ -132,8 +142,8 @@ func (t *QueryMetricsTool) Parameters() map[string]interface{} {
 }
 func (t *QueryMetricsTool) CheckPermission(agentCtx AgentContext) bool { return true }
 func (t *QueryMetricsTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	target, _ := input["target"].(string)
-	metric, _ := input["metric"].(string)
+	target := stringArg(input, "target")
+	metric := stringArg(input, "metric")
 	return map[string]interface{}{
 		"target": target,
 		"metric": metric,
@@ -171,8 +181,8 @@ func (t *ExecuteCommandTool) CheckPermission(agentCtx AgentContext) bool {
 	return true // 简化：实际应检查 agentCtx.Metadata["permissions"]
 }
 func (t *ExecuteCommandTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	deviceID, _ := input["device_id"].(string)
-	command, _ := input["command"].(string)
+	deviceID := stringArg(input, "device_id")
+	command := stringArg(input, "command")
 	// 实际调用 task-svc 创建任务
 	return map[string]interface{}{
 		"task_id":   "task-12345",
@@ -184,11 +194,7 @@ func (t *ExecuteCommandTool) Execute(ctx context.Context, input map[string]inter
 }
 
 // SearchKnowledgeTool 搜索知识库
-type SearchKnowledgeTool struct {
-	retriever interface {
-		Retrieve(ctx context.Context, query string, filter map[string]interface{}) (interface{}, error)
-	}
-}
+type SearchKnowledgeTool struct{}
 
 func (t *SearchKnowledgeTool) Name() string { return "search_knowledge" }
 func (t *SearchKnowledgeTool) Description() string {
@@ -212,7 +218,7 @@ func (t *SearchKnowledgeTool) Parameters() map[string]interface{} {
 }
 func (t *SearchKnowledgeTool) CheckPermission(agentCtx AgentContext) bool { return true }
 func (t *SearchKnowledgeTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	query, _ := input["query"].(string)
+	query := stringArg(input, "query")
 	return map[string]interface{}{
 		"results": []map[string]interface{}{
 			{"title": "Nginx 502 排查 Runbook", "content": "1. 检查 upstream 配置... 2. 检查后端服务状态..."},
@@ -243,7 +249,7 @@ func (t *WebSearchTool) Parameters() map[string]interface{} {
 }
 func (t *WebSearchTool) CheckPermission(agentCtx AgentContext) bool { return true }
 func (t *WebSearchTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	query, _ := input["query"].(string)
+	query := stringArg(input, "query")
 	return map[string]interface{}{
 		"results": []map[string]interface{}{
 			{"title": "CVE-2024-XXXX: Nginx 漏洞公告", "snippet": "影响版本 1.24.x..."},
@@ -281,7 +287,7 @@ func (t *CreateTicketTool) Parameters() map[string]interface{} {
 }
 func (t *CreateTicketTool) CheckPermission(agentCtx AgentContext) bool { return true }
 func (t *CreateTicketTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	title, _ := input["title"].(string)
+	title := stringArg(input, "title")
 	return map[string]interface{}{
 		"ticket_id": "TKT-2024-001",
 		"title":     title,

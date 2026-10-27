@@ -159,9 +159,9 @@ func (r *RAGRetriever) BuildContext(docs []VectorDocument) string {
 	var sb strings.Builder
 	sb.WriteString("参考知识：\n")
 	for i, doc := range docs {
-		sb.WriteString(fmt.Sprintf("[%d] %s\n", i+1, doc.Content))
+		fmt.Fprintf(&sb, "[%d] %s\n", i+1, doc.Content)
 		if len(doc.Metadata) > 0 {
-			sb.WriteString(fmt.Sprintf("    元数据: %v\n", doc.Metadata))
+			fmt.Fprintf(&sb, "    元数据: %v\n", doc.Metadata)
 		}
 	}
 	return sb.String()

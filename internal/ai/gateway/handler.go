@@ -34,12 +34,12 @@ func (h *AIGatewayHandler) HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Model    string    `json:"model"`
-		Messages []Message `json:"messages"`
-		Tools    []Tool    `json:"tools,omitempty"`
-		MaxTokens int      `json:"maxTokens,omitempty"`
-		UseRAG   bool      `json:"useRag,omitempty"`
-		Filter   map[string]interface{} `json:"filter,omitempty"`
+		Model     string                 `json:"model"`
+		Messages  []Message              `json:"messages"`
+		Tools     []Tool                 `json:"tools,omitempty"`
+		MaxTokens int                    `json:"maxTokens,omitempty"`
+		UseRAG    bool                   `json:"useRag,omitempty"`
+		Filter    map[string]interface{} `json:"filter,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})

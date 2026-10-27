@@ -71,7 +71,7 @@ func (c *ContextCompressor) Compress(messages []Message) []Message {
 func (c *ContextCompressor) summarize(msgs []Message) string {
 	var sb strings.Builder
 	for _, m := range msgs {
-		sb.WriteString(fmt.Sprintf("[%s] %s\n", m.Role, truncateStr(m.Content, 100)))
+		fmt.Fprintf(&sb, "[%s] %s\n", m.Role, truncateStr(m.Content, 100))
 	}
 	summary := sb.String()
 	if len(summary) > 500 {

@@ -94,8 +94,8 @@ func (h *AgentHandler) HandleClassify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"agentType":   agentType,
-		"confidence":  confidence,
+		"agentType":  agentType,
+		"confidence": confidence,
 	})
 }
 

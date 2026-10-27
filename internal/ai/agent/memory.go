@@ -10,21 +10,21 @@ import (
 
 // MemoryEntry 记忆条目
 type MemoryEntry struct {
-	SessionID string    `json:"sessionId"`
-	Input     string    `json:"input"`
-	Output    string    `json:"output"`
-	Timestamp time.Time `json:"timestamp"`
+	SessionID string                 `json:"sessionId"`
+	Input     string                 `json:"input"`
+	Output    string                 `json:"output"`
+	Timestamp time.Time              `json:"timestamp"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // MemoryManager 记忆管理器
 type MemoryManager struct {
-	mu          sync.RWMutex
-	shortTerm   map[string][]MemoryEntry // sessionID -> entries
-	longTerm    map[string][]MemoryEntry // userID -> entries
+	mu            sync.RWMutex
+	shortTerm     map[string][]MemoryEntry // sessionID -> entries
+	longTerm      map[string][]MemoryEntry // userID -> entries
 	teamKnowledge map[string][]MemoryEntry // teamID -> entries
-	maxShort    int
-	maxLong     int
+	maxShort      int
+	maxLong       int
 }
 
 func NewMemoryManager() *MemoryManager {
@@ -131,7 +131,7 @@ func (m *MemoryManager) SummarizeSession(sessionID string) string {
 	var sb strings.Builder
 	sb.WriteString("会话摘要:\n")
 	for _, e := range entries {
-		sb.WriteString(fmt.Sprintf("- Q: %s\n  A: %s\n", truncate(e.Input, 80), truncate(e.Output, 120)))
+		fmt.Fprintf(&sb, "- Q: %s\n  A: %s\n", truncate(e.Input, 80), truncate(e.Output, 120))
 	}
 	return sb.String()
 }

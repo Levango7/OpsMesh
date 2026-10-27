@@ -98,11 +98,11 @@ type TokenUsageTracker struct {
 }
 
 type TokenRecord struct {
-	Provider    string    `json:"provider"`
-	Model       string    `json:"model"`
-	InputTokens int       `json:"inputTokens"`
-	OutputTokens int      `json:"outputTokens"`
-	Timestamp   time.Time `json:"timestamp"`
+	Provider     string    `json:"provider"`
+	Model        string    `json:"model"`
+	InputTokens  int       `json:"inputTokens"`
+	OutputTokens int       `json:"outputTokens"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 type TokenUsageReport struct {

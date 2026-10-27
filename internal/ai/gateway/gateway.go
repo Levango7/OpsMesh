@@ -62,10 +62,10 @@ type CompletionResponse struct {
 	ID      string `json:"id"`
 	Model   string `json:"model"`
 	Choices []struct {
-		Index        int      `json:"index"`
-		Message      Message  `json:"message"`
+		Index        int        `json:"index"`
+		Message      Message    `json:"message"`
 		ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
-		FinishReason string   `json:"finish_reason"`
+		FinishReason string     `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -85,23 +85,23 @@ type LLMProvider interface {
 
 // ProviderConfig 提供商配置
 type ProviderConfig struct {
-	Name        string            `json:"name"`
-	Type        string            `json:"type"` // openai/anthropic/ollama/dashscope/deepseek
-	APIKey      string            `json:"apiKey"`
-	BaseURL     string            `json:"baseUrl"`
-	Models      []string          `json:"models"`
-	MaxTokens   int               `json:"maxTokens"`
-	RateLimit   int               `json:"rateLimit"` // RPM
-	CostPer1K   map[string]float64 `json:"costPer1K"` // model -> $/1K tokens
+	Name      string             `json:"name"`
+	Type      string             `json:"type"` // openai/anthropic/ollama/dashscope/deepseek
+	APIKey    string             `json:"apiKey"`
+	BaseURL   string             `json:"baseUrl"`
+	Models    []string           `json:"models"`
+	MaxTokens int                `json:"maxTokens"`
+	RateLimit int                `json:"rateLimit"` // RPM
+	CostPer1K map[string]float64 `json:"costPer1K"` // model -> $/1K tokens
 }
 
 // ModelRoute 模型路由规则
 type ModelRoute struct {
-	TaskType   string `json:"taskType"`   // classify/reason/chat/code
-	Provider   string `json:"provider"`   // 提供商名称
-	Model      string `json:"model"`      // 模型名称
-	MaxTokens  int    `json:"maxTokens"`  // 最大 token
-	Priority   int    `json:"priority"`   // 优先级
+	TaskType  string `json:"taskType"`  // classify/reason/chat/code
+	Provider  string `json:"provider"`  // 提供商名称
+	Model     string `json:"model"`     // 模型名称
+	MaxTokens int    `json:"maxTokens"` // 最大 token
+	Priority  int    `json:"priority"`  // 优先级
 }
 
 // Gateway 统一 LLM 网关

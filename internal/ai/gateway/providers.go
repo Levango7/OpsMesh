@@ -83,7 +83,10 @@ func (p *OpenAIProvider) Embed(ctx context.Context, text string) ([]float64, err
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("openai embed: read body: %w", err)
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("openai embed: HTTP %d: %s", resp.StatusCode, string(data))
 	}
@@ -174,7 +177,10 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: read body: %w", err)
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, string(data))
 	}
@@ -202,14 +208,14 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 		Model: anthropicResp.Model,
 	}
 	resp2.Choices = append(resp2.Choices, struct {
-		Index        int      `json:"index"`
-		Message      Message  `json:"message"`
+		Index        int        `json:"index"`
+		Message      Message    `json:"message"`
 		ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
-		FinishReason string   `json:"finish_reason"`
+		FinishReason string     `json:"finish_reason"`
 	}{
 		Index: 0,
 		Message: Message{
-			Role:    RoleAssistant,
+			Role: RoleAssistant,
 			Content: func() string {
 				var text string
 				for _, c := range anthropicResp.Content {
@@ -308,7 +314,10 @@ func (p *OllamaProvider) Complete(ctx context.Context, req CompletionRequest) (*
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("ollama: read body: %w", err)
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("ollama: HTTP %d: %s", resp.StatusCode, string(data))
 	}
@@ -331,10 +340,10 @@ func (p *OllamaProvider) Complete(ctx context.Context, req CompletionRequest) (*
 		Model: ollamaResp.Model,
 	}
 	resp2.Choices = append(resp2.Choices, struct {
-		Index        int      `json:"index"`
-		Message      Message  `json:"message"`
+		Index        int        `json:"index"`
+		Message      Message    `json:"message"`
 		ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
-		FinishReason string   `json:"finish_reason"`
+		FinishReason string     `json:"finish_reason"`
 	}{
 		Index: 0,
 		Message: Message{
@@ -367,7 +376,10 @@ func (p *OllamaProvider) Embed(ctx context.Context, text string) ([]float64, err
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("ollama embed: read body: %w", err)
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("ollama embed: HTTP %d: %s", resp.StatusCode, string(data))
 	}
@@ -430,9 +442,9 @@ func (p *DashScopeProvider) Complete(ctx context.Context, req CompletionRequest)
 			"messages": req.Messages,
 		},
 		"parameters": map[string]interface{}{
-			"max_tokens":  req.MaxTokens,
-			"temperature": req.Temperature,
-			"top_p":       req.TopP,
+			"max_tokens":    req.MaxTokens,
+			"temperature":   req.Temperature,
+			"top_p":         req.TopP,
 			"result_format": "message",
 		},
 	}
@@ -451,7 +463,10 @@ func (p *DashScopeProvider) Complete(ctx context.Context, req CompletionRequest)
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("dashscope: read body: %w", err)
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("dashscope: HTTP %d: %s", resp.StatusCode, string(data))
 	}
@@ -483,10 +498,10 @@ func (p *DashScopeProvider) Complete(ctx context.Context, req CompletionRequest)
 	}
 	for i, c := range dashResp.Output.Choices {
 		resp2.Choices = append(resp2.Choices, struct {
-			Index        int      `json:"index"`
-			Message      Message  `json:"message"`
+			Index        int        `json:"index"`
+			Message      Message    `json:"message"`
 			ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
-			FinishReason string   `json:"finish_reason"`
+			FinishReason string     `json:"finish_reason"`
 		}{
 			Index: i,
 			Message: Message{
@@ -523,7 +538,10 @@ func (p *DashScopeProvider) Embed(ctx context.Context, text string) ([]float64, 
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("dashscope embed: read body: %w", err)
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("dashscope embed: HTTP %d: %s", resp.StatusCode, string(data))
 	}
