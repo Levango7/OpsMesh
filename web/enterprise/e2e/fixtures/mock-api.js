@@ -50,7 +50,15 @@ function defaultEndpoints({ authed = true } = {}) {
     }),
 
     // —— 任务 ——
-    'GET /tasks': () => ({ status: 200, body: mockTasks }),
+    // 审批台会带 ?status=pending_approval 再拉一次：mock 数据没有该状态的任务，按状态过滤返回空，
+    // 避免审批表重复渲染主列表（曾致 E2E strict-mode 双命中 t-001 / dt-empty，2026-10-26 接管修复）。
+    'GET /tasks': (route) => {
+      const status = new URL(route.request().url()).searchParams.get('status')
+      if (status) {
+        return { status: 200, body: mockTasks.filter((t) => t.status === status) }
+      }
+      return { status: 200, body: mockTasks }
+    },
     'POST /tasks': () => ({
       status: 200,
       body: { taskID: 't-new', agentID: 'agent-001', type: 'shell', command: 'uptime', status: 'pending' }

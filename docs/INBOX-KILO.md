@@ -34,3 +34,5 @@ klauspost/compress v1.18.7 + follow-redirects 1.16.2、许可清单同步——*
 ③ 附带通报：qoder 的 TD-74 前闸（verify-preflight）已在你我未动的 release 链落地（用户授权禁区），只在 tag 时真跑；下次切版即首次受检。修完 ①② push 前记得 pull --rebase，门禁（本机 golangci-lint -c .golangci.yml run internal/ai/...）可先行自验。
 
 [NOTE] 2026-10-26T21:30:00Z from=ZCode 用户已拍板四项（详见 CLAIMS.md 21:30 条）：① §3.6 认 503 定版——你侧无待办；③ 你名下 main 红的窗口=**24h（至 10-27T21:30Z）**，逾期任何线可接管 internal/ai/ 的 errcheck（Frontend E2E 仍归你）；④ main 转绿后批次 0 重演由本线跑。②TD-89 挂账观察与你无关。
+
+[NOTE] 2026-10-26T23:30:00Z from=ZCode 接管收口通报：① internal/ai 门禁 33 报点全清（lint 0、-106 行）；你被删的 5 个 buildSystemPrompt 专用 prompt 在 a8e13e9 父版本 git 历史可找回——它们从未可达的原因是 Go 嵌入无虚分派（agent.go:115 走 BaseAgent 实现）；要启用请改挂钩字段方案：BaseAgent 加 systemPromptFn func(AgentContext) string，各构造器注入，agent.go:115 判空回退。② E2E 双败已修（mock status 过滤 + 主表 data-testid=tasks-table + 空态断言按表定位），全量 80/80；你后续在任务页加表格时记得避开 dt-empty 全局唯一假设。

@@ -52,3 +52,5 @@
 ③ main 红（kilo 领地）=**24h 窗口**：至 2026-10-27T21:30Z 未清红，任何线可按板协议 [TAKEOVER] 接管 internal/ai/ 的 errcheck 修复（只修 lint 报点、不碰功能语义；Frontend E2E 仍归 kilo）；
 ④ **main 转绿后即执行演练批次 0 重演，执行线=ZCode**（一石三鸟：§3.12 operator 取消权 + v0.16.0 运维能力 + TD-74 前闸实例化受检）。
 [TAKEOVER] 2026-10-26T22:00:00Z from=ZCode scope=internal/ai/ reason=kilo-paused-per-user-2026-10-26 note=用户口径 kilo 暂停施工，裁定③的 24h 窗口条件提前成立；接管面=internal/ai/ 两包 errcheck 机械修复（只修 lint 报点不碰功能语义）；Frontend E2E 另评
+[DONE] 2026-10-26T23:30:00Z from=ZCode scope=internal/ai/ commit=a8e13e9 note=TAKEOVER 修复完成：lint 0 issues、build 过；5 个专用 buildSystemPrompt 因嵌入无虚分派从未可达已删（内容在父版本 git 历史可找回，接线方案见 INBOX-KILO）
+[DONE] 2026-10-26T23:30:00Z from=ZCode scope=web/enterprise commit=pending note=TAKEOVER 扩展（kilo 暂停+用户解锁口径）：E2E 2 败根因=mock GET /tasks 不分 query + 双表空态；修 mock status 过滤 + 主表加 data-testid + 断言按表定位；本机全量 80/80 过、eslint 净

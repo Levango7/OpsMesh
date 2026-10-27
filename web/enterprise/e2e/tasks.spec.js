@@ -204,7 +204,8 @@ test.describe('任务下发', () => {
         }
       })
       await page.goto(routes.tasks)
-      await expect(page.getByTestId('dt-empty')).toBeVisible({ timeout: 5_000 })
+      // 页面有两张表（主列表 + 待审批），空态断言按主表定位，避免 strict-mode 双命中
+      await expect(page.getByTestId('tasks-table').getByTestId('dt-empty')).toBeVisible({ timeout: 5_000 })
     })
   })
 
