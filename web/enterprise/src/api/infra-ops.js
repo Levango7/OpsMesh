@@ -1308,6 +1308,210 @@ export const INFRA_DOMAINS = [
         ]
       }
     ]
+  },
+  // --------------------------------------------------------------------------
+  {
+    id: 'netdiag',
+    name: T('网络诊断', 'Network Diagnostics'),
+    icon: 'flow',
+    actions: [
+      {
+        id: 'run', name: T('执行', 'Run'), method: 'POST',
+        path: () => '/netdiag',
+        fields: [
+          deviceField(),
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['tcpdump', 'mtr', 'nmap', 'dig', 'host', 'arp', 'route', 'iftop', 'nethogs', 'ss', 'netstat', 'traceroute', 'ping', 'status-code'] },
+          { key: 'target', label: T('目标', 'Target'), type: 'text' },
+          { key: 'count', label: T('次数', 'Count'), type: 'number' },
+          { key: 'port', label: T('端口', 'Port'), type: 'number' },
+          { key: 'protocol', label: T('协议', 'Protocol'), type: 'select', options: ['tcp', 'udp', 'icmp'] }
+        ]
+      }
+    ]
+  },
+  // --------------------------------------------------------------------------
+  {
+    id: 'abac',
+    name: T('ABAC 访问控制', 'ABAC'),
+    icon: 'permissions',
+    actions: [
+      {
+        id: 'run', name: T('执行', 'Run'), method: 'POST',
+        path: () => '/abac',
+        fields: [
+          deviceField(),
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['policy-list', 'policy-create', 'policy-delete', 'evaluate'] },
+          { key: 'subject', label: T('主体属性(JSON)', 'Subject (JSON)'), type: 'textarea' },
+          { key: 'resource', label: T('资源属性(JSON)', 'Resource (JSON)'), type: 'textarea' },
+          { key: 'actionAttr', label: T('动作属性', 'Action Attr'), type: 'text' },
+          { key: 'context', label: T('环境上下文(JSON)', 'Context (JSON)'), type: 'textarea' }
+        ]
+      }
+    ]
+  },
+  // --------------------------------------------------------------------------
+  {
+    id: 'raid-ext',
+    name: T('RAID 高级管理', 'RAID Extended'),
+    icon: 'cmdb',
+    actions: [
+      {
+        id: 'run', name: T('执行', 'Run'), method: 'POST',
+        path: () => '/os/raid-ext',
+        fields: [
+          deviceField(),
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['status', 'rebuild', 'health', 'add-spare', 'remove-disk', 'mdadm', 'zfs'] },
+          { key: 'controller', label: T('控制器', 'Controller'), type: 'select',
+            options: ['megacli', 'storcli', 'hpssacli', 'mdadm', 'zfs'] },
+          { key: 'target', label: T('目标', 'Target'), type: 'text' }
+        ]
+      }
+    ]
+  },
+  // --------------------------------------------------------------------------
+  {
+    id: 'k8s-gateway-api',
+    name: T('K8s Gateway API', 'K8s Gateway API'),
+    icon: 'device',
+    actions: [
+      {
+        id: 'run', name: T('执行', 'Run'), method: 'POST',
+        path: () => '/k8s/gateway-api',
+        fields: [
+          deviceField(),
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['list-gatewayclasses', 'list-gateways', 'list-httproutes', 'list-grpcroutes', 'list-tcproutes', 'status', 'install'] },
+          { key: 'name', label: T('名称', 'Name'), type: 'text' },
+          { key: 'namespace', label: T('命名空间', 'Namespace'), type: 'text' }
+        ]
+      }
+    ]
+  },
+  // --------------------------------------------------------------------------
+  {
+    id: 'microservice',
+    name: T('微服务治理', 'Microservice'),
+    icon: 'flow',
+    actions: [
+      {
+        id: 'run', name: T('执行', 'Run'), method: 'POST',
+        path: () => '/microservice',
+        fields: [
+          deviceField(),
+          { key: 'type', label: T('类型', 'Type'), type: 'select', required: true,
+            options: ['dubbo', 'spring-cloud', 'apollo', 'nacos', 'sentinel', 'seata'] },
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['status', 'services', 'configs', 'routes', 'config', 'refresh', 'namespaces', 'releases', 'transactions', 'rules'] },
+          { key: 'service', label: T('服务', 'Service'), type: 'text' }
+        ]
+      }
+    ]
+  },
+  // --------------------------------------------------------------------------
+  {
+    id: 'redis-cache-scenario',
+    name: T('Redis 缓存场景', 'Redis Cache Scenarios'),
+    icon: 'cmdb',
+    actions: [
+      {
+        id: 'run', name: T('执行', 'Run'), method: 'POST',
+        path: () => '/cache/redis/scenario',
+        fields: [
+          deviceField(),
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['detect-penetration', 'detect-avalanche', 'detect-breakdown', 'config-rdb', 'config-aof', 'slice-cluster', 'scale', 'failover'] }
+        ]
+      }
+    ]
+  },
+  // --------------------------------------------------------------------------
+  {
+    id: 'db-perf',
+    name: T('数据库性能', 'DB Performance'),
+    icon: 'cmdb',
+    actions: [
+      {
+        id: 'run', name: T('执行', 'Run'), method: 'POST',
+        path: () => '/db/perf',
+        fields: [
+          deviceField(),
+          { key: 'type', label: T('类型', 'Type'), type: 'select', required: true,
+            options: ['mysql', 'postgresql', 'mongodb', 'redis'] },
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['qps', 'tps', 'rt', 'concurrency', 'throughput', 'slow-queries', 'locks', 'connections'] }
+        ]
+      }
+    ]
+  },
+  // --------------------------------------------------------------------------
+  {
+    id: 'gateway-mgmt',
+    name: T('API 网关管理', 'Gateway Management'),
+    icon: 'flow',
+    actions: [
+      {
+        id: 'run', name: T('执行', 'Run'), method: 'POST',
+        path: () => '/gateway/mgmt',
+        fields: [
+          deviceField(),
+          { key: 'type', label: T('类型', 'Type'), type: 'select', required: true,
+            options: ['kong', 'apisix', 'nginx'] },
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['status', 'routes', 'services', 'plugins', 'consumers', 'reload', 'upstreams', 'vhosts'] },
+          { key: 'name', label: T('名称', 'Name'), type: 'text' }
+        ]
+      }
+    ]
+  },
+
+  {
+    id: 'ascend-gpu',
+    name: T('昇腾 (Ascend) GPU', 'Ascend GPU'),
+    icon: 'gpu',
+    actions: [
+      {
+        id: 'ascend-driver', name: T('驱动/CANN 管理', 'Driver/CANN'), method: 'POST',
+        path: () => '/gpu/ascend/driver',
+        fields: [
+          deviceField(),
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['info', 'install', 'upgrade', 'remove'] },
+          { key: 'version', label: T('版本', 'Version'), type: 'text', placeholder: '如 8.0.RC2' }
+        ]
+      },
+      {
+        id: 'ascend-monitor', name: T('监控/拓扑', 'Monitor/Topology'), method: 'POST',
+        path: () => '/gpu/ascend/monitor',
+        fields: [
+          deviceField(),
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['status', 'metrics', 'topo'] }
+        ]
+      },
+      {
+        id: 'ascend-virt', name: T('虚拟化 (vNPU)', 'Virtualization (vNPU)'), method: 'POST',
+        path: () => '/gpu/ascend/virt',
+        fields: [
+          deviceField(),
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['enable', 'disable', 'list', 'create', 'delete'] },
+          { key: 'profile', label: T('vNPU Profile', 'vNPU Profile'), type: 'text', placeholder: '如 vir04' }
+        ]
+      },
+      {
+        id: 'ascend-power', name: T('电源管理', 'Power Management'), method: 'POST',
+        path: () => '/gpu/ascend/power',
+        fields: [
+          deviceField(),
+          { key: 'action', label: T('操作', 'Action'), type: 'select', required: true,
+            options: ['status', 'set-limit'] },
+          { key: 'limit', label: T('功率上限(W)', 'Power Limit (W)'), type: 'number' }
+        ]
+      }
+    ]
   }
 ]
 

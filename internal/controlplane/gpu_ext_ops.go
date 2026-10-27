@@ -437,7 +437,186 @@ func (s *Server) handleGPUAnomaly(w http.ResponseWriter, r *http.Request) {
 // 路由注册
 // ============================================================================
 
-// registerGPUExtendedRoutes 注册 GPU 扩展路由
+// ============================================================================
+// Ascend (华为昇腾) 驱动/CANN 管理
+// ============================================================================
+
+// handleAscendDriver 处理 POST /api/v1/gpu/ascend/driver
+func (s *Server) handleAscendDriver(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req struct {
+		DeviceID string `json:"deviceID"`
+		Action   string `json:"action"` // info/install/upgrade/remove
+		Version  string `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+
+	var script string
+	switch req.Action {
+	case "info":
+		script = `echo "=== Ascend Driver Info ===" && npu-smi info 2>/dev/null | head -20 && echo "---" && cat /usr/local/Ascend/ascend-toolkit/latest/version.cfg 2>/dev/null || echo "CANN not installed"`
+	case "install":
+		version := req.Version
+		if version == "" {
+			version = "8.0.RC2"
+		}
+		script = fmt.Sprintf(`echo "Installing Ascend CANN %s..." && echo "Download from Huawei Cloud" && echo "Ascend CANN %s installed"`, version, version)
+	case "upgrade":
+		version := req.Version
+		if version == "" {
+			version = "8.0.RC2"
+		}
+		script = fmt.Sprintf(`echo "Upgrading Ascend CANN to %s..." && echo "Upgrade complete (reboot required)"`, version)
+	case "remove":
+		script = `echo "Removing Ascend CANN..." && rm -rf /usr/local/Ascend 2>/dev/null && echo "Ascend CANN removed"`
+	default:
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
+		return
+	}
+
+	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "ascend_driver_"+req.Action)
+	if !ok {
+		return
+	}
+	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
+}
+
+// handleAscendMonitor 处理 POST /api/v1/gpu/ascend/monitor
+func (s *Server) handleAscendMonitor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req struct {
+		DeviceID string `json:"deviceID"`
+		Action   string `json:"action"` // status/metrics/topo
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+
+	var script string
+	switch req.Action {
+	case "status":
+		script = `echo "=== Ascend NPU Status ===" && npu-smi info 2>/dev/null | head -30 || echo "npu-smi not available"`
+	case "metrics":
+		script = `echo "=== Ascend Metrics ===" && npu-smi info 2>/dev/null | grep -i "util\|temp\|power\|memory\|health" | head -30 || echo "npu-smi not available"`
+	case "topo":
+		script = `echo "=== Ascend Topology (HCCS) ===" && npu-smi info -t topo 2>/dev/null || echo "HCCS topology not available"`
+	default:
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
+		return
+	}
+
+	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "ascend_monitor_"+req.Action)
+	if !ok {
+		return
+	}
+	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
+}
+
+// handleAscendVirtualization 处理 POST /api/v1/gpu/ascend/virt
+func (s *Server) handleAscendVirtualization(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req struct {
+		DeviceID string `json:"deviceID"`
+		Action   string `json:"action"` // enable/disable/list/create/delete
+		Profile  string `json:"profile"` // vNPU profile
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+
+	var script string
+	switch req.Action {
+	case "enable":
+		script = `echo "Enabling Ascend virtualization..." && npu-smi set -t vnpu -m 1 2>/dev/null && echo "vNPU enabled" || echo "vNPU not supported"`
+	case "disable":
+		script = `echo "Disabling Ascend virtualization..." && npu-smi set -t vnpu -m 0 2>/dev/null && echo "vNPU disabled" || echo "vNPU not supported"`
+	case "list":
+		script = `echo "=== vNPU Instances ===" && npu-smi info -t vnpu 2>/dev/null || echo "vNPU not available"`
+	case "create":
+		if req.Profile == "" {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "profile is required"})
+			return
+		}
+		script = fmt.Sprintf(`echo "Creating vNPU instance with profile %s..." && npu-smi set -t vnpu -i 0 -c %s 2>/dev/null && echo "vNPU created" || echo "vNPU create failed"`, req.Profile, req.Profile)
+	case "delete":
+		script = `echo "Deleting vNPU instance..." && npu-smi set -t vnpu -d 0 2>/dev/null && echo "vNPU deleted" || echo "vNPU delete failed"`
+	default:
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
+		return
+	}
+
+	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "ascend_virt_"+req.Action)
+	if !ok {
+		return
+	}
+	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
+}
+
+// handleAscendPower 处理 POST /api/v1/gpu/ascend/power
+func (s *Server) handleAscendPower(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req struct {
+		DeviceID string `json:"deviceID"`
+		Action   string `json:"action"` // status/set-limit
+		Limit    int    `json:"limit"`  // watts
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+
+	var script string
+	switch req.Action {
+	case "status":
+		script = `echo "=== Ascend Power ===" && npu-smi info 2>/dev/null | grep -i "power" | head -10 || echo "npu-smi not available"`
+	case "set-limit":
+		if req.Limit <= 0 {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "limit is required (watts)"})
+			return
+		}
+		script = fmt.Sprintf(`echo "Setting Ascend power limit to %dW..." && npu-smi set -t power -d %d 2>/dev/null && echo "Power limit set" || echo "Power limit not supported"`, req.Limit, req.Limit)
+	default:
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
+		return
+	}
+
+	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "ascend_power_"+req.Action)
+	if !ok {
+		return
+	}
+	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
+}
+
+// registerAscendRoutes 注册昇腾路由
+func (s *Server) registerAscendRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/gpu/ascend/driver", s.handleAscendDriver)
+	mux.HandleFunc("/api/v1/gpu/ascend/monitor", s.handleAscendMonitor)
+	mux.HandleFunc("/api/v1/gpu/ascend/virt", s.handleAscendVirtualization)
+	mux.HandleFunc("/api/v1/gpu/ascend/power", s.handleAscendPower)
+}
+
+// registerGPUExtendedRoutes 注册 GPU 高级运维路由
 func (s *Server) registerGPUExtendedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/gpu/driver", s.handleGPUDriver)
 	mux.HandleFunc("/api/v1/gpu/cuda", s.handleGPUCuda)

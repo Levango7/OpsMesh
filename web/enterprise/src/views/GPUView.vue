@@ -65,8 +65,8 @@
         <div class="card">
           <h3 class="card__title">{{ $t('gpu.utilizationChart') }}</h3>
           <p class="hint">{{ store.selectedNode ? store.selectedNode.name : $t('gpu.selectNodeHint') }}</p>
-          <!-- 数据来源显式化（TD-60 §5.11）：只有 nvidia-smi 采到的才算真实指标；
-               模拟兜底必须让运维看见——否则 40%~90% 的随机利用率会被当成容量依据。 -->
+          <!-- 数据来源显式化（TD-60 §5.11）：只有 nvidia-smi / npu-smi 采到的才算真实指标；
+     模拟兜底必须让运维看见——否则 40%~90% 的随机利用率会被当成容量依据。 -->
           <p v-if="store.metricsSynthetic" class="src-warn" data-testid="gpu-metrics-source-warn">
             <Icon name="warning" :size="14" /> {{ $t('gpu.sourceSimulated') }}
           </p>

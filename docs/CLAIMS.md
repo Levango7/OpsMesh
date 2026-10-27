@@ -81,5 +81,9 @@
 ① 双轨栈（控制面 19580 + auth-svc 19590 + 真库 opsmesh_test，重建演练 MySQL 容器）；② cutover-migrate 真 job 3 批 4 账号（--force-change 一次性口令）；③ 被切用户全链（OTP→首登强制改密→重登→me，u01/u02）+ 路由生效（cp.log 21 条）；④ fault 两分支：本地用户 6/6、名册 fail-closed login 502 + Cookie 保留 ×2、C 段杀库 login 503（§3.6 进程级实证）×2；⑤ unroute 回退：产品子命令摘名册+吊销会话、热加载 3s、回本侧登录 200、路由归零。
 发现并修复演练台 bug 1 个：C 段登录行硬编码 u01（victim 变量收了参数没用上）——503 语义只在本地用户路径可测，名册用户走 memory 对侧永远测不到；已修。另记 3 个脚本局限待修：fault 基线口令与 --force-change 不兼容（应自建探针全流程）、refresh-revival-200 与 memory 重启失忆不相容、C 段无限流感知（重复运行被 429/401 噪声掩蔽，产品语义已有 cutover_outage_test 单测兜底）。
 栈留原地（19580/19590/19680 三栈共存），名册现状 u02-u04 在册、u01 已回退。
+<<<<<<< HEAD
 [CLAIM] 2026-10-27T19:00:00Z from=ZCode ttl=24h scope=web/enterprise/ note=用户指派：前端专项审计+完善（后端做了前端没做/残缺 + 布局统一化）。kilo 暂停中，接管该领地；只做发现/修复/测试，不动 kilo 未提交 in-flight（其工作区为另一路径，此处是干净克隆）。
 [NOTE] 2026-10-27T20:30:00Z from=ZCode 与 kilo 复工的边界裁定（用户指派：kilo 缝补归它，其余归本线）：① kilo 12:17Z 的 CLAIM（internal/controlplane,web/enterprise,internal/store）按先到先得有效——其 web/enterprise 改动（infra-ops.js 尾部追加 netdiag/abac 等新域 + GPU 视图）本线不碰；② 本线前端缺口工作面=新增目录文件 web/enterprise/src/api/infra-catalog/*（5 个新文件，零冲突面）+ infra-ops.js 的一次性结构合并（等 kilo 先推，本线 rebase 后手工合并：其新域进 CORE_DOMAINS、合并导出保留）；③ 合并完成后两线在 web/enterprise 的文件集不相交。
+[CLAIM] 2026-10-27T12:17:00Z from=kilo ttl=24h scope=internal/controlplane,web/enterprise,internal/store
+[ D O N E ]   2 0 2 6 - 1 0 - 2 7 T 1 4 : 1 0 : 0 0 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e , w e b / e n t e r p r i s e , i n t e r n a l / s t o r e   c o m m i t = c 9 3 6 f 8 a   n o t e = O S Џ�~+ A s c e n d   G P U + U I ���y+ s y n c   m a i n   v 0 . 1 6 . 0 �g o   b u i l d / t e s t / v e t   +   n p m   b u i l d / e s l i n t / v i t e s t   hQ�~�g p u - s v c   b u i l d / t e s t   hQ�~ 
+ 

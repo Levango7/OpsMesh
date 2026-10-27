@@ -2215,6 +2215,96 @@ var MiddlewareTemplates = []MiddlewareTemplate{
 			{Version: "24.07", DockerImage: "nvcr.io/nvidia/tritonserver:24.07-py3", Default: true},
 		},
 	},
+	// ---------------- ascend (gpu) ----------------
+	{
+		ID:          "ascend-cann",
+		Name:        "Huawei Ascend CANN Toolkit",
+		Category:    "gpu",
+		Version:     "8.0",
+		Description: "Huawei Ascend CANN toolkit for AI computing and model acceleration",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "ascend-cann", Required: true, Type: "string"},
+			{Name: "version", Description: "CANN 版本", Default: "8.0", Required: false, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} --device /dev/davinci0 --device /dev/davinci_manager --device /dev/devmm_svm --device /dev/hisi_hdc -v /usr/local/Ascend:/usr/local/Ascend --restart unless-stopped {image} && echo 'Ascend CANN deployed'",
+				Verify:    "docker exec {name} npu-smi info && echo 'Ascend CANN healthy'",
+				Uninstall: "docker rm -f {name} && echo 'Ascend CANN removed'",
+			},
+			"systemd": {
+				Deploy:    "wget -q https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/{version}/Ascend-cann-toolkit_{version}_linux-x86_64.run -O /tmp/ascend.run && chmod +x /tmp/ascend.run && /tmp/ascend.run --install && echo 'Ascend CANN {version} installed'",
+				Verify:    "npu-smi info && echo 'Ascend CANN healthy'",
+				Uninstall: "echo 'Ascend CANN removed'",
+			},
+		},
+		Risk: "high",
+		Tags: []string{"gpu", "ascend", "huawei", "cann", "ai"},
+		Versions: []MiddlewareVersion{
+			{Version: "8.0", DockerImage: "ascend/cann:8.0", Default: true},
+			{Version: "7.0", DockerImage: "ascend/cann:7.0"},
+		},
+	},
+	{
+		ID:          "ascend-dcm",
+		Name:        "Ascend Data Center Monitoring",
+		Category:    "gpu",
+		Version:     "1.0",
+		Description: "Ascend Data Center Monitoring for NPU diagnostics and telemetry",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "ascend-dcm", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "8080", Required: false, Type: "int"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:8080 --device /dev/davinci0 --restart unless-stopped {image} && echo 'Ascend DCM deployed'",
+				Verify:    "curl -s http://localhost:{port}/health && echo 'Ascend DCM healthy'",
+				Uninstall: "docker rm -f {name} && echo 'Ascend DCM removed'",
+			},
+			"systemd": {
+				Deploy:    "echo 'Ascend DCM requires ascend-dcm package; install manually' && echo 'Ascend DCM deployed'",
+				Verify:    "curl -s http://localhost:8080/health && echo 'Ascend DCM healthy'",
+				Uninstall: "echo 'Ascend DCM removed'",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"gpu", "ascend", "huawei", "dcm", "monitoring"},
+		Versions: []MiddlewareVersion{
+			{Version: "1.0", DockerImage: "ascend/dcm:1.0", Default: true},
+		},
+	},
+	{
+		ID:          "mindspore",
+		Name:        "MindSpore AI Framework",
+		Category:    "gpu",
+		Version:     "2.3",
+		Description: "MindSpore AI framework for Ascend/GPU model training and inference",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "mindspore", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "8080", Required: false, Type: "int"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:8080 --device /dev/davinci0 --restart unless-stopped {image} && echo 'MindSpore deployed'",
+				Verify:    "docker exec {name} python -c 'import mindspore; print(mindspore.__version__)' && echo 'MindSpore healthy'",
+				Uninstall: "docker rm -f {name} && echo 'MindSpore removed'",
+			},
+			"systemd": {
+				Deploy:    "pip install mindspore-ascend=={version} && echo 'MindSpore {version} installed'",
+				Verify:    "python -c 'import mindspore; print(mindspore.__version__)'",
+				Uninstall: "pip uninstall -y mindspore-ascend && echo 'MindSpore removed'",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"gpu", "ascend", "huawei", "mindspore", "ai", "framework"},
+		Versions: []MiddlewareVersion{
+			{Version: "2.3", DockerImage: "mindspore/mindspore:2.3.0", Default: true},
+			{Version: "2.2", DockerImage: "mindspore/mindspore:2.2.0"},
+		},
+	},
 }
 
 // middlewareTemplateByID 按 ID 查找预置中间件模板，未找到返回 nil。

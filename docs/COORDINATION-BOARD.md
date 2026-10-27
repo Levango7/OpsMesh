@@ -116,7 +116,7 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  (无)
+  internal/controlplane,web/enterprise,internal/store <- kilo  (ttl=24h by kilo)
 
 TASKS:
   (无)

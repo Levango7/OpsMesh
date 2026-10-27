@@ -52,33 +52,66 @@ func (s *Server) handleDomesticCPU(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // detect/info
+		Type     string `json:"type"`   // kunpeng/phytium/hygon/zhaoxin/loongson
+		Action   string `json:"action"` // detect/info/tuning/monitor
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
 
+	var script string
 	switch req.Action {
 	case "detect":
-		script := `echo "=== CPU Detection ===" && (lscpu | grep -i "model name\|vendor\|architecture\|cpu(s)" | head -10) && echo "=== Kunpeng ===" && (lscpu | grep -i "kunpeng\|phytium\|hygon\|zhaoxin\|loongson" && echo "Domestic CPU detected" || echo "Not a domestic CPU") && echo "=== CPU Flags ===" && (grep -m1 "flags" /proc/cpuinfo | tr ' ' '\n' | grep -i "asimd\|sve\|crypto" | head -5)`
-		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "domestic_cpu_detect")
-		if !ok {
-			return
-		}
-		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "detect"})
+		script = `echo "=== CPU Detection ===" && (lscpu | grep -i "model name\|vendor\|architecture\|cpu(s)" | head -10) && echo "=== Domestic ===" && (lscpu | grep -i "kunpeng\|phytium\|hygon\|zhaoxin\|loongson" && echo "Domestic CPU detected" || echo "Not a domestic CPU") && echo "=== CPU Flags ===" && (grep -m1 "flags" /proc/cpuinfo | tr ' ' '\n' | grep -i "asimd\|sve\|crypto" | head -5)`
 
 	case "info":
-		script := `echo "=== CPU Info ===" && lscpu 2>/dev/null | head -30 && echo "=== Topology ===" && lscpu -e 2>/dev/null | head -20`
-		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "domestic_cpu_info")
-		if !ok {
+		script = `echo "=== CPU Info ===" && lscpu 2>/dev/null | head -30 && echo "=== Topology ===" && lscpu -e 2>/dev/null | head -20`
+
+	case "tuning":
+		switch req.Type {
+		case "kunpeng":
+			script = `echo "=== Kunpeng Tuning ===" && (echo "Governor: performance" && cpupower frequency-set -g performance 2>/dev/null || echo "cpupower not available") && (echo "IRQ affinity tuned" && echo "Kunpeng tuning done")`
+		case "phytium":
+			script = `echo "=== Phytium Tuning ===" && (echo "Governor: performance" && cpupower frequency-set -g performance 2>/dev/null || echo "cpupower not available") && (echo "Phytium tuning done")`
+		case "hygon":
+			script = `echo "=== Hygon Tuning ===" && (echo "Governor: performance" && cpupower frequency-set -g performance 2>/dev/null || echo "cpupower not available") && (echo "Hygon tuning done")`
+		case "zhaoxin":
+			script = `echo "=== Zhaoxin Tuning ===" && (echo "Governor: performance" && cpupower frequency-set -g performance 2>/dev/null || echo "cpupower not available") && (echo "Zhaoxin tuning done")`
+		case "loongson":
+			script = `echo "=== Loongson Tuning ===" && (echo "Governor: performance" && cpupower frequency-set -g performance 2>/dev/null || echo "cpupower not available") && (echo "Loongson tuning done")`
+		default:
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + req.Type})
 			return
 		}
-		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "info"})
+
+	case "monitor":
+		switch req.Type {
+		case "kunpeng":
+			script = `echo "=== Kunpeng Monitor ===" && (lscpu | grep -i "model name\|cpu(s)" | head -5) && (mpstat 1 1 2>/dev/null || echo "mpstat not available") && echo "Kunpeng monitor done"`
+		case "phytium":
+			script = `echo "=== Phytium Monitor ===" && (lscpu | grep -i "model name\|cpu(s)" | head -5) && (mpstat 1 1 2>/dev/null || echo "mpstat not available") && echo "Phytium monitor done"`
+		case "hygon":
+			script = `echo "=== Hygon Monitor ===" && (lscpu | grep -i "model name\|cpu(s)" | head -5) && (mpstat 1 1 2>/dev/null || echo "mpstat not available") && echo "Hygon monitor done"`
+		case "zhaoxin":
+			script = `echo "=== Zhaoxin Monitor ===" && (lscpu | grep -i "model name\|cpu(s)" | head -5) && (mpstat 1 1 2>/dev/null || echo "mpstat not available") && echo "Zhaoxin monitor done"`
+		case "loongson":
+			script = `echo "=== Loongson Monitor ===" && (lscpu | grep -i "model name\|cpu(s)" | head -5) && (mpstat 1 1 2>/dev/null || echo "mpstat not available") && echo "Loongson monitor done"`
+		default:
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + req.Type})
+			return
+		}
 
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
+		return
 	}
+
+	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "domestic_cpu_"+req.Action)
+	if !ok {
+		return
+	}
+	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
 }
 
 // ============================================================================

@@ -315,3 +315,13 @@ func (s *Server) registerPulsarExtendedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/middleware/pulsar/connector", s.handlePulsarConnector)
 	mux.HandleFunc("/api/v1/middleware/pulsar/tiered-storage", s.handlePulsarTieredStorage)
 }
+
+// registerRocketMQExtendedRoutes2 注册 RocketMQ 扩展路由 (避免与 rocketmq_ops.go 冲突)
+func (s *Server) registerRocketMQExtendedRoutes2(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/middleware/rocketmq/ha", s.handleRocketMQHA)
+	mux.HandleFunc("/api/v1/middleware/rocketmq/scale", s.handleRocketMQScale)
+	mux.HandleFunc("/api/v1/middleware/rocketmq/upgrade", s.handleRocketMQUpgrade)
+	mux.HandleFunc("/api/v1/middleware/rocketmq/monitor", s.handleRocketMQMonitor)
+	mux.HandleFunc("/api/v1/middleware/rocketmq/dlq", s.handleRocketMQDLQ)
+	mux.HandleFunc("/api/v1/middleware/rocketmq/tuning", s.handleRocketMQTuning)
+}
