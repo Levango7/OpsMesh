@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="autoscaler-title">{{ $t('autoscaler.title') }}</h2>
-    <p class="muted">{{ $t('autoscaler.desc') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('autoscaler.title')"
+    :desc="$t('autoscaler.desc')"
+    testid="autoscaler"
+    :error="store.error"
+  >
     <div class="row">
       <!-- 左：扩缩容规则 -->
       <div class="col">
@@ -141,16 +141,16 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
 import { computed, onMounted, ref } from 'vue'
 import { useAutoscalerStore } from '@/stores/autoscaler'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import Icon from '@/components/Icon.vue'
 
 const store = useAutoscalerStore()
 
@@ -270,11 +270,6 @@ onMounted(() => {
 .row .col:nth-child(1) { flex: 45; }
 .row .col:nth-child(2) { flex: 55; }
 
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .row-actions { display: inline-flex; gap: 6px; }
 

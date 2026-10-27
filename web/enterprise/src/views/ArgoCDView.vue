@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('argocd.title') }}</h2>
-    <p class="muted">{{ $t('argocd.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('argocd.title')"
+    :desc="$t('argocd.subtitle')"
+    testid="argo-cd"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -105,10 +107,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // ArgoCD 应用管理页 — GitOps 应用 CRUD + 手动同步
 import { ref, reactive, onMounted } from 'vue'
 import * as argocdApi from '@/api/argocd'
@@ -123,6 +127,7 @@ const apps = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 同步确认弹窗
 const syncConfirm = reactive({ show: false, row: null })
@@ -143,11 +148,14 @@ const columns = [
 
 async function fetchApps() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await argocdApi.listApps()
     apps.value = (r && r.apps) || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     apps.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

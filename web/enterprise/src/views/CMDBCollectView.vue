@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="cmdb-collect-title">{{ $t('cmdbCollect.title') }}</h2>
-    <p class="muted">{{ $t('cmdbCollect.subtitle') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('cmdbCollect.title')"
+    :desc="$t('cmdbCollect.subtitle')"
+    testid="cmdb-collect"
+    :error="store.error"
+  >
     <!-- ========== 采集触发 ========== -->
     <div class="card">
       <h3>{{ $t('cmdbCollect.collect_title') }}</h3>
@@ -101,10 +101,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // CMDB 采集管理页 — 触发采集 + CI 导入导出 + 待审批 CI 列表 + CI 编辑/删除/审批
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useCMDBAdvancedStore } from '@/stores/cmdb-advanced'
@@ -282,12 +284,6 @@ onMounted(() => {
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .collect-result { display: flex; gap: 8px; margin-top: 10px; }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 @media (max-width: 768px) {
   .row-2 { grid-template-columns: 1fr; }

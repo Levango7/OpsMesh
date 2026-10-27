@@ -7,6 +7,11 @@
 // 契约（internal/controlplane/*_ops.go）：所有执行类接口返回 Task（异步下发到 agent），
 // 结果经 GET /tasks/{id}/result 查询；查询类接口直接返回结构化 JSON。
 import { getJSON, postJSON, deleteJSONBody } from './request'
+import { T, deviceField, lifecycleActionOptions } from './infra-catalog/shared'
+import { OS_DOMAINS } from './infra-catalog/os'
+import { SEARCH_DOMAINS } from './infra-catalog/search'
+import { MQ_DEEP_DOMAINS } from './infra-catalog/mq-deep'
+import { CACHE_GPU_DOMAINS } from './infra-catalog/cache-gpu'
 
 // 字段类型枚举（视图层动态渲染）：
 //   device  — 设备下拉（从 /devices 拉取）
@@ -21,26 +26,17 @@ import { getJSON, postJSON, deleteJSONBody } from './request'
 //     fields:[{key, label:{zh,en}, type, required, options, placeholder}],
 //     taskType: 'task'|'query'  — task=显示任务卡片; query=直接显示 JSON 结果 }
 
-const T = (zh, en) => ({ zh, en })
 
-// 设备选择字段（几乎所有执行类动作共用）
-const deviceField = (required = true) => ({
-  key: 'deviceID', label: T('设备', 'Device'), type: 'device', required
-})
 
-// 通用启停字段
-const lifecycleActionOptions = [
-  { value: 'start', label: 'start' },
-  { value: 'stop', label: 'stop' },
-  { value: 'restart', label: 'restart' },
-  { value: 'status', label: 'status' }
-]
+
+
+
 
 // ============================================================================
 // Domain 目录
 // ============================================================================
 
-export const INFRA_DOMAINS = [
+const CORE_DOMAINS = [
   // --------------------------------------------------------------------------
   {
     id: 'middleware',
@@ -1570,3 +1566,13 @@ export async function submitInfraAction(domain, action, values) {
 
 // 查询任务执行结果（任务下发后轮询用）。
 export const getInfraTaskResult = (taskID) => getJSON(`/tasks/${encodeURIComponent(taskID)}/result`)
+
+// 按域拆分后的合并导出（视图与测试只依赖这一个符号，形状不变）。
+// 新增能力优先入对应域文件；legacy 核心域（含 kilo 线 netdiag/abac 等追加）保留在本文件 CORE_DOMAINS。
+export const INFRA_DOMAINS = [
+  ...CORE_DOMAINS,
+  ...OS_DOMAINS,
+  ...SEARCH_DOMAINS,
+  ...MQ_DEEP_DOMAINS,
+  ...CACHE_GPU_DOMAINS
+]
