@@ -16,31 +16,31 @@ import (
 type ModelTier string
 
 const (
-	TierSmall   ModelTier = "small"   // 分类/提取/简单任务
-	TierMedium  ModelTier = "medium"  // 一般对话/分析
-	TierLarge   ModelTier = "large"   // 复杂推理/代码生成
+	TierSmall  ModelTier = "small"  // 分类/提取/简单任务
+	TierMedium ModelTier = "medium" // 一般对话/分析
+	TierLarge  ModelTier = "large"  // 复杂推理/代码生成
 )
 
 // ModelSpec 模型规格
 type ModelSpec struct {
-	Name        string    `json:"name"`
-	Provider    string    `json:"provider"`
-	Tier        ModelTier `json:"tier"`
-	MaxTokens   int       `json:"maxTokens"`
-	CostPer1KIn float64   `json:"costPer1KIn"`  // $/1K input tokens
-	CostPer1KOut float64  `json:"costPer1KOut"` // $/1K output tokens
-	Capabilities []string `json:"capabilities"` // classify/reason/chat/code/embed
+	Name         string    `json:"name"`
+	Provider     string    `json:"provider"`
+	Tier         ModelTier `json:"tier"`
+	MaxTokens    int       `json:"maxTokens"`
+	CostPer1KIn  float64   `json:"costPer1KIn"`  // $/1K input tokens
+	CostPer1KOut float64   `json:"costPer1KOut"` // $/1K output tokens
+	Capabilities []string  `json:"capabilities"` // classify/reason/chat/code/embed
 }
 
 // TokenBudget Token 预算
 type TokenBudget struct {
-	TenantID     string    `json:"tenantId"`
-	DailyLimit   int       `json:"dailyLimit"`
-	MonthlyLimit int       `json:"monthlyLimit"`
-	UsedToday    int       `json:"usedToday"`
-	UsedMonth    int       `json:"usedMonth"`
-	AlertThreshold float64 `json:"alertThreshold"` // 0.8 = 80%
-	LastReset    time.Time `json:"lastReset"`
+	TenantID       string    `json:"tenantId"`
+	DailyLimit     int       `json:"dailyLimit"`
+	MonthlyLimit   int       `json:"monthlyLimit"`
+	UsedToday      int       `json:"usedToday"`
+	UsedMonth      int       `json:"usedMonth"`
+	AlertThreshold float64   `json:"alertThreshold"` // 0.8 = 80%
+	LastReset      time.Time `json:"lastReset"`
 }
 
 // BudgetManager 预算管理器
@@ -186,11 +186,11 @@ type ModelRouter struct {
 }
 
 type RoutingRule struct {
-	TaskType   string    `json:"taskType"`   // classify/extract/reason/chat/code
-	Tier       ModelTier `json:"tier"`       // small/medium/large
-	Provider   string    `json:"provider"`
-	Model      string    `json:"model"`
-	MaxTokens  int       `json:"maxTokens"`
+	TaskType  string    `json:"taskType"` // classify/extract/reason/chat/code
+	Tier      ModelTier `json:"tier"`     // small/medium/large
+	Provider  string    `json:"provider"`
+	Model     string    `json:"model"`
+	MaxTokens int       `json:"maxTokens"`
 }
 
 func NewModelRouter() *ModelRouter {
@@ -317,14 +317,14 @@ func (ct *CostTracker) Record(tenantID, provider, model string, inputTokens, out
 
 // CostReport 成本报告
 type CostReport struct {
-	TotalCost       float64            `json:"totalCost"`
-	TotalInputTokens int                `json:"totalInputTokens"`
-	TotalOutputTokens int              `json:"totalOutputTokens"`
-	ByProvider      map[string]float64 `json:"byProvider"`
-	ByModel         map[string]float64 `json:"byModel"`
-	ByTenant        map[string]float64 `json:"byTenant"`
-	ByTaskType      map[string]float64 `json:"byTaskType"`
-	RecordCount     int                `json:"recordCount"`
+	TotalCost         float64            `json:"totalCost"`
+	TotalInputTokens  int                `json:"totalInputTokens"`
+	TotalOutputTokens int                `json:"totalOutputTokens"`
+	ByProvider        map[string]float64 `json:"byProvider"`
+	ByModel           map[string]float64 `json:"byModel"`
+	ByTenant          map[string]float64 `json:"byTenant"`
+	ByTaskType        map[string]float64 `json:"byTaskType"`
+	RecordCount       int                `json:"recordCount"`
 }
 
 func (ct *CostTracker) Report(tenantID string, since time.Time) *CostReport {
@@ -374,12 +374,12 @@ func NewReportGenerator() *ReportGenerator {
 // GenerateMarkdown 生成 Markdown 报告
 func (rg *ReportGenerator) GenerateMarkdown(title string, sections []ReportSection) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# %s\n\n", title))
-	sb.WriteString(fmt.Sprintf("生成时间: %s\n\n", time.Now().Format("2006-01-02 15:04:05")))
+	fmt.Fprintf(&sb, "# %s\n\n", title)
+	fmt.Fprintf(&sb, "生成时间: %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
 	sb.WriteString("---\n\n")
 
 	for _, section := range sections {
-		sb.WriteString(fmt.Sprintf("## %s\n\n", section.Title))
+		fmt.Fprintf(&sb, "## %s\n\n", section.Title)
 		if section.Content != "" {
 			sb.WriteString(section.Content + "\n\n")
 		}
@@ -415,7 +415,7 @@ type ReportSection struct {
 func (rg *ReportGenerator) GenerateCostReport(report *CostReport, title string) string {
 	sections := []ReportSection{
 		{
-			Title:   "成本概览",
+			Title: "成本概览",
 			Content: fmt.Sprintf("总成本: $%.4f\n总输入 Token: %d\n总输出 Token: %d\n记录数: %d",
 				report.TotalCost, report.TotalInputTokens, report.TotalOutputTokens, report.RecordCount),
 		},
@@ -466,9 +466,9 @@ func (rg *ReportGenerator) GenerateCostReport(report *CostReport, title string) 
 
 // CostHandler 成本控制 HTTP handler
 type CostHandler struct {
-	budget  *BudgetManager
-	router  *ModelRouter
-	tracker *CostTracker
+	budget   *BudgetManager
+	router   *ModelRouter
+	tracker  *CostTracker
 	reporter *ReportGenerator
 }
 
@@ -530,7 +530,14 @@ func (h *CostHandler) HandleCostReport(w http.ResponseWriter, r *http.Request) {
 	sinceStr := r.URL.Query().Get("since")
 	var since time.Time
 	if sinceStr != "" {
-		since, _ = time.Parse(time.RFC3339, sinceStr)
+		// since 非法时明确拒绝（对齐 controlplane/audit_query.go 对时间范围参数的处理），
+		// 避免静默忽略过滤条件导致客户端拿到全量报表误判成本口径。
+		t, err := time.Parse(time.RFC3339, sinceStr)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid 'since' time (use RFC3339): " + err.Error()})
+			return
+		}
+		since = t
 	}
 
 	report := h.tracker.Report(tenantID, since)

@@ -135,17 +135,6 @@
 - 修复 `registerOSExtRoutes` 重复注册
 - 修复 K8s pod listing 增加 containers/probes/affinity/tolerations 字段
 
-## [Unreleased] — 2026-10-16（TD-95 收口：镜像发布抽成复用件 _publish-image.yml 并在 main 验绿；方向① 经评估主动不做）
-
-- **Phase A（已落地 + runner 验绿）**：把 ci.yml 的 `image`/`image-agent` 两个 ~400 行镜像发布 job
-  逐步骤（build→Trivy→syft SBOM→keyless cosign sign+attest→attest 自验→提权 `:<版本>`/`:latest`→digest
-  自验→可选 GitOps 写回）抽成 reusable workflow `.github/workflows/_publish-image.yml`（`on: workflow_call`，
-  入参 `image_leaf/dockerfile/sbom_prefix/job_label/gitops`，`secrets: inherit`），`image`/`image-agent` 改 `uses:` 调用点、行为不变。
-  main run `38807434499` 的 `image / publish-image`、`image-agent / publish-image` **completed/success**——复用件在真 runner 上端到端跑通。
-- **两处只有 runner 才暴露的 reusable 回归（已修）**：① 门禁 §7「chart 引用的镜像名必须有人推」原只 grep ci.yml 的 `IMAGE_LEAF:`，reusable 化后叶子名移到调用点 `with: image_leaf:` ⇒ 误报"CI 不再发布 opsmesh-binary/agent"；解析现同认两写法、扫两文件。② keyless cosign 证书 subject = 实际签名的 workflow 文件，构建进复用件后从 `ci.yml@` 变 `_publish-image.yml@` ⇒ attest 自验 `--certificate-identity-regexp` 改钉复用件自身（核对：release.yml 的 verify 钉 `release.yml@` 不受影响、回核脚本不做身份校验）。
-- **方向① 合并 B+C（发布整体搬进 release.yml）经核代码主动不做**：release.yml 全程不吃测试，"测试全绿才发布"仅挂在 ci.yml 的 release job（needs 8 测试 job + if tag）；把发布搬进 release.yml 会拆掉这道闸（跨 workflow 不能 needs，正是本债死结）。真·自洽须反向把测试并入同一 workflow、只能靠 dry-run tag 验，ROI 不抵方向②。TD-95 由「待启动」移入「已解决」。
-- 关联设计稿 `docs/td95-unified-publisher-design-2026-10-14.md`（记录评估与形状）、协调板第九十五则。
-
 ## [0.16.0] — 2026-10-14（切流演练阻断级两缺陷修复：对侧会话身份回落 + 主动改密转发还原 body；演练台回退路径补齐）
 
 - **背景**：模拟用户团队批次 0 演练（三人设 + 协调者逐条复核，报告与证据见

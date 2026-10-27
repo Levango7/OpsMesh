@@ -18,7 +18,7 @@ type KnowledgeHandler struct {
 	retriever *HybridRetriever
 	reranker  *Reranker
 	citation  *CitationTracker
-	gw   *gateway.Gateway
+	gw        *gateway.Gateway
 }
 
 func NewKnowledgeHandler(store KnowledgeStore, gw *gateway.Gateway) *KnowledgeHandler {
@@ -32,7 +32,7 @@ func NewKnowledgeHandler(store KnowledgeStore, gw *gateway.Gateway) *KnowledgeHa
 		retriever: retriever,
 		reranker:  reranker,
 		citation:  citation,
-		gw:   gw,
+		gw:        gw,
 	}
 }
 
@@ -46,7 +46,10 @@ func (h *KnowledgeHandler) HandleSync(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Source string `json:"source"` // empty = sync all
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
 
 	if req.Source == "" {
 		results, err := h.syncEng.SyncAll(r.Context())
@@ -101,7 +104,12 @@ func (h *KnowledgeHandler) HandleSearch(w http.ResponseWriter, r *http.Request) 
 
 	// 重排序
 	if req.Rerank && len(docs) > 1 {
-		docs, _ = h.reranker.Rerank(r.Context(), req.Query, docs)
+		reranked, err := h.reranker.Rerank(r.Context(), req.Query, docs)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		docs = reranked
 	}
 
 	// 引用溯源
@@ -208,12 +216,16 @@ func (h *KnowledgeHandler) HandleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, _ := h.store.Count(r.Context())
+	count, err := h.store.Count(r.Context())
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	configs := h.syncEng.GetConfigs()
 
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"totalDocs":    count,
-		"syncConfigs":  configs,
+		"totalDocs":   count,
+		"syncConfigs": configs,
 	})
 }
 
@@ -245,7 +257,17 @@ func (h *KnowledgeHandler) HandleUpdateSyncConfig(w http.ResponseWriter, r *http
 		return
 	}
 
-	interval, _ := time.ParseDuration(req.Interval)
+	// interval 为空表示仅更新 enabled 开关，保留原同步周期（UpdateConfig 对 <=0 不覆盖）；
+	// 非空但非法则拒绝请求，避免客户端误以为新周期已生效。
+	var interval time.Duration
+	if req.Interval != "" {
+		parsed, err := time.ParseDuration(req.Interval)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid interval: " + err.Error()})
+			return
+		}
+		interval = parsed
+	}
 	h.syncEng.UpdateConfig(KnowledgeSource(source), req.Enabled, interval)
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }

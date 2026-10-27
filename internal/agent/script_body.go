@@ -86,9 +86,10 @@ func (a *Agent) executeScriptFile(ctx context.Context, path string, stdout, stde
 //
 // Unix：sh <file>（POSIX sh；预置模板只用 POSIX 语法，shebang 行按注释处理）。
 // Windows：优先 sh（Git Bash / MSYS 环境有），没有则退到 cmd /C <file>
-//   ——Windows 上的 agent 本就不是预置 bash 模板的目标平台，退化路径只为
-//   「不因缺少 sh 而整条任务失败」，脚本语义由 cmd 解释（复杂 bash 语法会失败，
-//   但会如实报错，不会静默跳过）。
+//
+//	——Windows 上的 agent 本就不是预置 bash 模板的目标平台，退化路径只为
+//	「不因缺少 sh 而整条任务失败」，脚本语义由 cmd 解释（复杂 bash 语法会失败，
+//	但会如实报错，不会静默跳过）。
 func scriptFileCommand(path string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
 		if _, err := exec.LookPath("sh"); err != nil {

@@ -67,3 +67,6 @@
 [DONE] Tue, 27 Oct 2026 01:40:00 from=qoder scope=internal/gates/doc_paths_gate_test.go commit=eae2875
 [DONE] Tue, 27 Oct 2026 01:40:00 from=qoder scope=deploy/scripts/validate-deploy-assets.sh commit=eae2875
 [NOTE] Tue, 27 Oct 2026 01:40:00 from=qoder 存量库升级演练落地（v0.16.0→main 六条迁移 024-029）：升级 rc=0、200k 行 CRC 指纹前后同值、重放零 DDL、028 撞 1060 由幂等放行实测到日志。两条新缺陷：①tasks.approval_required 升级库=NULL vs 新装=NOT NULL（④段通用不变式自动抓出）②长事务持 MDL 时 migrate 会挂住该表写入（同表实测 10 条 insert 23.0s；@@global.lock_wait_timeout=31536000 且代码 0 命中）——修点在 internal/store/sqlstore（kilo 领地），本线只出证据与 runbook。门禁第 25 节把脚本+判据射程+文档回写钉住（3 条窄变异各判红）。CHANGELOG 那条红是 5c6f3af 带来的（两块早于 v0.16.0 发布日的 [Unreleased]），非本笔。
+[DONE] 2026-10-27T11:30:00Z from=ZCode scope=internal/controlplane/ commit=d0921b5 note=TAKEOVER 分片 2/3：107→0（unused×27 零调用核实删除、errcheck×28 真实传播、staticcheck×15、ineffassign×4、gofmt×31 LF 真实小 diff；净-559 行）
+[DONE] 2026-10-27T11:40:00Z from=ZCode scope=internal/knowledge/ scope=internal/cost/ commit=pending note=TAKEOVER 分片 3/3：knowledge/cost 17→0（Decode/Rerank/Count/time.Parse 按业务语义处理，Rerank 降级契约保留）；全仓 gofmt 37 文件判定=全部 LF 真实格式问题非 CRLF 噪音，5 文件本片修复、23 文件已被分片 2 收编
+[DONE] 2026-10-27T11:40:00Z from=ZCode scope=CHANGELOG.md commit=pending note=§16 两 offender 处置：10-16 TD-95 块=与已发货 [0.16.0] 块逐字同源的合并产物已删除；10-25 K8s 扩展块=真实新工作按 TD-96 纪律入豁免账。全仓钉版 lint 0 + build 过 + internal 全量测试绿

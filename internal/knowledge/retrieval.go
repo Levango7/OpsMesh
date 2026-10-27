@@ -15,7 +15,7 @@ import (
 // HybridRetriever 混合检索器 (向量 + 关键词 + 图谱)
 type HybridRetriever struct {
 	store    KnowledgeStore
-	gw  *gateway.Gateway
+	gw       *gateway.Gateway
 	topK     int
 	vectorW  float64 // 向量权重
 	keywordW float64 // 关键词权重
@@ -27,7 +27,7 @@ func NewHybridRetriever(store KnowledgeStore, gw *gateway.Gateway, topK int) *Hy
 	}
 	return &HybridRetriever{
 		store:    store,
-		gw:  gw,
+		gw:       gw,
 		topK:     topK,
 		vectorW:  0.6,
 		keywordW: 0.4,
@@ -147,10 +147,10 @@ func (r *Reranker) Rerank(ctx context.Context, query string, docs []KnowledgeDoc
 
 	// 构建重排序 prompt
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("查询: %s\n\n", query))
+	fmt.Fprintf(&sb, "查询: %s\n\n", query)
 	sb.WriteString("请对以下文档按与查询的相关性进行排序，输出排序后的文档编号列表（JSON 数组）：\n")
 	for i, doc := range docs {
-		sb.WriteString(fmt.Sprintf("[%d] %s: %s\n", i+1, doc.Title, truncate(doc.Content, 200)))
+		fmt.Fprintf(&sb, "[%d] %s: %s\n", i+1, doc.Title, truncate(doc.Content, 200))
 	}
 
 	resp, err := r.gw.Complete(ctx, gateway.CompletionRequest{
@@ -172,7 +172,10 @@ func (r *Reranker) Rerank(ctx context.Context, query string, docs []KnowledgeDoc
 	end := strings.LastIndex(content, "]")
 	if start >= 0 && end > start {
 		jsonStr := content[start : end+1]
-		json.Unmarshal([]byte(jsonStr), &order)
+		if err := json.Unmarshal([]byte(jsonStr), &order); err != nil {
+			// 排序结果解析失败：放弃重排序，沿用原始顺序（与上方 LLM 调用失败同一兜底策略）
+			order = nil
+		}
 	}
 
 	if len(order) == 0 {
@@ -234,9 +237,9 @@ func (ct *CitationTracker) FormatCitations(docs []KnowledgeDoc) string {
 	sb.WriteString("\n\n---\n**参考来源：**\n")
 	for i, doc := range docs {
 		if doc.Citation != nil {
-			sb.WriteString(fmt.Sprintf("%d. [%s] %s (相关度: %.2f)\n", i+1, doc.Citation.Source, doc.Title, doc.Citation.Relevance))
+			fmt.Fprintf(&sb, "%d. [%s] %s (相关度: %.2f)\n", i+1, doc.Citation.Source, doc.Title, doc.Citation.Relevance)
 		} else {
-			sb.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, doc.Source, doc.Title))
+			fmt.Fprintf(&sb, "%d. [%s] %s\n", i+1, doc.Source, doc.Title)
 		}
 	}
 	return sb.String()
