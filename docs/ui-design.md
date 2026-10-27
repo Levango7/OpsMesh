@@ -762,3 +762,29 @@ i18n 采用自研轻量模块（`src/i18n/index.js`），不依赖 vue-i18n，�
 ---
 
 > 本文档基于 `web/enterprise/src/` 与 `internal/controlplane/web/` 源码编写，所有 token 值、组件 props、样式参数均来自实际代码。如需调整设计系统，请先修改 `tokens.css` 并同步更新本文档。
+---
+
+## 页面骨架统一规则（2026-10-27 布局专项，强制）
+
+> 背景：实测 82 个视图曾出现 7 种页面标题写法 + 一堆一次性类名（`t-title`/`ntitle`/`cap-title`…），
+> 根容器/工具条/错误横幅各页自造。以下为统一规则，由门禁 `page-conventions.spec.js` 守护。
+
+1. **每个视图必须由 `<PageShell>` 组件包裹**（`@/components/PageShell.vue`，样式在 `styles/pages.css`）：
+   ```vue
+   <PageShell :title="$t('x.title')" :desc="$t('x.subtitle')" testid="x" :error="store.error">
+     <div class="btnbar">…操作按钮…</div>
+     <DataTable … />
+   </PageShell>
+   ```
+   - 标题/描述/操作区（`#actions` 插槽）/错误横幅的唯一实现；**不许页面自造标题类名**。
+   - `testid` 生成 `data-testid` 前缀：外层=`{testid}`、标题=`{testid}-title`、错误=`{testid}-error`。
+2. **表格数据用 `DataTable` 组件**；原生 `<table>` 仅限非数据网格场景（矩阵/时间轴/对账视图），
+   且须在视图头部注释写明理由。
+3. **工具条**：按钮栏 `.btnbar`、筛选表单栏 `.flowbar`；**模态**用 `.modal-*` 全局类、
+   抽屉用 `DetailDrawer`；行内操作组 `.row-actions`。
+4. **页面分组**（侧栏组）：概览 / 运维管理 / 资产配置 / 交付中心 / 可观测性 / 自动化 / AI 算力 / 系统管理 / 平台——
+   新页面必须归入既有组，不新开组；跨组归属存疑时写进 PR 说明由评审定，不默默塞。
+5. 存量迁移按门禁豁免清单（`page-conventions.spec.js` 的 `EXEMPT`）棘轮递减；**新增页面一律直接合规**。
+
+**已知遗留（UI 债，择机收编）**：共享原语（`.btnbar/.field/.card/.poll-err/.modal-*` 等）目前寄生在
+`styles/k8s.css`（K8s 命名当全站事实标准）；计划在后续批次迁入 `styles/pages.css` 并令 k8s.css 只留 k8s 专属类。

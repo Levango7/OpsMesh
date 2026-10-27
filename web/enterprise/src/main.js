@@ -9,6 +9,7 @@ import { useAuthStore } from './stores/auth'
 import { registerSW } from './registerSW'
 import './assets/tokens.css'
 import './styles/design-tokens.css'
+import './styles/pages.css'
 import './styles/k8s.css'
 
 const app = createApp(App)

@@ -1,8 +1,8 @@
 {
   "app": {
     "title": "OpsMesh Enterprise",
-"subtitle": "Multi-tenant Ops Orchestration Console",
-"footer": "OpsMesh Enterprise · Multi-tenant Ops Orchestration",
+    "subtitle": "Multi-tenant Ops Orchestration Console",
+    "footer": "OpsMesh Enterprise · Multi-tenant Ops Orchestration",
     "copyright": "© 2026 OpsMesh"
   },
   "nav": {
@@ -15,7 +15,8 @@
     "home": "Dashboard",
     "devices": "Devices",
     "tasks": "Tasks",
-    "dead_letter": "Dead Letter",    "alerts": "Alerts",
+    "dead_letter": "Dead Letter",
+    "alerts": "Alerts",
     "osopt": "OS Optimize",
     "system_ops": "System Ops",
     "infra_console": "Infra Console",
@@ -27,9 +28,9 @@
     "logs": "Logs",
     "users": "Users",
     "roles": "Roles",
-"permissions": "Permissions",
-"secrets": "Secrets",
-"admin_console": "Admin Console",
+    "permissions": "Permissions",
+    "secrets": "Secrets",
+    "admin_console": "Admin Console",
     "gpu": "GPU",
     "bot": "ChatOps",
     "runbooks": "Runbooks",
@@ -340,7 +341,8 @@
     "api_base": "API: /api/v1",
     "web_base": "Base: /enterprise/",
     "back": "Back",
-    "menu": "Menu"
+    "menu": "Menu",
+    "load_failed": "Load failed"
   },
   "alerts": {
     "root_cause": "Root Cause",

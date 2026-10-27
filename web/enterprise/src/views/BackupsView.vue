@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('backups.title') }}</h2>
-    <p class="muted">{{ $t('backups.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('backups.title')"
+    :desc="$t('backups.subtitle')"
+    testid="backups"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="outline" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -81,10 +83,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 灾备备份页 — 创建（异步归档）+ 列表 + 恢复（高危二次确认）+ 删除
 // create 触发后端异步归档（POST 返回 creating 态记录），随后刷新列表观察状态推进
 import { ref, reactive, onMounted } from 'vue'
@@ -101,6 +105,7 @@ const backups = ref([])
 const loading = ref(false)
 const createForm = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 恢复确认弹窗（高危操作）
 const restoreConfirm = reactive({ show: false, row: null })
@@ -130,11 +135,14 @@ function fmtSize(v) {
 
 async function fetchBackups() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await backupApi.listBackups()
     backups.value = (r && r.backups) || []
-  } catch {
+  } catch (e) {
     backups.value = []
+    // 此前静默吞错（只见空表）——统一骨架批次顺带补上可见的加载错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

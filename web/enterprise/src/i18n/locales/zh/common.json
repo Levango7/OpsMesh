@@ -1,8 +1,8 @@
 {
   "app": {
     "title": "OpsMesh 企业版",
-"subtitle": "多租户运维编排控制台",
-"footer": "OpsMesh Enterprise · 多租户运维编排",
+    "subtitle": "多租户运维编排控制台",
+    "footer": "OpsMesh Enterprise · 多租户运维编排",
     "copyright": "© 2026 OpsMesh"
   },
   "nav": {
@@ -15,7 +15,8 @@
     "home": "总览",
     "devices": "设备纳管",
     "tasks": "任务下发",
-    "dead_letter": "死信队列",    "alerts": "监控告警",
+    "dead_letter": "死信队列",
+    "alerts": "监控告警",
     "osopt": "OS 优化",
     "system_ops": "系统运维",
     "infra_console": "基础设施运维台",
@@ -27,9 +28,9 @@
     "logs": "日志检索",
     "users": "用户中心",
     "roles": "角色管理",
-"permissions": "权限管理",
-"secrets": "密钥管理",
-"admin_console": "管理控制台",
+    "permissions": "权限管理",
+    "secrets": "密钥管理",
+    "admin_console": "管理控制台",
     "gpu": "GPU 管理",
     "bot": "ChatOps",
     "runbooks": "Runbook",
@@ -340,7 +341,8 @@
     "api_base": "API: /api/v1",
     "web_base": "Base: /enterprise/",
     "back": "返回",
-    "menu": "菜单"
+    "menu": "菜单",
+    "load_failed": "加载失败"
   },
   "alerts": {
     "root_cause": "根因",

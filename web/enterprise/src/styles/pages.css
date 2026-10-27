@@ -1,0 +1,52 @@
+/* ===========================================================================
+ * 页面骨架层（pages.css）—— 全站页面统一规则的单一来源
+ * ---------------------------------------------------------------------------
+ * 统一规则（2026-10-27 前端布局专项）：
+ *   1. 每个视图的内容层必须由 PageShell 组件包裹（<PageShell title desc testid>），
+ *      页面标题/描述/操作区一律走 PageShell，不许页面自造标题类名。
+ *   2. 表格数据用 DataTable 组件；原生 <table> 仅限非数据网格场景（矩阵/时间轴），
+ *      且须在视图头注释写明理由。
+ *   3. 工具条用 .btnbar（按钮栏）/ .flowbar（筛选表单栏）；错误横幅用 PageShell 的
+ *      error prop（内部渲染 .poll-err），不许各页自绘。
+ *   4. 模态/抽屉分别用 .modal-* 全局类与 DetailDrawer 组件。
+ *
+ * 历史沿革（为什么有这个文件）：此前各页自造根容器/标题类名（实测 7 种标题写法
+ * + 一堆一次性类名），共享原语（.btnbar/.card/.poll-err 等）寄生在 k8s.css 里——
+ * 后者仍在使用中，本文件不重复定义，**合并不动**（收编为 UI 债，见 docs/ui-design.md
+ * 「页面骨架统一规则」节的遗留清单）。
+ * =========================================================================== */
+
+/* ===== 页面骨架 ===== */
+.page {
+  display: block;
+}
+
+.page__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  margin-bottom: var(--space-4, 16px);
+}
+
+.page__title {
+  margin: 0;
+  font-size: var(--font-size-base, 13px);
+  font-weight: 600;
+  color: var(--color-ink, #f7f8f8);
+}
+
+.page__desc {
+  margin: var(--space-1, 4px) 0 0 0;
+  font-size: var(--font-size-sm, 12px);
+  color: var(--color-ink-muted, #6b7280);
+}
+
+.page__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  flex-shrink: 0;
+}
+
+/* ===== 暗色模式（骨架仅用语义色变量，无需覆盖；此段留作将来硬编码色补丁位） ===== */
