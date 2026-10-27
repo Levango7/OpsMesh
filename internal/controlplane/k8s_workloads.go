@@ -14,10 +14,10 @@ import (
 	"github.com/Levango7/OpsMesh/internal/proto"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -716,23 +716,6 @@ func (s *Server) handleCronJobSubPath(w http.ResponseWriter, r *http.Request, cl
 		return
 	}
 	s.handleDeleteCronJob(w, r, client, ns, name)
-}
-
-// handleNamespaceSubPath 分发 namespace 子路径
-func (s *Server) handleNamespaceSubPath(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient, sub string) {
-	if sub == "" {
-		if r.Method == http.MethodPost {
-			s.handleCreateNamespace(w, r, client)
-			return
-		}
-		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	if r.Method != http.MethodDelete {
-		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	s.handleDeleteNamespace(w, r, client, sub)
 }
 
 var _ = appsv1.StatefulSet{}

@@ -15,32 +15,6 @@ import (
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
-// highRiskActions 是 Wave 5-C 审计链加固中认定的高风险操作动作集合。
-// 命中此集合的动作产出的审计事件会被置 HighRisk=true，并可通过
-// GET /api/v1/audit/high-risk 专项检索，哈希链校验也会将 HighRisk 计入摘要。
-var highRiskActions = map[string]bool{
-	"user_delete":     true,
-	"group_delete":    true,
-	"firewall_add":    true,
-	"firewall_del":    true,
-	"service_stop":    true,
-	"service_start":   true,
-	"service_restart": true,
-	"pkg_install":     true,
-	"pkg_remove":      true,
-	"pkg_upgrade":     true,
-	"task_create":     true,
-	"approve_task":    true,
-	"reject_task":     true,
-	"secret_rotate":   true,
-	"secret_delete":   true,
-}
-
-// isHighRiskAction 判定给定动作名是否为高风险操作。
-func isHighRiskAction(action string) bool {
-	return highRiskActions[action]
-}
-
 // AuditHighRisk 记录一条标记为高风险的审计事件。它是高风险操作（用户/组删除、防火墙变更、
 // 服务启停重启、包安装卸载升级、任务创建与审批、密钥轮换/删除等）的统一审计入口，
 // 除了落库审计事件外，还将 HighRisk 置 true，供高风险审计专项查询与链式防篡改校验使用。

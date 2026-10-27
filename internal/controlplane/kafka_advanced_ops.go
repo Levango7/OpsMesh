@@ -94,12 +94,12 @@ func (s *Server) handleMirrorMaker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID   string `json:"deviceID"`
-		Action     string `json:"action"`     // start/stop/status/list-configs
+		DeviceID      string `json:"deviceID"`
+		Action        string `json:"action"`        // start/stop/status/list-configs
 		SourceCluster string `json:"sourceCluster"` // 源集群 bootstrap
 		TargetCluster string `json:"targetCluster"` // 目标集群 bootstrap
-		Topics     string `json:"topics"`    // 逗号分隔的 topic 列表
-		Config     string `json:"config"`    // MM2 config (properties 格式)
+		Topics        string `json:"topics"`        // 逗号分隔的 topic 列表
+		Config        string `json:"config"`        // MM2 config (properties 格式)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -225,7 +225,7 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DeviceID string `json:"deviceID"`
 		Action   string `json:"action"` // deploy/status/configure/create-realm/create-client
-		Mode     string `json:"mode"`  // single/cluster
+		Mode     string `json:"mode"`   // single/cluster
 		Version  string `json:"version"`
 		Realm    string `json:"realm"`
 		ClientID string `json:"clientId"`
@@ -240,10 +240,6 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 		version := req.Version
 		if version == "" {
 			version = "23.0"
-		}
-		mode := req.Mode
-		if mode == "" {
-			mode = "single"
 		}
 		script := fmt.Sprintf(`docker run -d --name keycloak -p 8080:8080 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:%s start-dev 2>/dev/null && echo "Keycloak deployed"`, version)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "oauth_deploy")

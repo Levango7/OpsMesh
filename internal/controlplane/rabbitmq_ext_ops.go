@@ -149,8 +149,8 @@ func (s *Server) handleRabbitMQUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID     string `json:"deviceID"`
-		Action       string `json:"action"`       // plan/upgrade/rollback/version
+		DeviceID      string `json:"deviceID"`
+		Action        string `json:"action"`        // plan/upgrade/rollback/version
 		TargetVersion string `json:"targetVersion"` // e.g. 3.13.0
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

@@ -207,12 +207,3 @@ func (s *Server) handleRocketMQACL(w http.ResponseWriter, r *http.Request) {
 	}
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
 }
-
-// registerRocketMQRoutes 注册 RocketMQ 路由
-func (s *Server) registerRocketMQRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/middleware/rocketmq/deploy", s.handleRocketMQDeploy)
-	mux.HandleFunc("/api/v1/middleware/rocketmq/lifecycle", s.handleRocketMQLifecycle)
-	mux.HandleFunc("/api/v1/middleware/rocketmq/topic", s.handleRocketMQTopic)
-	mux.HandleFunc("/api/v1/middleware/rocketmq/consumer-group", s.handleRocketMQConsumerGroup)
-	mux.HandleFunc("/api/v1/middleware/rocketmq/acl", s.handleRocketMQACL)
-}

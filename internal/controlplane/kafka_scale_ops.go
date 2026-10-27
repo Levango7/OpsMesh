@@ -120,10 +120,10 @@ func (s *Server) handleKafkaUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID     string `json:"deviceID"`
-		Action       string `json:"action"`       // plan/upgrade/rollback
+		DeviceID      string `json:"deviceID"`
+		Action        string `json:"action"`        // plan/upgrade/rollback
 		TargetVersion string `json:"targetVersion"` // e.g. "3.7.0"
-		Nodes        string `json:"nodes"`        // 逗号分隔的节点列表
+		Nodes         string `json:"nodes"`         // 逗号分隔的节点列表
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -184,11 +184,11 @@ func (s *Server) handleKafkaLog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // list-segments/clean/dump/compact
-		Topic    string `json:"topic"`
-		Partition int   `json:"partition"`
-		Offset   int64  `json:"offset"`
+		DeviceID  string `json:"deviceID"`
+		Action    string `json:"action"` // list-segments/clean/dump/compact
+		Topic     string `json:"topic"`
+		Partition int    `json:"partition"`
+		Offset    int64  `json:"offset"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -425,7 +425,7 @@ func (s *Server) handleKafkaStreams(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		DeviceID    string `json:"deviceID"`
-		Action      string `json:"action"`      // reset/list-apps/describe
+		Action      string `json:"action"` // reset/list-apps/describe
 		AppID       string `json:"appId"`
 		Bootstrap   string `json:"bootstrap"`
 		InputTopic  string `json:"inputTopic"`

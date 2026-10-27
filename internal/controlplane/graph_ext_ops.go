@@ -135,9 +135,9 @@ func (s *Server) handleGraphUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID     string `json:"deviceID"`
-		Type         string `json:"type"`   // neo4j/nebulagraph
-		Action       string `json:"action"` // plan/upgrade/rollback/version
+		DeviceID      string `json:"deviceID"`
+		Type          string `json:"type"`   // neo4j/nebulagraph
+		Action        string `json:"action"` // plan/upgrade/rollback/version
 		TargetVersion string `json:"targetVersion"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -378,7 +378,7 @@ func (s *Server) handleGraphSchema(w http.ResponseWriter, r *http.Request) {
 		if req.Type == "nebulagraph" {
 			script = fmt.Sprintf(`nebula-console -e "CREATE EDGE %s(%s);" 2>/dev/null && echo "Edge %s created"`, req.Name, req.Props, req.Name)
 		} else {
-			script = fmt.Sprintf(`echo "Neo4j relationships are created inline in Cypher"`)
+			script = `echo "Neo4j relationships are created inline in Cypher"`
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_schema_create-edge")
 		if !ok {
@@ -433,7 +433,7 @@ func (s *Server) handleGraphBackupExt(w http.ResponseWriter, r *http.Request) {
 		if req.Type == "neo4j" {
 			script = fmt.Sprintf(`neo4j-admin database dump --to-path=%s 2>/dev/null && echo "Neo4j backup created" || echo "Neo4j not available"`, path)
 		} else {
-			script = fmt.Sprintf(`nebula-console -e "BACKUP;" 2>/dev/null && echo "NebulaGraph backup created" || echo "NebulaGraph not available"`)
+			script = `nebula-console -e "BACKUP;" 2>/dev/null && echo "NebulaGraph backup created" || echo "NebulaGraph not available"`
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_backup_backup")
 		if !ok {

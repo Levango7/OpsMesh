@@ -1,10 +1,11 @@
 // trace.go 实现可观测性链路追踪查询端点（与 Jaeger / OTel collector 对齐）。
 //
 // 路径与 Jaeger 查询端原生路径一致，不带 /api/v1 前缀：
-//   GET /api/services                列出所有服务
-//   GET /api/services/{service}/operations  列出服务的操作
-//   GET /api/traces                查询 traces（service, operation, start, end, limit, lookback, ...）
-//   GET /api/traces/{traceID}      获取 trace 详情（spans, duration, timestamps）
+//
+//	GET /api/services                列出所有服务
+//	GET /api/services/{service}/operations  列出服务的操作
+//	GET /api/traces                查询 traces（service, operation, start, end, limit, lookback, ...）
+//	GET /api/traces/{traceID}      获取 trace 详情（spans, duration, timestamps）
 //
 // 当前为 graceful 降级实现：未接入真实 Jaeger 时返回空结果，避免前端 404。
 // 后续可在此处添加向 Jaeger /api/services、/api/traces 等端点的转发代理。
@@ -28,18 +29,18 @@ type TraceOperation struct {
 
 // TraceQueryResult trace 查询结果。
 type TraceQueryResult struct {
-	Data []TraceSummary `json:"data"`
-	Total int `json:"total"`
+	Data  []TraceSummary `json:"data"`
+	Total int            `json:"total"`
 }
 
 // TraceSummary trace 摘要。
 type TraceSummary struct {
-	TraceID      string `json:"traceID"`
-	ServiceName  string `json:"serviceName"`
+	TraceID       string `json:"traceID"`
+	ServiceName   string `json:"serviceName"`
 	OperationName string `json:"operationName"`
-	Duration     int64  `json:"duration"`     // 纳秒
-	StartTime    int64  `json:"startTime"`    // 纳秒
-	SpanCount    int    `json:"spanCount"`
+	Duration      int64  `json:"duration"`  // 纳秒
+	StartTime     int64  `json:"startTime"` // 纳秒
+	SpanCount     int    `json:"spanCount"`
 }
 
 // TraceDetail trace 详情。
@@ -49,20 +50,20 @@ type TraceDetail struct {
 
 // TraceDetailItem trace 详情条目（与 Jaeger 返回格式兼容）。
 type TraceDetailItem struct {
-	TraceID string        `json:"traceID"`
-	Spans   []TraceSpan   `json:"spans"`
+	TraceID string      `json:"traceID"`
+	Spans   []TraceSpan `json:"spans"`
 }
 
 // TraceSpan 追踪跨度。
 type TraceSpan struct {
-	SpanID       string            `json:"spanID"`
-	TraceID      string            `json:"traceID"`
-	ParentSpanID string            `json:"parentSpanID"`
-	OperationName string           `json:"operationName"`
-	Kind         string            `json:"kind"`
-	StartTime    int64             `json:"startTime"`   // 纳秒
-	Duration     int64             `json:"duration"`     // 纳秒
-	Tags         map[string]string `json:"tags"`
+	SpanID        string            `json:"spanID"`
+	TraceID       string            `json:"traceID"`
+	ParentSpanID  string            `json:"parentSpanID"`
+	OperationName string            `json:"operationName"`
+	Kind          string            `json:"kind"`
+	StartTime     int64             `json:"startTime"` // 纳秒
+	Duration      int64             `json:"duration"`  // 纳秒
+	Tags          map[string]string `json:"tags"`
 }
 
 // ============================================================================
@@ -77,7 +78,7 @@ func (s *Server) handleTraceServices(w http.ResponseWriter, r *http.Request) {
 	}
 	// 未接入真实 Jaeger，返回空服务列表。
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"data": []TraceService{},
+		"data":  []TraceService{},
 		"total": 0,
 	})
 }
@@ -90,7 +91,7 @@ func (s *Server) handleTraceServiceOperations(w http.ResponseWriter, r *http.Req
 	}
 	// 未接入真实 Jaeger，返回空操作列表。
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"data": []TraceOperation{},
+		"data":  []TraceOperation{},
 		"total": 0,
 	})
 }
@@ -103,7 +104,7 @@ func (s *Server) handleListTraces(w http.ResponseWriter, r *http.Request) {
 	}
 	// 未接入真实 Jaeger，返回空 traces 列表。
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"data": []TraceSummary{},
+		"data":  []TraceSummary{},
 		"total": 0,
 	})
 }

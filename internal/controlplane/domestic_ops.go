@@ -1,6 +1,7 @@
 // Package controlplane domestic_ops.go 实现国产/信创系统与硬件运维
 // 支持：统信 UOS、麒麟 (NeoKylin/OpenKylin)、openEuler、鲲鹏 (Kunpeng)、昇腾 (Ascend)、
-//       寒武纪 (Cambricon)、摩尔线程 (Moore Threads)、GaussDB
+//
+//	寒武纪 (Cambricon)、摩尔线程 (Moore Threads)、GaussDB
 package controlplane
 
 import (
@@ -277,11 +278,12 @@ func (s *Server) handleDomesticMiddleware(w http.ResponseWriter, r *http.Request
 	var script string
 	switch req.Action {
 	case "status":
-		if req.Type == "tongweb" {
+		switch req.Type {
+		case "tongweb":
 			script = `echo "=== TongWeb Status ===" && /opt/tongweb/bin/version.sh 2>/dev/null || echo "TongWeb not installed" && ps aux | grep -i tongweb | grep -v grep | head -3`
-		} else if req.Type == "bes" {
+		case "bes":
 			script = `echo "=== BES Status ===" && /opt/bes/bin/version.sh 2>/dev/null || echo "BES not installed" && ps aux | grep -i bes | grep -v grep | head -3`
-		} else {
+		default:
 			script = `echo "=== InforSuite Status ===" && /opt/inforsuite/bin/version.sh 2>/dev/null || echo "InforSuite not installed"`
 		}
 	case "deploy":
@@ -289,27 +291,30 @@ func (s *Server) handleDomesticMiddleware(w http.ResponseWriter, r *http.Request
 		if version == "" {
 			version = "8.0"
 		}
-		if req.Type == "tongweb" {
+		switch req.Type {
+		case "tongweb":
 			script = fmt.Sprintf(`echo "Deploying TongWeb %s..." && echo "TongWeb %s deployed"`, version, version)
-		} else if req.Type == "bes" {
+		case "bes":
 			script = fmt.Sprintf(`echo "Deploying BES %s..." && echo "BES %s deployed"`, version, version)
-		} else {
+		default:
 			script = fmt.Sprintf(`echo "Deploying InforSuite %s..." && echo "InforSuite %s deployed"`, version, version)
 		}
 	case "start":
-		if req.Type == "tongweb" {
+		switch req.Type {
+		case "tongweb":
 			script = `/opt/tongweb/bin/startup.sh 2>/dev/null && echo "TongWeb started" || echo "TongWeb not available"`
-		} else if req.Type == "bes" {
+		case "bes":
 			script = `/opt/bes/bin/startup.sh 2>/dev/null && echo "BES started" || echo "BES not available"`
-		} else {
+		default:
 			script = `/opt/inforsuite/bin/startup.sh 2>/dev/null && echo "InforSuite started" || echo "InforSuite not available"`
 		}
 	case "stop":
-		if req.Type == "tongweb" {
+		switch req.Type {
+		case "tongweb":
 			script = `/opt/tongweb/bin/shutdown.sh 2>/dev/null && echo "TongWeb stopped" || echo "TongWeb not available"`
-		} else if req.Type == "bes" {
+		case "bes":
 			script = `/opt/bes/bin/shutdown.sh 2>/dev/null && echo "BES stopped" || echo "BES not available"`
-		} else {
+		default:
 			script = `/opt/inforsuite/bin/shutdown.sh 2>/dev/null && echo "InforSuite stopped" || echo "InforSuite not available"`
 		}
 	default:

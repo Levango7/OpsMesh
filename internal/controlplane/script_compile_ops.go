@@ -27,9 +27,9 @@ func (s *Server) handleScriptExec(w http.ResponseWriter, r *http.Request) {
 		DeviceID string `json:"deviceID"`
 		Language string `json:"language"` // shell/python/powershell/cmd/bat/ruby/perl/node/go/rust/java
 		Content  string `json:"content"`
-		Args     string `json:"args"`     // 命令行参数
-		WorkDir  string `json:"workDir"`  // 工作目录
-		Timeout  int    `json:"timeout"`  // 超时 (秒)
+		Args     string `json:"args"`    // 命令行参数
+		WorkDir  string `json:"workDir"` // 工作目录
+		Timeout  int    `json:"timeout"` // 超时 (秒)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -168,8 +168,8 @@ func (s *Server) handleScriptCompile(w http.ResponseWriter, r *http.Request) {
 		DeviceID string `json:"deviceID"`
 		Language string `json:"language"` // go/rust/java/c/cpp/csharp
 		Source   string `json:"source"`
-		Output   string `json:"output"`   // 输出文件名
-		Args     string `json:"args"`     // 编译参数
+		Output   string `json:"output"` // 输出文件名
+		Args     string `json:"args"`   // 编译参数
 		WorkDir  string `json:"workDir"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -254,11 +254,11 @@ func (s *Server) handleBuildTool(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		Tool     string `json:"tool"`     // maven/gradle/npm/yarn/cargo/make/cmake/go
-		Action   string `json:"action"`   // build/test/clean/install/package
-		Project  string `json:"project"`  // 项目路径
-		Args     string `json:"args"`     // 额外参数
-		Profile  string `json:"profile"`  // Maven profile / Gradle task
+		Tool     string `json:"tool"`    // maven/gradle/npm/yarn/cargo/make/cmake/go
+		Action   string `json:"action"`  // build/test/clean/install/package
+		Project  string `json:"project"` // 项目路径
+		Args     string `json:"args"`    // 额外参数
+		Profile  string `json:"profile"` // Maven profile / Gradle task
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})

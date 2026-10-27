@@ -22,11 +22,11 @@ func (s *Server) handleKafkaRebalance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID   string `json:"deviceID"`
-		Action     string `json:"action"`     // preferred-leader-election / reassign-partitions / cancel-reassignment
-		Topics     string `json:"topics"`    // 逗号分隔的 topic 列表 (空=全部)
-		Throttle   int    `json:"throttle"`  // 带宽限制 (bytes/sec, 0=不限)
-		Timeout    int    `json:"timeout"`   // 超时 (秒)
+		DeviceID string `json:"deviceID"`
+		Action   string `json:"action"`   // preferred-leader-election / reassign-partitions / cancel-reassignment
+		Topics   string `json:"topics"`   // 逗号分隔的 topic 列表 (空=全部)
+		Throttle int    `json:"throttle"` // 带宽限制 (bytes/sec, 0=不限)
+		Timeout  int    `json:"timeout"`  // 超时 (秒)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -104,10 +104,10 @@ func (s *Server) handleKafkaDeleteRecords(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Topic    string `json:"topic"`
-		Partition int   `json:"partition"`
-		Offset   int64  `json:"offset"`
+		DeviceID  string `json:"deviceID"`
+		Topic     string `json:"topic"`
+		Partition int    `json:"partition"`
+		Offset    int64  `json:"offset"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -143,7 +143,7 @@ func (s *Server) handleKafkaDelegationToken(w http.ResponseWriter, r *http.Reque
 		Action    string `json:"action"`    // create/describe/expire/renew
 		Principal string `json:"principal"` // User:xxx
 		TokenID   string `json:"tokenId"`
-		Expiry    int64  `json:"expiry"`   // ms
+		Expiry    int64  `json:"expiry"` // ms
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -216,7 +216,7 @@ func (s *Server) handleKafkaConfig(w http.ResponseWriter, r *http.Request) {
 		EntityType string `json:"entityType"` // topics / brokers
 		EntityName string `json:"entityName"` // topic name or broker id
 		Action     string `json:"action"`     // describe / alter / delete
-		Config     string `json:"config"`    // key=value,key=value
+		Config     string `json:"config"`     // key=value,key=value
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})

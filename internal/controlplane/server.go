@@ -17,12 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Levango7/OpsMesh/internal/aiops"
 	"github.com/Levango7/OpsMesh/internal/ai/agent"
-	"github.com/Levango7/OpsMesh/internal/ai/gateway"
-	"github.com/Levango7/OpsMesh/internal/cost"
-	"github.com/Levango7/OpsMesh/internal/k8slifecycle"
-	"github.com/Levango7/OpsMesh/internal/knowledge"
+	aigateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
+	"github.com/Levango7/OpsMesh/internal/aiops"
 	"github.com/Levango7/OpsMesh/internal/alertengine"
 	"github.com/Levango7/OpsMesh/internal/approval"
 	"github.com/Levango7/OpsMesh/internal/cmdb"
@@ -32,12 +29,15 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/factory"
 	"github.com/Levango7/OpsMesh/internal/controlplane/metricscache"
 	"github.com/Levango7/OpsMesh/internal/controlplane/pluginhost"
+	"github.com/Levango7/OpsMesh/internal/cost"
 	"github.com/Levango7/OpsMesh/internal/cron"
 	"github.com/Levango7/OpsMesh/internal/deploy"
 	"github.com/Levango7/OpsMesh/internal/egress"
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/helm"
 	"github.com/Levango7/OpsMesh/internal/k8s"
+	"github.com/Levango7/OpsMesh/internal/k8slifecycle"
+	"github.com/Levango7/OpsMesh/internal/knowledge"
 	"github.com/Levango7/OpsMesh/internal/logstore"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/metrics"
@@ -45,8 +45,8 @@ import (
 	"github.com/Levango7/OpsMesh/internal/orchestration"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 	"github.com/Levango7/OpsMesh/internal/platform"
-	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider"
+	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/secrets"
 	"github.com/Levango7/OpsMesh/internal/store"
 	"github.com/Levango7/OpsMesh/internal/tlsutil"
@@ -60,25 +60,25 @@ type Server struct {
 	metricsPort int
 	// metricsCounts 缓存 /metrics 的应用级计数（P1-6：每次抓取 5 次全量扫描 → TTL 内合并）。
 	// 零值 = 不缓存，故测试里直接 &Server{...} 构造的老路径行为不变。
-	metricsCounts metricscache.AppCountsCache
-	requireAuth   bool
-	tlsCert       string
-	tlsKey        string
-	clientCA      string
-	shutdownWait  time.Duration
-	bus           events.Bus             // 审计/告警事件总线（默认 noop）
-	metrics       *metrics.M             // 观测指标
-	store         store.Store            // 持久化存储（供 CMDB 等子系统复用）
-	cmdbHandler   *cmdb.Handler          // CMDB 处理器（Phase 1）
-	logHandler    *logstore.Handler      // M6 日志检索处理器
-	deployHandler *deploy.Handler        // M3 部署中心处理器
-	orchHandler   *orchestration.Handler // M5 作业编排中心处理器
-	aiopsHandler     *aiops.Handler         // AIOps 故障分析与智能修复
-	aiopsEngine      *aiops.Engine          // AIOps 引擎实例（供告警→根因分析集成调用）
-	aiGatewayHandler *aigateway.AIGatewayHandler // AI 网关处理器（chat/embed/RAG/prompts）
-	agentHandler     *agent.AgentHandler        // AI Agent 编排处理器
-	knowledgeHandler *knowledge.KnowledgeHandler // 知识库处理器
-	costHandler      *cost.CostHandler          // 成本控制处理器
+	metricsCounts       metricscache.AppCountsCache
+	requireAuth         bool
+	tlsCert             string
+	tlsKey              string
+	clientCA            string
+	shutdownWait        time.Duration
+	bus                 events.Bus                        // 审计/告警事件总线（默认 noop）
+	metrics             *metrics.M                        // 观测指标
+	store               store.Store                       // 持久化存储（供 CMDB 等子系统复用）
+	cmdbHandler         *cmdb.Handler                     // CMDB 处理器（Phase 1）
+	logHandler          *logstore.Handler                 // M6 日志检索处理器
+	deployHandler       *deploy.Handler                   // M3 部署中心处理器
+	orchHandler         *orchestration.Handler            // M5 作业编排中心处理器
+	aiopsHandler        *aiops.Handler                    // AIOps 故障分析与智能修复
+	aiopsEngine         *aiops.Engine                     // AIOps 引擎实例（供告警→根因分析集成调用）
+	aiGatewayHandler    *aigateway.AIGatewayHandler       // AI 网关处理器（chat/embed/RAG/prompts）
+	agentHandler        *agent.AgentHandler               // AI Agent 编排处理器
+	knowledgeHandler    *knowledge.KnowledgeHandler       // 知识库处理器
+	costHandler         *cost.CostHandler                 // 成本控制处理器
 	k8sLifecycleHandler *k8slifecycle.K8sLifecycleHandler // K8s 生命周期处理器
 	// 告警推送去重（notifyLoop 防重复）：按告警指纹（AlertID）记录已推送集合，
 	// 替代旧版全局单一时间高水位 lastAlertSent——时间水位对乱序插入/跨租户告警/
@@ -187,7 +187,7 @@ type Server struct {
 	// 由 NewServer 调用 secrets.FromConfig 构造；nil=未启用密钥外置（向后兼容）。
 	// 注入到 alertNotifier 与 buildChannel，使渠道构造支持 ${key} 格式密钥引用解析。
 	// 构造失败时：生产模式 fail-fast，非生产模式打 Warning 继续（保持本地体验兼容）。
-	secretProvider   secrets.SecretProvider
+	secretProvider       secrets.SecretProvider
 	cloudProviderFactory *cloudprovider.AdapterFactory
 
 	// 集成：告警抑制器（基于活跃告警状态的动态抑制）。
@@ -345,37 +345,37 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		cfg:           cfg,
-		store:         st,
-		httpPort:      cfg.HTTPPort,
-		grpcPort:      cfg.GRPCPort,
-		metricsPort:   cfg.MetricsPort,
-		metricsCounts: metricscache.AppCountsCache{TTL: cfg.MetricsCacheTTL},
-		requireAuth:   cfg.RequireAuth,
-		tlsCert:       cfg.TLSCert,
-		tlsKey:        cfg.TLSKey,
-		clientCA:      cfg.ClientCA,
-		shutdownWait:  cfg.ShutdownTimeout,
-		bus:           bus,
-		metrics:       metrics.New(),
-		cmdbHandler:   factory.NewCMDBHandler(st),
-		logHandler:    factory.NewLogHandler(st, cfg),
-		deployHandler: deployHandler,
-		orchHandler:   orchHandler,
+		cfg:              cfg,
+		store:            st,
+		httpPort:         cfg.HTTPPort,
+		grpcPort:         cfg.GRPCPort,
+		metricsPort:      cfg.MetricsPort,
+		metricsCounts:    metricscache.AppCountsCache{TTL: cfg.MetricsCacheTTL},
+		requireAuth:      cfg.RequireAuth,
+		tlsCert:          cfg.TLSCert,
+		tlsKey:           cfg.TLSKey,
+		clientCA:         cfg.ClientCA,
+		shutdownWait:     cfg.ShutdownTimeout,
+		bus:              bus,
+		metrics:          metrics.New(),
+		cmdbHandler:      factory.NewCMDBHandler(st),
+		logHandler:       factory.NewLogHandler(st, cfg),
+		deployHandler:    deployHandler,
+		orchHandler:      orchHandler,
 		aiopsHandler:     aiops.NewHandler(aiops.NewEngine(cfg, st)),
 		aiopsEngine:      aiops.NewEngine(cfg, st),
 		aiGatewayHandler: aigateway.NewAIGatewayHandler(aigateway.NewGateway(), aigateway.NewInMemoryVectorStore(), 5),
-		agentHandler:     agent.NewAgentHandler(
+		agentHandler: agent.NewAgentHandler(
 			agent.NewOrchestrator(aigateway.NewGateway(), agent.DefaultToolRegistry(), agent.NewMemoryManager()),
 			aigateway.NewGateway(),
 			agent.NewMemoryManager(),
 		),
-		knowledgeHandler: knowledge.NewKnowledgeHandler(knowledge.NewInMemoryKnowledgeStore(), aigateway.NewGateway()),
-		costHandler:      cost.NewCostHandler(cost.NewBudgetManager(), cost.NewModelRouter(), cost.NewCostTracker()),
-		k8sLifecycleHandler: k8slifecycle.NewK8sLifecycleHandler(),
+		knowledgeHandler:     knowledge.NewKnowledgeHandler(knowledge.NewInMemoryKnowledgeStore(), aigateway.NewGateway()),
+		costHandler:          cost.NewCostHandler(cost.NewBudgetManager(), cost.NewModelRouter(), cost.NewCostTracker()),
+		k8sLifecycleHandler:  k8slifecycle.NewK8sLifecycleHandler(),
 		cloudProviderFactory: cloudprovider.NewAdapterFactory(),
-		eventSubs:     make(map[chan SSEEvent]struct{}), // SSE 订阅者集合
-		alertAggr:     notify.NewAlertAggregator(),      // 告警聚合器
+		eventSubs:            make(map[chan SSEEvent]struct{}), // SSE 订阅者集合
+		alertAggr:            notify.NewAlertAggregator(),      // 告警聚合器
 		alertChannels: &notify.Channels{ // 多通道（Webhook + Email）
 			NotifierType: cfg.AlertNotifierType,
 			WebhookURL:   cfg.AlertWebhookURL,

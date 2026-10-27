@@ -83,10 +83,10 @@ func (s *Server) handlePulsarTopic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // list/create/delete
-		Topic    string `json:"topic"`
-		Tenant   string `json:"tenant"`
+		DeviceID  string `json:"deviceID"`
+		Action    string `json:"action"` // list/create/delete
+		Topic     string `json:"topic"`
+		Tenant    string `json:"tenant"`
 		Namespace string `json:"namespace"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -139,11 +139,11 @@ func (s *Server) handlePulsarSubscription(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		DeviceID  string `json:"deviceID"`
-		Action    string `json:"action"` // list/create/delete
-		Topic     string `json:"topic"`
-		SubName   string `json:"subName"`
-		SubType   string `json:"subType"` // Exclusive/Shared/Failover/Key_Shared
+		DeviceID string `json:"deviceID"`
+		Action   string `json:"action"` // list/create/delete
+		Topic    string `json:"topic"`
+		SubName  string `json:"subName"`
+		SubType  string `json:"subType"` // Exclusive/Shared/Failover/Key_Shared
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -291,14 +291,14 @@ func (s *Server) handlePulsarFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // list/create/delete/status
-		Tenant   string `json:"tenant"`
-		NS       string `json:"namespace"`
-		Name     string `json:"name"`
+		DeviceID  string `json:"deviceID"`
+		Action    string `json:"action"` // list/create/delete/status
+		Tenant    string `json:"tenant"`
+		NS        string `json:"namespace"`
+		Name      string `json:"name"`
 		ClassName string `json:"className"`
-		Inputs   string `json:"inputs"`
-		Outputs  string `json:"outputs"`
+		Inputs    string `json:"inputs"`
+		Outputs   string `json:"outputs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -404,5 +404,3 @@ func (s *Server) registerRocketMQExtendedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/middleware/rocketmq/consumer-group", s.handleRocketMQConsumerGroup)
 	mux.HandleFunc("/api/v1/middleware/rocketmq/acl", s.handleRocketMQACL)
 }
-
-

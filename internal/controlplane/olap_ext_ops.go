@@ -288,15 +288,14 @@ func (s *Server) handleDorisUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID     string `json:"deviceID"`
-		Action       string `json:"action"`       // plan/upgrade/rollback/version
+		DeviceID      string `json:"deviceID"`
+		Action        string `json:"action"` // plan/upgrade/rollback/version
 		TargetVersion string `json:"targetVersion"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}
-
 
 	var script string
 	switch req.Action {

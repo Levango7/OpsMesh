@@ -267,8 +267,8 @@ func (s *Server) handleAppTuning(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		App      string `json:"app"`      // jvm/mysql/nginx/redis/es
-		Action   string `json:"action"`  // analyze/recommend/apply
+		App      string `json:"app"`    // jvm/mysql/nginx/redis/es
+		Action   string `json:"action"` // analyze/recommend/apply
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})

@@ -62,7 +62,7 @@ func (s *Server) handleActiveMQNetworkOfBrokers(w http.ResponseWriter, r *http.R
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // setup/status
+		Action   string `json:"action"`  // setup/status
 		Brokers  string `json:"brokers"` // 逗号分隔的 broker 地址
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -198,8 +198,8 @@ func (s *Server) handleActiveMQUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID     string `json:"deviceID"`
-		Action       string `json:"action"`       // plan/upgrade/rollback/version
+		DeviceID      string `json:"deviceID"`
+		Action        string `json:"action"` // plan/upgrade/rollback/version
 		TargetVersion string `json:"targetVersion"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

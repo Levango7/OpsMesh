@@ -156,14 +156,14 @@ func (s *Server) handleListPDBs(w http.ResponseWriter, r *http.Request, client *
 			maxUnavailable = pdb.Spec.MaxUnavailable.String()
 		}
 		out = append(out, map[string]interface{}{
-			"name":           pdb.Name,
-			"namespace":      pdb.Namespace,
-			"minAvailable":   minAvailable,
-			"maxUnavailable": maxUnavailable,
-			"currentHealthy": pdb.Status.CurrentHealthy,
-			"desiredHealthy": pdb.Status.DesiredHealthy,
+			"name":               pdb.Name,
+			"namespace":          pdb.Namespace,
+			"minAvailable":       minAvailable,
+			"maxUnavailable":     maxUnavailable,
+			"currentHealthy":     pdb.Status.CurrentHealthy,
+			"desiredHealthy":     pdb.Status.DesiredHealthy,
 			"disruptionsAllowed": pdb.Status.DisruptionsAllowed,
-			"age":            formatAge(pdb.CreationTimestamp.Time),
+			"age":                formatAge(pdb.CreationTimestamp.Time),
 		})
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"pdbs": out})
@@ -355,9 +355,9 @@ func (s *Server) handleListRuntimeClasses(w http.ResponseWriter, r *http.Request
 	out := make([]map[string]interface{}, 0, len(list.Items))
 	for _, rc := range list.Items {
 		out = append(out, map[string]interface{}{
-			"name":      rc.Name,
-			"handler":   rc.Handler,
-			"age":       formatAge(rc.CreationTimestamp.Time),
+			"name":    rc.Name,
+			"handler": rc.Handler,
+			"age":     formatAge(rc.CreationTimestamp.Time),
 		})
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"runtimeclasses": out})
@@ -393,11 +393,11 @@ func (s *Server) handleListLeases(w http.ResponseWriter, r *http.Request, client
 			renewTime = lease.Spec.RenewTime.Time.UTC().Format("2006-01-02T15:04:05Z")
 		}
 		out = append(out, map[string]interface{}{
-			"name":        lease.Name,
-			"namespace":   lease.Namespace,
-			"holder":      holder,
-			"renewTime":   renewTime,
-			"age":         formatAge(lease.CreationTimestamp.Time),
+			"name":      lease.Name,
+			"namespace": lease.Namespace,
+			"holder":    holder,
+			"renewTime": renewTime,
+			"age":       formatAge(lease.CreationTimestamp.Time),
 		})
 	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"leases": out})

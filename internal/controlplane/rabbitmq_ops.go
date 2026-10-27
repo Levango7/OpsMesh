@@ -5,12 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
-
-var rabbitmqResourceRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // ============================================================================
 // RabbitMQ 部署
@@ -250,7 +247,7 @@ func (s *Server) handleRabbitMQPolicy(w http.ResponseWriter, r *http.Request) {
 		Action   string `json:"action"` // set/clear/list
 		Name     string `json:"name"`
 		Pattern  string `json:"pattern"`
-		Def      string `json:"def"`    // JSON definition
+		Def      string `json:"def"` // JSON definition
 		Priority int    `json:"priority"`
 		Vhost    string `json:"vhost"`
 	}
@@ -308,12 +305,12 @@ func (s *Server) handleRabbitMQShovel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // list/add/delete
-		Name     string `json:"name"`
-		SrcURI   string `json:"srcUri"`
-		DestURI  string `json:"destUri"`
-		SrcQueue string `json:"srcQueue"`
+		DeviceID  string `json:"deviceID"`
+		Action    string `json:"action"` // list/add/delete
+		Name      string `json:"name"`
+		SrcURI    string `json:"srcUri"`
+		DestURI   string `json:"destUri"`
+		SrcQueue  string `json:"srcQueue"`
 		DestQueue string `json:"destQueue"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

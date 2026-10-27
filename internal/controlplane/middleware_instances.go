@@ -76,8 +76,7 @@ func (s *Server) deriveMiddlewareInstances(tenantID string, filterAgentID, filte
 
 	// 按复合键构建实例映射。
 	type entry struct {
-		inst     middlewareInstance
-		deployed bool
+		inst middlewareInstance
 	}
 	m := make(map[string]*entry)
 
@@ -191,26 +190,6 @@ func resolveMiddlewareVersionStr(tpl *MiddlewareTemplate, requestedVersion strin
 		return tpl.Version
 	}
 	return v.Version
-}
-
-// mergeMiddlewareParams merges template params with version-specific params (version wins on name conflicts).
-func mergeMiddlewareParams(tplParams []MiddlewareParam, versionParams []MiddlewareParam) []MiddlewareParam {
-	merged := make([]MiddlewareParam, len(tplParams))
-	copy(merged, tplParams)
-	for _, vp := range versionParams {
-		found := false
-		for i, mp := range merged {
-			if mp.Name == vp.Name {
-				merged[i] = vp
-				found = true
-				break
-			}
-		}
-		if !found {
-			merged = append(merged, vp)
-		}
-	}
-	return merged
 }
 
 // selectedMiddlewareVersionImage returns the DockerImage for the selected version.

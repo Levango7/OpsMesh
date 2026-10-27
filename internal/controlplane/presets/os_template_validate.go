@@ -45,7 +45,7 @@ func BuildOSExecuteCommand(commands string, params []string) (scriptBody, comman
 
 // injectPositionalParams 把位置参数以 `set -- 'p1' 'p2'` 注入脚本首行。
 //
-// 单引号转义：' -> '\''（与改造前一致，值里的单引号不会提前闭合引号）。
+// 单引号转义：' -> '\”（与改造前一致，值里的单引号不会提前闭合引号）。
 // shebang 行（#!/bin/bash）保持在脚本首行——脚本体落盘后仍是一个合法的脚本文件。
 func injectPositionalParams(commands string, params []string) string {
 	if len(params) == 0 {

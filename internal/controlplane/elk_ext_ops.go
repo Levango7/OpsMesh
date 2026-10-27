@@ -249,10 +249,10 @@ func (s *Server) handleElasticsearchMaintenance(w http.ResponseWriter, r *http.R
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // force-merge/clear-cache/flush/refresh/shrink/split
-		Index    string `json:"index"`
-		MaxSegments int `json:"maxSegments"`
+		DeviceID    string `json:"deviceID"`
+		Action      string `json:"action"` // force-merge/clear-cache/flush/refresh/shrink/split
+		Index       string `json:"index"`
+		MaxSegments int    `json:"maxSegments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})

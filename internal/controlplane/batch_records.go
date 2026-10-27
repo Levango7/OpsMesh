@@ -1,15 +1,6 @@
 // batch_records.go 批量/灰度记录的持久化接线（TD-60 task 域 R6）。
 //
-// 分工（与 TD-66 P1 路由持久化同构，但**失败语义刻意不同**，理由写在下面）：
-//   - 建批次/建灰度后 **写穿** 到 store；
-//   - 按 ID 查询时内存索引未命中 ⇒ **回落 store**（这是"重启后 batchID 仍可查"的路径）。
-//
-// **为什么写失败不回滚请求**（与 P1 路由持久化的"失败即 5xx"不同）：
-// 批次的任务实例在插入索引之前**已经写进 store 了**（CreateTask 逐台落库）——此时若因为
-// "记录写失败"给客户端 5xx，客户端会重试，而重试会**再建一批任务**（重复下发）。
-// 所以这里选"尽力持久化 + 失败留痕"：内存视图照常服务（与切流前行为一致），
-// 代价是极端情况下该批次重启后查不到（退化成 R6 修复前的行为，而不是制造重复任务）。
-// 这个取舍写在这里，免得后来者以为忘了处理错误。
+// 分工：按 ID 查询时内存索引未命中 ⇒ **回落 store**（这是"重启后 batchID 仍可查"的路径）。
 package controlplane
 
 import (
@@ -17,7 +8,6 @@ import (
 	"encoding/json"
 
 	"github.com/Levango7/OpsMesh/internal/logx"
-	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // 记录类型（与 task_records.kind 取值一致）。
@@ -25,24 +15,6 @@ const (
 	taskRecordKindBatch  = "batch"
 	taskRecordKindCanary = "canary"
 )
-
-// persistTaskRecord 把记录整段序列化后写穿到 store。失败只留痕，不阻断请求（理由见文件头）。
-func (s *Server) persistTaskRecord(kind, tenantID, id string, v any) {
-	if s.store == nil {
-		return
-	}
-	payload, err := json.Marshal(v)
-	if err != nil {
-		logx.Warn(context.Background(), "任务记录序列化失败（该记录重启后不可查）",
-			"kind", kind, "id", id, "err", err)
-		return
-	}
-	rec := &model.TaskRecord{Kind: kind, ID: id, TenantID: tenantID, Payload: payload}
-	if err := s.store.SaveTaskRecord(rec); err != nil {
-		logx.Warn(context.Background(), "任务记录持久化失败（该记录重启后不可查；内存视图仍可服务）",
-			"kind", kind, "id", id, "err", err)
-	}
-}
 
 // cloneBatchTask / cloneCanaryRelease 深拷贝（索引里的对象只读共享，出索引必须给副本：
 // 否则调用方在锁外读到的切片可能正被并发写者改写）。

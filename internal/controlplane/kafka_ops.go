@@ -21,8 +21,6 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
-// kafkaGroupRe 校验 Consumer Group 名称。
-var kafkaGroupRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // kafkaResourceRe 校验资源名称（ACL/Connector/Schema 等）。
 var kafkaResourceRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
@@ -40,6 +38,7 @@ func (s *Server) dispatchKafkaTask(w http.ResponseWriter, r *http.Request, devic
 	}
 	return task.TaskID, true
 }
+
 // ============================================================================
 // Broker / Cluster 管理
 // ============================================================================
@@ -145,10 +144,6 @@ func (s *Server) handleKafkaACL(w http.ResponseWriter, r *http.Request) {
 		op := req.Operation
 		if op == "" {
 			op = "All"
-		}
-		perm := req.Permission
-		if perm == "" {
-			perm = "Allow"
 		}
 		name := req.Name
 		if name == "" {

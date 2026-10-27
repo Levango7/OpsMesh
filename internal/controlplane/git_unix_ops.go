@@ -838,5 +838,3 @@ func (s *Server) registerGitUnixRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/os/disk-health", s.handleDiskHealth)
 	mux.HandleFunc("/api/v1/os/raid", s.handleRAID)
 }
-
-

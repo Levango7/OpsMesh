@@ -115,8 +115,8 @@ func (s *Server) handleRocketMQUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID     string `json:"deviceID"`
-		Action       string `json:"action"`       // plan/upgrade/rollback/version
+		DeviceID      string `json:"deviceID"`
+		Action        string `json:"action"` // plan/upgrade/rollback/version
 		TargetVersion string `json:"targetVersion"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

@@ -106,7 +106,7 @@ func (s *Server) handleVectorBackup(w http.ResponseWriter, r *http.Request) {
 		case "milvus":
 			script = fmt.Sprintf(`milvus-backup create -n backup_$(date +%%Y%%m%%d) 2>/dev/null && echo "Milvus backup created" || echo "Milvus backup not available"`)
 		case "qdrant":
-			script = fmt.Sprintf(`curl -s -X POST http://localhost:6333/snapshots 2>/dev/null && echo "Qdrant snapshot created" || echo "Qdrant not available"`)
+			script = `curl -s -X POST http://localhost:6333/snapshots 2>/dev/null && echo "Qdrant snapshot created" || echo "Qdrant not available"`
 		case "pgvector":
 			script = fmt.Sprintf(`pg_dump -Fc -f %s/vector_backup.dump 2>/dev/null && echo "pgvector backup created" || echo "pgvector not available"`, path)
 		default:
@@ -214,9 +214,9 @@ func (s *Server) handleVectorUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID     string `json:"deviceID"`
-		Type         string `json:"type"`   // milvus/qdrant/pgvector
-		Action       string `json:"action"` // plan/upgrade/rollback/version
+		DeviceID      string `json:"deviceID"`
+		Type          string `json:"type"`   // milvus/qdrant/pgvector
+		Action        string `json:"action"` // plan/upgrade/rollback/version
 		TargetVersion string `json:"targetVersion"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

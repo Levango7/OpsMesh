@@ -24,17 +24,17 @@ func (s *Server) handleDistFS(w http.ResponseWriter, r *http.Request) {
 		Mode     string `json:"mode"`   // single/cluster
 		Version  string `json:"version"`
 		// Ceph specific
-		Pool     string `json:"pool"`
-		PGNum    int    `json:"pgNum"`
+		Pool  string `json:"pool"`
+		PGNum int    `json:"pgNum"`
 		// GlusterFS specific
-		Volume   string `json:"volume"`
-		Bricks   string `json:"bricks"`
+		Volume string `json:"volume"`
+		Bricks string `json:"bricks"`
 		// HDFS specific
-		Path     string `json:"path"`
+		Path string `json:"path"`
 		// Common
-		File     string `json:"file"`
-		Remote   string `json:"remote"`
-		Host     string `json:"host"`
+		File   string `json:"file"`
+		Remote string `json:"remote"`
+		Host   string `json:"host"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -76,18 +76,14 @@ func (s *Server) handleCeph(w http.ResponseWriter, r *http.Request, req struct {
 	Bricks   string `json:"bricks"`
 	Path     string `json:"path"`
 	File     string `json:"file"`
-		Remote   string `json:"remote"`
-		Host     string `json:"host"`
-	}) {
+	Remote   string `json:"remote"`
+	Host     string `json:"host"`
+}) {
 	switch req.Action {
 	case "deploy":
 		version := req.Version
 		if version == "" {
 			version = "18.2.0" // Reef
-		}
-		mode := req.Mode
-		if mode == "" {
-			mode = "single"
 		}
 		script := fmt.Sprintf(`cephadm bootstrap --mon-ip 127.0.0.1 --initial-dashboard-user admin --initial-dashboard-password admin 2>/dev/null || (apt-get install -y ceph ceph-mgr ceph-mon ceph-osd 2>/dev/null && echo "Ceph %s deployed (manual mode)")`, version)
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "ceph_deploy")
@@ -185,9 +181,9 @@ func (s *Server) handleGlusterFS(w http.ResponseWriter, r *http.Request, req str
 	Bricks   string `json:"bricks"`
 	Path     string `json:"path"`
 	File     string `json:"file"`
-		Remote   string `json:"remote"`
-		Host     string `json:"host"`
-	}) {
+	Remote   string `json:"remote"`
+	Host     string `json:"host"`
+}) {
 	switch req.Action {
 	case "deploy":
 		version := req.Version
@@ -290,9 +286,9 @@ func (s *Server) handleHDFS(w http.ResponseWriter, r *http.Request, req struct {
 	Bricks   string `json:"bricks"`
 	Path     string `json:"path"`
 	File     string `json:"file"`
-		Remote   string `json:"remote"`
-		Host     string `json:"host"`
-	}) {
+	Remote   string `json:"remote"`
+	Host     string `json:"host"`
+}) {
 	switch req.Action {
 	case "deploy":
 		version := req.Version
@@ -407,9 +403,9 @@ func (s *Server) handleSeaweedFS(w http.ResponseWriter, r *http.Request, req str
 	Bricks   string `json:"bricks"`
 	Path     string `json:"path"`
 	File     string `json:"file"`
-		Remote   string `json:"remote"`
-		Host     string `json:"host"`
-	}) {
+	Remote   string `json:"remote"`
+	Host     string `json:"host"`
+}) {
 	switch req.Action {
 	case "deploy":
 		version := req.Version

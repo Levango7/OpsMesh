@@ -14,12 +14,12 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/ai/agent"
-	"github.com/Levango7/OpsMesh/internal/ai/gateway"
+	aigateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
-	"github.com/Levango7/OpsMesh/internal/cost"
-	"github.com/Levango7/OpsMesh/internal/knowledge"
-	"github.com/Levango7/OpsMesh/internal/k8slifecycle"
 	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
+	"github.com/Levango7/OpsMesh/internal/cost"
+	"github.com/Levango7/OpsMesh/internal/k8slifecycle"
+	"github.com/Levango7/OpsMesh/internal/knowledge"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 )
@@ -270,7 +270,7 @@ func (s *Server) Start() error {
 	s.registerOSExtRoutes(mux)
 	s.registerDomesticRoutes(mux)
 	s.registerOSTuningRoutes(mux)
-	s.registerGitUnixRoutes(mux)	// 安全运维：漏洞扫描/基线修复/组件更新/回滚（固定路径优先，再泛路由 /api/v1/security/）。
+	s.registerGitUnixRoutes(mux) // 安全运维：漏洞扫描/基线修复/组件更新/回滚（固定路径优先，再泛路由 /api/v1/security/）。
 	s.registerSecurityRoutes(mux)
 	// 虚拟化衔接：KVM/vSphere/OpenStack/Proxmox（固定路径优先，再泛路由 /api/v1/virt/）。
 	s.registerVirtRoutes(mux)
@@ -446,9 +446,9 @@ func (s *Server) Start() error {
 	// 前端 trace.js 覆盖 baseURL 为 ''，直接请求 /api/services、/api/traces。
 	// 当前为 graceful 降级实现，返回空结果，避免前端 404。
 	mux.HandleFunc("GET /api/services", s.handleTraceServices)
-	mux.HandleFunc("GET /api/services/", s.handleTraceRouting)   // {service}/operations
+	mux.HandleFunc("GET /api/services/", s.handleTraceRouting) // {service}/operations
 	mux.HandleFunc("GET /api/traces", s.handleListTraces)
-	mux.HandleFunc("GET /api/traces/", s.handleTraceRouting)    // {traceID}
+	mux.HandleFunc("GET /api/traces/", s.handleTraceRouting) // {traceID}
 
 	// 修复 4：用 jsonErrorMux 包装 mux，将 404 统一为 JSON 格式。
 	// ：httpMetricsMiddleware 包在最外层，记录所有请求（含 panic 转的 500）的计数与延迟。

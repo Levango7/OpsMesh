@@ -262,7 +262,7 @@ func (s *Server) handleElasticsearchILM(w http.ResponseWriter, r *http.Request) 
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "policy is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s "http://localhost:9200/*/_ilm/explain?pretty" 2>/dev/null | head -30`)
+		script = `curl -s "http://localhost:9200/*/_ilm/explain?pretty" 2>/dev/null | head -30`
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -287,12 +287,12 @@ func (s *Server) handleElasticsearchSnapshot(w http.ResponseWriter, r *http.Requ
 	}
 
 	var req struct {
-		DeviceID  string `json:"deviceID"`
-		Action    string `json:"action"`    // create-repo/create-snapshot/restore/list/delete
-		Repo      string `json:"repo"`
-		Snapshot  string `json:"snapshot"`
-		Indices   string `json:"indices"`
-		Location  string `json:"location"`
+		DeviceID string `json:"deviceID"`
+		Action   string `json:"action"` // create-repo/create-snapshot/restore/list/delete
+		Repo     string `json:"repo"`
+		Snapshot string `json:"snapshot"`
+		Indices  string `json:"indices"`
+		Location string `json:"location"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -457,8 +457,8 @@ func (s *Server) handleElasticsearchUpgrade(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req struct {
-		DeviceID     string `json:"deviceID"`
-		Action       string `json:"action"`       // plan/upgrade/rollback/version
+		DeviceID      string `json:"deviceID"`
+		Action        string `json:"action"` // plan/upgrade/rollback/version
 		TargetVersion string `json:"targetVersion"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -599,11 +599,11 @@ func (s *Server) handleKibana(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "8.13.0"
 		}
-		esUrl := req.ESUrl
-		if esUrl == "" {
-			esUrl = "http://localhost:9200"
+		esURL := req.ESUrl
+		if esURL == "" {
+			esURL = "http://localhost:9200"
 		}
-		script := fmt.Sprintf(`docker run -d --name kibana -p 5601:5601 -e "ELASTICSEARCH_HOSTS=%s" docker.elastic.co/kibana/kibana:%s 2>/dev/null && echo "Kibana %s deployed"`, esUrl, version, version)
+		script := fmt.Sprintf(`docker run -d --name kibana -p 5601:5601 -e "ELASTICSEARCH_HOSTS=%s" docker.elastic.co/kibana/kibana:%s 2>/dev/null && echo "Kibana %s deployed"`, esURL, version, version)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "kibana_deploy")
 		if !ok {
 			return

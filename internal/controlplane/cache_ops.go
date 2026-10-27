@@ -24,9 +24,9 @@ func (s *Server) handleCacheDeploy(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		Type     string `json:"type"`     // redis/memcached/ignite
-		Mode     string `json:"mode"`     // standalone/master-slave/sentinel/cluster
-		Version  string `json:"version"`  // e.g. 7.2
+		Type     string `json:"type"`    // redis/memcached/ignite
+		Mode     string `json:"mode"`    // standalone/master-slave/sentinel/cluster
+		Version  string `json:"version"` // e.g. 7.2
 		Port     int    `json:"port"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -462,12 +462,12 @@ func (s *Server) handleRedisTuning(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID    string `json:"deviceID"`
-		Action      string `json:"action"` // get/set/analyze/recommend
-		MaxMemory   string `json:"maxMemory"`   // e.g. 2gb
-		Eviction    string `json:"eviction"`    // noeviction/allkeys-lru/volatile-lru/etc
-		MaxClients  int    `json:"maxClients"`
-		IOThreads   int    `json:"ioThreads"`
+		DeviceID   string `json:"deviceID"`
+		Action     string `json:"action"`    // get/set/analyze/recommend
+		MaxMemory  string `json:"maxMemory"` // e.g. 2gb
+		Eviction   string `json:"eviction"`  // noeviction/allkeys-lru/volatile-lru/etc
+		MaxClients int    `json:"maxClients"`
+		IOThreads  int    `json:"ioThreads"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})

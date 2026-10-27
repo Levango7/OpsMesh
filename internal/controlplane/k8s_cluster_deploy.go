@@ -19,18 +19,18 @@ import (
 
 // K8sClusterDeploySpec 集群部署规格
 type K8sClusterDeploySpec struct {
-	ClusterName      string            `json:"clusterName"`
-	K8sVersion       string            `json:"k8sVersion"`       // e.g. "1.29.4"
-	ContainerRuntime string            `json:"containerRuntime"` // containerd/cri-o
-	CNI              string            `json:"cni"`              // calico/cilium/flannel
-	CSI              string            `json:"csi"`              // local-path/nfs/ceph
-	Registry         string            `json:"registry"`         // 镜像仓库地址
-	HAEnabled        bool              `json:"haEnabled"`
-	ControlPlaneNodes []NodeSpec       `json:"controlPlaneNodes"`
-	WorkerNodes      []NodeSpec        `json:"workerNodes"`
-	LoadBalancer     *LoadBalancerSpec `json:"loadBalancer,omitempty"`
-	RegistryAuth     *RegistryAuth     `json:"registryAuth,omitempty"`
-	CustomArgs       map[string]string `json:"customArgs,omitempty"`
+	ClusterName       string            `json:"clusterName"`
+	K8sVersion        string            `json:"k8sVersion"`       // e.g. "1.29.4"
+	ContainerRuntime  string            `json:"containerRuntime"` // containerd/cri-o
+	CNI               string            `json:"cni"`              // calico/cilium/flannel
+	CSI               string            `json:"csi"`              // local-path/nfs/ceph
+	Registry          string            `json:"registry"`         // 镜像仓库地址
+	HAEnabled         bool              `json:"haEnabled"`
+	ControlPlaneNodes []NodeSpec        `json:"controlPlaneNodes"`
+	WorkerNodes       []NodeSpec        `json:"workerNodes"`
+	LoadBalancer      *LoadBalancerSpec `json:"loadBalancer,omitempty"`
+	RegistryAuth      *RegistryAuth     `json:"registryAuth,omitempty"`
+	CustomArgs        map[string]string `json:"customArgs,omitempty"`
 }
 
 type NodeSpec struct {
@@ -38,7 +38,7 @@ type NodeSpec struct {
 	Host     string            `json:"host"`
 	Port     int               `json:"port"`
 	User     string            `json:"user"`
-	SSHKey   string            `json:"sshKey"`   // 私钥内容
+	SSHKey   string            `json:"sshKey"` // 私钥内容
 	Password string            `json:"password,omitempty"`
 	Labels   map[string]string `json:"labels,omitempty"`
 	Taints   []TaintSpec       `json:"taints,omitempty"`
@@ -63,7 +63,7 @@ type RegistryAuth struct {
 
 // K8sClusterDeployStatus 部署状态
 type K8sClusterDeployStatus struct {
-	Phase       string            `json:"phase"` // Precheck/ControlPlane/Workers/PostInstall/Completed/Failed
+	Phase       string            `json:"phase"`    // Precheck/ControlPlane/Workers/PostInstall/Completed/Failed
 	Progress    int               `json:"progress"` // 0-100
 	CurrentStep string            `json:"currentStep"`
 	NodeStatus  map[string]string `json:"nodeStatus"` // nodeID -> status
@@ -130,7 +130,7 @@ func (d *K8sClusterDeployer) executeDeploy(ctx context.Context, deployID string,
 	d.updateStatus(deployID, "Precheck", 10, "生成 CA/证书/Token", "")
 	token, err := d.generateToken(spec)
 	if err != nil {
-		return fmt.Errorf("Token 生成失败: %w", err)
+		return fmt.Errorf("token 生成失败: %w", err)
 	}
 
 	// 3. 分发证书/配置到所有节点
@@ -157,7 +157,7 @@ func (d *K8sClusterDeployer) executeDeploy(ctx context.Context, deployID string,
 	// 6. Worker 并行加入
 	d.updateStatus(deployID, "Workers", 55, "Worker 节点并行加入集群", "")
 	if err := d.joinWorkers(ctx, spec, token, cpEndpoints); err != nil {
-		return fmt.Errorf("Worker 加入失败: %w", err)
+		return fmt.Errorf("worker 加入失败: %w", err)
 	}
 
 	// 7. 后置组件安装 (CNI/CSI/Ingress/监控)
@@ -221,30 +221,48 @@ func (d *K8sClusterDeployer) precheckNodes(ctx context.Context, nodes []NodeSpec
 		diskGB := strings.TrimSpace(out)
 		logx.Info(ctx, "节点可用磁盘", "host", node.Host, "diskGB", diskGB)
 
-		// swap 关闭检查
-		out, _, _, _ = ssh.Exec(client, "swapon --show")
+		// swap 关闭检查（查询失败 ⇒ 预检无法判定，fail-loud）
+		out, _, _, err = ssh.Exec(client, "swapon --show")
+		if err != nil {
+			return fmt.Errorf("节点 %s swap 状态查询失败: %w", node.Host, err)
+		}
 		if strings.TrimSpace(out) != "" {
 			logx.Warn(ctx, "节点 swap 未关闭，将自动关闭", "host", node.Host)
-			ssh.Exec(client, "swapoff -a && sed -i '/ swap / s/^/#/' /etc/fstab")
+			if _, _, _, err := ssh.Exec(client, "swapoff -a && sed -i '/ swap / s/^/#/' /etc/fstab"); err != nil {
+				return fmt.Errorf("节点 %s 关闭 swap 失败: %w", node.Host, err)
+			}
 		}
 
 		// 防火墙检查 (firewalld/ufw)
-		_, _, code, _ = ssh.Exec(client, "systemctl is-active firewalld")
+		_, _, code, err = ssh.Exec(client, "systemctl is-active firewalld")
+		if err != nil {
+			return fmt.Errorf("节点 %s 防火墙状态查询失败: %w", node.Host, err)
+		}
 		if code == 0 {
 			logx.Warn(ctx, "节点 firewalld 运行中，将停止", "host", node.Host)
-			ssh.Exec(client, "systemctl stop firewalld && systemctl disable firewalld")
+			if _, _, _, err := ssh.Exec(client, "systemctl stop firewalld && systemctl disable firewalld"); err != nil {
+				return fmt.Errorf("节点 %s 停止 firewalld 失败: %w", node.Host, err)
+			}
 		}
 
-		// SELinux 检查
-		out, _, _, _ = ssh.Exec(client, "getenforce 2>/dev/null || echo disabled")
+		// SELinux 检查（getenforce 对无 SELinux 的机器经 `|| echo disabled` 兜底，传输层失败才判错）
+		out, _, _, err = ssh.Exec(client, "getenforce 2>/dev/null || echo disabled")
+		if err != nil {
+			return fmt.Errorf("节点 %s SELinux 状态查询失败: %w", node.Host, err)
+		}
 		if strings.TrimSpace(out) != "Disabled" && strings.TrimSpace(out) != "Permissive" {
 			logx.Warn(ctx, "节点 SELinux 为 Enforcing，将设置为 Permissive", "host", node.Host)
-			ssh.Exec(client, "setenforce 0 && sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config")
+			if _, _, _, err := ssh.Exec(client, "setenforce 0 && sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config"); err != nil {
+				return fmt.Errorf("节点 %s 设置 SELinux Permissive 失败: %w", node.Host, err)
+			}
 		}
 
 		// 端口占用检查 (6443/2379/2380/10250/10251/10252)
 		for _, port := range []int{6443, 2379, 2380, 10250, 10251, 10252} {
-			out, _, code, _ := ssh.Exec(client, fmt.Sprintf("ss -tlnp | grep -q ':%d '", port))
+			out, _, code, err := ssh.Exec(client, fmt.Sprintf("ss -tlnp | grep -q ':%d '", port))
+			if err != nil {
+				return fmt.Errorf("节点 %s 端口占用查询失败 (port %d): %w", node.Host, port, err)
+			}
 			if code == 0 {
 				logx.Warn(ctx, "节点端口已被占用", "host", node.Host, "port", port, "output", out)
 			}
@@ -268,8 +286,7 @@ func (d *K8sClusterDeployer) precheckNodes(ctx context.Context, nodes []NodeSpec
 // generateToken 生成 kubeadm token
 func (d *K8sClusterDeployer) generateToken(spec K8sClusterDeploySpec) (string, error) {
 	// kubeadm token 格式: [a-z0-9]{6}.[a-z0-9]{16}
-	token := generateRandomToken()
-	return token, nil
+	return generateRandomToken()
 }
 
 // distributeConfigs 分发证书/kubeconfig/kubeadm 配置到所有节点
@@ -324,7 +341,7 @@ func (d *K8sClusterDeployer) deployControlPlane(ctx context.Context, spec K8sClu
 	}
 
 	// kubeadm init
-	cmd := fmt.Sprintf("kubeadm init --config /etc/kubernetes/kubeadm-config.yaml --upload-certs")
+	cmd := "kubeadm init --config /etc/kubernetes/kubeadm-config.yaml --upload-certs"
 	out, _, code, err := ssh.Exec(client, cmd)
 	if err != nil || code != 0 {
 		return nil, fmt.Errorf("kubeadm init 失败: %w (code %d)\n%s", err, code, out)
@@ -355,7 +372,12 @@ func (d *K8sClusterDeployer) deployControlPlane(ctx context.Context, spec K8sClu
 				}
 
 				// 上传证书
-				ssh.Exec(client, fmt.Sprintf("kubeadm init phase upload-certs --upload-certs --config /etc/kubernetes/kubeadm-config.yaml"))
+				if _, _, code, err := ssh.Exec(client, "kubeadm init phase upload-certs --upload-certs --config /etc/kubernetes/kubeadm-config.yaml"); err != nil || code != 0 {
+					mu.Lock()
+					joinErrors = append(joinErrors, fmt.Errorf("节点 %s 上传证书失败 (code %d)", node.Host, code))
+					mu.Unlock()
+					return
+				}
 
 				// join
 				_, _, code, err := ssh.Exec(client, joinCmd)
@@ -405,11 +427,21 @@ func (d *K8sClusterDeployer) setupLoadBalancer(ctx context.Context, spec K8sClus
 			continue
 		}
 		// 安装 keepalived/haproxy
-		ssh.Exec(client, "yum install -y keepalived haproxy || apt-get install -y keepalived haproxy")
-		ssh.WriteFile(client, []byte(haproxyConfig), "/etc/haproxy/haproxy.cfg", 0644)
-		ssh.WriteFile(client, []byte(keepalivedConfig), "/etc/keepalived/keepalived.conf", 0644)
-		ssh.Systemctl(client, "restart", "haproxy")
-		ssh.Systemctl(client, "restart", "keepalived")
+		if _, _, _, err := ssh.Exec(client, "yum install -y keepalived haproxy || apt-get install -y keepalived haproxy"); err != nil {
+			return fmt.Errorf("LB 节点 %s 安装 keepalived/haproxy 失败: %w", node.Host, err)
+		}
+		if err := ssh.WriteFile(client, []byte(haproxyConfig), "/etc/haproxy/haproxy.cfg", 0644); err != nil {
+			return fmt.Errorf("LB 节点 %s 写入 haproxy 配置失败: %w", node.Host, err)
+		}
+		if err := ssh.WriteFile(client, []byte(keepalivedConfig), "/etc/keepalived/keepalived.conf", 0644); err != nil {
+			return fmt.Errorf("LB 节点 %s 写入 keepalived 配置失败: %w", node.Host, err)
+		}
+		if err := ssh.Systemctl(client, "restart", "haproxy"); err != nil {
+			return fmt.Errorf("LB 节点 %s 重启 haproxy 失败: %w", node.Host, err)
+		}
+		if err := ssh.Systemctl(client, "restart", "keepalived"); err != nil {
+			return fmt.Errorf("LB 节点 %s 重启 keepalived 失败: %w", node.Host, err)
+		}
 	}
 	return nil
 }
@@ -519,7 +551,10 @@ func (d *K8sClusterDeployer) finalizeCluster(ctx context.Context, spec K8sCluste
 	}
 
 	// 检查所有节点 Ready
-	out, _, _, _ := ssh.Exec(client, "kubectl get nodes --no-headers | grep -v ' Ready ' | wc -l")
+	out, _, _, err := ssh.Exec(client, "kubectl get nodes --no-headers | grep -v ' Ready ' | wc -l")
+	if err != nil {
+		return fmt.Errorf("节点 %s 检查节点 Ready 状态失败: %w", cpNode.Host, err)
+	}
 	if strings.TrimSpace(out) != "0" {
 		logx.Warn(ctx, "部分节点未 Ready", "notReadyCount", strings.TrimSpace(out))
 	}
@@ -672,13 +707,25 @@ func (d *K8sClusterDeployer) installContainerRuntime(ctx context.Context, client
 
 	if runtime == "containerd" {
 		// 安装 containerd
-		ssh.Exec(client, "yum install -y containerd || apt-get install -y containerd")
+		if _, _, _, err := ssh.Exec(client, "yum install -y containerd || apt-get install -y containerd"); err != nil {
+			return fmt.Errorf("安装 containerd 失败: %w", err)
+		}
 		// 配置 containerd
-		ssh.Exec(client, "mkdir -p /etc/containerd")
-		ssh.Exec(client, "containerd config default > /etc/containerd/config.toml")
-		ssh.Exec(client, "sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml")
-		ssh.Systemctl(client, "enable", "containerd")
-		ssh.Systemctl(client, "restart", "containerd")
+		if _, _, _, err := ssh.Exec(client, "mkdir -p /etc/containerd"); err != nil {
+			return fmt.Errorf("创建 containerd 配置目录失败: %w", err)
+		}
+		if _, _, _, err := ssh.Exec(client, "containerd config default > /etc/containerd/config.toml"); err != nil {
+			return fmt.Errorf("生成 containerd 默认配置失败: %w", err)
+		}
+		if _, _, _, err := ssh.Exec(client, "sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml"); err != nil {
+			return fmt.Errorf("配置 containerd SystemdCgroup 失败: %w", err)
+		}
+		if err := ssh.Systemctl(client, "enable", "containerd"); err != nil {
+			return fmt.Errorf("启用 containerd 服务失败: %w", err)
+		}
+		if err := ssh.Systemctl(client, "restart", "containerd"); err != nil {
+			return fmt.Errorf("重启 containerd 服务失败: %w", err)
+		}
 	}
 	return nil
 }
@@ -690,55 +737,81 @@ func (d *K8sClusterDeployer) installK8sBinaries(ctx context.Context, client *ssh
 	}
 
 	// 添加 K8s 仓库
-	ssh.Exec(client, "cat > /etc/yum.repos.d/kubernetes.repo << 'EOF'\n[kubernetes]\nname=Kubernetes\nbaseurl=https://pkgs.k8s.io/core:/stable:/v1.29/rpm/\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://pkgs.k8s.io/core:/stable:/v1.29/rpm/repodata/repomd.xml.key\nexclude=kubelet kubeadm kubectl cri-tools kubernetes-cni\nEOF")
+	if _, _, _, err := ssh.Exec(client, "cat > /etc/yum.repos.d/kubernetes.repo << 'EOF'\n[kubernetes]\nname=Kubernetes\nbaseurl=https://pkgs.k8s.io/core:/stable:/v1.29/rpm/\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://pkgs.k8s.io/core:/stable:/v1.29/rpm/repodata/repomd.xml.key\nexclude=kubelet kubeadm kubectl cri-tools kubernetes-cni\nEOF"); err != nil {
+		return fmt.Errorf("写入 Kubernetes yum 仓库失败: %w", err)
+	}
 
 	// 安装
-	ssh.Exec(client, fmt.Sprintf("yum install -y kubelet-%s kubeadm-%s kubectl-%s --disableexcludes=kubernetes", version, version, version))
-	ssh.Systemctl(client, "enable", "kubelet")
+	if _, _, _, err := ssh.Exec(client, fmt.Sprintf("yum install -y kubelet-%s kubeadm-%s kubectl-%s --disableexcludes=kubernetes", version, version, version)); err != nil {
+		return fmt.Errorf("安装 kubelet/kubeadm/kubectl 失败: %w", err)
+	}
+	if err := ssh.Systemctl(client, "enable", "kubelet"); err != nil {
+		return fmt.Errorf("启用 kubelet 服务失败: %w", err)
+	}
 
 	return nil
 }
 
 func (d *K8sClusterDeployer) applyNodeLabelsAndTaints(client *ssh.Client, node NodeSpec) error {
 	for k, v := range node.Labels {
-		ssh.Exec(client, fmt.Sprintf("kubectl label node $(hostname) %s=%s --overwrite", k, v))
+		if _, _, _, err := ssh.Exec(client, fmt.Sprintf("kubectl label node $(hostname) %s=%s --overwrite", k, v)); err != nil {
+			return fmt.Errorf("节点 %s 设置标签 %s=%s 失败: %w", node.Host, k, v, err)
+		}
 	}
 	for _, t := range node.Taints {
-		ssh.Exec(client, fmt.Sprintf("kubectl taint node $(hostname) %s=%s:%s --overwrite", t.Key, t.Value, t.Effect))
+		if _, _, _, err := ssh.Exec(client, fmt.Sprintf("kubectl taint node $(hostname) %s=%s:%s --overwrite", t.Key, t.Value, t.Effect)); err != nil {
+			return fmt.Errorf("节点 %s 设置污点 %s=%s:%s 失败: %w", node.Host, t.Key, t.Value, t.Effect, err)
+		}
 	}
 	return nil
 }
 
 func (d *K8sClusterDeployer) installCalico(ctx context.Context, client *ssh.Client, spec K8sClusterDeploySpec) {
-	ssh.Exec(client, "kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml")
+	if _, _, _, err := ssh.Exec(client, "kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml"); err != nil {
+		logx.Warn(ctx, "安装 Calico CNI 失败", "error", err)
+	}
 }
 
 func (d *K8sClusterDeployer) installCilium(ctx context.Context, client *ssh.Client, spec K8sClusterDeploySpec) {
-	ssh.Exec(client, "cilium install")
+	if _, _, _, err := ssh.Exec(client, "cilium install"); err != nil {
+		logx.Warn(ctx, "安装 Cilium CNI 失败", "error", err)
+	}
 }
 
 func (d *K8sClusterDeployer) installFlannel(ctx context.Context, client *ssh.Client, spec K8sClusterDeploySpec) {
-	ssh.Exec(client, "kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml")
+	if _, _, _, err := ssh.Exec(client, "kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml"); err != nil {
+		logx.Warn(ctx, "安装 Flannel CNI 失败", "error", err)
+	}
 }
 
 func (d *K8sClusterDeployer) installLocalPathCSI(ctx context.Context, client *ssh.Client, spec K8sClusterDeploySpec) {
-	ssh.Exec(client, "kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.26/deploy/local-path-storage.yaml")
+	if _, _, _, err := ssh.Exec(client, "kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.26/deploy/local-path-storage.yaml"); err != nil {
+		logx.Warn(ctx, "安装 local-path 本地存储失败", "error", err)
+	}
 }
 
 func (d *K8sClusterDeployer) installNFSCSI(ctx context.Context, client *ssh.Client, spec K8sClusterDeploySpec) {
-	ssh.Exec(client, "helm install nfs-subdir-external-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner")
+	if _, _, _, err := ssh.Exec(client, "helm install nfs-subdir-external-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner"); err != nil {
+		logx.Warn(ctx, "安装 NFS CSI 失败", "error", err)
+	}
 }
 
 func (d *K8sClusterDeployer) installCephCSI(ctx context.Context, client *ssh.Client, spec K8sClusterDeploySpec) {
-	ssh.Exec(client, "helm install ceph-csi ceph-csi/ceph-csi")
+	if _, _, _, err := ssh.Exec(client, "helm install ceph-csi ceph-csi/ceph-csi"); err != nil {
+		logx.Warn(ctx, "安装 Ceph CSI 失败", "error", err)
+	}
 }
 
 func (d *K8sClusterDeployer) installNginxIngress(ctx context.Context, client *ssh.Client, spec K8sClusterDeploySpec) {
-	ssh.Exec(client, "kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.0/deploy/static/provider/cloud/deploy.yaml")
+	if _, _, _, err := ssh.Exec(client, "kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.0/deploy/static/provider/cloud/deploy.yaml"); err != nil {
+		logx.Warn(ctx, "安装 Nginx Ingress Controller 失败", "error", err)
+	}
 }
 
 func (d *K8sClusterDeployer) installMetricsServer(ctx context.Context, client *ssh.Client, spec K8sClusterDeploySpec) {
-	ssh.Exec(client, "kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml")
+	if _, _, _, err := ssh.Exec(client, "kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"); err != nil {
+		logx.Warn(ctx, "安装 metrics-server 失败", "error", err)
+	}
 }
 
 func (d *K8sClusterDeployer) GetStatus(deployID string) (*K8sClusterDeployStatus, bool) {
@@ -798,9 +871,9 @@ func (s *Server) handleK8sClusterDeploy(w http.ResponseWriter, r *http.Request) 
 	}
 
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{
-		"deployID":   status.StartedAt.Format("20060102150405"),
-		"phase":      status.Phase,
-		"progress":   status.Progress,
+		"deployID":    status.StartedAt.Format("20060102150405"),
+		"phase":       status.Phase,
+		"progress":    status.Progress,
 		"currentStep": status.CurrentStep,
 	})
 }
@@ -835,18 +908,23 @@ func (s *Server) RegisterK8sClusterDeployRoutes(mux *http.ServeMux) {
 }
 
 // generateRandomToken 生成随机 token。
-func generateRandomToken() string {
+func generateRandomToken() (string, error) {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
 	buf := make([]byte, 23) // 6 + 1 + 16
 	for i := 0; i < 6; i++ {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		if err != nil {
+			return "", fmt.Errorf("生成随机 token 失败: %w", err)
+		}
 		buf[i] = chars[n.Int64()]
 	}
 	buf[6] = '.'
 	for i := 7; i < 23; i++ {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		if err != nil {
+			return "", fmt.Errorf("生成随机 token 失败: %w", err)
+		}
 		buf[i] = chars[n.Int64()]
 	}
-	return string(buf)
+	return string(buf), nil
 }
-

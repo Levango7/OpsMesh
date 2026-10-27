@@ -29,6 +29,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -52,7 +53,7 @@ var ErrQuotaExceeded = errors.New("quota exceeded")
 // 相比细粒度锁/乐观并发显著降低复杂度与死锁风险。store 自身并发安全，mu 仅保护
 // QuotaManager 视角下的 count+compare 临界区，不替代 store 锁。
 type QuotaManager struct {
-	mu           sync.Mutex // 保护 Check*/count 的 count+compare 临界区（粗粒度单锁）
+	mu           sync.Mutex  // 保护 Check*/count 的 count+compare 临界区（粗粒度单锁）
 	store        store.Store // 用于查询当前用量 + 读写配额配置
 	defaultQuota *store.QuotaConfig
 	enabled      bool
@@ -295,7 +296,11 @@ func (s *Server) listQuotas(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]interface{}, 0, len(quotas))
 	for _, q := range quotas {
-		usage, _ := s.quotaMgr.Usage(q.TenantID)
+		// 单租户用量查询失败不阻断整个列表（按零用量返回），留痕即可。
+		usage, err := s.quotaMgr.Usage(q.TenantID)
+		if err != nil {
+			logx.Warn(r.Context(), "查询租户配额用量失败（按零用量返回）", "tenantID", q.TenantID, "error", err)
+		}
 		out = append(out, map[string]interface{}{
 			"tenantID": q.TenantID,
 			"quota":    q,

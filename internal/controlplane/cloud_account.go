@@ -37,6 +37,7 @@ import (
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider"
 	"github.com/Levango7/OpsMesh/internal/secrets"
 	"github.com/Levango7/OpsMesh/internal/store"
@@ -136,11 +137,12 @@ func (s *Server) handleCloudAccountRouting(w http.ResponseWriter, r *http.Reques
 	}
 	switch r.Method {
 	case http.MethodGet:
-		if action == "" {
+		switch action {
+		case "":
 			s.handleGetCloudAccount(w, r, id)
-		} else if action == "regions" {
+		case "regions":
 			s.handleListCloudAccountRegions(w, r, id)
-		} else {
+		default:
 			paginate.JSONError(w, http.StatusNotFound, "not found")
 		}
 	case http.MethodPut:
@@ -156,11 +158,12 @@ func (s *Server) handleCloudAccountRouting(w http.ResponseWriter, r *http.Reques
 			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	case http.MethodPost:
-		if action == "sync" {
+		switch action {
+		case "sync":
 			s.handleSyncCloudAccount(w, r, id)
-		} else if action == "test" {
+		case "test":
 			s.handleTestCloudAccount(w, r, id)
-		} else {
+		default:
 			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	default:
@@ -351,8 +354,10 @@ func (s *Server) handleDeleteCloudAccount(w http.ResponseWriter, r *http.Request
 		paginate.JSONError(w, http.StatusNotFound, "cloud account not found")
 		return
 	}
-	// 级联删除该账号下全部云资源。
-	_ = s.store.DeleteCloudResourcesByAccount(r.Context(), id)
+	// 级联删除该账号下全部云资源。级联失败不阻断账号删除，但需留痕。
+	if err := s.store.DeleteCloudResourcesByAccount(r.Context(), id); err != nil {
+		logx.Warn(r.Context(), "级联删除云账号下云资源失败（继续删除云账号）", "accountID", id, "error", err)
+	}
 	if err := s.store.DeleteCloudAccount(r.Context(), id); err != nil {
 		paginate.JSONError(w, http.StatusInternalServerError, "delete cloud account failed")
 		return
@@ -410,11 +415,23 @@ func (s *Server) handleSyncCloudAccount(w http.ResponseWriter, r *http.Request, 
 			if region == "" {
 				region = "cn-hangzhou"
 			}
-			// 发现实例
-			instances, _ := provider.DiscoverInstances(r.Context(), *creds, region)
-			vpcs, _ := provider.DiscoverVPCs(r.Context(), *creds, region)
-			subnets, _ := provider.DiscoverSubnets(r.Context(), *creds, region, "")
-			clusters, _ := provider.DiscoverClusters(r.Context(), *creds, region)
+			// 发现实例（各资源类型独立尽力发现：单项失败记 Warn 留痕，按 0 计入总数，不阻断同步）
+			instances, err := provider.DiscoverInstances(r.Context(), *creds, region)
+			if err != nil {
+				logx.Warn(r.Context(), "发现云实例失败", "provider", existing.Provider, "region", region, "error", err)
+			}
+			vpcs, err := provider.DiscoverVPCs(r.Context(), *creds, region)
+			if err != nil {
+				logx.Warn(r.Context(), "发现 VPC 失败", "provider", existing.Provider, "region", region, "error", err)
+			}
+			subnets, err := provider.DiscoverSubnets(r.Context(), *creds, region, "")
+			if err != nil {
+				logx.Warn(r.Context(), "发现子网失败", "provider", existing.Provider, "region", region, "error", err)
+			}
+			clusters, err := provider.DiscoverClusters(r.Context(), *creds, region)
+			if err != nil {
+				logx.Warn(r.Context(), "发现集群失败", "provider", existing.Provider, "region", region, "error", err)
+			}
 			discoveredCount = len(instances) + len(vpcs) + len(subnets) + len(clusters)
 			body.SyncStatus = "synced"
 		}

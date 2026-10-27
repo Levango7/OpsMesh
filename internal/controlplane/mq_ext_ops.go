@@ -115,8 +115,8 @@ func (s *Server) handlePulsarUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID     string `json:"deviceID"`
-		Action       string `json:"action"`       // plan/upgrade/rollback/version
+		DeviceID      string `json:"deviceID"`
+		Action        string `json:"action"` // plan/upgrade/rollback/version
 		TargetVersion string `json:"targetVersion"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -208,13 +208,13 @@ func (s *Server) handlePulsarConnector(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // list/create/delete
-		Tenant   string `json:"tenant"`
-		NS       string `json:"namespace"`
-		Name     string `json:"name"`
+		DeviceID  string `json:"deviceID"`
+		Action    string `json:"action"` // list/create/delete
+		Tenant    string `json:"tenant"`
+		NS        string `json:"namespace"`
+		Name      string `json:"name"`
 		ClassName string `json:"className"`
-		Config   string `json:"config"`
+		Config    string `json:"config"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -267,7 +267,7 @@ func (s *Server) handlePulsarTieredStorage(w http.ResponseWriter, r *http.Reques
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // enable/disable/status
+		Action   string `json:"action"`  // enable/disable/status
 		Storage  string `json:"storage"` // s3/gcs/azure
 		Bucket   string `json:"bucket"`
 	}
@@ -314,34 +314,4 @@ func (s *Server) registerPulsarExtendedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/middleware/pulsar/schema-registry", s.handlePulsarSchemaRegistry)
 	mux.HandleFunc("/api/v1/middleware/pulsar/connector", s.handlePulsarConnector)
 	mux.HandleFunc("/api/v1/middleware/pulsar/tiered-storage", s.handlePulsarTieredStorage)
-}
-
-// registerRocketMQExtendedRoutes2 注册 RocketMQ 扩展路由 (避免与 rocketmq_ops.go 冲突)
-func (s *Server) registerRocketMQExtendedRoutes2(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/middleware/rocketmq/ha", s.handleRocketMQHA)
-	mux.HandleFunc("/api/v1/middleware/rocketmq/scale", s.handleRocketMQScale)
-	mux.HandleFunc("/api/v1/middleware/rocketmq/upgrade", s.handleRocketMQUpgrade)
-	mux.HandleFunc("/api/v1/middleware/rocketmq/monitor", s.handleRocketMQMonitor)
-	mux.HandleFunc("/api/v1/middleware/rocketmq/dlq", s.handleRocketMQDLQ)
-	mux.HandleFunc("/api/v1/middleware/rocketmq/tuning", s.handleRocketMQTuning)
-}
-
-// registerActiveMQExtendedRoutes2 注册 ActiveMQ 扩展路由 (避免与 activemq_ops.go 冲突)
-func (s *Server) registerActiveMQExtendedRoutes2(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/middleware/activemq/ha", s.handleActiveMQHA)
-	mux.HandleFunc("/api/v1/middleware/activemq/network", s.handleActiveMQNetworkOfBrokers)
-	mux.HandleFunc("/api/v1/middleware/activemq/security", s.handleActiveMQSecurity)
-	mux.HandleFunc("/api/v1/middleware/activemq/durable-sub", s.handleActiveMQDurableSub)
-	mux.HandleFunc("/api/v1/middleware/activemq/upgrade", s.handleActiveMQUpgrade)
-}
-
-// registerRabbitMQExtendedRoutes2 注册 RabbitMQ 扩展路由 (避免与 rabbitmq_ops.go 冲突)
-func (s *Server) registerRabbitMQExtendedRoutes2(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/middleware/rabbitmq/ha", s.handleRabbitMQHA)
-	mux.HandleFunc("/api/v1/middleware/rabbitmq/scale", s.handleRabbitMQScale)
-	mux.HandleFunc("/api/v1/middleware/rabbitmq/upgrade", s.handleRabbitMQUpgrade)
-	mux.HandleFunc("/api/v1/middleware/rabbitmq/backup", s.handleRabbitMQBackup)
-	mux.HandleFunc("/api/v1/middleware/rabbitmq/tuning", s.handleRabbitMQTuning)
-	mux.HandleFunc("/api/v1/middleware/rabbitmq/security", s.handleRabbitMQSecurity)
-	mux.HandleFunc("/api/v1/middleware/rabbitmq/observability", s.handleRabbitMQObservability)
 }

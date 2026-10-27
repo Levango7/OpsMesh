@@ -58,6 +58,7 @@ func containerStateString(cs corev1.ContainerStatus) string {
 	}
 	return "Unknown"
 }
+
 // namespace 为空时跨所有 namespace 列出（client-go 支持 ns="" 表示 all namespaces）。
 // 返回 {pods: [{name, namespace, status, podIP, nodeIP, restarts, age}]}。
 func (s *Server) handleListPods(w http.ResponseWriter, r *http.Request, client *k8s.K8sClient) {

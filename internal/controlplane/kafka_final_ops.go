@@ -23,12 +23,12 @@ func (s *Server) handleKafkaTieredStorage(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // enable/configure/status/disable
+		DeviceID      string `json:"deviceID"`
+		Action        string `json:"action"`        // enable/configure/status/disable
 		RemoteStorage string `json:"remoteStorage"` // s3/gcs/azure
-		Bucket    string `json:"bucket"`
-		Region    string `json:"region"`
-		Credentials string `json:"credentials"` // JSON
+		Bucket        string `json:"bucket"`
+		Region        string `json:"region"`
+		Credentials   string `json:"credentials"` // JSON
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -41,7 +41,7 @@ func (s *Server) handleKafkaTieredStorage(w http.ResponseWriter, r *http.Request
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "remoteStorage is required (s3/gcs/azure)"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type brokers --entity-name 0 --alter --add-config remote.log.storage.system.enable=true,remote.storage.manager.class.name=org.apache.kafka.server.log.remote.storage.RemoteLogManager 2>/dev/null && echo "Tiered storage enabled on broker 0"`)
+		script := `kafka-configs.sh --bootstrap-server localhost:9092 --entity-type brokers --entity-name 0 --alter --add-config remote.log.storage.system.enable=true,remote.storage.manager.class.name=org.apache.kafka.server.log.remote.storage.RemoteLogManager 2>/dev/null && echo "Tiered storage enabled on broker 0"`
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "tiered-storage_enable")
 		if !ok {
 			return
@@ -155,8 +155,8 @@ func (s *Server) handleKafkaKRaftMigration(w http.ResponseWriter, r *http.Reques
 	}
 
 	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // check/status/migrate/verify
+		DeviceID  string `json:"deviceID"`
+		Action    string `json:"action"` // check/status/migrate/verify
 		ZKConnect string `json:"zkConnect"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -219,7 +219,7 @@ func (s *Server) handleKafkaStreamsFull(w http.ResponseWriter, r *http.Request) 
 
 	var req struct {
 		DeviceID    string `json:"deviceID"`
-		Action      string `json:"action"`      // list-apps/describe/reset/topology
+		Action      string `json:"action"` // list-apps/describe/reset/topology
 		AppID       string `json:"appId"`
 		Bootstrap   string `json:"bootstrap"`
 		InputTopic  string `json:"inputTopic"`
@@ -298,7 +298,7 @@ func (s *Server) handleKafkaOTel(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // enable/disable/status/configure
+		Action   string `json:"action"`   // enable/disable/status/configure
 		Endpoint string `json:"endpoint"` // OTLP collector endpoint
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -360,13 +360,13 @@ func (s *Server) handleKafkaKEDA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID    string `json:"deviceID"`
-		Action      string `json:"action"`      // create-scaledobject/list/delete
+		DeviceID      string `json:"deviceID"`
+		Action        string `json:"action"` // create-scaledobject/list/delete
 		ConsumerGroup string `json:"consumerGroup"`
-		Topic       string `json:"topic"`
-		MinReplicas int    `json:"minReplicas"`
-		MaxReplicas int    `json:"maxReplicas"`
-		LagThreshold int   `json:"lagThreshold"`
+		Topic         string `json:"topic"`
+		MinReplicas   int    `json:"minReplicas"`
+		MaxReplicas   int    `json:"maxReplicas"`
+		LagThreshold  int    `json:"lagThreshold"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
