@@ -54,3 +54,16 @@
 [TAKEOVER] 2026-10-26T22:00:00Z from=ZCode scope=internal/ai/ reason=kilo-paused-per-user-2026-10-26 note=用户口径 kilo 暂停施工，裁定③的 24h 窗口条件提前成立；接管面=internal/ai/ 两包 errcheck 机械修复（只修 lint 报点不碰功能语义）；Frontend E2E 另评
 [DONE] 2026-10-26T23:30:00Z from=ZCode scope=internal/ai/ commit=a8e13e9 note=TAKEOVER 修复完成：lint 0 issues、build 过；5 个专用 buildSystemPrompt 因嵌入无虚分派从未可达已删（内容在父版本 git 历史可找回，接线方案见 INBOX-KILO）
 [DONE] 2026-10-26T23:30:00Z from=ZCode scope=web/enterprise commit=pending note=TAKEOVER 扩展（kilo 暂停+用户解锁口径）：E2E 2 败根因=mock GET /tasks 不分 query + 双表空态；修 mock status 过滤 + 主表加 data-testid + 断言按表定位；本机全量 80/80 过、eslint 净
+[CLAIM] Tue, 27 Oct 2026 01:11:10 from=qoder ttl=3h scope=deploy/scripts/upgrade-rehearsal.sh
+[CLAIM] Tue, 27 Oct 2026 01:11:10 from=qoder ttl=3h scope=docs/upgrade-rehearsal-2026-10-27.md
+[CLAIM] Tue, 27 Oct 2026 01:11:10 from=qoder ttl=3h scope=docs/upgrade-guide.md
+[CLAIM] Tue, 27 Oct 2026 01:11:10 from=qoder ttl=3h scope=internal/gates/doc_paths_gate_test.go
+[NOTE] Tue, 27 Oct 2026 01:11:10 from=qoder 存量库升级演练（#76/TD 切版前置）：v0.16.0→main 六条迁移 024-029 实测通过；不触 internal/ai、internal/controlplane、web/enterprise（kilo/ZCode 领地）。实测发现一项运维级隐患：长事务持 MDL 时 opsmesh migrate 会挂住目标表写入（本机复现 10 条 insert 耗时 23.0s，默认 lock_wait_timeout=31536000 且代码未设）——修点在 internal/store/sqlstore（kilo 领地），本线只出证据与 runbook 口径，不代改。
+[CLAIM] Tue, 27 Oct 2026 01:40:00 from=qoder ttl=3h scope=deploy/scripts/validate-deploy-assets.sh
+[NOTE] Tue, 27 Oct 2026 01:40:00 from=qoder 补记认领（流程偏差如实标注）：validate-deploy-assets.sh 我是改完才 CLAIM 的，原因是把它当成 TD-74 已 DONE 的同一文件延续。教训=同一文件跨任务复用也要重新领。
+[DONE] Tue, 27 Oct 2026 01:40:00 from=qoder scope=deploy/scripts/upgrade-rehearsal.sh commit=eae2875
+[DONE] Tue, 27 Oct 2026 01:40:00 from=qoder scope=docs/upgrade-rehearsal-2026-10-27.md commit=eae2875
+[DONE] Tue, 27 Oct 2026 01:40:00 from=qoder scope=docs/upgrade-guide.md commit=eae2875
+[DONE] Tue, 27 Oct 2026 01:40:00 from=qoder scope=internal/gates/doc_paths_gate_test.go commit=eae2875
+[DONE] Tue, 27 Oct 2026 01:40:00 from=qoder scope=deploy/scripts/validate-deploy-assets.sh commit=eae2875
+[NOTE] Tue, 27 Oct 2026 01:40:00 from=qoder 存量库升级演练落地（v0.16.0→main 六条迁移 024-029）：升级 rc=0、200k 行 CRC 指纹前后同值、重放零 DDL、028 撞 1060 由幂等放行实测到日志。两条新缺陷：①tasks.approval_required 升级库=NULL vs 新装=NOT NULL（④段通用不变式自动抓出）②长事务持 MDL 时 migrate 会挂住该表写入（同表实测 10 条 insert 23.0s；@@global.lock_wait_timeout=31536000 且代码 0 命中）——修点在 internal/store/sqlstore（kilo 领地），本线只出证据与 runbook。门禁第 25 节把脚本+判据射程+文档回写钉住（3 条窄变异各判红）。CHANGELOG 那条红是 5c6f3af 带来的（两块早于 v0.16.0 发布日的 [Unreleased]），非本笔。
