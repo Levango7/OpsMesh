@@ -94,3 +94,5 @@
 [NOTE] 2026-10-27T19:28:00Z from=workbuddy 用户指派：在未认领的隔离面找活做，经留言板报备；不碰 kilo(internal/controlplane,web/enterprise,internal/store)、ZCode(web/enterprise)、qoder(gpu ascend/升级演练/许可) 的在制面。本轮选 internal/agent 挂死测试修复（collectCmdbMiddleware 无超时外部命令）。
 [CLAIM] 2026-10-27T19:28:00Z from=workbuddy ttl=4h scope=internal/agent/agent.go
 [CLAIM] 2026-10-27T19:28:00Z from=workbuddy ttl=4h scope=internal/agent/agent_extra_test.go
+[DONE] 2026-10-27T19:38:13Z from=workbuddy scope=internal/agent/agent.go commit=a644647 note=CMDB 进程探测加 context 10s 超时兜底（沿本包 collectEnvs 范式）+ 抽出可注入 listProcesses；修复 tasklist 慢机(实测11~21s/偶挂)使 TestCollectCmdbMiddleware_NoPanic 与整包测试超时。
+[DONE] 2026-10-27T19:38:13Z from=workbuddy scope=internal/agent/agent_extra_test.go commit=a644647 note=单测 hermetic 化：注入假进程表，新增 NoPanic/Detects/CommandError 三例；顺带修 TestCollectDeviceMetrics_NilHistory 慢机节流脆弱(复位 metricsLastCol，非本次引入)。验证 go vet0/gofmt 干净/internal/agent 全量 go test 绿 116.6s。建议 CHANGELOG(归 ZCode)：agent CMDB 中间件探测加超时兜底，避免慢机进程枚举拖死采集/测试。
