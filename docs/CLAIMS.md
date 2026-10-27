@@ -51,3 +51,4 @@
 ② TD-89 残余=**挂账观察**，触发条件=一个月内 service-container 判红 ≥3 次 ⇒ 上选项②（GHCR 源）；触发前不动 .github/workflows/；
 ③ main 红（kilo 领地）=**24h 窗口**：至 2026-10-27T21:30Z 未清红，任何线可按板协议 [TAKEOVER] 接管 internal/ai/ 的 errcheck 修复（只修 lint 报点、不碰功能语义；Frontend E2E 仍归 kilo）；
 ④ **main 转绿后即执行演练批次 0 重演，执行线=ZCode**（一石三鸟：§3.12 operator 取消权 + v0.16.0 运维能力 + TD-74 前闸实例化受检）。
+[TAKEOVER] 2026-10-26T22:00:00Z from=ZCode scope=internal/ai/ reason=kilo-paused-per-user-2026-10-26 note=用户口径 kilo 暂停施工，裁定③的 24h 窗口条件提前成立；接管面=internal/ai/ 两包 errcheck 机械修复（只修 lint 报点不碰功能语义）；Frontend E2E 另评
