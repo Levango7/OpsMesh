@@ -24,8 +24,7 @@ import (
 )
 
 var (
-	errCloudResourceNotFound = errors.New("cloud resource not found")
-	errCloudResourceInvalid  = errors.New("invalid input")
+	errCloudResourceInvalid = errors.New("invalid input")
 )
 
 // CreateCloudResource 创建云资源（按 ID 幂等；ID 为空时分配随机 ID）。

@@ -34,8 +34,8 @@ func TestValidateCredentialsRejectsEmpty(t *testing.T) {
 
 	// AK/SK 缺少 AccessKeySecret
 	if err := p.ValidateCredentials(ctx, types.Credentials{
-		Type:         types.AuthTypeAKSK,
-		AccessKeyID:  "key",
+		Type:        types.AuthTypeAKSK,
+		AccessKeyID: "key",
 	}); err == nil {
 		t.Error("ValidateCredentials(missing AccessKeySecret) expected error, got nil")
 	}

@@ -173,11 +173,11 @@ func (m *MemoryStore) AddSecretAccessLog(tenantID, key, accessedBy, action strin
 // addSecretAccessLogLocked 在持锁下追加一条访问日志，超 auditCap 时截断最旧。
 func (m *MemoryStore) addSecretAccessLogLocked(tenantID, key, accessedBy, action string) {
 	m.secretAccessLogs = append(m.secretAccessLogs, &SecretAccessLog{
-		Key:         key,
-		TenantID:    tenantID,
-		AccessedBy:  accessedBy,
-		Action:      action,
-		AccessedAt:  time.Now(),
+		Key:        key,
+		TenantID:   tenantID,
+		AccessedBy: accessedBy,
+		Action:     action,
+		AccessedAt: time.Now(),
 	})
 	if len(m.secretAccessLogs) > auditCap {
 		m.secretAccessLogs = m.secretAccessLogs[len(m.secretAccessLogs)-auditCap:]

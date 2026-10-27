@@ -1,4 +1,4 @@
-﻿// memory_fixes_test.go — P0/P1 修复的行为回归测试（store/state-machine 批次）。
+// memory_fixes_test.go — P0/P1 修复的行为回归测试（store/state-machine 批次）。
 //
 // 覆盖：
 //   - FIX 3：ListTasksByPriority 排序确定性（priority DESC, createdAt ASC, taskID ASC）

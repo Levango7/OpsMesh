@@ -74,8 +74,10 @@ func dial(host string, port int, user, keyPath, password string) (*cryptossh.Cli
 	}
 
 	config := &cryptossh.ClientConfig{
-		User:            user,
-		Auth:            auth,
+		User: user,
+		Auth: auth,
+		// #nosec G106 -- 内网运维自动化：连接平台自管/托管的 K8s 节点，主机密钥未预注册，
+		// 改为固定 hostkey 校验会断开全部既有连接（语义变更），此处显式豁免待后续引入 known_hosts。
 		HostKeyCallback: cryptossh.InsecureIgnoreHostKey(),
 		Timeout:         15 * time.Second,
 	}
@@ -154,14 +156,22 @@ func MkdirAll(client *cryptossh.Client, path string) error {
 }
 
 // FileExists 检查远程文件是否存在。
+// 会话执行异常（非命令退出码）时视为不存在（Exec 对此类错误返回 code=-1，行为与原实现一致）。
 func FileExists(client *cryptossh.Client, path string) bool {
-	_, _, code, _ := Exec(client, fmt.Sprintf("test -f %s", path))
+	_, _, code, err := Exec(client, fmt.Sprintf("test -f %s", path))
+	if err != nil {
+		return false
+	}
 	return code == 0
 }
 
 // DirExists 检查远程目录是否存在。
+// 会话执行异常（非命令退出码）时视为不存在（Exec 对此类错误返回 code=-1，行为与原实现一致）。
 func DirExists(client *cryptossh.Client, path string) bool {
-	_, _, code, _ := Exec(client, fmt.Sprintf("test -d %s", path))
+	_, _, code, err := Exec(client, fmt.Sprintf("test -d %s", path))
+	if err != nil {
+		return false
+	}
 	return code == 0
 }
 
@@ -180,9 +190,8 @@ func SyncFile(client *cryptossh.Client, localPath, remotePath string) error {
 	if err != nil {
 		return fmt.Errorf("read local file: %w", err)
 	}
-	info, _ := os.Stat(localPath)
 	mode := os.FileMode(0644)
-	if info != nil {
+	if info, statErr := os.Stat(localPath); statErr == nil {
 		mode = info.Mode()
 	}
 	return WriteFile(client, content, remotePath, mode)
@@ -291,11 +300,12 @@ func Systemctl(client *cryptossh.Client, action, service string) error {
 }
 
 // WaitForPort 等待远程端口开放。
+// 会话执行异常（非命令退出码）视为本次探测未就绪（Exec 对此类错误返回 code=-1，行为与原实现一致）。
 func WaitForPort(client *cryptossh.Client, port int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		_, _, code, _ := Exec(client, fmt.Sprintf("ss -tlnp | grep -q ':%d '", port))
-		if code == 0 {
+		_, _, code, err := Exec(client, fmt.Sprintf("ss -tlnp | grep -q ':%d '", port))
+		if err == nil && code == 0 {
 			return nil
 		}
 		time.Sleep(2 * time.Second)
@@ -314,6 +324,7 @@ func GetHostname(client *cryptossh.Client) (string, error) {
 
 // Client is an alias for golang.org/x/crypto/ssh.Client for external callers.
 type Client = cryptossh.Client
+
 func GetOSInfo(client *cryptossh.Client) (string, error) {
 	out, _, code, err := Exec(client, "cat /etc/os-release | grep '^ID=' | cut -d= -f2")
 	if err != nil || code != 0 {

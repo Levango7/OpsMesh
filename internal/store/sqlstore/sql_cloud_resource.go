@@ -25,8 +25,7 @@ import (
 )
 
 var (
-	errCloudResourceNotFound = errors.New("cloud resource not found")
-	errCloudResourceInvalid  = errors.New("invalid input")
+	errCloudResourceInvalid = errors.New("invalid input")
 )
 
 // scanCloudResource 从一行扫描出 *CloudResource（tags 为 JSON 文本列）。
@@ -185,7 +184,11 @@ func (s *SQLStore) DeleteCloudResourcesByAccount(ctx context.Context, accountID 
 		storefail.Record("[store] DeleteCloudResourcesByAccount 删除失败 (account=%s): %v", accountID, err)
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		storefail.Record("[store] DeleteCloudResourcesByAccount RowsAffected 失败 (account=%s): %v", accountID, rowsErr)
+		return rowsErr
+	}
 	storefail.Record("[store] DeleteCloudResourcesByAccount 删除 (account=%s) 条数=%d", accountID, n)
 	return nil
 }

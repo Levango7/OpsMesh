@@ -208,7 +208,11 @@ func (s *SQLStore) DeleteCloudAccount(ctx context.Context, id string) error {
 		storefail.Record("[store] DeleteCloudAccount 删除失败 (account=%s): %v", id, err)
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		storefail.Record("[store] DeleteCloudAccount RowsAffected 失败 (account=%s): %v", id, rowsErr)
+		return rowsErr
+	}
 	if n == 0 {
 		return errCloudAccountNotFound
 	}

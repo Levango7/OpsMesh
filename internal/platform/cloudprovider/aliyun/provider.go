@@ -18,7 +18,7 @@ package aliyun
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- 阿里云 OpenAPI RPC 签名协议强制 HMAC-SHA1（SignatureMethod=HMAC-SHA1），非自主选择的弱原语，换算法会破坏签名
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -30,6 +30,7 @@ import (
 	"time"
 
 	_ "github.com/aliyun/alibaba-cloud-sdk-go" // blank import，保留 SDK 依赖
+
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider/types"
 )

@@ -32,11 +32,11 @@ type NodeSpec struct {
 
 // UpgradeSpec 升级规格
 type UpgradeSpec struct {
-	ClusterID   string `json:"clusterId"`
-	TargetVersion string `json:"targetVersion"` // e.g. "1.30.0"
-	Nodes       []string `json:"nodes"`        // 节点列表 (空=全部)
-	DrainNodes  bool   `json:"drainNodes"`    // 升级前 drain
-	Force       bool   `json:"force"`         // 强制升级 (跳过预检)
+	ClusterID     string   `json:"clusterId"`
+	TargetVersion string   `json:"targetVersion"` // e.g. "1.30.0"
+	Nodes         []string `json:"nodes"`         // 节点列表 (空=全部)
+	DrainNodes    bool     `json:"drainNodes"`    // 升级前 drain
+	Force         bool     `json:"force"`         // 强制升级 (跳过预检)
 }
 
 // UpgradeStatus 升级状态
@@ -54,9 +54,9 @@ type UpgradeStatus struct {
 
 // UpgradeManager 版本升级管理器
 type UpgradeManager struct {
-	mu        sync.RWMutex
-	upgrades  map[string]*UpgradeStatus
-	sshPool   *ssh.Pool
+	mu       sync.RWMutex
+	upgrades map[string]*UpgradeStatus
+	sshPool  *ssh.Pool
 }
 
 func NewUpgradeManager() *UpgradeManager {
@@ -74,7 +74,10 @@ func (m *UpgradeManager) PlanUpgrade(ctx context.Context, spec UpgradeSpec, node
 	}
 
 	// 获取当前版本
-	out, _, _, _ := ssh.Exec(client, "kubectl version --short 2>/dev/null || kubectl version")
+	out, _, _, err := ssh.Exec(client, "kubectl version --short 2>/dev/null || kubectl version")
+	if err != nil {
+		return nil, fmt.Errorf("获取当前 kubectl 版本失败: %w", err)
+	}
 	currentVer := parseK8sVersion(out)
 
 	// 执行 upgrade plan
@@ -119,7 +122,7 @@ func (m *UpgradeManager) Upgrade(ctx context.Context, spec UpgradeSpec) (*Upgrad
 	m.mu.Unlock()
 
 	go func() {
-		deployCtx, cancel := context.WithTimeout(context.Background(), 3*time.Hour)
+		deployCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Hour)
 		defer cancel()
 
 		if err := m.executeUpgrade(deployCtx, upgradeID, spec); err != nil {
@@ -148,7 +151,7 @@ func (m *UpgradeManager) executeUpgrade(ctx context.Context, upgradeID string, s
 	// 3. 升级 Worker
 	m.updateStatus(upgradeID, "Upgrading", 60, "升级 Worker 节点", "")
 	if err := m.upgradeWorkers(ctx, spec, upgradeID); err != nil {
-		return fmt.Errorf("Worker 升级失败: %w", err)
+		return fmt.Errorf("升级 Worker 失败: %w", err)
 	}
 
 	// 4. 验证
@@ -235,7 +238,7 @@ func (m *UpgradeManager) Rollback(ctx context.Context, spec RollbackSpec) (*Upgr
 	m.mu.Unlock()
 
 	go func() {
-		deployCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+		deployCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Hour)
 		defer cancel()
 
 		if err := m.executeRollback(deployCtx, rollbackID, spec); err != nil {
@@ -267,7 +270,7 @@ func (m *UpgradeManager) executeRollback(ctx context.Context, rollbackID string,
 
 // CertRotationSpec 证书轮换规格
 type CertRotationSpec struct {
-	ClusterID string `json:"clusterId"`
+	ClusterID string   `json:"clusterId"`
 	Nodes     []string `json:"nodes"` // 空=全部
 }
 
@@ -312,7 +315,7 @@ func (m *CertRotationManager) RotateCertificates(ctx context.Context, spec CertR
 	m.mu.Unlock()
 
 	go func() {
-		deployCtx, cancel := context.WithTimeout(context.Background(), 1*time.Hour)
+		deployCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 1*time.Hour)
 		defer cancel()
 
 		if err := m.executeRotation(deployCtx, rotationID, spec); err != nil {
@@ -375,7 +378,6 @@ type NodeScaleSpec struct {
 
 // NodeScaler 节点扩缩容管理器
 type NodeScaler struct {
-	mu      sync.RWMutex
 	sshPool *ssh.Pool
 }
 
@@ -487,7 +489,9 @@ func (m *EtcdManager) Backup(ctx context.Context, spec EtcdBackupSpec) (*EtcdBac
 	}
 
 	// 创建备份目录
-	ssh.MkdirAll(client, backupDir)
+	if err := ssh.MkdirAll(client, backupDir); err != nil {
+		return nil, fmt.Errorf("创建备份目录失败: %w", err)
+	}
 
 	// 执行 etcdctl snapshot save
 	timestamp := time.Now().Format("20060102-150405")
@@ -500,9 +504,15 @@ func (m *EtcdManager) Backup(ctx context.Context, spec EtcdBackupSpec) (*EtcdBac
 	}
 
 	// 获取文件大小
-	out, _, _, _ = ssh.Exec(client, fmt.Sprintf("stat -c %%s %s", backupPath))
+	out, _, _, err = ssh.Exec(client, fmt.Sprintf("stat -c %%s %s", backupPath))
+	if err != nil {
+		return nil, fmt.Errorf("获取备份文件大小失败: %w", err)
+	}
 	size := int64(0)
-	fmt.Sscanf(strings.TrimSpace(out), "%d", &size)
+	if _, serr := fmt.Sscanf(strings.TrimSpace(out), "%d", &size); serr != nil {
+		// 解析失败显式回退为 0：快照本身已保存成功，不应因大小读取失败而判失败
+		logx.Warn(ctx, "解析备份文件大小失败, 置为 0", "path", backupPath, "error", serr)
+	}
 
 	logx.Info(ctx, "etcd 备份完成", "path", backupPath, "size", size)
 	return &EtcdBackupResult{
@@ -520,28 +530,47 @@ func (m *EtcdManager) Restore(ctx context.Context, spec EtcdBackupSpec, backupPa
 	}
 
 	// 1. 停止 kube-apiserver 和 etcd
-	ssh.Exec(client, "mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/")
-	ssh.Exec(client, "mv /etc/kubernetes/manifests/etcd.yaml /tmp/")
+	if _, stderr, code, err := ssh.Exec(client, "mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/"); err != nil || code != 0 {
+		return fmt.Errorf("移出 kube-apiserver manifest 失败: %w (code %d)\n%s", err, code, stderr)
+	}
+	if _, stderr, code, err := ssh.Exec(client, "mv /etc/kubernetes/manifests/etcd.yaml /tmp/"); err != nil || code != 0 {
+		return fmt.Errorf("移出 etcd manifest 失败: %w (code %d)\n%s", err, code, stderr)
+	}
 	time.Sleep(5 * time.Second)
 
 	// 2. 清理 etcd 数据目录
-	ssh.Exec(client, "rm -rf /var/lib/etcd/member")
+	if _, stderr, code, err := ssh.Exec(client, "rm -rf /var/lib/etcd/member"); err != nil || code != 0 {
+		return fmt.Errorf("清理 etcd 数据目录失败: %w (code %d)\n%s", err, code, stderr)
+	}
 
 	// 3. 恢复快照
 	cmd := fmt.Sprintf("ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key snapshot restore %s --data-dir=/var/lib/etcd", backupPath)
 	out, stderr, code, err := ssh.Exec(client, cmd)
 	if err != nil || code != 0 {
-		// 恢复 manifest
-		ssh.Exec(client, "mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/")
-		ssh.Exec(client, "mv /tmp/etcd.yaml /etc/kubernetes/manifests/")
+		// 恢复失败时尽力还原 manifest，避免集群停留在坏状态；还原失败仅记录（原始恢复错误优先返回）
+		if mErr := restoreManifests(client); mErr != nil {
+			logx.Error(ctx, "恢复失败后还原 manifest 失败", mErr)
+		}
 		return fmt.Errorf("etcd 恢复失败: %w (code %d)\n%s\n%s", err, code, out, stderr)
 	}
 
 	// 4. 恢复 manifest
-	ssh.Exec(client, "mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/")
-	ssh.Exec(client, "mv /tmp/etcd.yaml /etc/kubernetes/manifests/")
+	if err := restoreManifests(client); err != nil {
+		return err
+	}
 
 	logx.Info(ctx, "etcd 恢复完成", "backup", backupPath)
+	return nil
+}
+
+// restoreManifests 将 /tmp 下暂存的 kube-apiserver/etcd manifest 还原回 manifests 目录。
+func restoreManifests(client *ssh.Client) error {
+	if _, stderr, code, err := ssh.Exec(client, "mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/"); err != nil || code != 0 {
+		return fmt.Errorf("还原 kube-apiserver manifest 失败: %w (code %d)\n%s", err, code, stderr)
+	}
+	if _, stderr, code, err := ssh.Exec(client, "mv /tmp/etcd.yaml /etc/kubernetes/manifests/"); err != nil || code != 0 {
+		return fmt.Errorf("还原 etcd manifest 失败: %w (code %d)\n%s", err, code, stderr)
+	}
 	return nil
 }
 
@@ -577,10 +606,10 @@ func (m *EtcdManager) ListBackups(ctx context.Context, cpNode, backupDir string)
 
 // K8sLifecycleHandler HTTP handler
 type K8sLifecycleHandler struct {
-	upgradeMgr  *UpgradeManager
-	certMgr     *CertRotationManager
-	nodeScaler  *NodeScaler
-	etcdMgr     *EtcdManager
+	upgradeMgr *UpgradeManager
+	certMgr    *CertRotationManager
+	nodeScaler *NodeScaler
+	etcdMgr    *EtcdManager
 }
 
 func NewK8sLifecycleHandler() *K8sLifecycleHandler {
@@ -627,11 +656,11 @@ func (h *K8sLifecycleHandler) HandleUpgradePlan(w http.ResponseWriter, r *http.R
 	}
 
 	var req struct {
-		ClusterID string   `json:"clusterId"`
+		ClusterID     string `json:"clusterId"`
 		TargetVersion string `json:"targetVersion"`
-		Host      string   `json:"host"`
-		User      string   `json:"user"`
-		SSHKey    string   `json:"sshKey"`
+		Host          string `json:"host"`
+		User          string `json:"user"`
+		SSHKey        string `json:"sshKey"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -730,21 +759,22 @@ func (h *K8sLifecycleHandler) HandleNodeScale(w http.ResponseWriter, r *http.Req
 
 	spec := NodeScaleSpec{ClusterID: req.ClusterID, Action: req.Action, Nodes: req.Nodes}
 
-	if req.Action == "add" {
+	switch req.Action {
+	case "add":
 		added, err := h.nodeScaler.AddNodes(r.Context(), spec, req.JoinCmd)
 		if err != nil {
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"added": added})
-	} else if req.Action == "remove" {
+	case "remove":
 		removed, err := h.nodeScaler.RemoveNodes(r.Context(), spec, req.CPNode)
 		if err != nil {
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"removed": removed})
-	} else {
+	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "action must be add or remove"})
 	}
 }
@@ -845,5 +875,3 @@ func nodePort(node NodeSpec) int {
 	}
 	return 22
 }
-
-

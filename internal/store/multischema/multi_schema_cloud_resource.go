@@ -8,6 +8,8 @@ package multischema
 
 import (
 	"context"
+
+	"github.com/Levango7/OpsMesh/internal/store/storefail"
 )
 
 // CreateCloudResource 创建云资源：用 res.TenantID 路由。
@@ -46,12 +48,16 @@ func (m *MultiSchemaStore) ListCloudResources(ctx context.Context, tenantID stri
 }
 
 // DeleteCloudResourcesByAccount 删除指定云账号下全部云资源：遍历全部租户 store。
+// 单个租户 store 删除失败不中断扇出（记录 storefail 后继续其余租户），最终仍返回 nil，
+// 与本包其余跨租户聚合方法的宽松语义一致。
 func (m *MultiSchemaStore) DeleteCloudResourcesByAccount(ctx context.Context, accountID string) error {
 	if accountID == "" {
 		return nil
 	}
 	for _, s := range m.allStores() {
-		_ = s.DeleteCloudResourcesByAccount(ctx, accountID)
+		if err := s.DeleteCloudResourcesByAccount(ctx, accountID); err != nil {
+			storefail.Record("[multi-schema] DeleteCloudResourcesByAccount 删除失败 (account=%s): %v", accountID, err)
+		}
 	}
 	return nil
 }

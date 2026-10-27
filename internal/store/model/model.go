@@ -326,11 +326,11 @@ type SecretMeta struct {
 // SecretAccessLog 密钥访问审计日志：记录谁、何时、对哪个密钥做了什么操作（get/rotate/delete）。
 // 按 (TenantID, Key, AccessedAt) 隔离，供审计/合规查询。
 type SecretAccessLog struct {
-	Key         string    `json:"key"`         // 密钥逻辑名
-	TenantID    string    `json:"tenantID"`    // 所属租户（隔离）
-	AccessedBy  string    `json:"accessedBy"`  // 操作人（用户/调用方标识）
-	Action      string    `json:"action"`      // get | rotate | delete
-	AccessedAt  time.Time `json:"accessedAt"`  // 访问时间
+	Key        string    `json:"key"`        // 密钥逻辑名
+	TenantID   string    `json:"tenantID"`   // 所属租户（隔离）
+	AccessedBy string    `json:"accessedBy"` // 操作人（用户/调用方标识）
+	Action     string    `json:"action"`     // get | rotate | delete
+	AccessedAt time.Time `json:"accessedAt"` // 访问时间
 }
 
 // ============================================================================

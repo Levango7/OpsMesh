@@ -809,21 +809,21 @@ func (m *MemoryStore) FireDueSchedules(now time.Time) int {
 			if !t.LastFiredAt.IsZero() && !t.LastFiredAt.Before(minuteStart) {
 				continue
 			}
-		inst := &proto.Task{
-			AgentID:    t.AgentID,
-			TenantID:   t.TenantID,
-			Type:       t.Type,
-			Command:    t.Command,
-			Content:    t.Content,
-			Path:       t.Path,
-			ScriptBody: t.ScriptBody, // 多行脚本体随模板任务继承（与 SQL 后端 FireDueSchedules 一致）
-			Status:     "pending",
-			ParentID:   t.TaskID,
-			MaxRetries: t.MaxRetries,
-			Timeout:    t.Timeout,    // 继承模板的节点级超时
-			RetryDelay: t.RetryDelay, // 继承模板的重试间隔
-			CreatedAt:  now,
-		}
+			inst := &proto.Task{
+				AgentID:    t.AgentID,
+				TenantID:   t.TenantID,
+				Type:       t.Type,
+				Command:    t.Command,
+				Content:    t.Content,
+				Path:       t.Path,
+				ScriptBody: t.ScriptBody, // 多行脚本体随模板任务继承（与 SQL 后端 FireDueSchedules 一致）
+				Status:     "pending",
+				ParentID:   t.TaskID,
+				MaxRetries: t.MaxRetries,
+				Timeout:    t.Timeout,    // 继承模板的节点级超时
+				RetryDelay: t.RetryDelay, // 继承模板的重试间隔
+				CreatedAt:  now,
+			}
 			m.seq++
 			inst.TaskID = fmt.Sprintf("task-%d-%d", now.UnixNano(), m.seq)
 			m.addTaskLocked(inst)
@@ -1807,7 +1807,7 @@ func (m *MemoryStore) RetryDeadLetterTask(id, tenantID string) bool {
 	if tenantID != "" && t.TenantID != tenantID {
 		return false
 	}
-	if t.DeadLetter != true || t.Status != "failed" {
+	if !t.DeadLetter || t.Status != "failed" {
 		return false
 	}
 	t.DeadLetter = false
