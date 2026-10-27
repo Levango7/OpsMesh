@@ -11,8 +11,8 @@
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0">{{ $t('runbook.runbooks') }}</h3>
-            <button class="xs primary" @click="openAddRunbook" data-testid="runbook-add-btn">{{ $t('runbook.add') }}</button>
-            <button class="xs outline" @click="store.fetchRunbooks()">↻ {{ $t('common.refresh') }}</button>
+            <Button variant="primary" size="sm" @click="openAddRunbook" data-testid="runbook-add-btn">{{ $t('runbook.add') }}</Button>
+            <Button variant="ghost" size="sm" @click="store.fetchRunbooks()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.loading && !store.runbooks.length" class="muted">{{ $t('common.loading') }}</div>
           <DataTable v-else :columns="runbookCols" :rows="store.runbooks" row-key="id" :empty-text="$t('runbook.noRunbooks')">
@@ -24,9 +24,9 @@
             </template>
             <template #cell-actions="{ row }">
               <div class="row-actions" @click.stop>
-                <button class="xs outline" @click="store.selectRunbook(row.id)">{{ $t('runbook.executions') }}</button>
-                <button class="xs primary" @click="onExecute(row.id)" data-testid="runbook-execute-btn">{{ $t('runbook.execute') }}</button>
-                <button class="xs outline" style="color: var(--fail); border-color: var(--fail)" @click="onDelete(row.id)" data-testid="runbook-delete-btn">{{ $t('common.delete') }}</button>
+                <Button variant="ghost" size="sm" @click="store.selectRunbook(row.id)">{{ $t('runbook.executions') }}</Button>
+                <Button variant="primary" size="sm" @click="onExecute(row.id)" data-testid="runbook-execute-btn">{{ $t('runbook.execute') }}</Button>
+                <Button variant="ghost" size="sm" style="color: var(--fail); border-color: var(--fail)" @click="onDelete(row.id)" data-testid="runbook-delete-btn">{{ $t('common.delete') }}</Button>
               </div>
             </template>
           </DataTable>
@@ -45,7 +45,7 @@
             </template>
             <template #cell-actions="{ row }">
               <div class="row-actions" @click.stop>
-                <button class="xs outline" @click="viewLogs(row.id)" data-testid="runbook-view-logs-btn">{{ $t('runbook.viewLogs') }}</button>
+                <Button variant="ghost" size="sm" @click="viewLogs(row.id)" data-testid="runbook-view-logs-btn">{{ $t('runbook.viewLogs') }}</Button>
               </div>
             </template>
           </DataTable>
@@ -68,8 +68,8 @@
             data-testid="runbook-editor"
           />
           <div class="btnbar" style="margin-top: 10px;">
-            <button class="primary" @click="saveEditor" data-testid="runbook-save-editor">{{ $t('runbook.save') }}</button>
-            <button class="outline" @click="editorContent = ''">{{ $t('runbook.clear') }}</button>
+            <Button variant="primary" size="md" @click="saveEditor" data-testid="runbook-save-editor">{{ $t('runbook.save') }}</Button>
+            <Button variant="ghost" size="md" @click="editorContent = ''">{{ $t('runbook.clear') }}</Button>
           </div>
         </div>
       </div>
@@ -80,7 +80,7 @@
       <div class="modal">
         <header class="modal-head">
           <h3>{{ $t('runbook.add') }}</h3>
-          <button class="xs outline" @click="addOpen = false">✕</button>
+          <Button variant="ghost" size="sm" @click="addOpen = false">✕</Button>
         </header>
         <div class="modal-body">
           <div class="field">
@@ -96,8 +96,8 @@
             <textarea v-model="addForm.content" rows="8" :placeholder="$t('runbook.contentPlaceholder')" data-testid="runbook-add-content" />
           </div>
           <div class="btnbar">
-            <button class="primary" @click="confirmAdd" :disabled="adding" data-testid="runbook-add-confirm">{{ $t('common.confirm') }}</button>
-            <button class="outline" @click="addOpen = false">{{ $t('common.cancel') }}</button>
+            <Button variant="primary" size="md" @click="confirmAdd" :disabled="adding" data-testid="runbook-add-confirm">{{ $t('common.confirm') }}</Button>
+            <Button variant="ghost" size="md" @click="addOpen = false">{{ $t('common.cancel') }}</Button>
           </div>
           <p v-if="addMsg" :class="['msg', addOk ? 'ok' : 'err']">{{ addMsg }}</p>
         </div>
@@ -109,7 +109,7 @@
       <div class="modal modal-lg">
         <header class="modal-head">
           <h3>{{ $t('runbook.executionLogs') }}</h3>
-          <button class="xs outline" @click="logsOpen = false">✕</button>
+          <Button variant="ghost" size="sm" @click="logsOpen = false">✕</Button>
         </header>
         <div class="modal-body">
           <pre class="code-block logs-block">{{ store.logsContent || '—' }}</pre>
@@ -127,6 +127,7 @@ import { useRunbookStore } from '@/stores/runbook'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useRunbookStore()
 const editorContent = ref('')

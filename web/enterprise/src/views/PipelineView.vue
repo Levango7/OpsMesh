@@ -1,14 +1,14 @@
 <template>
   <PageShell :title="$t('pipeline.title')" :desc="$t('pipeline.subtitle')" testid="pipeline" :error="loadErr">
     <div class="btnbar">
-      <button class="primary" @click="openCreate">
+      <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('pipeline.add') }}
-      </button>
-      <button class="outline" @click="fetchAll">
+      </Button>
+      <Button variant="ghost" size="md" @click="fetchAll">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -22,9 +22,9 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" :title="$t('pipeline.run')" @click="onRun(row)"><Icon name="success" :size="13" /></button>
-            <button class="xs outline" @click="openEdit(row)"><Icon name="edit" :size="13" /></button>
-            <button class="xs danger" @click="onDelete(row)"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" :title="$t('pipeline.run')" @click="onRun(row)"><Icon name="success" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -69,8 +69,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('pipeline.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('pipeline.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('pipeline.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('pipeline.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -114,6 +114,7 @@ import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const templates = ref([])
 const runs = ref([])

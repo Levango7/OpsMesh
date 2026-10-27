@@ -55,9 +55,9 @@
               <input v-model="form.mount" placeholder="secret" />
             </div>
             <div class="btnbar">
-              <button type="submit" class="primary" :disabled="testing">
+              <Button variant="primary" size="md" native-type="submit" :disabled="testing">
                 {{ testing ? $t('secrets.testing') : $t('secrets.test_connection') }}
-              </button>
+              </Button>
             </div>
             <p v-if="testMsg" :class="['msg', testOk ? 'ok' : 'err']">{{ testMsg }}</p>
           </form>
@@ -69,7 +69,7 @@
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0;">{{ $t('secrets.keys_title') }}</h3>
-            <button @click="fetchKeys()">↻ {{ $t('common.refresh') }}</button>
+            <Button variant="primary" size="md" @click="fetchKeys()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <DataTable
             :columns="keyCols"
@@ -82,9 +82,9 @@
               <span class="badge info">{{ value || '—' }}</span>
             </template>
             <template #cell-actions="{ row }">
-              <button class="xs outline" @click="onRotate(row.key)" :disabled="rotating === row.key">
+              <Button variant="ghost" size="sm" @click="onRotate(row.key)" :disabled="rotating === row.key">
                 {{ rotating === row.key ? $t('secrets.rotating') : $t('secrets.rotate') }}
-              </button>
+              </Button>
             </template>
           </DataTable>
         </div>
@@ -110,10 +110,10 @@
             </select>
           </div>
           <div class="btnbar">
-            <button class="primary" @click="confirmRotate" :disabled="!rotateConfirm.newValue || rotating">
+            <Button variant="primary" size="md" @click="confirmRotate" :disabled="!rotateConfirm.newValue || rotating">
               {{ rotating ? $t('secrets.rotating') : $t('secrets.rotate_confirm') }}
-            </button>
-            <button class="outline" @click="cancelRotate">{{ $t('common.cancel') }}</button>
+            </Button>
+            <Button variant="ghost" size="md" @click="cancelRotate">{{ $t('common.cancel') }}</Button>
           </div>
         </Modal>
 
@@ -150,6 +150,7 @@ import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { Modal } from '@/components/ui'
+import Button from "@/components/ui/Button.vue"
 
 // 提供者状态
 const status = reactive({ provider: '', enabled: false, addr: '', mount: '', file: '' })

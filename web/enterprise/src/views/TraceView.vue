@@ -57,10 +57,10 @@
             <input v-model="query.tags" placeholder="key=value,key2=value2" />
           </div>
           <div class="form-field action-field">
-            <button class="xs primary" @click="searchTraces" :disabled="queryLoading" data-testid="trace-search-btn">
+            <Button variant="primary" size="sm" @click="searchTraces" :disabled="queryLoading" data-testid="trace-search-btn">
               {{ $t('trace.search') }}
-            </button>
-            <button class="xs outline" @click="loadServices">↻ {{ $t('common.refresh') }}</button>
+            </Button>
+            <Button variant="ghost" size="sm" @click="loadServices">↻ {{ $t('common.refresh') }}</Button>
           </div>
         </div>
       </div>
@@ -96,9 +96,9 @@
             <td>{{ trace.spanCount }}</td>
             <td>{{ fmtTime(trace.startTimeMs) }}</td>
             <td>
-              <button class="xs primary" @click="selectTrace(trace)" data-testid="trace-detail-btn">
+              <Button variant="primary" size="sm" @click="selectTrace(trace)" data-testid="trace-detail-btn">
                 {{ $t('trace.detail') }}
-              </button>
+              </Button>
             </td>
           </tr>
         </tbody>
@@ -111,7 +111,7 @@
     <div v-if="selectedTrace" class="detail-card">
       <div class="flowbar">
         <h3 style="margin: 0">{{ $t('trace.detail_title') }}</h3>
-        <button class="xs outline" @click="selectedTrace = null">{{ $t('trace.back') }}</button>
+        <Button variant="ghost" size="sm" @click="selectedTrace = null">{{ $t('trace.back') }}</Button>
         <span class="muted">{{ $t('trace.trace_id_label') }}: {{ selectedTrace.traceID }}</span>
       </div>
 
@@ -170,6 +170,7 @@ import {
   normalizeTrace,
 } from '@/api/trace'
 import MetricsCard from '@/components/MetricsCard.vue'
+import Button from "@/components/ui/Button.vue"
 
 const route = useRoute()
 

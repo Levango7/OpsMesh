@@ -6,14 +6,14 @@
     :error="loadErr"
   >
     <div class="btnbar">
-      <button class="primary" @click="openCreate">
+      <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('scripts.add') }}
-      </button>
-      <button class="outline" @click="fetchScripts">
+      </Button>
+      <Button variant="ghost" size="md" @click="fetchScripts">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -26,10 +26,10 @@
         <template #cell-updatedAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" :title="$t('scripts.execute')" @click="openExec(row)"><Icon name="task" :size="13" /></button>
-            <button class="xs outline" :title="$t('scripts.executions')" @click="openExecutions(row)"><Icon name="clipboard" :size="13" /></button>
-            <button class="xs outline" @click="openEdit(row)"><Icon name="edit" :size="13" /></button>
-            <button class="xs danger" @click="onDelete(row)"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" :title="$t('scripts.execute')" @click="openExec(row)"><Icon name="task" :size="13" /></Button>
+            <Button variant="ghost" size="sm" :title="$t('scripts.executions')" @click="openExecutions(row)"><Icon name="clipboard" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -59,8 +59,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('scripts.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('scripts.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('scripts.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('scripts.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -78,8 +78,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="task" :size="14" /> {{ $t('scripts.execute') }}</button>
-          <button type="button" class="outline" @click="execForm = null">{{ $t('scripts.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="task" :size="14" /> {{ $t('scripts.execute') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="execForm = null">{{ $t('scripts.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -130,6 +130,7 @@ import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const scripts = ref([])
 const loading = ref(false)

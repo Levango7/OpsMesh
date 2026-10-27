@@ -1,14 +1,14 @@
 <template>
   <PageShell :title="$t('apikeys.title')" :desc="$t('apikeys.subtitle')" testid="api-keys" :error="loadErr">
     <div class="btnbar">
-      <button class="primary" data-testid="apikeys-add-btn" @click="openCreate">
+      <Button variant="primary" size="md" data-testid="apikeys-add-btn" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('apikeys.add') }}
-      </button>
-      <button class="outline" @click="fetchKeys">
+      </Button>
+      <Button variant="ghost" size="md" @click="fetchKeys">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -35,11 +35,11 @@
       <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
       <template #cell-actions="{ row }">
         <div class="row-actions">
-          <button class="xs outline" @click="openEdit(row)"><Icon name="edit" :size="13" /></button>
+          <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
           <!-- 启停切换 -->
-          <button v-if="!row.enabled" class="xs outline" @click="onToggle(row, true)">{{ $t('apikeys.enable') }}</button>
-          <button v-else class="xs outline" @click="onToggle(row, false)">{{ $t('apikeys.disable') }}</button>
-          <button class="xs danger" @click="onDelete(row)"><Icon name="delete" :size="13" /></button>
+          <Button variant="ghost" size="sm" v-if="!row.enabled" @click="onToggle(row, true)">{{ $t('apikeys.enable') }}</Button>
+          <Button variant="ghost" size="sm" v-else @click="onToggle(row, false)">{{ $t('apikeys.disable') }}</Button>
+          <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
         </div>
       </template>
     </DataTable>
@@ -73,8 +73,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('apikeys.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('apikeys.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('apikeys.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('apikeys.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -120,6 +120,7 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const keys = ref([])
 const loading = ref(false)

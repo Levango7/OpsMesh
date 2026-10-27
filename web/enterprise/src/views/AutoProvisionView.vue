@@ -19,10 +19,10 @@
           </div>
         </div>
         <div class="btnbar">
-          <button type="submit" class="primary" :disabled="store.loading" data-testid="auto-provision-btn">
+          <Button variant="primary" size="md" native-type="submit" :disabled="store.loading" data-testid="auto-provision-btn">
             <Icon name="success" :size="14" />
             {{ store.loading ? $t('common.loading') : $t('provision.submit') }}
-          </button>
+          </Button>
         </div>
         <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
       </form>
@@ -79,6 +79,7 @@ import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useProvisionStore()
 const msg = ref('')

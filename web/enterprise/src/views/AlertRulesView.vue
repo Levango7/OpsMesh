@@ -2,22 +2,22 @@
   <PageShell :title="$t('alertRules.title')" :desc="$t('alertRules.subtitle')" testid="alert-rules" :error="store.error">
     <!-- Tab 切换 -->
     <div class="tabbar">
-      <button
-        v-for="tab in tabs"
+      <Button
+        variant="primary" size="md" v-for="tab in tabs"
         :key="tab.key"
         :class="['tab', { active: activeTab === tab.key }]"
         :data-testid="'alert-rules-tab-' + tab.key"
         @click="switchTab(tab.key)"
-      >{{ $t(tab.label) }}</button>
+      >{{ $t(tab.label) }}</Button>
     </div>
 
     <!-- ========== Tab 1: 告警规则 ========== -->
     <div v-show="activeTab === 'rules'">
       <div class="btnbar">
-        <button class="primary" @click="openRuleCreate" data-testid="alert-rule-create-btn">
+        <Button variant="primary" size="md" @click="openRuleCreate" data-testid="alert-rule-create-btn">
           <Icon name="add" :size="14" /> {{ $t('alertRules.add_rule') }}
-        </button>
-        <button class="outline" @click="store.fetchRules()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        </Button>
+        <Button variant="ghost" size="md" @click="store.fetchRules()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.rules.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable
@@ -36,8 +36,8 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="openRuleEdit(row)" data-testid="alert-rule-edit-btn"><Icon name="edit" :size="13" /></button>
-            <button class="xs danger" @click="onRuleDelete(row)" data-testid="alert-rule-delete-btn"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" @click="openRuleEdit(row)" data-testid="alert-rule-edit-btn"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onRuleDelete(row)" data-testid="alert-rule-delete-btn"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -46,10 +46,10 @@
     <!-- ========== Tab 2: 引擎规则 ========== -->
     <div v-show="activeTab === 'engine'">
       <div class="btnbar">
-        <button class="primary" @click="openEngineCreate" data-testid="alert-engine-create-btn">
+        <Button variant="primary" size="md" @click="openEngineCreate" data-testid="alert-engine-create-btn">
           <Icon name="add" :size="14" /> {{ $t('alertRules.add_engine') }}
-        </button>
-        <button class="outline" @click="store.fetchEngineRules()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        </Button>
+        <Button variant="ghost" size="md" @click="store.fetchEngineRules()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.engineRules.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable
@@ -65,8 +65,8 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="openEngineEdit(row)" data-testid="alert-engine-edit-btn"><Icon name="edit" :size="13" /></button>
-            <button class="xs danger" @click="onEngineDelete(row)" data-testid="alert-engine-delete-btn"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" @click="openEngineEdit(row)" data-testid="alert-engine-edit-btn"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onEngineDelete(row)" data-testid="alert-engine-delete-btn"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -75,10 +75,10 @@
     <!-- ========== Tab 3: 静默规则 ========== -->
     <div v-show="activeTab === 'silences'">
       <div class="btnbar">
-        <button class="primary" @click="openSilenceCreate" data-testid="alert-silence-create-btn">
+        <Button variant="primary" size="md" @click="openSilenceCreate" data-testid="alert-silence-create-btn">
           <Icon name="add" :size="14" /> {{ $t('alertRules.add_silence') }}
-        </button>
-        <button class="outline" @click="store.fetchSilences()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        </Button>
+        <Button variant="ghost" size="md" @click="store.fetchSilences()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.silences.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable
@@ -92,7 +92,7 @@
         <template #cell-matchers="{ value }"><code>{{ formatMatchers(value) }}</code></template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs danger" @click="onSilenceDelete(row)" data-testid="alert-silence-delete-btn"><Icon name="delete" :size="13" /></button>
+            <Button variant="danger" size="sm" @click="onSilenceDelete(row)" data-testid="alert-silence-delete-btn"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -144,8 +144,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="ruleForm = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="ruleForm = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -178,8 +178,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="engineForm = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="engineForm = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -207,8 +207,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="silenceForm = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="silenceForm = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -243,6 +243,7 @@ import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useAlertRuleStore()
 const activeTab = ref('rules')

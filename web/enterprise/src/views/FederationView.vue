@@ -7,19 +7,19 @@
   >
     <!-- Tab 切换 -->
     <div class="tabbar">
-      <button
-        v-for="tab in tabs"
+      <Button
+        variant="primary" size="md" v-for="tab in tabs"
         :key="tab.key"
         :class="['tab', { active: activeTab === tab.key }]"
         :data-testid="'federation-tab-' + tab.key"
         @click="switchTab(tab.key)"
-      >{{ $t(tab.label) }}</button>
+      >{{ $t(tab.label) }}</Button>
     </div>
 
     <!-- ========== Tab 1: Peer 管理 ========== -->
     <div v-show="activeTab === 'peers'">
       <div class="btnbar">
-        <button class="outline" @click="store.fetchPeers()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        <Button variant="ghost" size="md" @click="store.fetchPeers()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.peers.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable
@@ -41,14 +41,14 @@
     <!-- ========== Tab 2: 设备聚合视图（分页+搜索） ========== -->
     <div v-show="activeTab === 'devices'">
       <div class="btnbar">
-        <button class="outline" @click="loadDevices()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        <Button variant="ghost" size="md" @click="loadDevices()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
         <input
           v-model="deviceSearch"
           :placeholder="$t('federation.device_search_placeholder')"
           class="search-input"
           @keyup.enter="loadDevices"
         />
-        <button class="xs primary" @click="loadDevices">{{ $t('federation.device_search') }}</button>
+        <Button variant="primary" size="sm" @click="loadDevices">{{ $t('federation.device_search') }}</Button>
       </div>
 
       <div v-if="deviceLoading && !devices.length" class="muted">{{ $t('common.loading') }}</div>
@@ -58,18 +58,16 @@
         <span>{{ $t('federation.device_total') }}: <strong>{{ deviceTotal }}</strong></span>
         <span>{{ $t('federation.device_page') }}: <strong>{{ devicePage }}</strong></span>
         <span>{{ $t('federation.device_page_size') }}: <strong>{{ devicePageSize }}</strong></span>
-        <button
-          class="xs outline"
-          :disabled="devicePage <= 1"
+        <Button
+          variant="ghost" size="sm" :disabled="devicePage <= 1"
           @click="prevPage"
           data-testid="federation-device-prev"
-        >{{ $t('federation.device_prev') }}</button>
-        <button
-          class="xs outline"
-          :disabled="!deviceHasMore"
+        >{{ $t('federation.device_prev') }}</Button>
+        <Button
+          variant="ghost" size="sm" :disabled="!deviceHasMore"
           @click="nextPage"
           data-testid="federation-device-next"
-        >{{ $t('federation.device_next') }}</button>
+        >{{ $t('federation.device_next') }}</Button>
       </div>
 
       <div v-if="deviceLoading && !devices.length" class="muted">{{ $t('common.loading') }}</div>
@@ -127,9 +125,9 @@
             <input v-model.number="form.timeoutSec" type="number" min="1" />
           </div>
           <div class="btnbar">
-            <button type="submit" class="primary" :disabled="submitting" data-testid="federation-forward-btn">
+            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="federation-forward-btn">
               {{ submitting ? $t('common.loading') : $t('federation.forward') }}
-            </button>
+            </Button>
           </div>
           <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
         </form>
@@ -167,9 +165,9 @@
             </div>
           </div>
           <div class="btnbar">
-            <button type="submit" class="primary" :disabled="taskStatusLoading" data-testid="federation-taskstatus-query">
+            <Button variant="primary" size="md" native-type="submit" :disabled="taskStatusLoading" data-testid="federation-taskstatus-query">
               {{ taskStatusLoading ? $t('common.loading') : $t('federation.taskstatus_query') }}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -208,6 +206,7 @@ import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { getFederationDevices, getFederationTaskStatus } from '@/api/federation'
+import Button from "@/components/ui/Button.vue"
 
 const store = useFederationStore()
 const activeTab = ref('peers')

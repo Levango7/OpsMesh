@@ -26,13 +26,12 @@
           <div v-if="store.quickCommands.length" class="quick-commands">
             <label class="quick-label">{{ $t('bot.quickCommands') }}</label>
             <div class="quick-btns">
-              <button
-                v-for="qc in store.quickCommands"
+              <Button
+                variant="ghost" size="sm" :class="['quick-btn']" v-for="qc in store.quickCommands"
                 :key="qc.command"
-                class="xs outline quick-btn"
                 :data-testid="'bot-quick-' + qc.label"
                 @click="runQuickCommand(qc.command)"
-              >{{ qc.label }}</button>
+              >{{ qc.label }}</Button>
             </div>
           </div>
 
@@ -45,9 +44,9 @@
               data-testid="bot-command-input"
               @keyup.enter="runCommand"
             />
-            <button class="primary" @click="runCommand" :disabled="store.executing || !commandInput.trim()" data-testid="bot-run-btn">
+            <Button variant="primary" size="md" @click="runCommand" :disabled="store.executing || !commandInput.trim()" data-testid="bot-run-btn">
               {{ store.executing ? $t('bot.executing') : $t('bot.run') }}
-            </button>
+            </Button>
           </div>
 
           <!-- 响应显示 -->
@@ -55,7 +54,7 @@
             <div class="response-header">
               <StatusBadge :status="lastResponse.status === 'success' ? 'success' : 'failed'" :text="lastResponse.status" />
               <span class="response-time">{{ lastResponse.executedAt || '' }}</span>
-              <button class="xs outline" @click="copyResponse">{{ $t('bot.copy') }}</button>
+              <Button variant="ghost" size="sm" @click="copyResponse">{{ $t('bot.copy') }}</Button>
             </div>
             <pre class="code-block response-content">{{ formatResponse(lastResponse.response) }}</pre>
           </div>
@@ -67,7 +66,7 @@
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0">{{ $t('bot.history') }}</h3>
-            <button class="xs outline" @click="store.fetchHistory(store.selectedPlatform)">↻ {{ $t('common.refresh') }}</button>
+            <Button variant="ghost" size="sm" @click="store.fetchHistory(store.selectedPlatform)">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.loading && !store.history.length" class="muted">{{ $t('common.loading') }}</div>
           <div v-else-if="!store.history.length" class="muted">{{ $t('bot.noHistory') }}</div>
@@ -100,6 +99,7 @@ import { onMounted, ref } from 'vue'
 import { useBotStore } from '@/stores/bot'
 
 import StatusBadge from '@/components/StatusBadge.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useBotStore()
 const commandInput = ref('')

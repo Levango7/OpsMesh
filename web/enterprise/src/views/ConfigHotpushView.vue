@@ -7,13 +7,13 @@
   >
     <!-- Tab 切换 -->
     <div class="tabbar">
-      <button
-        v-for="tab in tabs"
+      <Button
+        variant="primary" size="md" v-for="tab in tabs"
         :key="tab.key"
         :class="['tab', { active: activeTab === tab.key }]"
         :data-testid="'config-tab-' + tab.key"
         @click="switchTab(tab.key)"
-      >{{ $t(tab.label) }}</button>
+      >{{ $t(tab.label) }}</Button>
     </div>
 
     <!-- ========== Tab 1: 热推送 ========== -->
@@ -56,9 +56,9 @@
             <input v-model.trim="hotpushForm.description" type="text" :placeholder="$t('configHotpush.description_placeholder')" />
           </div>
           <div class="btnbar">
-            <button type="submit" class="primary" :disabled="submitting" data-testid="config-hotpush-btn">
+            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="config-hotpush-btn">
               {{ submitting ? $t('common.loading') : $t('configHotpush.hotpush') }}
-            </button>
+            </Button>
           </div>
           <p v-if="hotpushMsg" :class="['msg', hotpushMsgOk ? 'ok' : 'err']">{{ hotpushMsg }}</p>
         </form>
@@ -123,9 +123,9 @@
             <input v-model.number="canaryForm.percentage" type="number" min="0" max="100" />
           </div>
           <div class="btnbar">
-            <button type="submit" class="primary" :disabled="submitting" data-testid="config-canary-btn">
+            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="config-canary-btn">
               {{ submitting ? $t('common.loading') : $t('configHotpush.canary') }}
-            </button>
+            </Button>
           </div>
           <p v-if="canaryMsg" :class="['msg', canaryMsgOk ? 'ok' : 'err']">{{ canaryMsg }}</p>
         </form>
@@ -142,8 +142,8 @@
         <input v-model.trim="filter.key" :placeholder="$t('configHotpush.filter_key')" class="filter-input" />
         <input v-model.trim="filter.agentID" :placeholder="$t('configHotpush.filter_agentID')" class="filter-input" />
         <input v-model.number="filter.limit" type="number" min="1" max="500" :placeholder="$t('configHotpush.filter_limit')" class="filter-input narrow" />
-        <button class="primary" @click="searchVersions" data-testid="config-versions-search-btn">{{ $t('common.search') }}</button>
-        <button class="outline" @click="resetFilter">{{ $t('configHotpush.reset') }}</button>
+        <Button variant="primary" size="md" @click="searchVersions" data-testid="config-versions-search-btn">{{ $t('common.search') }}</Button>
+        <Button variant="ghost" size="md" @click="resetFilter">{{ $t('configHotpush.reset') }}</Button>
       </div>
       <div v-if="store.loading && !store.versions.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable
@@ -179,6 +179,7 @@ import { useConfigStore } from '@/stores/config'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useConfigStore()
 const activeTab = ref('hotpush')

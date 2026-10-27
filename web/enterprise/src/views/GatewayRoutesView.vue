@@ -21,14 +21,14 @@
     </div>
 
     <div class="btnbar">
-      <button class="primary" data-testid="gateway-add-route-btn" @click="openCreate">
+      <Button variant="primary" size="md" data-testid="gateway-add-route-btn" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('gateway_routes.add') }}
-      </button>
-      <button class="outline" @click="fetchAll">
+      </Button>
+      <Button variant="ghost" size="md" @click="fetchAll">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -49,11 +49,11 @@
       <template #cell-updatedAt="{ value }">{{ fmtTime(value) }}</template>
       <template #cell-actions="{ row }">
         <div class="row-actions">
-          <button class="xs outline" @click="openEdit(row)"><Icon name="edit" :size="13" /></button>
+          <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
           <!-- 启停切换 -->
-          <button v-if="!row.enabled" class="xs outline" @click="onToggle(row, true)">{{ $t('gateway_routes.enable') }}</button>
-          <button v-else class="xs outline" @click="onToggle(row, false)">{{ $t('gateway_routes.disable') }}</button>
-          <button class="xs danger" @click="onDelete(row)"><Icon name="delete" :size="13" /></button>
+          <Button variant="ghost" size="sm" v-if="!row.enabled" @click="onToggle(row, true)">{{ $t('gateway_routes.enable') }}</Button>
+          <Button variant="ghost" size="sm" v-else @click="onToggle(row, false)">{{ $t('gateway_routes.disable') }}</Button>
+          <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
         </div>
       </template>
     </DataTable>
@@ -97,8 +97,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('gateway_routes.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('gateway_routes.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('gateway_routes.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('gateway_routes.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -135,6 +135,7 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const routes = ref([])
 const stats = ref({})

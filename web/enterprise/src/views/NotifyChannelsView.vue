@@ -7,25 +7,25 @@
   >
     <!-- tab 分区：通知渠道 / 通知模板 -->
     <div class="btnbar tabs">
-      <button :class="['tab-btn', { active: tab === 'channels' }]" @click="tab = 'channels'">
+      <Button variant="primary" size="md" :class="['tab-btn', { active: tab === 'channels' }]" @click="tab = 'channels'">
         {{ $t('notify.tab_channels') }}
-      </button>
-      <button :class="['tab-btn', { active: tab === 'templates' }]" @click="tab = 'templates'">
+      </Button>
+      <Button variant="primary" size="md" :class="['tab-btn', { active: tab === 'templates' }]" @click="tab = 'templates'">
         {{ $t('notify.tab_templates') }}
-      </button>
+      </Button>
     </div>
 
     <!-- ============ 通知渠道 ============ -->
     <template v-if="tab === 'channels'">
       <div class="btnbar">
-        <button class="primary" data-testid="notify-add-channel-btn" @click="openChannelCreate">
+        <Button variant="primary" size="md" data-testid="notify-add-channel-btn" @click="openChannelCreate">
           <Icon name="add" :size="14" />
           {{ $t('notify.add_channel') }}
-        </button>
-        <button class="outline" @click="fetchChannels">
+        </Button>
+        <Button variant="ghost" size="md" @click="fetchChannels">
           <Icon name="refresh" :size="14" />
           {{ $t('common.refresh') }}
-        </button>
+        </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
       <DataTable v-else :columns="channelCols" :rows="channels" row-key="id" :empty-text="$t('notify.empty_channels')">
@@ -39,10 +39,10 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="openChannelEdit(row)"><Icon name="edit" :size="13" /></button>
+            <Button variant="ghost" size="sm" @click="openChannelEdit(row)"><Icon name="edit" :size="13" /></Button>
             <!-- 测试发送：验证渠道连通性 -->
-            <button class="xs outline" data-testid="notify-test-btn" @click="onTest(row)">{{ $t('notify.test') }}</button>
-            <button class="xs danger" @click="onDeleteChannel(row)"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" data-testid="notify-test-btn" @click="onTest(row)">{{ $t('notify.test') }}</Button>
+            <Button variant="danger" size="sm" @click="onDeleteChannel(row)"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -51,14 +51,14 @@
     <!-- ============ 通知模板 ============ -->
     <template v-else>
       <div class="btnbar">
-        <button class="primary" data-testid="notify-add-template-btn" @click="openTemplateCreate">
+        <Button variant="primary" size="md" data-testid="notify-add-template-btn" @click="openTemplateCreate">
           <Icon name="add" :size="14" />
           {{ $t('notify.add_template') }}
-        </button>
-        <button class="outline" @click="fetchTemplates">
+        </Button>
+        <Button variant="ghost" size="md" @click="fetchTemplates">
           <Icon name="refresh" :size="14" />
           {{ $t('common.refresh') }}
-        </button>
+        </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
       <DataTable v-else :columns="templateCols" :rows="templates" row-key="id" :empty-text="$t('notify.empty_templates')">
@@ -74,8 +74,8 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="openTemplateEdit(row)"><Icon name="edit" :size="13" /></button>
-            <button class="xs danger" @click="onDeleteTemplate(row)"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" @click="openTemplateEdit(row)"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDeleteTemplate(row)"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -109,8 +109,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('notify.save') }}</button>
-          <button type="button" class="outline" @click="channelForm = null">{{ $t('notify.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('notify.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="channelForm = null">{{ $t('notify.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -148,8 +148,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('notify.save') }}</button>
-          <button type="button" class="outline" @click="templateForm = null">{{ $t('notify.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('notify.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="templateForm = null">{{ $t('notify.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -190,6 +190,7 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const tab = ref('channels')
 const loading = ref(false)

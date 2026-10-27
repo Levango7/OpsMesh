@@ -6,10 +6,10 @@
     :error="store.error"
   >
     <div class="btnbar">
-      <button class="primary" @click="openCreate" data-testid="federation-deploys-create-btn">
+      <Button variant="primary" size="md" @click="openCreate" data-testid="federation-deploys-create-btn">
         <Icon name="add" :size="14" /> {{ $t('federationDeploys.add') }}
-      </button>
-      <button class="outline" @click="store.fetchDeploys()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+      </Button>
+      <Button variant="ghost" size="md" @click="store.fetchDeploys()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
     </div>
 
     <!-- 联邦部署列表 -->
@@ -35,7 +35,7 @@
       </template>
       <template #cell-actions="{ row }">
         <div class="row-actions">
-          <button class="xs outline" @click="viewDetail(row)" data-testid="federation-deploys-detail-btn">{{ $t('federationDeploys.detail') }}</button>
+          <Button variant="ghost" size="sm" @click="viewDetail(row)" data-testid="federation-deploys-detail-btn">{{ $t('federationDeploys.detail') }}</Button>
         </div>
       </template>
     </DataTable>
@@ -61,8 +61,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -111,6 +111,7 @@ import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useFederationDeploysStore()
 const formError = ref('')

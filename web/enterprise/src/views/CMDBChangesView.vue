@@ -7,13 +7,13 @@
   >
     <!-- 状态筛选 -->
     <div class="filter-bar">
-      <button
-        v-for="s in statusFilters"
+      <Button
+        variant="primary" size="md" v-for="s in statusFilters"
         :key="s.key"
         :class="['tab', { active: statusFilter === s.key }]"
         @click="setStatusFilter(s.key)"
-      >{{ $t(s.label) }}</button>
-      <button class="outline" @click="loadList"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+      >{{ $t(s.label) }}</Button>
+      <Button variant="ghost" size="md" @click="loadList"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
     </div>
 
     <!-- 变更列表 -->
@@ -36,9 +36,9 @@
       </template>
       <template #cell-actions="{ row }">
         <div class="row-actions">
-          <button class="xs outline" @click="viewDetail(row)" data-testid="cmdb-change-detail-btn">{{ $t('cmdbChanges.detail') }}</button>
-          <button v-if="row.status === 'pending'" class="xs primary" @click="onApprove(row)" data-testid="cmdb-change-approve-btn">{{ $t('cmdbChanges.approve') }}</button>
-          <button v-if="row.status === 'pending'" class="xs danger" @click="onReject(row)" data-testid="cmdb-change-reject-btn">{{ $t('cmdbChanges.reject') }}</button>
+          <Button variant="ghost" size="sm" @click="viewDetail(row)" data-testid="cmdb-change-detail-btn">{{ $t('cmdbChanges.detail') }}</Button>
+          <Button variant="primary" size="sm" v-if="row.status === 'pending'" @click="onApprove(row)" data-testid="cmdb-change-approve-btn">{{ $t('cmdbChanges.approve') }}</Button>
+          <Button variant="danger" size="sm" v-if="row.status === 'pending'" @click="onReject(row)" data-testid="cmdb-change-reject-btn">{{ $t('cmdbChanges.reject') }}</Button>
         </div>
       </template>
     </DataTable>
@@ -89,6 +89,7 @@ import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useCMDBAdvancedStore()
 const statusFilter = ref('pending')

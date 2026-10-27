@@ -6,14 +6,14 @@
     :error="loadErr"
   >
     <div class="btnbar">
-      <button class="primary" @click="openEdit">
+      <Button variant="primary" size="md" @click="openEdit">
         <Icon name="edit" :size="14" />
         {{ $t('quotas.edit') }}
-      </button>
-      <button class="outline" @click="fetchQuota">
+      </Button>
+      <Button variant="ghost" size="md" @click="fetchQuota">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -45,8 +45,8 @@
         <p class="muted">{{ $t('quotas.unlimited_hint') }}</p>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('quotas.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('quotas.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('quotas.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('quotas.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -82,6 +82,7 @@ import { toast } from '@/utils/toast'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const usage = ref(null)
 const enabled = ref(false)

@@ -11,8 +11,8 @@
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0">{{ $t('autoscaler.rules') }}</h3>
-            <button class="xs primary" @click="openAddRule" data-testid="autoscaler-add-btn">{{ $t('autoscaler.addRule') }}</button>
-            <button class="xs outline" @click="store.fetchRules()">↻ {{ $t('common.refresh') }}</button>
+            <Button variant="primary" size="sm" @click="openAddRule" data-testid="autoscaler-add-btn">{{ $t('autoscaler.addRule') }}</Button>
+            <Button variant="ghost" size="sm" @click="store.fetchRules()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.loading && !store.rules.length" class="muted">{{ $t('common.loading') }}</div>
           <DataTable v-else :columns="ruleCols" :rows="store.rules" row-key="id" :empty-text="$t('autoscaler.noRules')">
@@ -26,8 +26,8 @@
             <template #cell-threshold="{ value }">{{ value || 0 }}%</template>
             <template #cell-actions="{ row }">
               <div class="row-actions" @click.stop>
-                <button class="xs outline" @click="onToggleRule(row)" data-testid="autoscaler-toggle-btn">{{ row.enabled ? $t('autoscaler.disable') : $t('autoscaler.enable') }}</button>
-                <button class="xs outline" style="color: var(--fail); border-color: var(--fail)" @click="onDeleteRule(row.id)" data-testid="autoscaler-delete-btn">{{ $t('common.delete') }}</button>
+                <Button variant="ghost" size="sm" @click="onToggleRule(row)" data-testid="autoscaler-toggle-btn">{{ row.enabled ? $t('autoscaler.disable') : $t('autoscaler.enable') }}</Button>
+                <Button variant="ghost" size="sm" style="color: var(--fail); border-color: var(--fail)" @click="onDeleteRule(row.id)" data-testid="autoscaler-delete-btn">{{ $t('common.delete') }}</Button>
               </div>
             </template>
           </DataTable>
@@ -50,7 +50,7 @@
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0">{{ $t('autoscaler.decisions') }}</h3>
-            <button class="xs outline" @click="store.fetchDecisions()">↻ {{ $t('common.refresh') }}</button>
+            <Button variant="ghost" size="sm" @click="store.fetchDecisions()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.decisionsLoading && !store.decisions.length" class="muted">{{ $t('common.loading') }}</div>
           <div v-else-if="!store.decisions.length" class="muted">{{ $t('autoscaler.noDecisions') }}</div>
@@ -89,7 +89,7 @@
             <input v-model="scaleForm.reason" :placeholder="$t('autoscaler.reasonPlaceholder')" data-testid="autoscaler-scale-reason" />
           </div>
           <div class="btnbar">
-            <button class="primary" @click="onManualScale" :disabled="scaling" data-testid="autoscaler-scale-btn">{{ $t('autoscaler.trigger') }}</button>
+            <Button variant="primary" size="md" @click="onManualScale" :disabled="scaling" data-testid="autoscaler-scale-btn">{{ $t('autoscaler.trigger') }}</Button>
           </div>
           <p v-if="scaleMsg" :class="['msg', scaleOk ? 'ok' : 'err']">{{ scaleMsg }}</p>
         </div>
@@ -101,7 +101,7 @@
       <div class="modal">
         <header class="modal-head">
           <h3>{{ $t('autoscaler.addRule') }}</h3>
-          <button class="xs outline" @click="addOpen = false">✕</button>
+          <Button variant="ghost" size="sm" @click="addOpen = false">✕</Button>
         </header>
         <div class="modal-body">
           <div class="field">
@@ -134,8 +134,8 @@
             <input v-model.number="addForm.cooldown" type="number" min="0" data-testid="autoscaler-add-cooldown" />
           </div>
           <div class="btnbar">
-            <button class="primary" @click="confirmAddRule" :disabled="adding" data-testid="autoscaler-add-confirm">{{ $t('common.confirm') }}</button>
-            <button class="outline" @click="addOpen = false">{{ $t('common.cancel') }}</button>
+            <Button variant="primary" size="md" @click="confirmAddRule" :disabled="adding" data-testid="autoscaler-add-confirm">{{ $t('common.confirm') }}</Button>
+            <Button variant="ghost" size="md" @click="addOpen = false">{{ $t('common.cancel') }}</Button>
           </div>
           <p v-if="addMsg" :class="['msg', addOk ? 'ok' : 'err']">{{ addMsg }}</p>
         </div>
@@ -151,6 +151,7 @@ import { useAutoscalerStore } from '@/stores/autoscaler'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useAutoscalerStore()
 

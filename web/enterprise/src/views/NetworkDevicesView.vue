@@ -2,22 +2,22 @@
   <PageShell :title="$t('network.devices_title')" :desc="$t('network.devices_subtitle')" testid="network-devices" :error="store.error">
     <!-- Tab 切换 -->
     <div class="tabbar">
-      <button
-        v-for="tab in tabs"
+      <Button
+        variant="primary" size="md" v-for="tab in tabs"
         :key="tab.key"
         :class="['tab', { active: activeTab === tab.key }]"
         :data-testid="'network-devices-tab-' + tab.key"
         @click="switchTab(tab.key)"
-      >{{ $t(tab.label) }}</button>
+      >{{ $t(tab.label) }}</Button>
     </div>
 
     <!-- ========== Tab 1: 设备列表 ========== -->
     <div v-show="activeTab === 'devices'">
       <div class="btnbar">
-        <button class="primary" @click="openCreate" data-testid="network-device-create-btn">
+        <Button variant="primary" size="md" @click="openCreate" data-testid="network-device-create-btn">
           <Icon name="add" :size="14" /> {{ $t('network.add_device') }}
-        </button>
-        <button class="outline" @click="store.fetchDevices()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        </Button>
+        <Button variant="ghost" size="md" @click="store.fetchDevices()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.devices.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable
@@ -33,9 +33,9 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="viewMetrics(row)" data-testid="network-device-metrics-btn"><Icon name="logs" :size="13" /></button>
-            <button class="xs outline" @click="openConfigPush(row)" data-testid="network-device-config-btn"><Icon name="settings" :size="13" /></button>
-            <button class="xs danger" @click="onDelete(row)" data-testid="network-device-delete-btn"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" @click="viewMetrics(row)" data-testid="network-device-metrics-btn"><Icon name="logs" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openConfigPush(row)" data-testid="network-device-config-btn"><Icon name="settings" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="network-device-delete-btn"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -57,9 +57,9 @@
             </div>
           </div>
           <div class="btnbar">
-            <button type="submit" class="primary" :disabled="submitting" data-testid="network-discover-btn">
+            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="network-discover-btn">
               {{ submitting ? $t('common.loading') : $t('network.discover') }}
-            </button>
+            </Button>
           </div>
           <p v-if="discoverMsg" :class="['msg', discoverMsgOk ? 'ok' : 'err']">{{ discoverMsg }}</p>
         </form>
@@ -120,8 +120,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -147,8 +147,8 @@
         </div>
         <div v-if="configError" class="msg err">{{ configError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('network.push_config') }}</button>
-          <button type="button" class="outline" @click="configForm = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('network.push_config') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="configForm = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -194,6 +194,7 @@ import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useNetworkStore()
 const activeTab = ref('devices')

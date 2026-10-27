@@ -1,12 +1,12 @@
 <template>
   <PageShell :title="$t('network.topology_title')" :desc="$t('network.topology_subtitle')" testid="network-topology" :error="store.error">
     <div class="btnbar">
-      <button class="primary" @click="refresh" data-testid="network-topology-refresh-btn">
+      <Button variant="primary" size="md" @click="refresh" data-testid="network-topology-refresh-btn">
         <Icon name="refresh" :size="14" /> {{ $t('network.refresh_topology') }}
-      </button>
-      <button class="outline" @click="loadCache" data-testid="network-topology-cache-btn">
+      </Button>
+      <Button variant="ghost" size="md" @click="loadCache" data-testid="network-topology-cache-btn">
         <Icon name="success" :size="14" /> {{ $t('network.load_cache') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="store.loading && !store.topology" class="muted">{{ $t('common.loading') }}</div>
@@ -78,6 +78,7 @@ import { useNetworkStore } from '@/stores/network'
 import { t } from '@/i18n'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useNetworkStore()
 const errorConfirm = reactive({ show: false, message: '' })

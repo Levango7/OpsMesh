@@ -1,10 +1,10 @@
 <template>
   <PageShell :title="$t('approval.flows_title')" :desc="$t('approval.flows_subtitle')" testid="approval-flows" :error="store.error">
     <div class="btnbar">
-      <button class="primary" @click="openCreate" data-testid="approval-flow-create-btn">
+      <Button variant="primary" size="md" @click="openCreate" data-testid="approval-flow-create-btn">
         <Icon name="add" :size="14" /> {{ $t('approval.add_flow') }}
-      </button>
-      <button class="outline" @click="store.fetchFlows()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+      </Button>
+      <Button variant="ghost" size="md" @click="store.fetchFlows()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
     </div>
 
     <div v-if="store.loading && !store.flows.length" class="muted">{{ $t('common.loading') }}</div>
@@ -21,8 +21,8 @@
       </template>
       <template #cell-actions="{ row }">
         <div class="row-actions">
-          <button class="xs outline" @click="openEdit(row)" data-testid="approval-flow-edit-btn"><Icon name="edit" :size="13" /></button>
-          <button class="xs danger" @click="onDelete(row)" data-testid="approval-flow-delete-btn"><Icon name="delete" :size="13" /></button>
+          <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="approval-flow-edit-btn"><Icon name="edit" :size="13" /></Button>
+          <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="approval-flow-delete-btn"><Icon name="delete" :size="13" /></Button>
         </div>
       </template>
     </DataTable>
@@ -45,8 +45,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -81,6 +81,7 @@ import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useApprovalStore()
 const formError = ref('')

@@ -19,9 +19,9 @@
           </option>
         </select>
       </div>
-      <button class="outline" @click="refreshDevices" :disabled="loadingDevices">
+      <Button variant="ghost" size="md" @click="refreshDevices" :disabled="loadingDevices">
         <Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="errorMsg" class="poll-err" data-testid="error-msg"><Icon name="warning" :size="14" /> {{ errorMsg }}</div>
@@ -36,8 +36,8 @@
           type="search"
           data-testid="domain-search"
         />
-        <button
-          v-for="d in filteredDomains"
+        <Button
+          variant="primary" size="md" v-for="d in filteredDomains"
           :key="d.id"
           :class="['domain-btn', { active: currentDomain?.id === d.id }]"
           @click="selectDomain(d)"
@@ -45,7 +45,7 @@
         >
           <Icon :name="d.icon || 'deploy'" :size="13" />
           <span>{{ L(d.name.zh, d.name.en) }}</span>
-        </button>
+        </Button>
       </aside>
 
       <!-- 右侧动作区 -->
@@ -59,15 +59,15 @@
 
           <!-- 动作 tab -->
           <div class="tabbar" data-testid="action-tabs">
-            <button
-              v-for="a in currentDomain.actions"
+            <Button
+              variant="primary" size="md" v-for="a in currentDomain.actions"
               :key="a.id"
               :class="['tab', { active: currentAction?.id === a.id }]"
               @click="selectAction(a)"
               :data-testid="'action-' + a.id"
             >
               {{ L(a.name.zh, a.name.en) }}
-            </button>
+            </Button>
           </div>
 
           <!-- 动态表单 -->
@@ -115,10 +115,10 @@
             </div>
 
             <div class="btnbar">
-              <button type="submit" class="primary" :disabled="submitting" data-testid="submit-btn">
+              <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="submit-btn">
                 {{ submitting ? $t('common.loading') : L('执行', 'Execute') }}
-              </button>
-              <button type="button" class="outline" @click="resetResult">{{ L('清空结果', 'Clear result') }}</button>
+              </Button>
+              <Button variant="ghost" size="md" native-type="button" @click="resetResult">{{ L('清空结果', 'Clear result') }}</Button>
             </div>
           </form>
 
@@ -128,7 +128,7 @@
             <template v-if="result.kind === 'query'">
               <div class="flowbar">
                 <h4 style="margin: 0">{{ L('查询结果', 'Query Result') }}</h4>
-                <button class="xs outline" @click="copyResult"><Icon name="cmdb" :size="12" /> {{ L('复制', 'Copy') }}</button>
+                <Button variant="ghost" size="sm" @click="copyResult"><Icon name="cmdb" :size="12" /> {{ L('复制', 'Copy') }}</Button>
               </div>
               <pre class="result-pre">{{ prettyJSON(result.data) }}</pre>
             </template>
@@ -139,9 +139,9 @@
                 <h4 style="margin: 0">{{ L('任务已下发', 'Task Dispatched') }}</h4>
                 <span v-if="result.data?.j?.taskID" class="tag ok" data-testid="task-id">ID: {{ result.data.j.taskID }}</span>
                 <span v-if="result.data?.s" class="tag">HTTP: {{ result.data.s }}</span>
-                <button class="xs outline" @click="pollTaskResult" :disabled="polling">
+                <Button variant="ghost" size="sm" @click="pollTaskResult" :disabled="polling">
                   <Icon name="refresh" :size="12" /> {{ L('查询结果', 'Fetch Result') }}
-                </button>
+                </Button>
               </div>
               <div v-if="taskOutput" class="task-output">
                 <pre class="result-pre">{{ taskOutput }}</pre>
@@ -165,6 +165,7 @@ import { currentLang } from '@/i18n'
 import { toast } from '@/utils/toast'
 import Icon from '@/components/Icon.vue'
 import { INFRA_DOMAINS, submitInfraAction, getInfraTaskResult } from '@/api/infra-ops'
+import Button from "@/components/ui/Button.vue"
 
 // 本地双语选择器（catalog 内嵌 {zh,en}，不依赖 i18n 域文件）。
 const L = (zh, en) => (currentLang.value === 'en' ? en : zh)

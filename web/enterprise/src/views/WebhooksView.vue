@@ -6,14 +6,14 @@
     :error="loadErr"
   >
     <div class="btnbar">
-      <button class="primary" @click="openCreate">
+      <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('webhooks.add') }}
-      </button>
-      <button class="outline" @click="fetchWebhooks">
+      </Button>
+      <Button variant="ghost" size="md" @click="fetchWebhooks">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -28,10 +28,10 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" :title="$t('webhooks.test')" @click="onTest(row)"><Icon name="check" :size="13" /></button>
-            <button class="xs outline" :title="$t('webhooks.deliveries')" @click="openDeliveries(row)"><Icon name="clipboard" :size="13" /></button>
-            <button class="xs outline" @click="openEdit(row)"><Icon name="edit" :size="13" /></button>
-            <button class="xs danger" @click="onDelete(row)"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" :title="$t('webhooks.test')" @click="onTest(row)"><Icon name="check" :size="13" /></Button>
+            <Button variant="ghost" size="sm" :title="$t('webhooks.deliveries')" @click="openDeliveries(row)"><Icon name="clipboard" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -68,8 +68,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('webhooks.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('webhooks.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('webhooks.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('webhooks.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -121,6 +121,7 @@ import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const webhooks = ref([])
 const loading = ref(false)

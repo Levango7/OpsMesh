@@ -27,8 +27,8 @@
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0">{{ $t('incident.incidents') }}</h3>
-            <button class="xs primary" @click="openAddIncident" data-testid="incident-add-btn">{{ $t('incident.add') }}</button>
-            <button class="xs outline" @click="store.fetchIncidents()">↻ {{ $t('common.refresh') }}</button>
+            <Button variant="primary" size="sm" @click="openAddIncident" data-testid="incident-add-btn">{{ $t('incident.add') }}</Button>
+            <Button variant="ghost" size="sm" @click="store.fetchIncidents()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.loading && !store.incidents.length" class="muted">{{ $t('common.loading') }}</div>
           <DataTable v-else :columns="incidentCols" :rows="store.incidents" row-key="id" :empty-text="$t('incident.noIncidents')">
@@ -44,7 +44,7 @@
             <template #cell-assignee="{ value }">{{ value || '-' }}</template>
             <template #cell-actions="{ row }">
               <div class="row-actions" @click.stop>
-                <button class="xs outline" @click="viewDetail(row.id)" data-testid="incident-detail-btn">{{ $t('incident.detail') }}</button>
+                <Button variant="ghost" size="sm" @click="viewDetail(row.id)" data-testid="incident-detail-btn">{{ $t('incident.detail') }}</Button>
               </div>
             </template>
           </DataTable>
@@ -77,7 +77,7 @@
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0">{{ $t('incident.postmortem') }}</h3>
-            <button class="xs outline" @click="onGeneratePostmortem" :disabled="!store.currentIncident" data-testid="incident-postmortem-btn">{{ $t('incident.generate') }}</button>
+            <Button variant="ghost" size="sm" @click="onGeneratePostmortem" :disabled="!store.currentIncident" data-testid="incident-postmortem-btn">{{ $t('incident.generate') }}</Button>
           </div>
           <pre v-if="store.postmortemContent" class="code-block postmortem-content">{{ store.postmortemContent }}</pre>
           <p v-else class="muted">{{ $t('incident.noPostmortem') }}</p>
@@ -90,7 +90,7 @@
       <div class="modal">
         <header class="modal-head">
           <h3>{{ $t('incident.add') }}</h3>
-          <button class="xs outline" @click="addOpen = false">✕</button>
+          <Button variant="ghost" size="sm" @click="addOpen = false">✕</Button>
         </header>
         <div class="modal-body">
           <div class="field">
@@ -115,8 +115,8 @@
             <input v-model="addForm.assignee" data-testid="incident-add-assignee" />
           </div>
           <div class="btnbar">
-            <button class="primary" @click="confirmAdd" :disabled="adding" data-testid="incident-add-confirm">{{ $t('common.confirm') }}</button>
-            <button class="outline" @click="addOpen = false">{{ $t('common.cancel') }}</button>
+            <Button variant="primary" size="md" @click="confirmAdd" :disabled="adding" data-testid="incident-add-confirm">{{ $t('common.confirm') }}</Button>
+            <Button variant="ghost" size="md" @click="addOpen = false">{{ $t('common.cancel') }}</Button>
           </div>
           <p v-if="addMsg" :class="['msg', addOk ? 'ok' : 'err']">{{ addMsg }}</p>
         </div>
@@ -134,6 +134,7 @@ import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useIncidentStore()
 

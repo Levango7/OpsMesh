@@ -10,9 +10,9 @@
       <h3>{{ $t('cmdbCollect.collect_title') }}</h3>
       <p class="muted">{{ $t('cmdbCollect.collect_hint') }}</p>
       <div class="btnbar">
-        <button class="primary" :disabled="collecting" @click="onCollect" data-testid="cmdb-collect-btn">
+        <Button variant="primary" size="md" :disabled="collecting" @click="onCollect" data-testid="cmdb-collect-btn">
           <Icon name="refresh" :size="14" /> {{ collecting ? $t('common.loading') : $t('cmdbCollect.collect') }}
-        </button>
+        </Button>
       </div>
       <div v-if="store.lastCollect" class="collect-result">
         <span class="status-pill ok">{{ $t('cmdbCollect.collected') }}: {{ store.lastCollect.collected ?? 0 }}</span>
@@ -27,15 +27,15 @@
         <div class="field">
           <label>{{ $t('cmdbCollect.import_label') }}</label>
           <textarea v-model="importRaw" rows="4" :placeholder="$t('cmdbCollect.import_placeholder')"></textarea>
-          <button class="primary xs" :disabled="importing" @click="onImport" data-testid="cmdb-import-btn">
+          <Button variant="primary" size="sm" :disabled="importing" @click="onImport" data-testid="cmdb-import-btn">
             {{ importing ? $t('common.loading') : $t('cmdbCollect.import') }}
-          </button>
+          </Button>
         </div>
         <div class="field">
           <label>{{ $t('cmdbCollect.export_label') }}</label>
-          <button class="outline xs" :disabled="exporting" @click="onExport" data-testid="cmdb-export-btn">
+          <Button variant="ghost" size="sm" :disabled="exporting" @click="onExport" data-testid="cmdb-export-btn">
             <Icon name="refresh" :size="13" /> {{ exporting ? $t('common.loading') : $t('cmdbCollect.export') }}
-          </button>
+          </Button>
           <div v-if="store.lastExport != null" class="muted">{{ $t('cmdbCollect.exported_count', { n: Array.isArray(store.lastExport) ? store.lastExport.length : 0 }) }}</div>
         </div>
       </div>
@@ -49,7 +49,7 @@
     <div class="card">
       <div class="flowbar">
         <h3>{{ $t('cmdbCollect.pending_title') }}</h3>
-        <button class="xs outline" @click="store.fetchPendingCIs()"><Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}</button>
+        <Button variant="ghost" size="sm" @click="store.fetchPendingCIs()"><Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.pendingCIs.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable
@@ -63,10 +63,10 @@
         <template #cell-id="{ value }"><code>{{ value }}</code></template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="openCIEdit(row)" data-testid="cmdb-ci-edit-btn"><Icon name="edit" :size="13" /></button>
-            <button class="xs primary" @click="onCIApprove(row)" data-testid="cmdb-ci-approve-btn">{{ $t('cmdbCollect.approve') }}</button>
-            <button class="xs danger" @click="onCIReject(row)" data-testid="cmdb-ci-reject-btn">{{ $t('cmdbCollect.reject') }}</button>
-            <button class="xs danger" @click="onCIDelete(row)" data-testid="cmdb-ci-delete-btn"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" @click="openCIEdit(row)" data-testid="cmdb-ci-edit-btn"><Icon name="edit" :size="13" /></Button>
+            <Button variant="primary" size="sm" @click="onCIApprove(row)" data-testid="cmdb-ci-approve-btn">{{ $t('cmdbCollect.approve') }}</Button>
+            <Button variant="danger" size="sm" @click="onCIReject(row)" data-testid="cmdb-ci-reject-btn">{{ $t('cmdbCollect.reject') }}</Button>
+            <Button variant="danger" size="sm" @click="onCIDelete(row)" data-testid="cmdb-ci-delete-btn"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -81,8 +81,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="ciForm = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="ciForm = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -116,6 +116,7 @@ import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useCMDBAdvancedStore()
 const collecting = ref(false)

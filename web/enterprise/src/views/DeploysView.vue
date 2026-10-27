@@ -38,8 +38,8 @@
               </div>
             </div>
             <div class="btnbar">
-              <button type="submit" class="primary" data-testid="deploys-register-btn">{{ $t('deploys.register_btn') }}</button>
-              <button type="button" data-testid="deploys-demo-btn" @click="loadDemo">{{ $t('deploys.demo_btn') }}</button>
+              <Button variant="primary" size="md" native-type="submit" data-testid="deploys-register-btn">{{ $t('deploys.register_btn') }}</Button>
+              <Button variant="primary" size="md" native-type="button" data-testid="deploys-demo-btn" @click="loadDemo">{{ $t('deploys.demo_btn') }}</Button>
             </div>
             <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']" data-testid="deploys-msg">{{ store.msg }}</p>
           </form>
@@ -61,7 +61,7 @@
                 <option value="rolledback">rolledback</option>
               </select>
             </div>
-            <button data-testid="deploys-refresh-btn" @click="store.fetchList()">↻ {{ $t('common.refresh') }}</button>
+            <Button variant="primary" size="md" data-testid="deploys-refresh-btn" @click="store.fetchList()">↻ {{ $t('common.refresh') }}</Button>
           </div>
 
           <DataTable :columns="columns" :rows="store.list" row-key="id" :loading="store.loading" :empty-text="$t('deploys.empty')" data-testid="deploys-table">
@@ -72,9 +72,9 @@
             </template>
             <template #cell-actions="{ row }">
               <div class="row-actions" :data-testid="'deploys-row-' + row.id">
-                <button class="xs" data-testid="btn-row-execute" @click.stop="onExec(row.id)">▶ {{ $t('deploys.execute') }}</button>
-                <button class="xs outline" data-testid="btn-row-rollback" @click.stop="onRollback(row.id)">↩ {{ $t('deploys.rollback') }}</button>
-                <button class="xs outline" data-testid="btn-row-detail" @click.stop="onOpen(row.id)">{{ $t('deploys.detail_btn') }}</button>
+                <Button variant="primary" size="sm" data-testid="btn-row-execute" @click.stop="onExec(row.id)">▶ {{ $t('deploys.execute') }}</Button>
+                <Button variant="ghost" size="sm" data-testid="btn-row-rollback" @click.stop="onRollback(row.id)">↩ {{ $t('deploys.rollback') }}</Button>
+                <Button variant="ghost" size="sm" data-testid="btn-row-detail" @click.stop="onOpen(row.id)">{{ $t('deploys.detail_btn') }}</Button>
               </div>
             </template>
           </DataTable>
@@ -117,6 +117,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const store = useDeployStore()
 const form = reactive({

@@ -53,22 +53,22 @@
           <span>{{ error }}</span>
         </div>
 
-        <button type="submit" class="primary submit-btn" :disabled="loading" data-testid="login-submit">
+        <Button variant="primary" size="md" native-type="submit" :class="['submit-btn']" :disabled="loading" data-testid="login-submit">
           <Icon v-if="loading" name="refresh" :size="16" class="spin" />
           <Icon v-else name="login" :size="16" />
           <span>{{ loading ? $t('login.loading') : $t('login.submit') }}</span>
-        </button>
+        </Button>
       </form>
 
       <!-- 顶栏小工具：主题 + 语言 -->
       <div class="auth-tools">
-        <button class="tool-btn" @click="themeStore.toggle()" :title="themeStore.isDark ? $t('topbar.theme_light') : $t('topbar.theme_dark')">
+        <Button variant="primary" size="md" :class="['tool-btn']" @click="themeStore.toggle()" :title="themeStore.isDark ? $t('topbar.theme_light') : $t('topbar.theme_dark')">
           <Icon :name="themeStore.isDark ? 'theme-light' : 'theme-dark'" :size="16" />
-        </button>
-        <button class="tool-btn" @click="toggleLang" :title="$t('topbar.lang')">
+        </Button>
+        <Button variant="primary" size="md" :class="['tool-btn']" @click="toggleLang" :title="$t('topbar.lang')">
           <Icon name="lang" :size="16" />
           <span>{{ currentLang === 'zh' ? '中' : 'EN' }}</span>
-        </button>
+        </Button>
       </div>
     </div>
   </div>
@@ -83,6 +83,7 @@ import { useThemeStore } from '@/stores/theme'
 import { currentLang, setLang, t } from '@/i18n'
 import Icon from '@/components/Icon.vue'
 import { LOGIN_REASON_SESSION_EXPIRED } from '@/api/request'
+import Button from "@/components/ui/Button.vue"
 
 const router = useRouter()
 const route = useRoute()

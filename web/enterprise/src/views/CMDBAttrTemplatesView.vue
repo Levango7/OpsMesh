@@ -6,10 +6,10 @@
     :error="store.error"
   >
     <div class="btnbar">
-      <button class="primary" @click="openCreate" data-testid="cmdb-attr-template-create-btn">
+      <Button variant="primary" size="md" @click="openCreate" data-testid="cmdb-attr-template-create-btn">
         <Icon name="add" :size="14" /> {{ $t('cmdbAttrTemplates.add') }}
-      </button>
-      <button class="outline" @click="store.fetchTemplates()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+      </Button>
+      <Button variant="ghost" size="md" @click="store.fetchTemplates()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
     </div>
 
     <!-- 属性模板列表 -->
@@ -31,8 +31,8 @@
       </template>
       <template #cell-actions="{ row }">
         <div class="row-actions">
-          <button class="xs outline" @click="openEdit(row)" data-testid="cmdb-attr-template-edit-btn"><Icon name="edit" :size="13" /></button>
-          <button class="xs danger" @click="onDelete(row)" data-testid="cmdb-attr-template-delete-btn"><Icon name="delete" :size="13" /></button>
+          <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="cmdb-attr-template-edit-btn"><Icon name="edit" :size="13" /></Button>
+          <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="cmdb-attr-template-delete-btn"><Icon name="delete" :size="13" /></Button>
         </div>
       </template>
     </DataTable>
@@ -76,8 +76,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -111,6 +111,7 @@ import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useCMDBAdvancedStore()
 const formError = ref('')

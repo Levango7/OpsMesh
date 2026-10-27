@@ -6,14 +6,14 @@
     :error="loadErr"
   >
     <div class="btnbar">
-      <button class="primary" @click="openCreate">
+      <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('tickets.add') }}
-      </button>
-      <button class="outline" @click="fetchTickets">
+      </Button>
+      <Button variant="ghost" size="md" @click="fetchTickets">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -30,13 +30,12 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button
-              v-if="row.status !== 'closed' && row.status !== 'resolved'"
-              class="xs outline"
+            <Button
+              variant="ghost" size="sm" v-if="row.status !== 'closed' && row.status !== 'resolved'"
               :title="$t('tickets.close')"
               @click="onClose(row)"
-            ><Icon name="close" :size="13" /></button>
-            <button class="xs outline" @click="openEdit(row)"><Icon name="edit" :size="13" /></button>
+            ><Icon name="close" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -89,8 +88,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('tickets.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('tickets.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('tickets.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('tickets.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -127,6 +126,7 @@ import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const tickets = ref([])
 const loading = ref(false)

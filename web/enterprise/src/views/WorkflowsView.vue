@@ -38,13 +38,13 @@
     </div>
 
     <div class="btnbar">
-      <button class="primary" data-testid="workflows-save-btn" @click="onSave">{{ $t('workflows.save_btn') }}</button>
-      <button class="teal" data-testid="workflows-run-btn" @click="onRun" :disabled="!store.current.id">{{ $t('workflows.run_btn') }}</button>
-      <button data-testid="workflows-schedule-btn" @click="onSchedule" :disabled="!store.current.id">{{ $t('workflows.schedule_btn') }}</button>
-      <button data-testid="workflows-add-step-btn" @click="store.addNode()">{{ $t('workflows.add_step_btn') }}</button>
-      <button data-testid="workflows-auto-layout-btn" @click="store.autoLayout()">{{ $t('workflows.auto_layout_btn') }}</button>
-      <button data-testid="workflows-load-demo-btn" @click="loadDemo">{{ $t('workflows.load_demo_btn') }}</button>
-      <button data-testid="workflows-clear-btn" @click="store.reset()">{{ $t('workflows.clear_btn') }}</button>
+      <Button variant="primary" size="md" data-testid="workflows-save-btn" @click="onSave">{{ $t('workflows.save_btn') }}</Button>
+      <Button variant="primary" size="md" :class="['teal']" data-testid="workflows-run-btn" @click="onRun" :disabled="!store.current.id">{{ $t('workflows.run_btn') }}</Button>
+      <Button variant="primary" size="md" data-testid="workflows-schedule-btn" @click="onSchedule" :disabled="!store.current.id">{{ $t('workflows.schedule_btn') }}</Button>
+      <Button variant="primary" size="md" data-testid="workflows-add-step-btn" @click="store.addNode()">{{ $t('workflows.add_step_btn') }}</Button>
+      <Button variant="primary" size="md" data-testid="workflows-auto-layout-btn" @click="store.autoLayout()">{{ $t('workflows.auto_layout_btn') }}</Button>
+      <Button variant="primary" size="md" data-testid="workflows-load-demo-btn" @click="loadDemo">{{ $t('workflows.load_demo_btn') }}</Button>
+      <Button variant="primary" size="md" data-testid="workflows-clear-btn" @click="store.reset()">{{ $t('workflows.clear_btn') }}</Button>
     </div>
 
     <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']" data-testid="workflows-msg">{{ store.msg }}</p>
@@ -118,7 +118,7 @@
         <label>{{ $t('workflows.depends_label') }}</label>
         <input :value="(currentNode.dependsOn || []).join(', ')" data-testid="input-node-depends" @change="onDepsChange" />
       </div>
-      <button class="danger xs" data-testid="workflows-delete-node-btn" @click="store.deleteNode(currentNode.id)">{{ $t('workflows.delete_node_btn') }}</button>
+      <Button variant="danger" size="sm" data-testid="workflows-delete-node-btn" @click="store.deleteNode(currentNode.id)">{{ $t('workflows.delete_node_btn') }}</Button>
     </div>
 
     <!-- Cron 定时输入（替代 prompt） -->
@@ -140,6 +140,7 @@ import { computed, onMounted, reactive, ref, defineAsyncComponent } from 'vue'
 import { useWorkflowStore } from '@/stores/workflow'
 import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
+import Button from "@/components/ui/Button.vue"
 // PromptModal 仅少数页面使用，改为异步加载减小首屏 components chunk
 const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.vue'))
 

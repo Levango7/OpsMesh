@@ -1,14 +1,14 @@
 <template>
   <PageShell :title="$t('users.title')" :desc="$t('users.subtitle')" testid="users" :error="loadErr">
     <div class="btnbar">
-      <button class="primary" data-testid="users-add-btn" @click="openCreate">
+      <Button variant="primary" size="md" data-testid="users-add-btn" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('users.add') }}
-      </button>
-      <button class="outline" data-testid="users-refresh-btn" @click="fetchUsers">
+      </Button>
+      <Button variant="ghost" size="md" data-testid="users-refresh-btn" @click="fetchUsers">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -28,10 +28,10 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions" :data-testid="'users-row-' + (row.id || row.username)">
-            <button v-if="row.status === 'pending'" class="xs primary" data-testid="btn-row-approve" @click="onApprove(row)"><Icon name="success" :size="13" /> {{ $t('users.approve') }}</button>
-            <button v-if="row.status === 'pending'" class="xs danger" data-testid="btn-row-reject" @click="onReject(row)"><Icon name="delete" :size="13" /> {{ $t('users.reject') }}</button>
-            <button class="xs outline" data-testid="btn-row-edit" @click="openEdit(row)"><Icon name="edit" :size="13" /></button>
-            <button class="xs danger" data-testid="btn-row-delete" @click="onDelete(row)"><Icon name="delete" :size="13" /></button>
+            <Button variant="primary" size="sm" v-if="row.status === 'pending'" data-testid="btn-row-approve" @click="onApprove(row)"><Icon name="success" :size="13" /> {{ $t('users.approve') }}</Button>
+            <Button variant="danger" size="sm" v-if="row.status === 'pending'" data-testid="btn-row-reject" @click="onReject(row)"><Icon name="delete" :size="13" /> {{ $t('users.reject') }}</Button>
+            <Button variant="ghost" size="sm" data-testid="btn-row-edit" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" data-testid="btn-row-delete" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -72,8 +72,8 @@
         </div>
         <div v-if="formError" class="msg err" data-testid="users-form-error">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary" data-testid="users-save-btn"><Icon name="success" :size="14" /> {{ $t('users.save') }}</button>
-          <button type="button" class="outline" data-testid="users-cancel-btn" @click="form = null">{{ $t('users.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="users-save-btn"><Icon name="success" :size="14" /> {{ $t('users.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" data-testid="users-cancel-btn" @click="form = null">{{ $t('users.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -109,6 +109,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const users = ref([])
 const roles = ref([])

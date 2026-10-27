@@ -3,20 +3,20 @@
   <PageShell :title="$t('platform.title')" :desc="$t('platform.subtitle')" testid="platform" :error="store.error">
     <!-- Tab 切换 -->
     <div class="tabbar">
-      <button
-        v-for="tab in tabs"
+      <Button
+        variant="primary" size="md" v-for="tab in tabs"
         :key="tab.key"
         :class="['tab', { active: activeTab === tab.key }]"
         :data-testid="'platform-tab-' + tab.key"
         @click="switchTab(tab.key)"
-      >{{ $t(tab.label) }}</button>
+      >{{ $t(tab.label) }}</Button>
     </div>
 
     <!-- ========== Tab 1: 平台配置 ========== -->
     <div v-show="activeTab === 'config'">
       <div class="btnbar">
-        <button class="outline" @click="store.fetchConfig()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
-        <button class="primary" @click="openEdit" data-testid="platform-config-edit-btn"><Icon name="edit" :size="14" /> {{ $t('platform.edit') }}</button>
+        <Button variant="ghost" size="md" @click="store.fetchConfig()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
+        <Button variant="primary" size="md" @click="openEdit" data-testid="platform-config-edit-btn"><Icon name="edit" :size="14" /> {{ $t('platform.edit') }}</Button>
       </div>
       <div v-if="store.loading && !store.config" class="muted">{{ $t('common.loading') }}</div>
       <div v-else-if="store.config" class="card">
@@ -36,7 +36,7 @@
     <!-- ========== Tab 2: 健康检查 ========== -->
     <div v-show="activeTab === 'health'">
       <div class="btnbar">
-        <button class="outline" @click="store.fetchHealth()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        <Button variant="ghost" size="md" @click="store.fetchHealth()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.health" class="muted">{{ $t('common.loading') }}</div>
       <div v-else-if="store.health" class="card">
@@ -58,7 +58,7 @@
     <!-- ========== Tab 3: 指标汇总 ========== -->
     <div v-show="activeTab === 'metrics'">
       <div class="btnbar">
-        <button class="outline" @click="store.fetchMetrics()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        <Button variant="ghost" size="md" @click="store.fetchMetrics()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.metrics" class="muted">{{ $t('common.loading') }}</div>
       <div v-else-if="store.metrics" class="stats">
@@ -98,8 +98,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.save') }}</button>
-          <button type="button" class="outline" @click="form = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -124,6 +124,7 @@ import { toast } from '@/utils/toast'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = usePlatformStore()
 const activeTab = ref('config')

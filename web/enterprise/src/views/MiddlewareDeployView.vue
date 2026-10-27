@@ -9,22 +9,20 @@
     <div class="card">
       <div class="view-head">
         <div class="segmented" role="tablist">
-          <button
-            class="segmented__item"
-            :class="{ 'is-active': view === 'templates' }"
+          <Button
+            variant="primary" size="md" :class="[{ 'is-active': view === 'templates' }, 'segmented__item']"
             role="tab"
             :aria-selected="view === 'templates'"
             data-testid="mwdep-view-templates"
             @click="setView('templates')"
-          >{{ $t('mwdep.viewTemplates') }}</button>
-          <button
-            class="segmented__item"
-            :class="{ 'is-active': view === 'instances' }"
+          >{{ $t('mwdep.viewTemplates') }}</Button>
+          <Button
+            variant="primary" size="md" :class="[{ 'is-active': view === 'instances' }, 'segmented__item']"
             role="tab"
             :aria-selected="view === 'instances'"
             data-testid="mwdep-view-instances"
             @click="setView('instances')"
-          >{{ $t('mwdep.viewInstances') }}</button>
+          >{{ $t('mwdep.viewInstances') }}</Button>
         </div>
         <div class="view-head__actions">
           <Button
@@ -40,13 +38,12 @@
 
       <!-- 分类筛选：仅模板目录视图可见 -->
       <div v-if="view === 'templates'" class="cat-filter">
-        <button
-          v-for="cat in categories"
+        <Button
+          variant="primary" size="md" v-for="cat in categories"
           :key="cat"
-          class="cat-btn"
-          :class="{ active: store.category === cat }"
+          :class="[{ active: store.category === cat }, 'cat-btn']"
           @click="store.setCategory(cat)"
-        >{{ $t('mwdep.category.' + cat) }}</button>
+        >{{ $t('mwdep.category.' + cat) }}</Button>
       </div>
 
       <!-- 模板目录表 -->
@@ -83,8 +80,8 @@
           </template>
           <template #cell-tpl-actions="{ row }">
             <div class="row-actions" @click.stop>
-              <button class="xs outline" @click="onView(row.id)">{{ $t('mwdep.view') }}</button>
-              <button class="xs primary" @click="onDeploy(row.id)">{{ $t('mwdep.deploy') }}</button>
+              <Button variant="ghost" size="sm" @click="onView(row.id)">{{ $t('mwdep.view') }}</Button>
+              <Button variant="primary" size="sm" @click="onDeploy(row.id)">{{ $t('mwdep.deploy') }}</Button>
             </div>
           </template>
         </DataTable>
@@ -110,12 +107,11 @@
           </template>
           <template #cell-ins-createdAt="{ value }">{{ fmtTime(value) }}</template>
           <template #cell-ins-actions="{ row }">
-            <button
-              v-if="canUninstall(row.status)"
-              class="xs outline"
+            <Button
+              variant="ghost" size="sm" v-if="canUninstall(row.status)"
               style="color: var(--fail); border-color: var(--fail)"
               @click.stop="onUninstall(row)"
-            >{{ $t('mwdep.uninstall') }}</button>
+            >{{ $t('mwdep.uninstall') }}</Button>
             <span v-else class="muted">—</span>
           </template>
         </DataTable>
@@ -175,7 +171,7 @@
           </div>
         </div>
         <div class="btnbar">
-          <button class="primary" @click="onDeploy(tpl.id)">{{ $t('mwdep.deploy') }}</button>
+          <Button variant="primary" size="md" @click="onDeploy(tpl.id)">{{ $t('mwdep.deploy') }}</Button>
         </div>
       </div>
     </DetailDrawer>
@@ -185,7 +181,7 @@
       <div class="modal modal-deploy">
         <header class="modal-head">
           <h3>{{ $t('mwdep.deployTitle') }}</h3>
-          <button class="xs outline" @click="closeDeploy">✕</button>
+          <Button variant="ghost" size="sm" @click="closeDeploy">✕</Button>
         </header>
         <div class="modal-body">
           <p class="muted">{{ $t('mwdep.deployHint') }}</p>
@@ -226,8 +222,8 @@
           </div>
           <div v-else class="muted">—</div>
           <div class="btnbar">
-            <button class="primary" @click="confirmDeploy" :disabled="deploying">{{ $t('mwdep.confirm') }}</button>
-            <button class="outline" @click="closeDeploy">{{ $t('mwdep.cancel') }}</button>
+            <Button variant="primary" size="md" @click="confirmDeploy" :disabled="deploying">{{ $t('mwdep.confirm') }}</Button>
+            <Button variant="ghost" size="md" @click="closeDeploy">{{ $t('mwdep.cancel') }}</Button>
           </div>
           <p v-if="deployMsg" :class="['msg', deployOk ? 'ok' : 'err']">{{ deployMsg }}</p>
           <div v-if="deployLog" class="log-block">
@@ -243,14 +239,14 @@
       <div class="modal modal-sm">
         <header class="modal-head">
           <h3>{{ $t('mwdep.uninstallTitle') }}</h3>
-          <button class="xs outline" @click="uninstallOpen = false">✕</button>
+          <Button variant="ghost" size="sm" @click="uninstallOpen = false">✕</Button>
         </header>
         <div class="modal-body">
           <p class="muted">{{ $t('mwdep.uninstallHint') }}</p>
           <p>{{ $t('mwdep.instanceIdLabel') }} <code>{{ uninstallTarget?.id }}</code></p>
           <div class="btnbar">
-            <button class="danger" @click="confirmUninstall" :disabled="uninstalling">{{ $t('mwdep.uninstallConfirmBtn') }}</button>
-            <button class="outline" @click="uninstallOpen = false">{{ $t('mwdep.uninstallCancel') }}</button>
+            <Button variant="danger" size="md" @click="confirmUninstall" :disabled="uninstalling">{{ $t('mwdep.uninstallConfirmBtn') }}</Button>
+            <Button variant="ghost" size="md" @click="uninstallOpen = false">{{ $t('mwdep.uninstallCancel') }}</Button>
           </div>
           <p v-if="uninstallMsg" :class="['msg', uninstallOk ? 'ok' : 'err']">{{ uninstallMsg }}</p>
           <div v-if="uninstallLog" class="log-block">

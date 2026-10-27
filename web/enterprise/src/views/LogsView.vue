@@ -4,18 +4,18 @@
     <div class="card" data-testid="logs-search-card">
       <!-- 模式切换 Tab -->
       <div class="mode-tabs" role="tablist" data-testid="logs-mode-tabs">
-        <button
-          role="tab"
+        <Button
+          variant="primary" size="md" role="tab"
           :class="{ active: store.mode === 'simple' }"
           data-testid="logs-mode-simple"
           @click="store.setMode('simple')"
-        >{{ $t('logs.simpleSearch') }}</button>
-        <button
-          role="tab"
+        >{{ $t('logs.simpleSearch') }}</Button>
+        <Button
+          variant="primary" size="md" role="tab"
           :class="{ active: store.mode === 'advanced' }"
           data-testid="logs-mode-advanced"
           @click="store.setMode('advanced')"
-        >{{ $t('logs.advancedQuery') }}</button>
+        >{{ $t('logs.advancedQuery') }}</Button>
       </div>
 
       <!-- 简单搜索：字段过滤 -->
@@ -104,10 +104,10 @@
 
         <!-- 语法提示面板（可折叠） -->
         <div class="syntax-hint">
-          <button class="hint-toggle" data-testid="logs-syntax-hint-toggle" @click="hintOpen = !hintOpen">
+          <Button variant="primary" size="md" :class="['hint-toggle']" data-testid="logs-syntax-hint-toggle" @click="hintOpen = !hintOpen">
             <span class="caret">{{ hintOpen ? '▾' : '▸' }}</span>
             <span>{{ $t('logs.querySyntaxHint') }}</span>
-          </button>
+          </Button>
           <div v-if="hintOpen" class="hint-body">
             <div class="hint-grid">
               <div>
@@ -138,7 +138,7 @@
               <li v-for="ex in examples" :key="ex.q" :data-testid="'logs-example-' + ex.q.replace(/[^a-z0-9]+/gi, '-')">
                 <code class="example-q">{{ ex.q }}</code>
                 <span class="muted"> — {{ $t(ex.descKey) }}</span>
-                <button class="xs outline try-btn" data-testid="btn-row-try-example" @click="tryExample(ex.q)">{{ $t('logs.tryIt') }}</button>
+                <Button variant="ghost" size="sm" :class="['try-btn']" data-testid="btn-row-try-example" @click="tryExample(ex.q)">{{ $t('logs.tryIt') }}</Button>
               </li>
             </ul>
           </div>
@@ -146,8 +146,8 @@
       </template>
 
       <div class="btnbar">
-        <button class="primary" data-testid="logs-search-btn" @click="store.search(0)">{{ $t('logs.search_btn') }}</button>
-        <button data-testid="logs-reset-btn" @click="onReset">{{ $t('logs.reset_btn') }}</button>
+        <Button variant="primary" size="md" data-testid="logs-search-btn" @click="store.search(0)">{{ $t('logs.search_btn') }}</Button>
+        <Button variant="primary" size="md" data-testid="logs-reset-btn" @click="onReset">{{ $t('logs.reset_btn') }}</Button>
       </div>
       <p v-if="store.error" class="msg err" data-testid="logs-error-msg">{{ store.error }}</p>
     </div>
@@ -186,6 +186,7 @@ import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Pagination from '@/components/Pagination.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useLogStore()
 

@@ -16,9 +16,9 @@
           @keyup.enter="onSearch"
           data-testid="helm-catalog-search-input"
         />
-        <button class="primary xs" @click="onSearch" data-testid="helm-catalog-search-btn">{{ $t('common.search') }}</button>
+        <Button variant="primary" size="sm" @click="onSearch" data-testid="helm-catalog-search-btn">{{ $t('common.search') }}</Button>
       </div>
-      <button class="outline" @click="loadCatalog"><Icon name="refresh" :size="14" /> {{ $t('helm.catalog_btn') }}</button>
+      <Button variant="ghost" size="md" @click="loadCatalog"><Icon name="refresh" :size="14" /> {{ $t('helm.catalog_btn') }}</Button>
     </div>
 
     <!-- 搜索结果模式 -->
@@ -39,7 +39,7 @@
         <template #cell-version="{ value }"><span class="tag">{{ value }}</span></template>
         <template #cell-appVersion="{ value }"><span class="tag">{{ value }}</span></template>
         <template #cell-actions="{ row }">
-          <button class="xs outline" @click="openChart(row)" data-testid="helm-chart-detail-btn"><Icon name="edit" :size="13" /></button>
+          <Button variant="ghost" size="sm" @click="openChart(row)" data-testid="helm-chart-detail-btn"><Icon name="edit" :size="13" /></Button>
         </template>
       </DataTable>
     </div>
@@ -62,7 +62,7 @@
             <template #cell-version="{ value }"><span class="tag">{{ value }}</span></template>
             <template #cell-appVersion="{ value }"><span class="tag">{{ value }}</span></template>
             <template #cell-actions="{ row }">
-              <button class="xs outline" @click="openChart(row)"><Icon name="edit" :size="13" /></button>
+              <Button variant="ghost" size="sm" @click="openChart(row)"><Icon name="edit" :size="13" /></Button>
             </template>
           </DataTable>
         </div>
@@ -87,9 +87,9 @@
           <span v-else>—</span>
         </div>
         <div class="btnbar">
-          <button class="primary" @click="goInstall" data-testid="helm-chart-install-btn">
+          <Button variant="primary" size="md" @click="goInstall" data-testid="helm-chart-install-btn">
             <Icon name="success" :size="14" /> {{ $t('helm.install_btn') }}
-          </button>
+          </Button>
         </div>
       </div>
     </DetailDrawer>
@@ -117,6 +117,7 @@ import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useHelmStore()
 const router = useRouter()

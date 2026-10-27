@@ -14,7 +14,7 @@
                 </option>
               </select>
             </div>
-            <button @click="store.fetchInstances()" data-testid="cmdb-refresh-btn">↻ {{ $t('common.refresh') }}</button>
+            <Button variant="primary" size="md" @click="store.fetchInstances()" data-testid="cmdb-refresh-btn">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <DataTable
             :columns="ciCols"
@@ -51,7 +51,7 @@
               <label>{{ $t('cmdb.attrs_label') }}</label>
               <textarea v-model="form.attrsRaw" rows="3" placeholder='{"env":"prod"}' style="width:100%" data-testid="cmdb-create-attrs" />
             </div>
-            <button type="submit" class="primary" data-testid="cmdb-create-btn">{{ $t('cmdb.create_btn') }}</button>
+            <Button variant="primary" size="md" native-type="submit" data-testid="cmdb-create-btn">{{ $t('cmdb.create_btn') }}</Button>
             <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']">{{ store.msg }}</p>
           </form>
         </div>
@@ -70,13 +70,13 @@
             </p>
             <!-- 视图切换：力导向图 / 网络拓扑 / 关系列表 -->
             <div class="graph-tabs" data-testid="cmdb-graph-tabs">
-              <button
-                v-for="m in graphModes"
+              <Button
+                variant="primary" size="md" v-for="m in graphModes"
                 :key="m.key"
                 :class="['graph-tab', graphMode === m.key ? 'active' : '']"
                 :data-testid="'cmdb-graph-mode-' + m.key"
                 @click="graphMode = m.key"
-              >{{ m.label }}</button>
+              >{{ m.label }}</Button>
             </div>
             <!-- 力导向 / 拓扑视图：RelationGraph 组件 -->
             <RelationGraph
@@ -110,6 +110,7 @@ import { computed, onMounted, reactive, ref, defineAsyncComponent } from 'vue'
 import { useCmdbStore } from '@/stores/cmdb'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
+import Button from "@/components/ui/Button.vue"
 // RelationGraph 仅 CMDB 页使用且体积较大（23KB），改为异步加载减小首屏 components chunk
 const RelationGraph = defineAsyncComponent(() => import('@/components/RelationGraph.vue'))
 

@@ -6,14 +6,14 @@
     :error="loadErr"
   >
     <div class="btnbar">
-      <button class="outline" @click="fetchAll">
+      <Button variant="ghost" size="md" @click="fetchAll">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
-      <button class="danger" @click="onFailover">
+      </Button>
+      <Button variant="danger" size="md" @click="onFailover">
         <Icon name="warning" :size="14" />
         {{ $t('ha.failover') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -91,6 +91,7 @@ import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const status = ref(null)
 const instances = ref([])

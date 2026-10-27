@@ -34,19 +34,19 @@
         </select>
       </div>
       <div class="filter-actions">
-        <button type="submit" class="primary" data-testid="audit-search-btn">
+        <Button variant="primary" size="md" native-type="submit" data-testid="audit-search-btn">
           <Icon name="search" :size="14" />
           {{ $t('audit_events.search') }}
-        </button>
-        <button type="button" class="outline" @click="onReset">{{ $t('audit_events.reset') }}</button>
+        </Button>
+        <Button variant="ghost" size="md" native-type="button" @click="onReset">{{ $t('audit_events.reset') }}</Button>
         <!-- 导出：GET /audit/export 下载 JSON 文件 -->
-        <button type="button" class="outline" data-testid="audit-export-btn" :disabled="exporting" @click="onExport">
+        <Button variant="ghost" size="md" native-type="button" data-testid="audit-export-btn" :disabled="exporting" @click="onExport">
           <Icon name="clipboard" :size="14" />
           {{ exporting ? $t('audit_events.exporting') : $t('audit_events.export') }}
-        </button>
-        <button type="button" class="outline" data-testid="audit-verify-btn" :disabled="verifying" @click="onVerify">
+        </Button>
+        <Button variant="ghost" size="md" native-type="button" data-testid="audit-verify-btn" :disabled="verifying" @click="onVerify">
           {{ verifying ? $t('audit_events.verifying') : $t('audit_events.verify_chain') }}
-        </button>
+        </Button>
       </div>
     </form>
 
@@ -108,6 +108,7 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import Pagination from '@/components/Pagination.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const events = ref([])
 const loading = ref(false)

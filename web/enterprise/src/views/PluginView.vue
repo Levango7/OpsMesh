@@ -10,7 +10,7 @@
           @input="onSearch"
         />
       </div>
-      <button class="xs outline" @click="store.fetchPlugins()">↻ {{ $t('common.refresh') }}</button>
+      <Button variant="ghost" size="sm" @click="store.fetchPlugins()">↻ {{ $t('common.refresh') }}</Button>
     </div>
 
     <!-- 插件网格 -->
@@ -35,19 +35,18 @@
           <span class="plugin-downloads">{{ p.downloads || 0 }} {{ $t('plugin.downloads') }}</span>
         </div>
         <div class="plugin-actions" @click.stop>
-          <button
-            v-if="p.status !== 'installed'"
-            class="xs primary"
+          <Button
+            variant="primary" size="sm" v-if="p.status !== 'installed'"
             @click="onInstall(p.id)"
             data-testid="plugin-install-btn"
-          >{{ $t('plugin.install') }}</button>
-          <button
-            v-else
-            class="xs outline"
+          >{{ $t('plugin.install') }}</Button>
+          <Button
+            variant="ghost" size="sm" v-else
+
             style="color: var(--fail); border-color: var(--fail)"
             @click="onUninstall(p.id)"
             data-testid="plugin-uninstall-btn"
-          >{{ $t('plugin.uninstall') }}</button>
+          >{{ $t('plugin.uninstall') }}</Button>
         </div>
       </div>
     </div>
@@ -87,6 +86,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { toast } from '@/utils/toast'
+import Button from "@/components/ui/Button.vue"
 
 const store = usePluginStore()
 const searchInput = ref('')

@@ -20,7 +20,7 @@
     </div>
 
     <div class="flowbar">
-      <button @click="store.fetchAlerts()" data-testid="alerts-refresh-btn">↻ {{ $t('common.refresh') }}</button>
+      <Button variant="primary" size="md" @click="store.fetchAlerts()" data-testid="alerts-refresh-btn">↻ {{ $t('common.refresh') }}</Button>
     </div>
 
     <div v-if="store.loading && !store.list.length" class="muted" data-testid="alerts-loading">{{ $t('common.loading') }}</div>
@@ -49,12 +49,12 @@
       <!-- 链路追踪（SSE 推送 traceID 后缓存到 store） -->
       <div v-if="store.traceIDs[a.alertID]" class="root-cause rc-trace">
         <span class="rc-label">{{ $t('alerts.trace_id') }}:</span>
-        <button class="xs outline" @click="goToTrace(a)" data-testid="alert-trace-link">{{ store.traceIDs[a.alertID] }}</button>
+        <Button variant="ghost" size="sm" @click="goToTrace(a)" data-testid="alert-trace-link">{{ store.traceIDs[a.alertID] }}</Button>
       </div>
       <div class="alert-actions">
         <template v-if="(a.status || 'firing') === 'firing'">
-          <button class="xs" @click="onAck(a.alertID)" data-testid="alert-ack-btn">{{ $t('alerts.ack') }}</button>
-          <button class="xs outline" @click="onSilence(a.alertID)" data-testid="alert-silence-btn">{{ $t('alerts.silence') }}</button>
+          <Button variant="primary" size="sm" @click="onAck(a.alertID)" data-testid="alert-ack-btn">{{ $t('alerts.ack') }}</Button>
+          <Button variant="ghost" size="sm" @click="onSilence(a.alertID)" data-testid="alert-silence-btn">{{ $t('alerts.silence') }}</Button>
         </template>
         <span v-else class="muted" style="font-size:12px">
           {{ $t('alerts.handler') }}{{ a.acknowledgedBy || '—' }}<template v-if="a.status === 'silenced' && a.silencedUntil">{{ $t('alerts.silenced_until') }}{{ a.silencedUntil }}</template>
@@ -100,6 +100,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 // PromptModal 仅少数页面使用，改为异步加载减小首屏 components chunk
 const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.vue'))
 

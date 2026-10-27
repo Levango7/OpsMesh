@@ -6,14 +6,14 @@
     :error="loadErr"
   >
     <div class="btnbar">
-      <button class="outline" @click="openCreate">
+      <Button variant="ghost" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('backups.create') }}
-      </button>
-      <button class="outline" @click="fetchBackups">
+      </Button>
+      <Button variant="ghost" size="md" @click="fetchBackups">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -30,8 +30,8 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" :title="$t('backups.restore')" @click="onRestore(row)"><Icon name="success" :size="13" /></button>
-            <button class="xs danger" @click="onDelete(row)"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" :title="$t('backups.restore')" @click="onRestore(row)"><Icon name="success" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -52,8 +52,8 @@
         <p class="muted">{{ $t('backups.create_hint') }}</p>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('backups.submit') }}</button>
-          <button type="button" class="outline" @click="createForm = null">{{ $t('backups.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('backups.submit') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="createForm = null">{{ $t('backups.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -100,6 +100,7 @@ import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const backups = ref([])
 const loading = ref(false)

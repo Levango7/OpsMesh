@@ -6,10 +6,10 @@
     :error="loadErr"
   >
     <div class="btnbar">
-      <button class="outline" @click="fetchRules">
+      <Button variant="ghost" size="md" @click="fetchRules">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -33,7 +33,7 @@
           <input v-model.trim="scanDeviceID" type="text" :placeholder="$t('compliance.device_placeholder')" required />
         </div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('compliance.run_scan') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('compliance.run_scan') }}</Button>
         </div>
       </form>
 
@@ -47,7 +47,7 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="openDetail(row)"><Icon name="edit" :size="13" /></button>
+            <Button variant="ghost" size="sm" @click="openDetail(row)"><Icon name="edit" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -97,6 +97,7 @@ import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const rules = ref([])
 const reports = ref([])

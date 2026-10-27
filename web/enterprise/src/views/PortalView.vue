@@ -40,7 +40,7 @@
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0">{{ $t('portal.requestResource') }}</h3>
-            <button class="xs primary" @click="openRequestForm" data-testid="portal-request-btn">{{ $t('portal.submitRequest') }}</button>
+            <Button variant="primary" size="sm" @click="openRequestForm" data-testid="portal-request-btn">{{ $t('portal.submitRequest') }}</Button>
           </div>
           <div class="field">
             <label>{{ $t('portal.resourceType') }}</label>
@@ -64,7 +64,7 @@
             <input v-model="requestForm.reason" :placeholder="$t('portal.reasonPlaceholder')" data-testid="portal-request-reason" />
           </div>
           <div class="btnbar">
-            <button class="primary" @click="submitRequest" :disabled="submitting" data-testid="portal-submit-btn">{{ $t('portal.submit') }}</button>
+            <Button variant="primary" size="md" @click="submitRequest" :disabled="submitting" data-testid="portal-submit-btn">{{ $t('portal.submit') }}</Button>
           </div>
           <p v-if="requestMsg" :class="['msg', requestOk ? 'ok' : 'err']">{{ requestMsg }}</p>
         </div>
@@ -75,7 +75,7 @@
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0">{{ $t('portal.myRequests') }}</h3>
-            <button class="xs outline" @click="store.fetchMyRequests()">↻ {{ $t('common.refresh') }}</button>
+            <Button variant="ghost" size="sm" @click="store.fetchMyRequests()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.loading && !store.myRequests.length" class="muted">{{ $t('common.loading') }}</div>
           <DataTable v-else :columns="requestCols" :rows="store.myRequests" row-key="id" :empty-text="$t('portal.noRequests')">
@@ -93,7 +93,7 @@
     <div class="card">
       <div class="flowbar">
         <h3 style="margin: 0">{{ $t('portal.approvalQueue') }}</h3>
-        <button class="xs outline" @click="store.fetchApprovalQueue()">↻ {{ $t('common.refresh') }}</button>
+        <Button variant="ghost" size="sm" @click="store.fetchApprovalQueue()">↻ {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.approvalQueue.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable v-else :columns="approvalCols" :rows="store.approvalQueue" row-key="id" :empty-text="$t('portal.noApprovals')">
@@ -101,8 +101,8 @@
         <template #cell-requester="{ value }">{{ value || '-' }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
-            <button class="xs primary" @click="onApprove(row.id)" data-testid="portal-approve-btn">{{ $t('portal.approve') }}</button>
-            <button class="xs outline" style="color: var(--fail); border-color: var(--fail)" @click="onReject(row.id)" data-testid="portal-reject-btn">{{ $t('portal.reject') }}</button>
+            <Button variant="primary" size="sm" @click="onApprove(row.id)" data-testid="portal-approve-btn">{{ $t('portal.approve') }}</Button>
+            <Button variant="ghost" size="sm" style="color: var(--fail); border-color: var(--fail)" @click="onReject(row.id)" data-testid="portal-reject-btn">{{ $t('portal.reject') }}</Button>
           </div>
         </template>
       </DataTable>
@@ -130,6 +130,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { toast } from '@/utils/toast'
+import Button from "@/components/ui/Button.vue"
 
 const store = usePortalStore()
 

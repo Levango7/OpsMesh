@@ -2,27 +2,27 @@
   <PageShell :title="$t('billing.title')" :desc="$t('billing.subtitle')" testid="billing" :error="loadErr">
     <!-- tab 分区：订阅计划 / 订阅 / 账单 / 用量 -->
     <div class="btnbar tabs">
-      <button
-        v-for="tb in tabs"
+      <Button
+        variant="primary" size="md" v-for="tb in tabs"
         :key="tb.key"
         :class="['tab-btn', { active: tab === tb.key }]"
         @click="tab = tb.key"
       >
         {{ tb.label }}
-      </button>
+      </Button>
     </div>
 
     <!-- ============ 订阅计划 ============ -->
     <template v-if="tab === 'plans'">
       <div class="btnbar">
-        <button class="primary" data-testid="billing-add-plan-btn" @click="openPlanCreate">
+        <Button variant="primary" size="md" data-testid="billing-add-plan-btn" @click="openPlanCreate">
           <Icon name="add" :size="14" />
           {{ $t('billing.add_plan') }}
-        </button>
-        <button class="outline" @click="fetchPlans">
+        </Button>
+        <Button variant="ghost" size="md" @click="fetchPlans">
           <Icon name="refresh" :size="14" />
           {{ $t('common.refresh') }}
-        </button>
+        </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
       <DataTable v-else :columns="planCols" :rows="plans" row-key="id" :empty-text="$t('billing.empty_plans')">
@@ -33,8 +33,8 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="openPlanEdit(row)"><Icon name="edit" :size="13" /></button>
-            <button class="xs danger" @click="onDeletePlan(row)"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" @click="openPlanEdit(row)"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDeletePlan(row)"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -43,14 +43,14 @@
     <!-- ============ 订阅 ============ -->
     <template v-else-if="tab === 'subscriptions'">
       <div class="btnbar">
-        <button class="primary" data-testid="billing-add-sub-btn" @click="openSubCreate">
+        <Button variant="primary" size="md" data-testid="billing-add-sub-btn" @click="openSubCreate">
           <Icon name="add" :size="14" />
           {{ $t('billing.add_sub') }}
-        </button>
-        <button class="outline" @click="fetchSubs">
+        </Button>
+        <Button variant="ghost" size="md" @click="fetchSubs">
           <Icon name="refresh" :size="14" />
           {{ $t('common.refresh') }}
-        </button>
+        </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
       <DataTable v-else :columns="subCols" :rows="subs" row-key="id" :empty-text="$t('billing.empty_subs')">
@@ -62,8 +62,8 @@
         <template #cell-expiresAt="{ value }">{{ fmtTime(value, '—') }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="openSubEdit(row)"><Icon name="edit" :size="13" /></button>
-            <button class="xs danger" @click="onDeleteSub(row)"><Icon name="delete" :size="13" /></button>
+            <Button variant="ghost" size="sm" @click="openSubEdit(row)"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDeleteSub(row)"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -72,10 +72,10 @@
     <!-- ============ 账单（只读） ============ -->
     <template v-else-if="tab === 'invoices'">
       <div class="btnbar">
-        <button class="outline" @click="fetchInvoices">
+        <Button variant="ghost" size="md" @click="fetchInvoices">
           <Icon name="refresh" :size="14" />
           {{ $t('common.refresh') }}
-        </button>
+        </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
       <DataTable v-else :columns="invoiceCols" :rows="invoices" row-key="id" :empty-text="$t('billing.empty_invoices')">
@@ -91,7 +91,7 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="openInvoiceDetail(row)">{{ $t('billing.view_items') }}</button>
+            <Button variant="ghost" size="sm" @click="openInvoiceDetail(row)">{{ $t('billing.view_items') }}</Button>
           </div>
         </template>
       </DataTable>
@@ -100,10 +100,10 @@
     <!-- ============ 用量统计（只读） ============ -->
     <template v-else>
       <div class="btnbar">
-        <button class="outline" @click="fetchUsage">
+        <Button variant="ghost" size="md" @click="fetchUsage">
           <Icon name="refresh" :size="14" />
           {{ $t('common.refresh') }}
-        </button>
+        </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
       <div v-else-if="!usage" class="muted">{{ $t('billing.empty_usage') }}</div>
@@ -155,8 +155,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('billing.save') }}</button>
-          <button type="button" class="outline" @click="planForm = null">{{ $t('billing.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('billing.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="planForm = null">{{ $t('billing.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -181,8 +181,8 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('billing.save') }}</button>
-          <button type="button" class="outline" @click="subForm = null">{{ $t('billing.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('billing.save') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="subForm = null">{{ $t('billing.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -244,6 +244,7 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+import Button from "@/components/ui/Button.vue"
 
 const tab = ref('plans')
 const loading = ref(false)

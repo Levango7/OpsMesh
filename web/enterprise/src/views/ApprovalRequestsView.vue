@@ -2,13 +2,13 @@
   <PageShell :title="$t('approval.requests_title')" :desc="$t('approval.requests_subtitle')" testid="approval-requests" :error="store.error">
     <!-- Tab 切换 -->
     <div class="tabbar">
-      <button
-        v-for="tab in tabs"
+      <Button
+        variant="primary" size="md" v-for="tab in tabs"
         :key="tab.key"
         :class="['tab', { active: activeTab === tab.key }]"
         :data-testid="'approval-requests-tab-' + tab.key"
         @click="switchTab(tab.key)"
-      >{{ $t(tab.label) }}</button>
+      >{{ $t(tab.label) }}</Button>
     </div>
 
     <!-- ========== Tab 1: 审批请求列表 ========== -->
@@ -24,10 +24,10 @@
             <option value="cancelled">{{ $t('approval.status_cancelled') }}</option>
           </select>
         </div>
-        <button class="primary" @click="searchRequests" data-testid="approval-requests-search-btn">
+        <Button variant="primary" size="md" @click="searchRequests" data-testid="approval-requests-search-btn">
           <Icon name="search" :size="14" /> {{ $t('common.search') }}
-        </button>
-        <button class="outline" @click="store.fetchRequests()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        </Button>
+        <Button variant="ghost" size="md" @click="store.fetchRequests()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.requests.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable
@@ -43,9 +43,9 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs outline" @click="viewHistory(row)" data-testid="approval-request-history-btn">
+            <Button variant="ghost" size="sm" @click="viewHistory(row)" data-testid="approval-request-history-btn">
               <Icon name="clock" :size="13" />
-            </button>
+            </Button>
           </div>
         </template>
       </DataTable>
@@ -54,7 +54,7 @@
     <!-- ========== Tab 2: 待我审批 ========== -->
     <div v-show="activeTab === 'pending'">
       <div class="btnbar">
-        <button class="outline" @click="store.fetchPending()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</button>
+        <Button variant="ghost" size="md" @click="store.fetchPending()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.pending.length" class="muted">{{ $t('common.loading') }}</div>
       <DataTable
@@ -70,12 +70,12 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="xs primary" @click="openApprove(row)" data-testid="approval-approve-btn">{{ $t('approval.approve') }}</button>
-            <button class="xs danger" @click="openReject(row)" data-testid="approval-reject-btn">{{ $t('approval.reject') }}</button>
-            <button class="xs outline" @click="openCancel(row)" data-testid="approval-cancel-btn">{{ $t('approval.cancel') }}</button>
-            <button class="xs outline" @click="viewHistory(row)" data-testid="approval-pending-history-btn">
+            <Button variant="primary" size="sm" @click="openApprove(row)" data-testid="approval-approve-btn">{{ $t('approval.approve') }}</Button>
+            <Button variant="danger" size="sm" @click="openReject(row)" data-testid="approval-reject-btn">{{ $t('approval.reject') }}</Button>
+            <Button variant="ghost" size="sm" @click="openCancel(row)" data-testid="approval-cancel-btn">{{ $t('approval.cancel') }}</Button>
+            <Button variant="ghost" size="sm" @click="viewHistory(row)" data-testid="approval-pending-history-btn">
               <Icon name="clock" :size="13" />
-            </button>
+            </Button>
           </div>
         </template>
       </DataTable>
@@ -90,8 +90,8 @@
         </div>
         <div v-if="actionError" class="msg err">{{ actionError }}</div>
         <div class="btnbar">
-          <button type="submit" class="primary"><Icon name="success" :size="14" /> {{ $t('common.confirm') }}</button>
-          <button type="button" class="outline" @click="actionForm = null">{{ $t('common.cancel') }}</button>
+          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.confirm') }}</Button>
+          <Button variant="ghost" size="md" native-type="button" @click="actionForm = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </DetailDrawer>
@@ -133,6 +133,7 @@ import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useApprovalStore()
 const activeTab = ref('requests')

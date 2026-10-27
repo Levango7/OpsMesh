@@ -62,21 +62,21 @@
           <span>{{ $t('change_password.success') }}</span>
         </div>
 
-        <button type="submit" class="primary submit-btn" :disabled="loading || success" data-testid="cp-submit">
+        <Button variant="primary" size="md" native-type="submit" :class="['submit-btn']" :disabled="loading || success" data-testid="cp-submit">
           <Icon v-if="loading" name="refresh" :size="16" class="spin" />
           <Icon v-else name="key" :size="16" />
           <span>{{ loading ? $t('change_password.submitting') : $t('change_password.submit') }}</span>
-        </button>
+        </Button>
       </form>
 
       <div class="auth-tools">
-        <button class="tool-btn" @click="themeStore.toggle()" :title="themeStore.isDark ? $t('topbar.theme_light') : $t('topbar.theme_dark')">
+        <Button variant="primary" size="md" :class="['tool-btn']" @click="themeStore.toggle()" :title="themeStore.isDark ? $t('topbar.theme_light') : $t('topbar.theme_dark')">
           <Icon :name="themeStore.isDark ? 'theme-light' : 'theme-dark'" :size="16" />
-        </button>
-        <button class="tool-btn" @click="toggleLang" :title="$t('topbar.lang')">
+        </Button>
+        <Button variant="primary" size="md" :class="['tool-btn']" @click="toggleLang" :title="$t('topbar.lang')">
           <Icon name="lang" :size="16" />
           <span>{{ currentLang === 'zh' ? '中' : 'EN' }}</span>
-        </button>
+        </Button>
       </div>
     </div>
   </div>
@@ -90,6 +90,7 @@ import { useThemeStore } from '@/stores/theme'
 import { currentLang, setLang, t } from '@/i18n'
 import Icon from '@/components/Icon.vue'
 import PasswordStrength from '@/components/PasswordStrength.vue'
+import Button from "@/components/ui/Button.vue"
 
 const router = useRouter()
 const authStore = useAuthStore()

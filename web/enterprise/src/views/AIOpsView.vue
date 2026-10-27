@@ -18,19 +18,19 @@
     </div>
 
     <div class="tabs">
-      <button :class="{ active: activeTab === 'analyze' }" @click="activeTab = 'analyze'">{{ $t('aiops.tab_analyze') }}</button>
-      <button :class="{ active: activeTab === 'remediate' }" @click="activeTab = 'remediate'">{{ $t('aiops.tab_remediate') }}</button>
-      <button :class="{ active: activeTab === 'nl' }" @click="activeTab = 'nl'">{{ $t('aiops.tab_nl') }}</button>
-      <button :class="{ active: activeTab === 'execute' }" @click="activeTab = 'execute'">{{ $t('aiops.tab_execute') }}</button>
-      <button :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'">{{ $t('aiops.tab_history') }}</button>
+      <Button variant="primary" size="md" :class="{ active: activeTab === 'analyze' }" @click="activeTab = 'analyze'">{{ $t('aiops.tab_analyze') }}</Button>
+      <Button variant="primary" size="md" :class="{ active: activeTab === 'remediate' }" @click="activeTab = 'remediate'">{{ $t('aiops.tab_remediate') }}</Button>
+      <Button variant="primary" size="md" :class="{ active: activeTab === 'nl' }" @click="activeTab = 'nl'">{{ $t('aiops.tab_nl') }}</Button>
+      <Button variant="primary" size="md" :class="{ active: activeTab === 'execute' }" @click="activeTab = 'execute'">{{ $t('aiops.tab_execute') }}</Button>
+      <Button variant="primary" size="md" :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'">{{ $t('aiops.tab_history') }}</Button>
     </div>
 
     <!-- Tab 1: 故障根因分析 -->
     <div v-if="activeTab === 'analyze'" class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('aiops.analyze_title') }}</h3>
-        <button class="xs primary" @click="runAnalyze" data-testid="aiops-analyze-btn">{{ $t('aiops.analyze_run') }}</button>
-        <button class="xs outline" @click="loadStatus">↻ {{ $t('common.refresh') }}</button>
+        <Button variant="primary" size="sm" @click="runAnalyze" data-testid="aiops-analyze-btn">{{ $t('aiops.analyze_run') }}</Button>
+        <Button variant="ghost" size="sm" @click="loadStatus">↻ {{ $t('common.refresh') }}</Button>
       </div>
 
       <div class="form-grid">
@@ -73,7 +73,7 @@
         <div class="result-row"><span>{{ $t('aiops.description') }}:</span> {{ rootCause.description }}</div>
         <div class="result-row"><span>{{ $t('aiops.confidence') }}:</span> {{ (rootCause.confidence * 100).toFixed(0) }}%</div>
         <div class="result-row"><span>{{ $t('aiops.evidence') }}:</span> <ul><li v-for="(e, i) in rootCause.evidence" :key="i">{{ e }}</li></ul></div>
-        <button class="xs primary" @click="useRootCause(rootCause)" data-testid="aiops-use-root-cause">{{ $t('aiops.use_for_remediation') }}</button>
+        <Button variant="primary" size="sm" @click="useRootCause(rootCause)" data-testid="aiops-use-root-cause">{{ $t('aiops.use_for_remediation') }}</Button>
       </div>
     </div>
 
@@ -81,8 +81,8 @@
     <div v-if="activeTab === 'remediate'" class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('aiops.remediate_title') }}</h3>
-        <button class="xs primary" @click="runRemediate" data-testid="aiops-remediate-btn">{{ $t('aiops.remediate_run') }}</button>
-        <button class="xs outline" @click="loadStatus">↻ {{ $t('common.refresh') }}</button>
+        <Button variant="primary" size="sm" @click="runRemediate" data-testid="aiops-remediate-btn">{{ $t('aiops.remediate_run') }}</Button>
+        <Button variant="ghost" size="sm" @click="loadStatus">↻ {{ $t('common.refresh') }}</Button>
       </div>
 
       <div class="form-grid">
@@ -150,9 +150,9 @@
           </ul>
         </div>
 
-        <button class="xs primary" @click="executePlan(remediationPlan)" :disabled="!remediationPlan.safety.requiresConfirm && !remediateReq.constraints.autoExecute" data-testid="aiops-execute-plan-btn">
+        <Button variant="primary" size="sm" @click="executePlan(remediationPlan)" :disabled="!remediationPlan.safety.requiresConfirm && !remediateReq.constraints.autoExecute" data-testid="aiops-execute-plan-btn">
           {{ remediationPlan.safety.requiresConfirm ? $t('aiops.execute_with_confirm') : $t('aiops.execute_plan') }}
-        </button>
+        </Button>
       </div>
     </div>
 
@@ -160,7 +160,7 @@
     <div v-if="activeTab === 'nl'" class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('aiops.nl_title') }}</h3>
-        <button class="xs primary" @click="runNL" data-testid="aiops-nl-btn">{{ $t('aiops.nl_run') }}</button>
+        <Button variant="primary" size="sm" @click="runNL" data-testid="aiops-nl-btn">{{ $t('aiops.nl_run') }}</Button>
       </div>
 
       <div class="form-field">
@@ -177,7 +177,7 @@
             <code>{{ c.command }}</code> <span class="muted">[agent={{ c.agentID }}]</span>
           </li>
         </ul>
-        <button class="xs primary" @click="executePlan(nlPlan)" data-testid="aiops-execute-nl-btn">{{ $t('aiops.execute_plan') }}</button>
+        <Button variant="primary" size="sm" @click="executePlan(nlPlan)" data-testid="aiops-execute-nl-btn">{{ $t('aiops.execute_plan') }}</Button>
       </div>
     </div>
 
@@ -208,7 +208,7 @@
     <div v-if="activeTab === 'history'" class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('aiops.history_title') }}</h3>
-        <button class="xs outline" @click="loadExecutions">↻ {{ $t('common.refresh') }}</button>
+        <Button variant="ghost" size="sm" @click="loadExecutions">↻ {{ $t('common.refresh') }}</Button>
       </div>
 
       <div v-if="executionsLoading" class="muted">{{ $t('common.loading') }}</div>
@@ -256,6 +256,7 @@ import PageShell from '@/components/PageShell.vue'
 import { getAIOpsStatus, analyzeAIOps, generateRemediation, generateRemediationNL, executeRemediation, getAIOpsExecutions } from '@/api/aiops'
 import { t } from '@/i18n'
 import MetricsCard from '@/components/MetricsCard.vue'
+import Button from "@/components/ui/Button.vue"
 
 const status = reactive({
   enabled: false,

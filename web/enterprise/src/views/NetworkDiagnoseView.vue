@@ -2,13 +2,13 @@
   <PageShell :title="$t('network.diagnose_title')" :desc="$t('network.diagnose_subtitle')" testid="network-diagnose" :error="store.error">
     <!-- Tab 切换 -->
     <div class="tabbar">
-      <button
-        v-for="tab in tabs"
+      <Button
+        variant="primary" size="md" v-for="tab in tabs"
         :key="tab.key"
         :class="['tab', { active: activeTab === tab.key }]"
         :data-testid="'network-diagnose-tab-' + tab.key"
         @click="switchTab(tab.key)"
-      >{{ $t(tab.label) }}</button>
+      >{{ $t(tab.label) }}</Button>
     </div>
 
     <!-- ========== Tab 1: 诊断工具 ========== -->
@@ -47,12 +47,12 @@
             </div>
           </div>
           <div class="btnbar">
-            <button type="submit" class="primary" :disabled="submitting" data-testid="network-diagnose-btn">
+            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="network-diagnose-btn">
               {{ submitting ? $t('common.loading') : $t('network.diagnose') }}
-            </button>
-            <button type="button" class="outline" @click="pollResult" :disabled="!store.diagnoseTask || polling">
+            </Button>
+            <Button variant="ghost" size="md" native-type="button" @click="pollResult" :disabled="!store.diagnoseTask || polling">
               {{ polling ? $t('common.loading') : $t('network.poll_result') }}
-            </button>
+            </Button>
           </div>
           <p v-if="diagnoseMsg" :class="['msg', diagnoseMsgOk ? 'ok' : 'err']">{{ diagnoseMsg }}</p>
         </form>
@@ -95,9 +95,9 @@
             <input v-model.number="connectivityForm.timeout" type="number" min="1" />
           </div>
           <div class="btnbar">
-            <button type="submit" class="primary" :disabled="submitting" data-testid="network-connectivity-btn">
+            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="network-connectivity-btn">
               {{ submitting ? $t('common.loading') : $t('network.check_connectivity') }}
-            </button>
+            </Button>
           </div>
           <p v-if="connectivityMsg" :class="['msg', connectivityMsgOk ? 'ok' : 'err']">{{ connectivityMsg }}</p>
         </form>
@@ -137,6 +137,7 @@ import { t } from '@/i18n'
 import PageShell from '@/components/PageShell.vue'
 import DataTable from '@/components/DataTable.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Button from "@/components/ui/Button.vue"
 
 const store = useNetworkStore()
 const activeTab = ref('diagnose')

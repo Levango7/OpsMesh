@@ -28,10 +28,10 @@
         </select>
       </div>
       <div class="filter-actions">
-        <button type="submit" class="primary" data-testid="audits-search-btn">
+        <Button variant="primary" size="md" native-type="submit" data-testid="audits-search-btn">
           <Icon name="search" :size="14" /> {{ $t('audits.search') }}
-        </button>
-        <button type="button" class="outline" @click="onReset">{{ $t('audits.reset') }}</button>
+        </Button>
+        <Button variant="ghost" size="md" native-type="button" @click="onReset">{{ $t('audits.reset') }}</Button>
       </div>
     </form>
 
@@ -77,6 +77,7 @@ import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
 import Pagination from '@/components/Pagination.vue'
+import Button from "@/components/ui/Button.vue"
 
 const audits = ref([])
 const loading = ref(false)

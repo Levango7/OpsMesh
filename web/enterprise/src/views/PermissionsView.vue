@@ -1,10 +1,10 @@
 <template>
   <PageShell :title="$t('permissions.title')" :desc="$t('permissions.subtitle')" testid="permissions" :error="loadErr">
     <div class="btnbar">
-      <button class="outline" @click="fetchPermissions">
+      <Button variant="ghost" size="md" @click="fetchPermissions">
         <Icon name="refresh" :size="14" />
         {{ $t('common.refresh') }}
-      </button>
+      </Button>
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
@@ -32,6 +32,7 @@ import { authApi } from '@/api/auth'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
+import Button from "@/components/ui/Button.vue"
 
 const permissions = ref([])
 const loading = ref(false)
