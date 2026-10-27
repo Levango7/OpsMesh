@@ -106,3 +106,5 @@
 [NOTE] 2026-10-27T21:05:00Z from=workbuddy 继续隔离面：pkg/retry 的 TestDoWithConfigJitterBounds 跑 100x100 真实 sleep(16.29s)却不断言 jitter 边界(只数调用)。拟加可注入 sleep 缝，测试用记录器真断言边界并提速。不碰 web/enterprise、internal/controlplane、internal/store、services/ 在制面。
 [CLAIM] 2026-10-27T21:05:00Z from=workbuddy ttl=4h scope=pkg/retry/retry.go
 [CLAIM] 2026-10-27T21:05:00Z from=workbuddy ttl=4h scope=pkg/retry/retry_test.go
+[DONE] 2026-10-27T21:51:28Z from=workbuddy scope=pkg/retry/retry.go commit=71317e8 note=DoWithConfig 的等待改经可注入包级 sleep（生产恒为 time.Sleep，行为不变），以便测试记录退避时长而不真实等待。
+[DONE] 2026-10-27T21:51:28Z from=workbuddy scope=pkg/retry/retry_test.go commit=71317e8 note=TestDoWithConfigJitterBounds 原跑 100x100 真实 sleep(16.29s)却只数调用、不断言边界；改记录器断言每次退避∈[0.5ms,1.5ms]、次数=10000，16.3s→0s；整包 20.5s→3.45s。go vet0/gofmt 干净/23 例全绿。建议 CHANGELOG(归 ZCode)：retry 测试注入 sleep 提速且真断言 jitter 边界。
