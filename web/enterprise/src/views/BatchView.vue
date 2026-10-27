@@ -1,10 +1,5 @@
 <template>
-  <div class="batch-view">
-    <h2 data-testid="batch-title">{{ $t('batch.title') }}</h2>
-    <p class="muted">{{ $t('batch.subtitle') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell :title="$t('batch.title')" :desc="$t('batch.subtitle')" testid="batch" :error="store.error">
     <!-- 批量下发表单（详情页不显示） -->
     <div v-if="!detailId" class="card">
       <h3>{{ $t('batch.dispatch_form_title') }}</h3>
@@ -126,10 +121,12 @@
     <Modal v-model="errorConfirm.show" :title="$t('common.error')">
       {{ errorConfirm.message }}
     </Modal>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 批量运维页 — 选择设备 + 批量下发 + 状态查看
 // 路由：/batch | /batch-exec | /batch/:id
 import { ref, reactive, computed, onMounted } from 'vue'
@@ -294,12 +291,6 @@ onMounted(async () => {
 .status-completed { background: var(--ok-soft); color: var(--ok); }
 .status-failed { background: var(--fail-soft); color: var(--fail); }
 .status-cancelled { background: var(--surface-3); color: var(--text-3); }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 @media (max-width: 768px) {
   .stats { grid-template-columns: repeat(2, 1fr); }

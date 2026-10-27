@@ -1,34 +1,21 @@
 // 页面骨架统一门禁（2026-10-27 布局专项）
 //
 // 规则：src/views 下每个视图必须用 PageShell 组件包裹（引用 '@/components/PageShell' 即视为合规）。
-// 本清单 = 历史存量豁免（按迁移批次递减）；棘轮语义：
+// 迁移终态（2026-10-27）：四波共 78 页迁移完毕（Wave1 24 / Wave2 26 / Wave3 13 / Wave4 15），
+// 存量豁免账 82 → 3——余下 3 条为**永久豁免**（见下），不再是待办。
+// 棘轮语义（保留，防回潮）：
 //   ① 非合规文件必须全在豁免清单里（新增页面不得绕过，新页面请直接用 PageShell）；
 //   ② 清单里任何文件一旦合规就必须删条目，否则判红（防豁免变永久）；
-//   ③ 每迁一批，条目只减不增。
+//   ③ 条目只减不增。
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
 const VIEWS_DIR = join(__dirname, '..')
 
-// 历史存量豁免（按迁移批次递减）
+// 永久豁免（唯一允许的类别）：全屏认证页——登录/注册/首登改密位于 app 壳之外，
+// 为全屏独立布局，不适用 PageShell。除此之外**不得新增豁免**。
 const EXEMPT = new Set([
-  'AIChatView.vue',
-  'AutoProvisionView.vue',
-  'BatchView.vue',
-  'CloudAccountsView.vue',
-  'CostView.vue',
-  'GPUView.vue',
-  'HelmReposView.vue',
-  'InfraConsoleView.vue',
-  'KnowledgeView.vue',
-  'OverviewView.vue',
-  'PipelineView.vue',
-  'PlatformConfigView.vue',
-  'SystemOpsView.vue',
-  'WorkflowsView.vue',
-  'secrets/SecretsView.vue',
-  // 全屏认证页：登录/注册/首登改密为全屏独立布局（app 壳之外），不适用 PageShell——保留豁免。
   'LoginView.vue',
   'RegisterView.vue',
   'ChangePasswordView.vue'

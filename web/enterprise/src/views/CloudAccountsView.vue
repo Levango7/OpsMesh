@@ -1,16 +1,9 @@
 <template>
-  <div class="cloud-accounts">
-    <!-- 页面头部：标题 + 面包屑 -->
-    <!-- 云账号管理页 — Header 组件已渲染标题+面包屑，无需重复 page-title -->
-    <Header
-      :title="t('cloud_accounts.title')"
-      :show-sidebar-toggle="false"
-      :show-search="false"
-      :show-notifications="false"
-      :show-user-menu="false"
-      :show-theme-toggle="false"
-    />
-
+  <PageShell
+    :title="t('cloud_accounts.title')"
+    :desc="t('cloud_accounts.subtitle')"
+    testid="cloud-accounts"
+  >
     <!-- 工具栏 -->
     <div class="toolbar">
       <Button variant="primary" icon="add" @click="openCreate">{{ t('cloud_accounts.add') }}</Button>
@@ -195,10 +188,12 @@
       <p>{{ t('cloud_accounts.confirm_test') }}</p>
       <p v-if="testTarget" class="muted">{{ testTarget.name }} ({{ providerLabel(testTarget.provider) }})</p>
     </Modal>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 云账号管理页 — 账号列表 / 创建编辑 / 同步 / 测试连接 / 删除 / 查看资源
 import { ref, reactive, onMounted } from 'vue'
 import * as cloudAccountApi from '@/api/cloud-account'
@@ -466,8 +461,6 @@ onMounted(fetchAccounts)
 </script>
 
 <style scoped>
-..cloud-accounts { display: flex; flex-direction: column; gap: var(--space-5); }
-.page-head { display: none; } /* Header component handles page title now */
 .toolbar { display: flex; gap: var(--space-2); align-items: center; }
 .table-wrap { display: flex; flex-direction: column; min-height: 320px; }
 .flowbar { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); flex-wrap: wrap; }

@@ -1,9 +1,6 @@
 <template>
-  <div class="system-ops">
-    <div class="system-ops__header">
-      <h2 data-testid="systemops-title" class="system-ops__title">{{ $t('system_ops.title') }}</h2>
-      <p class="system-ops__subtitle">{{ $t('system_ops.subtitle') }}</p>
-    </div>
+  <!-- testid="systemops" 沿用既有标题 id（systemops-title） -->
+  <PageShell :title="$t('system_ops.title')" :desc="$t('system_ops.subtitle')" testid="systemops" :error="error || loadErr">
 
     <!-- 设备选择 -->
     <div class="toolbar">
@@ -21,7 +18,6 @@
       </Button>
     </div>
 
-    <div v-if="error" class="poll-err"><Icon name="warning" :size="14" /> {{ error }}</div>
     <div v-if="!selectedDevice" class="muted">{{ $t('system_ops.please_select') }}</div>
     <div v-else-if="loading" class="muted">{{ $t('common.loading') }}</div>
 
@@ -208,10 +204,11 @@
         <Button variant="danger" size="sm" @click="doDelete">{{ $t('common.delete') }}</Button>
       </div>
     </Modal>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
 import { reactive, ref, computed, onMounted } from 'vue'
 import { useDeviceStore } from '@/stores/device'
 import { t } from '@/i18n'
@@ -242,6 +239,8 @@ const selectedDevice = ref('')
 const loading = ref(false)
 const submitting = ref(false)
 const error = ref('')
+// journal 轮询中途失败的错误（骨架横幅）：此前 catch 静默吞错
+const loadErr = ref('')
 const tab = ref('users')
 
 const users = ref([])
@@ -432,6 +431,7 @@ async function runJournalQuery() {
   journalLoading.value = true
   journalResult.value = ''
   journalError.value = ''
+  loadErr.value = ''
   try {
     const resp = await queryJournal({
       agentID: currentAgentID(),
@@ -453,8 +453,9 @@ async function runJournalQuery() {
           journalResult.value = out || stderr
           break
         }
-      } catch {
-        // 结果未就绪，继续轮询。
+      } catch (e) {
+        // 轮询中途失败此前静默吞错——统一骨架批次补上可见错误（未取到结果时另有 journal 卡片内提示）
+        loadErr.value = e.j?.error || t('common.load_failed')
       }
       if (!journalResult.value) {
         journalError.value = t('system_ops.journal_no_result')
@@ -482,27 +483,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.system-ops {
-  display: block;
-}
-
-.system-ops__header {
-  margin-bottom: var(--space-6, 24px);
-}
-
-.system-ops__title {
-  margin: 0;
-  font-size: var(--font-size-base, 13px);
-  font-weight: 600;
-  color: var(--color-ink, #f7f8f8);
-}
-
-.system-ops__subtitle {
-  margin: 0 0 var(--space-4, 16px) 0;
-  font-size: var(--font-size-sm, 12px);
-  color: var(--color-ink-muted, #d0d6e0);
-}
-
 .toolbar {
   display: flex;
   gap: var(--space-3, 12px);

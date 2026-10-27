@@ -32,7 +32,7 @@ const routes = [
 
   // 运维管理
   { path: '/devices', name: 'devices', component: () => import('@/views/DevicesView.vue'), meta: { title: 'nav.devices', group: '运维管理', icon: 'device', requirePerm: 'device:read', prefetch: true } },
-  { path: '/devices/:id', name: 'device-detail', component: () => import('@/views/DeviceDetailView.vue'), meta: { title: 'device_detail.title', group: '运维管理', icon: 'device', requirePerm: 'device:read' } },
+  { path: '/devices/:id', name: 'device-detail', component: () => import('@/views/DeviceDetailView.vue'), meta: { title: 'device_detail.title', group: '运维管理', icon: 'device', requirePerm: 'device:read', hideInNav: true } },
   { path: '/tasks', name: 'tasks', component: () => import('@/views/TasksView.vue'), meta: { title: 'nav.tasks', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
   { path: '/dead-letter', name: 'dead-letter', component: () => import('@/views/DeadLetterView.vue'), meta: { title: 'nav.dead_letter', group: '运维管理', icon: 'fail', requirePerm: 'task:read' } },
   { path: '/device-discovery', name: 'device-discovery', component: () => import('@/views/DeviceDiscoveryView.vue'), meta: { title: 'nav.deviceDiscovery', group: '运维管理', icon: 'discover', requirePerm: 'device:read' } },
@@ -52,9 +52,9 @@ const routes = [
   // 批量运维（运维管理）：多设备批量下发 + 状态查看
   { path: '/batch', name: 'batch', component: () => import('@/views/BatchView.vue'), meta: { title: 'nav.batch', group: '运维管理', icon: 'task', requirePerm: 'task:read', prefetch: true } },
   // 批量执行（运维管理）：批量下发执行页
-  { path: '/batch-exec', name: 'batch-exec', component: () => import('@/views/BatchView.vue'), meta: { title: 'nav.batch_exec', group: '运维管理', icon: 'task', requirePerm: 'task:write', prefetch: true } },
+  { path: '/batch-exec', name: 'batch-exec', component: () => import('@/views/BatchView.vue'), meta: { title: 'nav.batch_exec', group: '运维管理', icon: 'task', requirePerm: 'task:write', prefetch: true, hideInNav: true } },
   // 批量详情（运维管理）：单批次任务状态与明细
-  { path: '/batch/:id', name: 'batch-detail', component: () => import('@/views/BatchView.vue'), meta: { title: 'batch_detail.title', group: '运维管理', icon: 'task', requirePerm: 'task:read' } },
+  { path: '/batch/:id', name: 'batch-detail', component: () => import('@/views/BatchView.vue'), meta: { title: 'batch_detail.title', group: '运维管理', icon: 'task', requirePerm: 'task:read', hideInNav: true } },
 
   // 资产配置
   { path: '/cmdb', name: 'cmdb', component: () => import('@/views/CMDBView.vue'), meta: { title: 'nav.cmdb', group: '资产配置', icon: 'cmdb', requirePerm: 'cmdb:read' } },
@@ -65,7 +65,7 @@ const routes = [
   // 灰度发布（交付中心）：创建灰度 + 状态 + 推进 + 流量分割 + 指标
   { path: '/canary', name: 'canary', component: () => import('@/views/CanaryView.vue'), meta: { title: 'nav.canary', group: '交付中心', icon: 'flow', requirePerm: 'traffic:read', prefetch: true } },
   // 灰度详情（交付中心）：单灰度发布状态与流量分割
-  { path: '/canary/:id', name: 'canary-detail', component: () => import('@/views/CanaryView.vue'), meta: { title: 'canary_detail.title', group: '交付中心', icon: 'flow', requirePerm: 'traffic:read' } },
+  { path: '/canary/:id', name: 'canary-detail', component: () => import('@/views/CanaryView.vue'), meta: { title: 'canary_detail.title', group: '交付中心', icon: 'flow', requirePerm: 'traffic:read', hideInNav: true } },
 
   // 可观测性
   { path: '/logs', name: 'logs', component: () => import('@/views/LogsView.vue'), meta: { title: 'nav.logs', group: '可观测性', icon: 'logs', requirePerm: 'log:read' } },
@@ -163,8 +163,8 @@ const routes = [
   // Flux 应用（交付中心，GitOps 原生第二大支柱）
   { path: '/flux', name: 'flux', component: () => import('@/views/FluxView.vue'), meta: { title: 'nav.flux', group: '交付中心', icon: 'flow', requirePerm: 'flux:read' } },
 
-  // GitOps 整体仪表盘（可观测性）
-  { path: '/gitops/dashboard', name: 'gitops-dashboard', component: () => import('@/views/GitOpsDashboardView.vue'), meta: { title: 'nav.gitops', group: '可观测性', icon: 'alerts', requirePerm: 'observability:read' } },
+  // GitOps 整体仪表盘（交付中心：与 ArgoCD/Flux 同域，2026-10-27 从可观测性归位）
+  { path: '/gitops/dashboard', name: 'gitops-dashboard', component: () => import('@/views/GitOpsDashboardView.vue'), meta: { title: 'nav.gitops', group: '交付中心', icon: 'branch', requirePerm: 'observability:read' } },
 
   // 合规管理（系统管理）
   { path: '/compliance', name: 'compliance', component: () => import('@/views/ComplianceView.vue'), meta: { title: 'nav.compliance', group: '系统管理', icon: 'permissions', requirePerm: 'compliance:read' } },
@@ -201,8 +201,8 @@ const routes = [
   // 通知渠道（平台：渠道 + 模板；无独立权限点，复用告警权限）
   { path: '/notify-channels', name: 'notify-channels', component: () => import('@/views/NotifyChannelsView.vue'), meta: { title: 'nav.notifyChannels', group: '平台', icon: 'alerts', requirePerm: 'alert:read' } },
 
-  // 云账号管理（平台：多云厂商账号接入、同步资源、连通性测试）
-  { path: '/cloud-accounts', name: 'cloud-accounts', component: () => import('@/views/CloudAccountsView.vue'), meta: { title: 'nav.cloudAccounts', group: '平台', icon: 'cloud', requirePerm: 'cloud:read' } },
+  // 云账号管理（资产配置：多云厂商账号属资产侧，2026-10-27 从平台归位）
+  { path: '/cloud-accounts', name: 'cloud-accounts', component: () => import('@/views/CloudAccountsView.vue'), meta: { title: 'nav.cloudAccounts', group: '资产配置', icon: 'cloud', requirePerm: 'cloud:read' } },
 
   // ======================================================================
   // P1 五子域管理页（platform/federation/deploys-federation/config/
@@ -321,5 +321,8 @@ router.afterEach((to) => {
   }
 })
 
-export { RouteSkeleton }
+// routes 一并导出：侧栏导航（App.vue → src/nav/model.js）以本表为单一来源。
+// 分组/图标/权限门槛/标签全部取自 meta：新增页面只改本表即自动进侧栏；
+// 详情/子tab 页用 meta.hideInNav 显式排除（守卫见 src/nav/model.test.js）。
+export { RouteSkeleton, routes }
 export default router

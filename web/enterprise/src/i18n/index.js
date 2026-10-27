@@ -137,6 +137,23 @@ export const ROUTE_DOMAIN_MAP = {
   'auto-provision': 'ops',
 
   // ====================================================================
+  // 覆盖审计补齐（2026-10-27 侧栏单一来源改造时全量核对 82 条非公开路由）：
+  //   以下 9 条此前漏映射——域翻译永不按需加载，页面从侧栏进入时整页裸键。
+  //   文案实际都在 ops.json（含 AI 四页的 aiChat/agent/knowledge/cost 命名空间，
+  //   别被「AI 算力」分组名误导到 ai.json——那里只有 aiops/bot/gpu）。
+  //   判据固化于 src/nav/model.test.js ⑦（防再漏）。
+  // ====================================================================
+  'dead-letter': 'ops',
+  'device-discovery': 'ops',
+  'k8s-deploy': 'ops',
+  'k8s-lifecycle': 'ops',
+  'admin-console': 'ops',
+  'ai-chat': 'ops',
+  agent: 'ops',
+  knowledge: 'ops',
+  cost: 'ops',
+
+  // ====================================================================
   // P3 Helm 应用商店三子域路由 → 功能域映射（全部 → delivery）
   // ====================================================================
   'helm-repos': 'delivery',

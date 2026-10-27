@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="helm-repos-title">{{ $t('helm.repos_title') }}</h2>
-    <p class="muted">{{ $t('helm.repos_subtitle') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('helm.repos_title')"
+    :desc="$t('helm.repos_subtitle')"
+    testid="helm-repos"
+    :error="store.error"
+  >
     <div class="btnbar">
       <Button variant="primary" size="sm" @click="openCreate" data-testid="helm-repo-create-btn">
         <Icon name="add" :size="14" /> {{ $t('helm.add_repo') }}
@@ -92,9 +92,12 @@
         info
       />
     </div>
-  </div></template>
+  </PageShell>
+</template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // Helm 仓库管理页 — 仓库列表 + 添加 + 删除 + 查看仓库 Chart
 import { ref, computed, reactive, onMounted } from 'vue'
 import { useHelmStore } from '@/stores/helm'
@@ -200,12 +203,6 @@ onMounted(() => {
 }
 .btnbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .row-actions { display: flex; gap: 4px; }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }

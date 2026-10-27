@@ -121,7 +121,7 @@
             :class="{ active: isNavActive(item.name) }"
             :data-label="$t(item.labelKey)"
             :title="sidebarCollapsed ? $t(item.labelKey) : ''"
-            @click="goNav(item.name)"
+            @click="goNav(item.path)"
           >
             <span class="tab-index">{{ item.index }}</span>
             <span class="tab-icon"><Icon :name="item.icon" :size="16" /></span>
@@ -162,6 +162,8 @@ import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { currentLang, setLang } from '@/i18n'
 import { createSSEClient } from '@/api/sse'
+import { routes as appRoutes } from '@/router'
+import { buildNavGroups } from '@/nav/model'
 import Icon from '@/components/Icon.vue'
 import ToastHost from '@/components/ToastHost.vue'
 
@@ -171,69 +173,12 @@ const alertStore = useAlertStore()
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
 
-// 分组导航：每组 { group, labelKey, items[{ name, icon, labelKey, required }] }
-// required 为该功能入口对应的后端权限（与 requireProd 闸同源）；
-// 为空表示无需权限门槛（如概览页，登录即可见）。侧栏将按当前用户权限过滤。
-//
-// 图标唯一性：每个入口使用语义化且互不重复的图标（无重复），
-// 避免用户在长列表中靠位置记忆定位功能。
-// 全部为「实心填充」风格，视觉重量一致（不使用线框图标）。
-const navGroups = [
-  {
-    group: 'overview', labelKey: 'nav.overview',
-    items: [{ name: 'overview', icon: 'home', labelKey: 'nav.home', required: '' }]
-  },
-  {
-    group: 'ops', labelKey: 'nav.ops',
-    items: [
-      { name: 'devices', icon: 'device', labelKey: 'nav.devices', required: 'device:read' },
-      { name: 'tasks', icon: 'task', labelKey: 'nav.tasks', required: 'task:read' },
-      { name: 'dead-letter', icon: 'fail', labelKey: 'nav.dead_letter', required: 'task:read' },
-      { name: 'alerts', icon: 'alerts', labelKey: 'nav.alerts', required: 'alert:read' },
-      { name: 'os-optimize', icon: 'tune', labelKey: 'nav.osopt', required: 'task:read' },
-      { name: 'system-ops', icon: 'settings', labelKey: 'nav.system_ops', required: 'system:write' },
-      { name: 'middleware', icon: 'plugin', labelKey: 'nav.mwdep', required: 'deploy:read' },
-      { name: 'infra-console', icon: 'datacenter', labelKey: 'nav.infra_console', required: 'device:read' },
-      { name: 'k8s', icon: 'k8s', labelKey: 'nav.k8s', required: 'device:read' }
-    ]
-  },
-  {
-    group: 'assets', labelKey: 'nav.assets',
-    items: [{ name: 'cmdb', icon: 'cmdb', labelKey: 'nav.cmdb', required: 'cmdb:read' }]
-  },
-  {
-    group: 'delivery', labelKey: 'nav.delivery',
-    items: [
-      { name: 'workflows', icon: 'branch', labelKey: 'nav.workflows', required: 'workflow:read' },
-      { name: 'deploys', icon: 'deploy', labelKey: 'nav.deploys', required: 'deploy:read' }
-    ]
-  },
-  {
-    group: 'aiops', labelKey: 'nav.aiops',
-    items: [
-      { name: 'gpu', icon: 'gpu', labelKey: 'nav.gpu', required: 'gpu:read' },
-      { name: 'portal', icon: 'portal', labelKey: 'nav.portal', required: 'portal:read' },
-      { name: 'runbooks', icon: 'runbook', labelKey: 'nav.runbooks', required: 'runbook:read' },
-      { name: 'incidents', icon: 'incident', labelKey: 'nav.incidents', required: 'incident:read' },
-      { name: 'autoscaler', icon: 'autoscaler', labelKey: 'nav.autoscaler', required: 'autoscaler:read' },
-      { name: 'bot', icon: 'bot', labelKey: 'nav.bot', required: 'bot:read' }
-    ]
-  },
-  {
-    group: 'observability', labelKey: 'nav.observability',
-    items: [{ name: 'logs', icon: 'logs', labelKey: 'nav.logs', required: 'log:read' }]
-  },
-  {
-    group: 'system', labelKey: 'nav.system',
-    items: [
-      { name: 'users', icon: 'users', labelKey: 'nav.users', required: 'user:read' },
-      { name: 'roles', icon: 'roles', labelKey: 'nav.roles', required: 'role:read' },
-      { name: 'permissions', icon: 'permissions', labelKey: 'nav.permissions', required: 'role:read' },
-      { name: 'secrets', icon: 'key', labelKey: 'nav.secrets', required: 'role:read' },
-      { name: 'admin-console', icon: 'settings', labelKey: 'nav.admin_console', required: 'diagnostics:dump' }
-    ]
-  }
-]
+// 分组导航：以路由表为单一来源（统一规则与守卫见 src/nav/model.js）——
+// 分组归属 / 入口标签 / 图标 / 权限门槛全部取自各路由 meta；
+// 同 navKey 的家族页合并为一个入口；详情页以 meta.hideInNav 显式排除。
+// 2026-10-27 前此处为手写清单，与路由 meta.group 互相漂移（4 页分组矛盾、
+// 30+ 已实现页面零入口）——现改为生成，漂移从结构上不可能再发生。
+const navGroups = buildNavGroups(appRoutes)
 
 // 权限过滤后的侧栏视图：仅保留当前用户有权限的入口，并赋予全局连续编号（1、2、3…）。
 // 编号即"功能入口序号"，用户点击即可执行对应操作；空权限集合时（demo 等）放宽展示全部。
@@ -275,9 +220,11 @@ function toggleSidebarCollapse() {
     // 忽略持久化失败，不影响本次会话内的折叠行为
   }
 }
-// 点击导航项：跳转并关闭移动端抽屉
-function goNav(name) {
-  router.push('/' + name)
+// 点击导航项：按入口 path 跳转并关闭移动端抽屉。
+// path 来自路由表（合并家族项落到家族首个路由的 path，如 k8s → /k8s/clusters），
+// 不再用 '/' + name 拼接——避免依赖各家族单独维护的 /xxx 重定向。
+function goNav(path) {
+  router.push(path)
   sidebarOpen.value = false
 }
 // 侧栏高亮判定：子页面通过 meta.navKey 归并回父级条目

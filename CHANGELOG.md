@@ -4,7 +4,7 @@
 
 > 当前最新已发布版本：`v0.16.0`（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局统一专项：181 条「后端有/前端无」缺口闭合、InfraConsole 契约断链与 K8s 两页 i18n 裸键修复、PageShell 棘轮 63 页迁移）
+## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
 - **背景（用户指派）**：两大担忧——① 后端能力做了、前端没做或做残；② 各页面布局各行其是。
   专项审计方法：468 条后端 REST 路由 ×（前端静态调用 + 动态目录枚举）⇒ 181 条缺口定性，
@@ -29,17 +29,33 @@
   已在 `src/api/k8s.js` 增 6 个 lifecycle 包装（契约注释含请求/响应形状），视图全部改走包装。
 - **K8s 集群部署路由双形注册（后端真缺陷）**：`/k8s/clusters/deploy` 曾只注册带 `{id}` 形式，
   id-less 前端调用 404；改为两种形式都注册（前端 `deployK8sCluster` 走 id-less）。
-- **布局统一专项（PageShell 棘轮）**：新增 `PageShell` 组件 + `pages.css` 骨架层 +
+- **布局统一专项（PageShell 棘轮，部署收官）**：新增 `PageShell` 组件 + `pages.css` 骨架层 +
   `page-conventions.spec.js` 门禁（①非合规视图⊆豁免清单；②已合规豁免条目必须删除——
-  豁免不许变永久）；三波迁移 63 页（Wave1 24、Wave2 26、Wave3 13：K8s 家族/CMDB 家族/
-  设备家族/Tasks/Users/Alerts 等），豁免账 82 → 18（余 15 页待迁 + 3 个全屏认证页为
-  永久豁免——它们位于 app 壳之外）；统一规则五条入 `docs/ui-design.md`。
-  迁移顺带收编 7 处静默 catch 为可见错误（轮询/详情加载等）。
-- **i18n zh/en 键差 45 → 0**：本轮另迁 50 键（k8sDeploy/k8sLifecycle），两语言扁平键集逐键一致。
+  豁免不许变永久）；**四波共 78 页迁移完毕**（Wave1 24 / Wave2 26 / Wave3 13 / Wave4 15：
+  K8s·CMDB·设备·任务·用户·交付·AI·系统家族等），豁免账 **82 → 3**（余下仅登录/注册/首登改密
+  3 个全屏认证页为永久豁免——它们位于 app 壳之外）。统一规则入 `docs/ui-design.md`；
+  迁移顺带收编 10+ 处静默 catch 为可见错误（轮询/详情加载等）。
+- **侧栏导航单一来源改造（分组统一 + 38 页入口补全，真缺陷根治）**：侧栏原由 App.vue 手写 25 项，
+  与路由 `meta.group` 两套分组互相漂移——4 页分组矛盾（runbooks/incidents/autoscaler/portal）、
+  **38 条已实现路由全站零入口**（批量执行/Helm 三页/Canary/流量策略/流水线/联邦部署/备份/合规/
+  HA/租户/配额/审计/审批/AIOps/AI Agent/AI 对话/知识库/成本/网络三页/自动纳管/配置热推送/
+  CMDB 三子页/GitOps 仪表盘/云账号/插件/计费等，此前只能手打 URL）。改法：`src/nav/model.js`
+  由路由表生成侧栏（分组/标签/图标/权限门槛全部取自 meta；9 组 / 78 入口），同 navKey 家族合并；
+  守卫 `nav/model.test.js` 7 条判据固化（覆盖铁律 / hideInNav 白名单防后门 / 双语标签解析 /
+  ROUTE_DOMAIN_MAP 全覆盖 / 分组顺序等）。顺带：`ROUTE_DOMAIN_MAP` 漏配 9 条（域翻译不按需
+  加载 = 从侧栏进入整页裸键）已补；`nav.gitops` 错名键（原 `nav.gitops-dashboard` 无人引用）改名对齐。
+- **CloudAccountsView 页头空壳（真缺陷）**：模板引用了从未 import 的 `<Header>` 组件 ⇒
+  页头实际渲染为空壳占位；随布局迁移删除并按统一骨架重建（另删无效 CSS `..cloud-accounts` 双点号选择器）。
+- **i18n zh/en 键差 45 → 0**：本轮另迁/补 57 键（k8sDeploy/k8sLifecycle 50、侧栏组标签×3 与
+  nav.trace 4、知识库/设备发现列头 3），两语言扁平键集逐键一致。
 - **协作线并入（workbuddy，`a644647`）**：agent 的 CMDB 中间件进程探测加 10s 超时兜底
   （沿 collectEnvs 范式、进程表可注入），修 tasklist 慢机（实测 11–21s/偶挂）拖死采集
   与整包测试的问题；单测 hermetic 化（NoPanic/Detects/CommandError 三例）。
-- **验证**：全量 vitest **58 文件 / 1179 用例全绿**；eslint 0；`npm run build` 通过。
+- **协作线并入（workbuddy，`582b916`）**：`pkg/grpcwire`（6 服务共用 gRPC 线路守卫）补自测——
+  抽出不依赖 `*testing.T` 的 `generatedFileProblem` 纯函数 + 负向用例（手写/错版本/缺失必须判红）
+  + ServeBufconn 真实拨号冒烟；外显报错文案不变，6 个消费方测试全绿。
+- **验证**：全量 vitest **59 文件 / 1186 用例全绿**；eslint 0；`npm run build` 通过；
+  页面骨架门禁与侧栏守卫全绿（EXEMPT 只剩 3 条永久豁免）。
 
 ## [Unreleased] — 2026-10-27（迁移 DDL 的 MDL 锁等待上限：升级演练建议二落地，migrate 不再无限期挂住目标表写入）
 

@@ -1,7 +1,13 @@
 <template>
-  <div data-testid="workflows-view">
-    <h2 data-testid="workflows-title">{{ $t('workflows.title') }}</h2>
-    <p class="muted">{{ $t('workflows.subtitle') }}</p>
+  <!-- 特殊页：作业编排为 DAG 画布 + 节点编辑器，本次仅换骨架与标题，画布/编辑器/提示原位保留。
+       testid 驱动标题 id（workflows-title）；根节点沿用既有 workflows-view（spec 断言）。
+       store.error 已有页内可见元素（workflows-error-msg，spec 断言），不再重复绑骨架横幅。 -->
+  <PageShell
+    :title="$t('workflows.title')"
+    :desc="$t('workflows.subtitle')"
+    testid="workflows"
+    data-testid="workflows-view"
+  >
 
     <div class="flowbar">
       <div class="field">
@@ -114,21 +120,22 @@
       </div>
       <button class="danger xs" data-testid="workflows-delete-node-btn" @click="store.deleteNode(currentNode.id)">{{ $t('workflows.delete_node_btn') }}</button>
     </div>
-  </div>
 
-  <!-- Cron 定时输入（替代 prompt） -->
-  <PromptModal
-    v-model="cronModal.show"
-    data-testid="workflows-cron-modal"
-    :title="$t('workflows.cron_title')"
-    :message="$t('workflows.cron_prompt')"
-    :default-value="store.current.cron || '*/5 * * * *'"
-    placeholder="*/5 * * * *"
-    @confirm="onCronConfirm"
-  />
+    <!-- Cron 定时输入（替代 prompt） -->
+    <PromptModal
+      v-model="cronModal.show"
+      data-testid="workflows-cron-modal"
+      :title="$t('workflows.cron_title')"
+      :message="$t('workflows.cron_prompt')"
+      :default-value="store.current.cron || '*/5 * * * *'"
+      placeholder="*/5 * * * *"
+      @confirm="onCronConfirm"
+    />
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
 import { computed, onMounted, reactive, ref, defineAsyncComponent } from 'vue'
 import { useWorkflowStore } from '@/stores/workflow'
 import { getAgents } from '@/api/device'

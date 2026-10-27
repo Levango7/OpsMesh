@@ -1,12 +1,10 @@
 <template>
-  <div class="cost-page">
-    <div class="page-head">
-      <h2 class="page-title">{{ $t('cost.title') }}</h2>
-      <p class="page-desc">{{ $t('cost.desc') }}</p>
-    </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('cost.title')"
+    :desc="$t('cost.desc')"
+    testid="cost"
+    :error="store.error || loadErr"
+  >
     <!-- 预算概览 -->
     <div class="metrics-row" v-if="store.budget">
       <MetricsCard :title="$t('cost.daily_used')" icon="cmdb">
@@ -115,19 +113,23 @@
       />
       <div v-else class="muted">{{ $t('cost.no_routes') }}</div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { ref, computed, onMounted } from 'vue'
 import { useCostStore } from '@/stores/cost'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
-import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
 
 const store = useCostStore()
+
+// 预算保存/报告刷新/导出此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
+const loadErr = ref('')
 
 const budgetForm = ref({ daily: 100000, monthly: 1000000, threshold: 0.8 })
 
@@ -168,11 +170,13 @@ const modelRows = computed(() => {
 })
 
 async function updateBudget() {
-  try { await store.updateBudget('default', budgetForm.value.daily, budgetForm.value.monthly, budgetForm.value.threshold) } catch { /* ignore */ }
+  try { await store.updateBudget('default', budgetForm.value.daily, budgetForm.value.monthly, budgetForm.value.threshold) }
+  catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 async function fetchReport() {
-  try { await store.fetchReport('default') } catch { /* ignore */ }
+  try { await store.fetchReport('default') }
+  catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 async function exportMarkdown() {
@@ -188,7 +192,7 @@ async function exportMarkdown() {
     a.download = 'cost-report.md'
     a.click()
     URL.revokeObjectURL(url)
-  } catch { /* ignore */ }
+  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 onMounted(() => {
@@ -200,10 +204,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.cost-page { max-width: 1000px; margin: 0 auto; }
-.page-head { margin-bottom: 20px; }
-.page-title { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
-.page-desc { margin: 0; color: var(--color-ink-muted, #6b7280); font-size: 13px; }
 .metrics-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
 .card { background: var(--color-surface-1, #ffffff); border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); padding: 16px 18px; margin-bottom: 16px; }
 .card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
@@ -215,7 +215,6 @@ onMounted(() => {
 .btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
 .row-actions { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
-.poll-err { padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm, 6px); background: var(--color-error-soft, #fef2f2); border: 1px solid var(--color-error-light, #fecaca); color: var(--color-error, #ef4444); font-size: 12.5px; font-weight: 500; }
 .metric-value { font-size: 24px; font-weight: 700; }
 .metric-sub { font-size: 11px; color: var(--color-ink-muted, #6b7280); }
 .report-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }

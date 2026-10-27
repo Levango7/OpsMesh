@@ -1,8 +1,6 @@
 <template>
-  <div>
-    <h2 data-testid="platform-title">{{ $t('platform.title') }}</h2>
-    <p class="muted">{{ $t('platform.subtitle') }}</p>
-
+  <!-- testid="platform" 驱动标题 id（platform-title，沿用既有前缀） -->
+  <PageShell :title="$t('platform.title')" :desc="$t('platform.subtitle')" testid="platform" :error="store.error">
     <!-- Tab 切换 -->
     <div class="tabbar">
       <button
@@ -13,8 +11,6 @@
         @click="switchTab(tab.key)"
       >{{ $t(tab.label) }}</button>
     </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <!-- ========== Tab 1: 平台配置 ========== -->
     <div v-show="activeTab === 'config'">
@@ -115,11 +111,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 平台配置页 — 三 Tab：配置 / 健康检查 / 指标汇总
+import PageShell from '@/components/PageShell.vue'
 import { ref, reactive, onMounted } from 'vue'
 import { usePlatformStore } from '@/stores/platform'
 import { t } from '@/i18n'
@@ -219,11 +216,6 @@ onMounted(() => {
 .stat-v { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat-l { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
 
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .status-pill.warn { background: var(--warn-soft, #fef3c7); color: var(--warn, #b45309); }
 
 @media (max-width: 768px) {

@@ -738,7 +738,8 @@
     "noDocs": "No documents found.",
     "title_col": "Title",
     "created_at": "Created At",
-    "relevance": "Relevance"
+    "relevance": "Relevance",
+    "actions": "Actions"
   },
   "agent": {
     "title": "AI Agent",
@@ -796,6 +797,8 @@
     "noDevices": "No discovered devices yet. Run a discovery scan first.",
     "status": "Status",
     "devicesFound": "Devices Found",
+    "ip": "IP",
+    "hostname": "Hostname",
     "createdAt": "Created",
     "actions": "Actions",
     "view_devices": "View Devices",

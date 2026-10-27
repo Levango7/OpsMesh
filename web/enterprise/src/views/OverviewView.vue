@@ -1,9 +1,13 @@
 <template>
-  <div data-testid="overview-view" class="overview">
-    <div class="overview__header">
-      <h2 data-testid="overview-title" class="overview__title">{{ $t('overview.title') }}</h2>
-      <p class="overview__subtitle">{{ $t('overview.subtitle') }}</p>
-    </div>
+  <!-- 特殊页：总览为统计卡片 + 能力网格仪表盘，本次仅换骨架与标题，网格原位保留。
+       testid 驱动标题 id（overview-title）；根节点沿用既有 overview-view（spec 断言）。 -->
+  <PageShell
+    :title="$t('overview.title')"
+    :desc="$t('overview.subtitle')"
+    testid="overview"
+    data-testid="overview-view"
+    :error="deviceStore.error || alertStore.error"
+  >
 
     <!-- 统计卡片：加载中显示骨架屏 -->
     <div v-if="statsLoading" class="overview__skeleton stats-skeleton" data-testid="overview-stats-skeleton">
@@ -97,11 +101,12 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 总览页 — 聚合各 store 概况，提供快速入口与近期告警
+import PageShell from '@/components/PageShell.vue'
 import { computed, onMounted } from 'vue'
 import { useDeviceStore } from '@/stores/device'
 import { useAlertStore } from '@/stores/alert'
@@ -188,27 +193,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.overview {
-  display: block;
-}
-
-.overview__header {
-  margin-bottom: var(--space-6, 24px);
-}
-
-.overview__title {
-  margin: 0;
-  font-size: var(--font-size-base, 13px);
-  font-weight: 600;
-  color: var(--color-ink, #f7f8f8);
-}
-
-.overview__subtitle {
-  margin: 0 0 var(--space-3, 12px) 0;
-  font-size: var(--font-size-sm, 12px);
-  color: var(--color-ink-muted, #d0d6e0);
-}
-
 /* Stats grid */
 .stats-grid {
   display: grid;

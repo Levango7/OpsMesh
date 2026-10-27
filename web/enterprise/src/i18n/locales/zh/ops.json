@@ -739,7 +739,8 @@
     "noDocs": "暂无文档。",
     "title_col": "标题",
     "created_at": "创建时间",
-    "relevance": "相关度"
+    "relevance": "相关度",
+    "actions": "操作"
   },
   "agent": {
     "title": "AI Agent",
@@ -798,6 +799,8 @@
     "cidr": "网段",
     "status": "状态",
     "devicesFound": "发现数量",
+    "ip": "IP",
+    "hostname": "主机名",
     "createdAt": "创建时间",
     "actions": "操作",
     "view_devices": "查看设备",

@@ -1,10 +1,12 @@
 <template>
-  <div>
-    <h2 data-testid="infra-console-title">{{ L('基础设施运维台', 'Infrastructure Console') }}</h2>
-    <p class="muted">
-      {{ L('P4/P5/P6 运维能力统一入口：消息队列/数据库/OLAP/时序/向量/图/负载均衡/对象存储/Harbor/监控/Kernel/安全/虚拟化/Ansible',
-           'Unified console for middleware / DB / OLAP / TSDB / vector / graph / LB / storage / Harbor / monitoring / kernel / security / virt / Ansible') }}
-    </p>
+  <!-- 特殊页：运维控制台为域导航 + 动作面板布局，本次仅换骨架与标题，域导航/动作区/表单/结果面板原位保留。
+       标题沿用页内双语选择器 L()（catalog 不依赖 i18n 域文件），testid 生成 infra-console-title（spec 断言）。 -->
+  <PageShell
+    :title="L('基础设施运维台', 'Infrastructure Console')"
+    :desc="L('P4/P5/P6 运维能力统一入口：消息队列/数据库/OLAP/时序/向量/图/负载均衡/对象存储/Harbor/监控/Kernel/安全/虚拟化/Ansible',
+             'Unified console for middleware / DB / OLAP / TSDB / vector / graph / LB / storage / Harbor / monitoring / kernel / security / virt / Ansible')"
+    testid="infra-console"
+  >
 
     <!-- 设备选择（全局） -->
     <div class="toolbar">
@@ -152,10 +154,11 @@
         </template>
       </section>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useDeviceStore } from '@/stores/device'
 import { currentLang } from '@/i18n'

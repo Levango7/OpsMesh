@@ -2,8 +2,9 @@
  * K8s 模块共享样式
  * ---------------------------------------------------------------------------
  * K8s 管理拆分为「集群管理 / 资源管理」两个子页面后，两页共用以下样式：
- *   - .k8s-page / .k8s-page__head  页面骨架
  *   - .k8s-subnav                 子页签（集群 / 资源）
+ * 页面骨架（.k8s-page / .k8s-page__head / .k8s-page__title / .k8s-page__desc）
+ * 已随布局统一专项迁入 PageShell + pages.css（2026-10-27），此处删除。
  *   - .poll-err                    错误横幅
  *   - .flowbar / .field            工具条与表单字段
  *   - .row-actions                 表格行内操作组
@@ -58,28 +59,6 @@
 }
 .card + .card {
   margin-top: 0;
-}
-
-/* ===== 页面骨架 ===== */
-.k8s-page {
-  display: block;
-}
-
-.k8s-page__head {
-  margin-bottom: var(--space-4, 16px);
-}
-
-.k8s-page__title {
-  margin: 0;
-  font-size: var(--font-size-base, 13px);
-  font-weight: 600;
-  color: var(--color-ink, #f7f8f8);
-}
-
-.k8s-page__desc {
-  margin: var(--space-1, 4px) 0 0 0;
-  font-size: var(--font-size-sm, 12px);
-  color: var(--color-ink-muted, #6b7280);
 }
 
 /* ===== 子页签 ===== */

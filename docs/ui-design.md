@@ -782,9 +782,27 @@ i18n 采用自研轻量模块（`src/i18n/index.js`），不依赖 vue-i18n，�
    且须在视图头部注释写明理由。
 3. **工具条**：按钮栏 `.btnbar`、筛选表单栏 `.flowbar`；**模态**用 `.modal-*` 全局类、
    抽屉用 `DetailDrawer`；行内操作组 `.row-actions`。
-4. **页面分组**（侧栏组）：概览 / 运维管理 / 资产配置 / 交付中心 / 可观测性 / 自动化 / AI 算力 / 系统管理 / 平台——
-   新页面必须归入既有组，不新开组；跨组归属存疑时写进 PR 说明由评审定，不默默塞。
+4. **页面分组**（侧栏组）：概览 / 运维管理 / 资产配置 / 交付中心 / 可观测性 / 自动化 / AI 算力 / 平台 / 系统管理——
+   新页面必须归入既有组，不新开组（分组顺序以 `src/nav/model.js` 的 `GROUP_ORDER` 为准）；
+   跨组归属存疑时写进 PR 说明由评审定，不默默塞。
 5. 存量迁移按门禁豁免清单（`page-conventions.spec.js` 的 `EXEMPT`）棘轮递减；**新增页面一律直接合规**。
+   迁移终态（2026-10-27）：78 页四波迁完，豁免账 82 → 3，余下仅全屏认证页（app 壳之外）为永久豁免。
+
+### 侧栏导航统一规则（2026-10-27，强制）
+
+> 背景：侧栏曾由 `App.vue` 手写 25 项，与路由 `meta.group` 两套分组互相漂移——4 个页面分组矛盾
+> （runbooks/incidents/autoscaler/portal）、**38 条已实现路由全站零入口**（批量执行/Helm/备份/审批/
+> AIOps 等只能手打 URL）、9 条路由漏配按需翻译致整页裸键。现以路由表为单一来源，由守卫
+> `src/nav/model.test.js` 守护。
+
+6. **侧栏入口 = 路由表**（`src/nav/model.js` 从 `src/router/index.js` 生成）：
+   分组/入口标签（`meta.title`）/图标（`meta.icon`）/权限门槛（`meta.requirePerm`）全部取自 route meta；
+   **新增页面只改路由表即自动进侧栏**。同 `meta.navKey` 的家族页合并为一个入口（如 k8s 四页）。
+7. **隐藏页面必须显式**：详情页/子 tab 页用 `meta.hideInNav: true`，且只允许出现在守卫测试的
+   白名单里（目前 4 条：device-detail / batch-exec / batch-detail / canary-detail）——防「藏页面」后门。
+8. **翻译映射必须同步**：新路由必须登记 `src/i18n/index.js` 的 `ROUTE_DOMAIN_MAP`（漏登记 = 页面裸键），
+   守卫 ⑦ 强制；侧栏标签键须 zh/en 双语可解析（守卫 ④）。
 
 **已知遗留（UI 债，择机收编）**：共享原语（`.btnbar/.field/.card/.poll-err/.modal-*` 等）目前寄生在
 `styles/k8s.css`（K8s 命名当全站事实标准）；计划在后续批次迁入 `styles/pages.css` 并令 k8s.css 只留 k8s 专属类。
+（2026-10-27 已先清其中的死件 `.k8s-page*` 四规则——K8s 页面迁 PageShell 后已无引用。）

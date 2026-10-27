@@ -1,12 +1,6 @@
 <template>
-  <div class="ai-chat-page">
-    <div class="page-head">
-      <h2 class="page-title">{{ $t('aiChat.title') }}</h2>
-      <p class="page-desc">{{ $t('aiChat.desc') }}</p>
-    </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <!-- 特殊页：全高对话布局——PageShell 只接管页头/错误横幅，对话区的滚动与高度样式保持原样 -->
+  <PageShell :title="$t('aiChat.title')" :desc="$t('aiChat.desc')" testid="ai-chat" :error="store.error">
     <!-- 聊天区域 -->
     <div class="chat-container">
       <div class="chat-messages" ref="messagesRef">
@@ -14,7 +8,7 @@
           <div class="msg-role">{{ msg.role === 'user' ? $t('aiChat.you') : $t('aiChat.ai') }}</div>
           <div class="msg-content">{{ msg.content }}</div>
           <div v-if="msg.usage" class="msg-usage">
-            {{ $t('aiChat.tokens') }}: {{ msg.usage.totalTokens }}
+            {{ $t('aiChat.token_usage') }}: {{ msg.usage.totalTokens }}
           </div>
         </div>
         <div v-if="store.loading" class="chat-msg assistant">
@@ -69,13 +63,14 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { ref, nextTick } from 'vue'
 import { useAIStore } from '@/stores/ai'
-import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
 
 const store = useAIStore()
@@ -101,10 +96,6 @@ async function send() {
 </script>
 
 <style scoped>
-.ai-chat-page { max-width: 900px; margin: 0 auto; }
-.page-head { margin-bottom: 20px; }
-.page-title { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
-.page-desc { margin: 0; color: var(--color-ink-muted, #6b7280); font-size: 13px; }
 .chat-container { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 .chat-messages { max-height: 500px; overflow-y: auto; padding: 12px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); background: var(--color-surface-1, #ffffff); }
 .chat-msg { margin-bottom: 12px; }
@@ -127,9 +118,4 @@ async function send() {
 .usage-label { font-size: 11px; color: var(--color-ink-muted, #6b7280); }
 .usage-value { font-size: 16px; font-weight: 600; }
 .muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
-.poll-err {
-  padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm, 6px);
-  background: var(--color-error-soft, #fef2f2); border: 1px solid var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444); font-size: 12.5px; font-weight: 500;
-}
 </style>

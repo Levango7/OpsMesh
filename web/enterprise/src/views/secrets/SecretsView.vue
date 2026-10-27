@@ -1,12 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('secrets.title') }}</h2>
-    <p class="muted">{{ $t('secrets.subtitle') }}</p>
-
-    <div v-if="loadError" class="poll-err">
-      <Icon name="warning" :size="14" /> {{ loadError }}
-    </div>
-
+  <PageShell :title="$t('secrets.title')" :desc="$t('secrets.subtitle')" testid="secrets" :error="loadError">
     <div class="row">
       <!-- 左：提供者状态 + Vault 配置 -->
       <div class="col">
@@ -139,7 +132,7 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
@@ -150,12 +143,12 @@
 //   - 帮助说明：解释密钥引用格式 ${key} 和支持的 provider 类型
 //
 // 安全约束：本页面不展示任何密钥值，仅展示 key 名称与来源 provider。
+import PageShell from '@/components/PageShell.vue'
 import { onMounted, reactive, ref } from 'vue'
 import { getSecretProviderStatus, testSecretProvider, listSecretKeys, rotateSecret } from '@/api/secrets'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import Icon from '@/components/Icon.vue'
 import { Modal } from '@/components/ui'
 
 // 提供者状态
@@ -207,8 +200,10 @@ async function fetchKeys() {
   try {
     const data = await listSecretKeys()
     keys.value = Array.isArray(data) ? data : []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     keys.value = []
+    loadError.value = e.j?.error || t('common.load_failed')
   }
 }
 
@@ -227,8 +222,9 @@ async function confirmRotate() {
   try {
     await rotateSecret(key, { keyType, newValue, rotatedBy: 'ui' })
     await fetchKeys()
-  } catch {
-    // 轮转失败
+  } catch (e) {
+    // 轮转失败此前静默吞错——统一骨架批次补上可见错误
+    loadError.value = e.j?.error || t('common.load_failed')
   } finally {
     rotating.value = ''
     rotateConfirm.value.show = false
@@ -316,12 +312,6 @@ onMounted(() => {
 
 .help-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.7; }
 .help-list code { font-size: 12px; }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 .msg { margin-top: 8px; font-size: 12.5px; }
 .msg.ok { color: var(--teal); }

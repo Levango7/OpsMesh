@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('pipeline.title') }}</h2>
-    <p class="muted">{{ $t('pipeline.subtitle') }}</p>
-
+  <PageShell :title="$t('pipeline.title')" :desc="$t('pipeline.subtitle')" testid="pipeline" :error="loadErr">
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -102,11 +99,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 流水线管理页 — 模板 CRUD + 触发运行 + 运行记录列表
+import PageShell from '@/components/PageShell.vue'
 import { ref, reactive, onMounted } from 'vue'
 import * as pipelineApi from '@/api/pipeline'
 import { t } from '@/i18n'
@@ -122,6 +120,8 @@ const runs = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+// 列表加载错误（骨架横幅）：此前 catch 静默吞错只见空表
+const loadErr = ref('')
 
 // 触发运行确认弹窗
 const runConfirm = reactive({ show: false, row: null })
@@ -149,13 +149,16 @@ const runColumns = [
 
 async function fetchAll() {
   loading.value = true
+  loadErr.value = ''
   try {
     const [tr, rr] = await Promise.all([pipelineApi.listTemplates(), pipelineApi.listRuns()])
     templates.value = (tr && tr.templates) || []
     runs.value = (rr && rr.runs) || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     templates.value = []
     runs.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

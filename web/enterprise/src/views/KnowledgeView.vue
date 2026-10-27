@@ -1,12 +1,10 @@
 <template>
-  <div class="knowledge-page">
-    <div class="page-head">
-      <h2 class="page-title">{{ $t('knowledge.title') }}</h2>
-      <p class="page-desc">{{ $t('knowledge.desc') }}</p>
-    </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('knowledge.title')"
+    :desc="$t('knowledge.desc')"
+    testid="knowledge"
+    :error="store.error || loadErr"
+  >
     <!-- 统计 -->
     <div class="metrics-row" v-if="store.stats">
       <MetricsCard :title="$t('knowledge.total_docs')" icon="cmdb">
@@ -90,19 +88,23 @@
       </DataTable>
       <div v-else class="muted">{{ $t('knowledge.noDocs') }}</div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 import { ref, onMounted } from 'vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
-import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
 
 const store = useKnowledgeStore()
+
+// 检索/同步/文档增删此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
+const loadErr = ref('')
 
 const searchQuery = ref('')
 const rerank = ref(false)
@@ -127,23 +129,28 @@ const docColumns = [
 
 async function doSearch() {
   if (!searchQuery.value.trim()) return
-  try { await store.search(searchQuery.value, rerank.value) } catch { /* ignore */ }
+  try { await store.search(searchQuery.value, rerank.value) }
+  catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 async function syncAll() {
-  try { await store.sync('') } catch { /* ignore */ }
+  try { await store.sync('') }
+  catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 async function syncSource(source) {
-  try { await store.sync(source) } catch { /* ignore */ }
+  try { await store.sync(source) }
+  catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 async function fetchDocs() {
-  try { await store.fetchDocs(sourceFilter.value) } catch { /* ignore */ }
+  try { await store.fetchDocs(sourceFilter.value) }
+  catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 async function deleteDoc(id) {
-  try { await store.deleteDoc(id) } catch { /* ignore */ }
+  try { await store.deleteDoc(id) }
+  catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
 onMounted(() => {
@@ -154,17 +161,12 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.knowledge-page { max-width: 1000px; margin: 0 auto; }
-.page-head { margin-bottom: 20px; }
-.page-title { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
-.page-desc { margin: 0; color: var(--color-ink-muted, #6b7280); font-size: 13px; }
 .metrics-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 18px; }
 .card { background: var(--color-surface-1, #ffffff); border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); padding: 16px 18px; margin-bottom: 16px; }
 .card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .row-actions { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
-.poll-err { padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm, 6px); background: var(--color-error-soft, #fef2f2); border: 1px solid var(--color-error-light, #fecaca); color: var(--color-error, #ef4444); font-size: 12.5px; font-weight: 500; }
 .search-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
 .search-input { flex: 1; padding: 7px 9px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 13px; background: var(--color-surface-1, #ffffff); }
 .filter-select { padding: 6px 8px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 12px; background: var(--color-surface-1, #ffffff); }
