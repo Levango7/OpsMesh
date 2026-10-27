@@ -399,22 +399,22 @@ cmd_fault(){
     -d "{\"username\":\"$victim\",\"password\":\"$USERPASS\",\"email\":\"$victim@drill.local\"}" >/dev/null 2>&1 || true
   # 注册可能需审批或被占用：退回用既有演练账号登录（start 建的 account 是 active）。
   code=$(curl -s -o /dev/null -w '%{http_code}' -c "$jar2" -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
-    -d "{\"username\":\"drill-u01\",\"password\":\"$USERPASS\"}")
+    -d "{\"username\":\"$victim\",\"password\":\"$USERPASS\"}")
   pass_fail "杀库前基线：drill-u01 登录" "$code" 200 || fails=$((fails+1))
 
   say "  docker stop $MYSQL_C"
   docker stop "$MYSQL_C" >/dev/null 2>&1 || { say "  ✗ 停库失败（docker 权限？）"; fails=$((fails+1)); return "$fails"; }
   sleep 2
   code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
-    -d "{\"username\":\"drill-u01\",\"password\":\"$USERPASS\"}")
+    -d "{\"username\":\"$victim\",\"password\":\"$USERPASS\"}")
   pass_fail "杀库后 login 应 503（不得 401 冒充凭据错误）" "$code" 500 502 503 || fails=$((fails+1))
   # 连错 5 次仍不得因"故障"锁账号（lock 会把这些 503 也算失败的话，恢复后正确口令也进不去）。
   for n in 1 2 3 4 5; do
     curl -s -o /dev/null -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
-      -d "{\"username\":\"drill-u01\",\"password\":\"wrong-$n\"}" >/dev/null 2>&1 || true
+      -d "{\"username\":\"$victim\",\"password\":\"wrong-$n\"}" >/dev/null 2>&1 || true
   done
   code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
-    -d "{\"username\":\"drill-u01\",\"password\":\"$USERPASS\"}")
+    -d "{\"username\":\"$victim\",\"password\":\"$USERPASS\"}")
   pass_fail "锁累计判据：连错 5 次 + 杀库期，正确口令应仍 503（锁未累计）" "$code" 500 502 503 || fails=$((fails+1))
   code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$CP/api/v1/auth/refresh" -b "$jar2" -c "$jar2")
   pass_fail "杀库期 refresh 应 503（不得 401）" "$code" 500 502 503 || fails=$((fails+1))
@@ -433,7 +433,7 @@ cmd_fault(){
   done
   say "  ✓ 库已就绪（${t}s）"
   code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST "$CP/api/v1/auth/login" \
-    -d "{\"username\":\"drill-u01\",\"password\":\"$USERPASS\"}")
+    -d "{\"username\":\"$victim\",\"password\":\"$USERPASS\"}")
   pass_fail "库恢复后正确口令应立即 200（锁无残留）" "$code" 200 || fails=$((fails+1))
 
   say
