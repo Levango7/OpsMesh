@@ -18,10 +18,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/kubernetes"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -33,15 +33,15 @@ func TestExternalK8sClusterReconcile_FinalizerAdded(t *testing.T) {
 
 	instance := &opsmeshv1alpha1.ExternalK8sCluster{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-cluster",
-			Namespace: "default",
+			Name:       "test-cluster",
+			Namespace:  "default",
 			Generation: 1,
 		},
 		Spec: opsmeshv1alpha1.ExternalK8sClusterSpec{
 			ClusterName: "test-cluster",
 			KubeconfigSecretRef: corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "test-kubeconfig"},
-				Key:                   "kubeconfig",
+				Key:                  "kubeconfig",
 			},
 		},
 	}
@@ -108,7 +108,7 @@ func TestExternalK8sClusterReconcile_DeleteRemovesFinalizer(t *testing.T) {
 			ClusterName: "test-cluster-delete",
 			KubeconfigSecretRef: corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "test-kubeconfig"},
-				Key:                   "kubeconfig",
+				Key:                  "kubeconfig",
 			},
 		},
 	}
@@ -169,15 +169,15 @@ func TestExternalK8sClusterReconcile_SuccessPath(t *testing.T) {
 
 	instance := &opsmeshv1alpha1.ExternalK8sCluster{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-cluster-success",
-			Namespace: "default",
+			Name:       "test-cluster-success",
+			Namespace:  "default",
 			Generation: 1,
 		},
 		Spec: opsmeshv1alpha1.ExternalK8sClusterSpec{
 			ClusterName: "test-cluster-success",
 			KubeconfigSecretRef: corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "test-kubeconfig"},
-				Key:                   "kubeconfig",
+				Key:                  "kubeconfig",
 			},
 		},
 	}
@@ -211,7 +211,7 @@ func TestExternalK8sClusterReconcile_SuccessPath(t *testing.T) {
 
 	instance.Spec.KubeconfigSecretRef = corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "test-kubeconfig"},
-		Key:                   "kubeconfig",
+		Key:                  "kubeconfig",
 	}
 
 	cl = fakeclient.NewClientBuilder().

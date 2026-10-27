@@ -82,10 +82,10 @@ type ExternalK8sClusterStatus struct {
 
 // APIResourceSummary summarizes a discovered API resource.
 type APIResourceSummary struct {
-	Group   string `json:"group"`
-	Version string `json:"version"`
-	Kind    string `json:"kind"`
-	Namespaced bool `json:"namespaced"`
+	Group      string `json:"group"`
+	Version    string `json:"version"`
+	Kind       string `json:"kind"`
+	Namespaced bool   `json:"namespaced"`
 }
 
 // +kubebuilder:object:root=true

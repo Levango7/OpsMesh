@@ -764,7 +764,7 @@ type CreateUserRequest struct {
 	// 首登强制改密（TD-60 切流搬迁用）：true 时建号即置 MustChangePassword，
 	// 该用户首次登录只签 5min 改密专用令牌，必须改密后才能取得常规会话。
 	// 迁移 job 以一次性随机口令建号时必须置 true，否则用户拿到的是长期口令。
-	MustChangePassword bool `protobuf:"varint,5,opt,name=must_change_password,json=mustChangePassword,proto3" json:"must_change_password,omitempty"`
+	MustChangePassword bool   `protobuf:"varint,5,opt,name=must_change_password,json=mustChangePassword,proto3" json:"must_change_password,omitempty"`
 	TenantId           string `protobuf:"bytes,6,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache

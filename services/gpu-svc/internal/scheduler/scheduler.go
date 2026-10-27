@@ -28,9 +28,9 @@ type WorkloadProvider interface {
 
 // Scheduler handles workload scheduling across GPU nodes.
 type Scheduler struct {
-	mu              sync.RWMutex
-	policies        []models.SchedulingPolicy
-	now             func() time.Time
+	mu               sync.RWMutex
+	policies         []models.SchedulingPolicy
+	now              func() time.Time
 	workloadProvider WorkloadProvider
 }
 

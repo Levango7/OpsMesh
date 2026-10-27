@@ -267,25 +267,25 @@ func (s *Service) TriggerScheduling() []*models.ScheduleResult {
 		if result == nil {
 			continue
 		}
-	if result.Assigned {
-		if err := s.workloads.AssignNode(wl.ID, result.NodeIDs); err != nil {
-			log.Printf("[service] assign node for workload %s: %v", wl.ID, err)
-		}
-		// Update node VRAM allocation
-		vramPerWorkload := wl.GPURequest.MinVRAMMB
-		if vramPerWorkload <= 0 {
-			vramPerWorkload = 4096 // default 4GB per workload
-		}
-		for _, nodeID := range result.NodeIDs {
-			if n, err := s.nodes.Get(nodeID); err == nil {
-				s.scheduler.AssignNodeResources(n, vramPerWorkload)
-				_ = s.nodes.Update(n)
+		if result.Assigned {
+			if err := s.workloads.AssignNode(wl.ID, result.NodeIDs); err != nil {
+				log.Printf("[service] assign node for workload %s: %v", wl.ID, err)
+			}
+			// Update node VRAM allocation
+			vramPerWorkload := wl.GPURequest.MinVRAMMB
+			if vramPerWorkload <= 0 {
+				vramPerWorkload = 4096 // default 4GB per workload
+			}
+			for _, nodeID := range result.NodeIDs {
+				if n, err := s.nodes.Get(nodeID); err == nil {
+					s.scheduler.AssignNodeResources(n, vramPerWorkload)
+					_ = s.nodes.Update(n)
+				}
+			}
+			if err := s.quotas.RecordAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
+				log.Printf("[service] record quota for workload %s: %v", wl.ID, err)
 			}
 		}
-		if err := s.quotas.RecordAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
-			log.Printf("[service] record quota for workload %s: %v", wl.ID, err)
-		}
-	}
 		results = append(results, result)
 	}
 	return results
