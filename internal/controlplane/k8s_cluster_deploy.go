@@ -902,9 +902,16 @@ func (s *Server) handleK8sClusterDeployStatus(w http.ResponseWriter, r *http.Req
 }
 
 // RegisterK8sClusterDeployRoutes 注册 K8s 集群部署路由。
+//
+// 双形注册（2026-10-28）：两个 handler 均不读取路径段 {id}（POST 只解 body，
+// status 只读 ?deployID= 查询参数）；前端（src/api/k8s.js 与 K8sClusterDeployView）
+// 使用的是 id-less 形态——原注册只有 {id} 形，段数不匹配导致请求落到泛路由
+// （部署向导的状态轮询实际打空）。保留 {id} 形作兼容，补齐 id-less 真实契约形。
 func (s *Server) RegisterK8sClusterDeployRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/k8s/clusters/{id}/deploy", s.handleK8sClusterDeploy)
 	mux.HandleFunc("GET /api/v1/k8s/clusters/{id}/deploy/status", s.handleK8sClusterDeployStatus)
+	mux.HandleFunc("POST /api/v1/k8s/clusters/deploy", s.handleK8sClusterDeploy)
+	mux.HandleFunc("GET /api/v1/k8s/clusters/deploy/status", s.handleK8sClusterDeployStatus)
 }
 
 // generateRandomToken 生成随机 token。
