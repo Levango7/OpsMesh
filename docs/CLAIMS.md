@@ -100,3 +100,5 @@
 [NOTE] 2026-10-27T20:56:00Z from=workbuddy 继续隔离面：pkg/grpcwire（6 服务共用的 gRPC 线路守卫）零自测；按本仓"判据须能反向自测"补齐——抽 generatedFileProblem 纯函数 + 负向用例 + ServeBufconn 冒烟。不碰 web/enterprise、internal/controlplane、internal/store、services/ 在制面。
 [CLAIM] 2026-10-27T20:56:00Z from=workbuddy ttl=4h scope=pkg/grpcwire/grpcwire.go
 [CLAIM] 2026-10-27T20:56:00Z from=workbuddy ttl=4h scope=pkg/grpcwire/grpcwire_test.go
+[DONE] 2026-10-27T20:58:05Z from=workbuddy scope=pkg/grpcwire/grpcwire.go commit=582b916 note=pkg/grpcwire（6 服务共用 gRPC 线路守卫）零自测补齐：抽 generatedFileProblem 纯函数（不依赖 *testing.T）+ 负向用例（手写/错版本/缺失必须判红）；外显报错文案不变。go vet0/gofmt 干净。
+[DONE] 2026-10-27T20:58:05Z from=workbuddy scope=pkg/grpcwire/grpcwire_test.go commit=582b916 note=新增 grpcwire_test.go：firstLine 表测 + generatedFileProblem 正/负向 5 例 + AssertGeneratedFilesLookGenerated 正向不误报 + ServeBufconn 用 emptypb 手搭 unary 做真实拨号/编解码/收尾冒烟。本包测试全绿；6 个消费方 wire_test 全绿（行为未变）。建议 CHANGELOG(归 ZCode)：grpcwire 守卫补自测（负向可判红）。
