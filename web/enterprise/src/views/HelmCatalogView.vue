@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="helm-catalog-title">{{ $t('helm.catalog_title') }}</h2>
-    <p class="muted">{{ $t('helm.catalog_subtitle') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('helm.catalog_title')"
+    :desc="$t('helm.catalog_subtitle')"
+    testid="helm-catalog"
+    :error="store.error"
+  >
     <!-- 搜索框 -->
     <div class="btnbar">
       <div class="search-box">
@@ -102,10 +102,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // Helm 应用目录页 — 预置分类 + Chart 搜索 + Chart 详情
 import { ref, computed, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -182,12 +184,6 @@ onMounted(loadCatalog)
   background: var(--bg-1);
 }
 .search-box input { flex: 1; border: none; background: transparent; outline: none; font-size: 13px; }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 .catalog-cat { margin-bottom: 18px; }
 .catalog-cat h3 { margin: 0 0 8px 0; font-size: 14px; }

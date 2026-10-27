@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2 data-testid="approval-requests-title">{{ $t('approval.requests_title') }}</h2>
-    <p class="muted">{{ $t('approval.requests_subtitle') }}</p>
-
+  <PageShell :title="$t('approval.requests_title')" :desc="$t('approval.requests_subtitle')" testid="approval-requests" :error="store.error">
     <!-- Tab 切换 -->
     <div class="tabbar">
       <button
@@ -13,8 +10,6 @@
         @click="switchTab(tab.key)"
       >{{ $t(tab.label) }}</button>
     </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <!-- ========== Tab 1: 审批请求列表 ========== -->
     <div v-show="activeTab === 'requests'">
@@ -124,12 +119,13 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 审批请求页 — 两 Tab：审批请求列表（筛选 pending/approved/rejected）+ 待我审批（approve/reject/cancel + 查看历史）
 import { ref, computed, reactive, onMounted } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { useApprovalStore } from '@/stores/approval'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -287,12 +283,6 @@ onMounted(() => {
 .filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 10px 0; }
 .filter-bar .field { display: flex; flex-direction: column; gap: 5px; }
 .filter-bar .field > label { margin: 0; font-size: 12px; color: var(--text-2); }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }

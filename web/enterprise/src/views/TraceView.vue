@@ -1,15 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="trace-title">{{ $t('trace.title') }}</h2>
-    <p class="muted">{{ $t('trace.desc') }}</p>
-
-    <!-- 服务状态 -->
-    <div v-if="servicesError" class="poll-err">
-      <Icon name="warning" :size="14" />
-      {{ $t('trace.services_unavailable') }}: {{ servicesError }}
-      <button class="xs outline" @click="loadServices">{{ $t('common.refresh') }}</button>
-    </div>
-
+  <PageShell
+    :title="$t('trace.title')"
+    :desc="$t('trace.desc')"
+    testid="trace"
+    :error="servicesError ? $t('trace.services_unavailable') + ': ' + servicesError : ''"
+  >
     <div class="query-card">
       <div class="flowbar">
         <h3 style="margin: 0">{{ $t('trace.query_title') }}</h3>
@@ -160,11 +155,12 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 import { reactive, ref, onMounted, watch } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { useRoute } from 'vue-router'
 import {
   getTraceServices,
@@ -173,7 +169,6 @@ import {
   getTrace,
   normalizeTrace,
 } from '@/api/trace'
-import Icon from '@/components/Icon.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
 
 const route = useRoute()
@@ -356,5 +351,4 @@ watch(
 .tag-label { font-size: 11px; color: var(--text-2); font-weight: 600; margin-right: 6px; }
 .tag { font-size: 11px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-2); margin-right: 4px; }
 .metrics-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 14px; }
-.poll-err { padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm); background: var(--fail-soft); border: 1px solid var(--fail-bg); color: var(--fail); font-size: 12.5px; font-weight: 500; }
 </style>

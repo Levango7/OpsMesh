@@ -1,10 +1,5 @@
 <template>
-  <div class="canary-view">
-    <h2 data-testid="canary-title">{{ $t('canary.title') }}</h2>
-    <p class="muted">{{ $t('canary.subtitle') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell :title="$t('canary.title')" :desc="$t('canary.subtitle')" testid="canary" :error="store.error">
     <!-- 创建灰度发布（详情页不显示） -->
     <div v-if="!detailId" class="card">
       <h3>{{ $t('canary.create_title') }}</h3>
@@ -171,13 +166,14 @@
     <Modal v-model="errorConfirm.show" :title="$t('common.error')">
       {{ errorConfirm.message }}
     </Modal>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 灰度发布页 — 创建 + 状态 + 推进 + 流量分割 + 指标
 // 路由：/canary | /canary/:id
 import { ref, reactive, computed, onMounted } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { useRoute } from 'vue-router'
 import { useCanaryStore } from '@/stores/canary'
 import { t } from '@/i18n'
@@ -400,12 +396,6 @@ onMounted(async () => {
 .status-completed { background: var(--ok-soft); color: var(--ok); }
 .status-failed { background: var(--fail-soft); color: var(--fail); }
 .status-cancelled { background: var(--surface-3); color: var(--text-3); }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 @media (max-width: 768px) {
   .stats { grid-template-columns: repeat(2, 1fr); }

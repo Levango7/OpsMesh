@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('billing.title') }}</h2>
-    <p class="muted">{{ $t('billing.subtitle') }}</p>
-
+  <PageShell :title="$t('billing.title')" :desc="$t('billing.subtitle')" testid="billing" :error="loadErr">
     <!-- tab 分区：订阅计划 / 订阅 / 账单 / 用量 -->
     <div class="btnbar tabs">
       <button
@@ -231,12 +228,13 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 计费管理页 — tab 分区：订阅计划 / 订阅 / 账单（只读）/ 用量统计（只读）
 import { ref, reactive, computed, watch, onMounted } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { listPlans, createPlan, updatePlan, deletePlan, listSubscriptions, createSubscription, updateSubscription, deleteSubscription, listInvoices, getUsage } from '@/api/billing'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -249,6 +247,7 @@ import { fmtTime } from '@/composables/useFormatTime'
 
 const tab = ref('plans')
 const loading = ref(false)
+const loadErr = ref('')
 const formError = ref('')
 
 const plans = ref([])
@@ -323,11 +322,14 @@ function planName(id) {
 // ============ 数据拉取 ============
 async function fetchPlans() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await listPlans()
     plans.value = (r && r.plans) || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     plans.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -335,11 +337,13 @@ async function fetchPlans() {
 
 async function fetchSubs() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await listSubscriptions()
     subs.value = (r && r.subscriptions) || []
-  } catch {
+  } catch (e) {
     subs.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -347,11 +351,13 @@ async function fetchSubs() {
 
 async function fetchInvoices() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await listInvoices()
     invoices.value = (r && r.invoices) || []
-  } catch {
+  } catch (e) {
     invoices.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -359,10 +365,12 @@ async function fetchInvoices() {
 
 async function fetchUsage() {
   loading.value = true
+  loadErr.value = ''
   try {
     usage.value = await getUsage()
-  } catch {
+  } catch (e) {
     usage.value = null
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

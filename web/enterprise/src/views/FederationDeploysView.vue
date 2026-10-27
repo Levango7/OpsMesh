@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="federation-deploys-title">{{ $t('federationDeploys.title') }}</h2>
-    <p class="muted">{{ $t('federationDeploys.subtitle') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('federationDeploys.title')"
+    :desc="$t('federationDeploys.subtitle')"
+    testid="federation-deploys"
+    :error="store.error"
+  >
     <div class="btnbar">
       <button class="primary" @click="openCreate" data-testid="federation-deploys-create-btn">
         <Icon name="add" :size="14" /> {{ $t('federationDeploys.add') }}
@@ -96,10 +96,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 多集群联邦部署页 — 列表 + 创建 + 详情（各集群状态）
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useFederationDeploysStore } from '@/stores/deploys-federation'
@@ -208,10 +210,5 @@ onMounted(() => {
   white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto;
 }
 
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .status-pill.warn { background: var(--warn-soft, #fef3c7); color: var(--warn, #b45309); }
 </style>

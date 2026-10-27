@@ -1,10 +1,5 @@
 <template>
-  <div>
-    <h2 data-testid="approval-flows-title">{{ $t('approval.flows_title') }}</h2>
-    <p class="muted">{{ $t('approval.flows_subtitle') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell :title="$t('approval.flows_title')" :desc="$t('approval.flows_subtitle')" testid="approval-flows" :error="store.error">
     <div class="btnbar">
       <button class="primary" @click="openCreate" data-testid="approval-flow-create-btn">
         <Icon name="add" :size="14" /> {{ $t('approval.add_flow') }}
@@ -72,12 +67,13 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 审批流定义页 — 列表 + 创建/编辑（多级审批节点配置）+ 删除
 import { ref, computed, reactive, onMounted } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { useApprovalStore } from '@/stores/approval'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -174,12 +170,6 @@ onMounted(() => {
 <style scoped>
 .btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
 .row-actions { display: flex; gap: 4px; }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }

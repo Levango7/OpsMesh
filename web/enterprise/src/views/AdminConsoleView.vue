@@ -1,8 +1,5 @@
 <template>
-  <div class="admin-console">
-    <h2>{{ $t('admin_console.title') }}</h2>
-    <p class="muted">{{ $t('admin_console.subtitle') }}</p>
-
+  <PageShell :title="$t('admin_console.title')" :desc="$t('admin_console.subtitle')" testid="admin-console" :error="loadError">
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
       <!-- 顶栏：日志级别切换 + 诊断包下载 -->
@@ -54,11 +51,12 @@
         <DataTable :columns="trafficCols" :rows="serviceTraffic.domains || []" :empty-text="$t('admin_console.no_data')" />
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { getAdminConfig, setLogLevel, getDiagnosticsUrl, getStoreFailures, getServiceRouting, getServiceTraffic } from '@/api/admin'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
@@ -127,7 +125,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.admin-console { display: block; }
 .btnbar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .field-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .field-inline select { padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
@@ -136,6 +133,5 @@ onMounted(() => {
 .card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, var(--text-secondary), #6b7280); }
 .code-block { background: var(--surface-3); color: var(--text); padding: 10px; border-radius: var(--radius-sm); overflow: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; font-family: var(--font-mono); max-height: 400px; }
 .muted { color: var(--text-3); font-size: 12.5px; }
-.poll-err { padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm); background: var(--fail-soft); border: 1px solid var(--fail-bg); color: var(--fail); font-size: 12.5px; }
 .row-actions { display: inline-flex; gap: 6px; }
 </style>

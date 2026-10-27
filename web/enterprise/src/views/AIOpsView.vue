@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2 data-testid="aiops-title">{{ $t('aiops.title') }}</h2>
-    <p class="muted">{{ $t('aiops.desc') }}</p>
-
+  <PageShell :title="$t('aiops.title')" :desc="$t('aiops.desc')" testid="aiops" :error="status.error">
     <!-- 引擎状态卡片 -->
     <div class="metrics-row">
       <MetricsCard :title="$t('aiops.status_enabled')" icon="info" accent="--indigo">
@@ -19,8 +16,6 @@
         <div class="metric-value">{{ status.stats.executedRemediations }}</div>
       </MetricsCard>
     </div>
-
-    <div v-if="status.error" class="poll-err"><Icon name="warning" :size="14" /> {{ status.error }}</div>
 
     <div class="tabs">
       <button :class="{ active: activeTab === 'analyze' }" @click="activeTab = 'analyze'">{{ $t('aiops.tab_analyze') }}</button>
@@ -252,14 +247,14 @@
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { getAIOpsStatus, analyzeAIOps, generateRemediation, generateRemediationNL, executeRemediation, getAIOpsExecutions } from '@/api/aiops'
 import { t } from '@/i18n'
-import Icon from '@/components/Icon.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
 
 const status = reactive({
@@ -422,7 +417,6 @@ onMounted(() => {
 ul { margin: 6px 0; padding-left: 20px; }
 code { background: var(--muted); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 12px; }
 .hint { font-size: 12px; color: var(--text-2); margin-top: 4px; }
-.poll-err { padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm); background: var(--fail-soft); border: 1px solid var(--fail-bg); color: var(--fail); font-size: 12.5px; font-weight: 500; }
 .data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
 .data-table th, .data-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
 .data-table th { background: var(--muted); color: var(--text-2); font-size: 12px; }

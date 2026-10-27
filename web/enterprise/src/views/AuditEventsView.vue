@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('audit_events.title') }}</h2>
-    <p class="muted">{{ $t('audit_events.subtitle') }}</p>
-
+  <PageShell :title="$t('audit_events.title')" :desc="$t('audit_events.subtitle')" testid="audit-events" :error="loadErr">
     <!-- 筛选表单：时间范围 / 动作 / 用户 -->
     <form class="filter-bar" @submit.prevent="onSearch">
       <div class="field">
@@ -97,12 +94,13 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 审计事件页 — 只读：筛选表单（时间范围/动作/用户）+ DataTable + 前端分页 + 导出下载
 import { ref, reactive, computed, onMounted } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { getEvents, exportEvents, getHighRiskAudits, verifyAuditChain } from '@/api/audit'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -113,6 +111,7 @@ import { fmtTime } from '@/composables/useFormatTime'
 
 const events = ref([])
 const loading = ref(false)
+const loadErr = ref('')
 const exporting = ref(false)
 const verifying = ref(false)
 const highRiskOnly = ref(false)
@@ -150,6 +149,7 @@ function buildParams() {
 
 async function fetchEvents() {
   loading.value = true
+  loadErr.value = ''
   try {
     const params = buildParams()
     const r = highRiskOnly.value
@@ -157,8 +157,10 @@ async function fetchEvents() {
       : await getEvents(params)
     events.value = (r && (r.events || r)) || []
     page.value = 1
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     events.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

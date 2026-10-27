@@ -1,10 +1,5 @@
 <template>
-  <div>
-    <h2 data-testid="plugin-title">{{ $t('plugin.title') }}</h2>
-    <p class="muted">{{ $t('plugin.desc') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell :title="$t('plugin.title')" :desc="$t('plugin.desc')" testid="plugin" :error="store.error">
     <!-- 搜索 -->
     <div class="flowbar search-bar">
       <div class="field search-field">
@@ -80,16 +75,16 @@
       :message="actionConfirm.message"
       @confirm="onActionConfirm"
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { usePluginStore } from '@/stores/plugin'
 import { t } from '@/i18n'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
-import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { toast } from '@/utils/toast'
 
@@ -171,11 +166,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 .flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .search-bar { margin-bottom: 16px; }
 .search-field { flex: 1; min-width: 200px; }

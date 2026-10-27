@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="config-hotpush-title">{{ $t('configHotpush.title') }}</h2>
-    <p class="muted">{{ $t('configHotpush.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('configHotpush.title')"
+    :desc="$t('configHotpush.subtitle')"
+    testid="config-hotpush"
+    :error="store.error"
+  >
     <!-- Tab 切换 -->
     <div class="tabbar">
       <button
@@ -13,8 +15,6 @@
         @click="switchTab(tab.key)"
       >{{ $t(tab.label) }}</button>
     </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <!-- ========== Tab 1: 热推送 ========== -->
     <div v-show="activeTab === 'hotpush'">
@@ -167,16 +167,17 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 配置热推送页 — 三 Tab：热推送 / 灰度发布 / 版本历史
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useConfigStore } from '@/stores/config'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
-import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const store = useConfigStore()
@@ -307,12 +308,6 @@ onMounted(() => {})
 .kv .v { font-size: 13px; color: var(--text); word-break: break-all; }
 
 .value-cell { display: inline-block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 @media (max-width: 768px) {
   .row-2 { grid-template-columns: 1fr; }

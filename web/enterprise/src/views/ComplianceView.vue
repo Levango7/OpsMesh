@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('compliance.title') }}</h2>
-    <p class="muted">{{ $t('compliance.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('compliance.title')"
+    :desc="$t('compliance.subtitle')"
+    testid="compliance"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="outline" @click="fetchRules">
         <Icon name="refresh" :size="14" />
@@ -78,10 +80,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 合规管理页 — 规则目录 + 触发设备扫描 + 报告列表与详情
 // 规则为引擎预置（只读）；扫描需 deviceID，POST /compliance/scan 后刷新报告列表
 import { ref, reactive, onMounted } from 'vue'
@@ -99,6 +103,7 @@ const reports = ref([])
 const loading = ref(false)
 const scanDeviceID = ref('')
 const detail = ref(null)
+const loadErr = ref('')
 
 // 错误提示弹窗
 const errorConfirm = reactive({ show: false, message: '' })
@@ -128,13 +133,16 @@ const detailColumns = [
 
 async function fetchAll() {
   loading.value = true
+  loadErr.value = ''
   try {
     const [rr, pr] = await Promise.all([complianceApi.listRules(), complianceApi.listReports()])
     rules.value = (rr && rr.rules) || []
     reports.value = (pr && pr.reports) || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     rules.value = []
     reports.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

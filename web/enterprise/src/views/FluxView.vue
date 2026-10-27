@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('flux.title') }}</h2>
-    <p class="muted">{{ $t('flux.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('flux.title')"
+    :desc="$t('flux.subtitle')"
+    testid="flux"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -95,10 +97,11 @@
       :message="$t('flux.confirm_delete', { name: deleteConfirm.row?.name })"
       @confirm="onConfirmDelete"
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
 import { reactive, ref } from 'vue'
 import { listFluxApps, createFluxApp, updateFluxApp, deleteFluxApp, syncFluxApp } from '@/api/flux'
 import { t } from '@/i18n'
@@ -124,15 +127,19 @@ const form = ref(null)
 const formError = ref('')
 const apps = ref([])
 const loading = ref(false)
+const loadErr = ref('')
 const deleteConfirm = reactive({ show: false, row: null })
 
 async function fetchApps() {
   loading.value = true
+  loadErr.value = ''
   try {
     const resp = await listFluxApps()
     apps.value = (resp && resp.apps) || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     apps.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

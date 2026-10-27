@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2 data-testid="alert-rules-title">{{ $t('alertRules.title') }}</h2>
-    <p class="muted">{{ $t('alertRules.subtitle') }}</p>
-
+  <PageShell :title="$t('alertRules.title')" :desc="$t('alertRules.subtitle')" testid="alert-rules" :error="store.error">
     <!-- Tab 切换 -->
     <div class="tabbar">
       <button
@@ -13,8 +10,6 @@
         @click="switchTab(tab.key)"
       >{{ $t(tab.label) }}</button>
     </div>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
 
     <!-- ========== Tab 1: 告警规则 ========== -->
     <div v-show="activeTab === 'rules'">
@@ -234,12 +229,13 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 告警规则管理页 — 三 Tab：规则 / 引擎 / 静默
 import { ref, computed, reactive, onMounted } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { useAlertRuleStore } from '@/stores/alert-rule'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -482,12 +478,6 @@ onMounted(() => { store.fetchRules() })
 }
 .status-pill.ok { background: var(--accent-soft); color: var(--accent); }
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }

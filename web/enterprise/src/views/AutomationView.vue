@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('automation.title') }}</h2>
-    <p class="muted">{{ $t('automation.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('automation.title')"
+    :desc="$t('automation.subtitle')"
+    testid="automation"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="primary" @click="openCreate">
         <Icon name="add" :size="14" />
@@ -111,10 +113,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 自动化规则管理页 — 规则 CRUD + 启停/测试 + 执行历史
 import { ref, computed, reactive, onMounted } from 'vue'
 import {
@@ -134,6 +138,7 @@ const executions = ref([])
 const loading = ref(false)
 const form = ref(null)
 const formError = ref('')
+const loadErr = ref('')
 
 // 删除确认弹窗（替代 confirm）
 const deleteConfirm = reactive({ show: false, row: null })
@@ -168,11 +173,14 @@ function parseParamsText(text, errKey) {
 
 async function fetchRules() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await getAutomationRules()
     rules.value = (r && r.rules) || []
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     rules.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }
@@ -182,8 +190,9 @@ async function fetchExecutions() {
   try {
     const r = await getAutomationExecutions()
     executions.value = (r && r.executions) || []
-  } catch {
+  } catch (e) {
     executions.value = []
+    loadErr.value = e.j?.error || t('common.load_failed')
   }
 }
 

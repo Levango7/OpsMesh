@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2>{{ $t('gitops.title') }}</h2>
-    <p class="muted">{{ $t('gitops.subtitle') }}</p>
-
+  <PageShell :title="$t('gitops.title')" :desc="$t('gitops.subtitle')" testid="gitops" :error="loadErr">
     <!-- 统计卡片 -->
     <div v-if="loading" class="route-skeleton stats-skeleton" data-testid="gitops-stats-skeleton">
       <div class="skeleton-card stats-skeleton-card" v-for="i in 5" :key="i" />
@@ -131,16 +128,19 @@
         </a>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 import { reactive, ref, computed, onMounted } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { listApps } from '@/api/argocd'
 import { listFluxApps } from '@/api/flux'
+import { t } from '@/i18n'
 import Icon from '@/components/Icon.vue'
 
 const loading = ref(false)
+const loadErr = ref('')
 const apps = reactive([])
 const clusterCount = ref(0)
 
@@ -175,6 +175,7 @@ function fmtTime(ts) {
 
 async function load() {
   loading.value = true
+  loadErr.value = ''
   try {
     const [argoResp, fluxResp] = await Promise.all([listApps(), listFluxApps()])
     const argoApps = argoResp.apps || []
@@ -220,8 +221,9 @@ async function load() {
     healthyPct.value = Math.round((healthyCount.value / total) * 100)
     degradedPct.value = Math.round((degradedCount.value / total) * 100)
     missingPct.value = Math.round((missingCount.value / total) * 100)
-  } catch {
-    // 错误由全局 request.js toast 提示
+  } catch (e) {
+    // 此前静默吞错（错误仅由全局 request.js toast 提示）——统一骨架批次补上页面内可见错误
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

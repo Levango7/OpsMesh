@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <h2 data-testid="helm-releases-title">{{ $t('helm.releases_title') }}</h2>
-    <p class="muted">{{ $t('helm.releases_subtitle') }}</p>
-
-    <div v-if="store.error" class="poll-err"><Icon name="warning" :size="14" /> {{ store.error }}</div>
-
+  <PageShell
+    :title="$t('helm.releases_title')"
+    :desc="$t('helm.releases_subtitle')"
+    testid="helm-releases"
+    :error="store.error"
+  >
     <div class="btnbar">
       <Button variant="primary" size="sm" @click="openInstall" data-testid="helm-release-install-btn">
         <Icon name="add" :size="14" /> {{ $t('helm.install_release') }}
@@ -118,10 +118,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // Helm Release 管理页 — 列表 + 安装 + 升级 + 卸载 + 回滚 + 历史
 import { ref, computed, reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
@@ -302,12 +304,6 @@ onMounted(() => {
 }
 .btnbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .row-actions { display: flex; gap: 4px; }
-
-.poll-err {
-  padding: 8px 12px; margin: 6px 0; border-radius: var(--radius-sm);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  color: var(--fail); font-size: 12.5px; font-weight: 500;
-}
 
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }

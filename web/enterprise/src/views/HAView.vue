@@ -1,8 +1,10 @@
 <template>
-  <div>
-    <h2>{{ $t('ha.title') }}</h2>
-    <p class="muted">{{ $t('ha.subtitle') }}</p>
-
+  <PageShell
+    :title="$t('ha.title')"
+    :desc="$t('ha.subtitle')"
+    testid="ha"
+    :error="loadErr"
+  >
     <div class="btnbar">
       <button class="outline" @click="fetchAll">
         <Icon name="refresh" :size="14" />
@@ -75,10 +77,12 @@
       :message="errorConfirm.message"
       info
     />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
+import PageShell from '@/components/PageShell.vue'
+
 // 高可用状态页 — 无 CRUD：status 卡片 + instances 实例表 + failover 高危按钮（二次确认）
 import { ref, reactive, onMounted } from 'vue'
 import * as haApi from '@/api/ha'
@@ -92,6 +96,7 @@ const status = ref(null)
 const instances = ref([])
 const health = ref(null)
 const loading = ref(false)
+const loadErr = ref('')
 
 // failover 二次确认弹窗（高危操作）
 const failoverConfirm = reactive({ show: false })
@@ -108,16 +113,19 @@ const columns = [
 
 async function fetchAll() {
   loading.value = true
+  loadErr.value = ''
   try {
     const [st, ins, hl] = await Promise.all([haApi.getStatus(), haApi.getInstances(), haApi.getHealth()])
     status.value = st || null
     // instances 接口返回 {instances, count}；status 里也带 instances，优先用专口数据
     instances.value = (ins && ins.instances) || (st && st.instances) || []
     health.value = hl || null
-  } catch {
+  } catch (e) {
+    // 此前静默吞错（只见空卡片）——统一骨架批次补上可见的加载错误
     status.value = null
     instances.value = []
     health.value = null
+    loadErr.value = e.j?.error || t('common.load_failed')
   } finally {
     loading.value = false
   }

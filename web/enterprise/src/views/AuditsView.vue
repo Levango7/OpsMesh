@@ -1,8 +1,5 @@
 <template>
-  <div>
-    <h2 data-testid="audits-title">{{ $t('audits.title') }}</h2>
-    <p class="muted">{{ $t('audits.subtitle') }}</p>
-
+  <PageShell :title="$t('audits.title')" :desc="$t('audits.subtitle')" testid="audits" :error="loadErr">
     <!-- 筛选表单：action / user / 时间范围 + 分页 -->
     <form class="filter-bar" @submit.prevent="onSearch">
       <div class="field">
@@ -68,34 +65,26 @@
     <p v-else-if="audits.length" class="muted count-hint">
       {{ $t('audits.count_hint', { n: audits.length }) }}
     </p>
-
-    <ConfirmModal
-      v-model="errorConfirm.show"
-      data-testid="audits-error-modal"
-      :title="$t('common.error')"
-      :message="errorConfirm.message"
-      info
-    />
-  </div>
+  </PageShell>
 </template>
 
 <script setup>
 // 审计检索页 — 筛选 action/user/时间范围 + 分页列表
 import { ref, reactive, computed, onMounted } from 'vue'
+import PageShell from '@/components/PageShell.vue'
 import { getAudits } from '@/api/audit'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
-import ConfirmModal from '@/components/ConfirmModal.vue'
 import Pagination from '@/components/Pagination.vue'
 
 const audits = ref([])
 const loading = ref(false)
+const loadErr = ref('')
 const page = ref(1)
 const pageSize = 20
 
 const filters = reactive({ from: '', to: '', action: '', user: '', limit: 100 })
-const errorConfirm = reactive({ show: false, message: '' })
 
 const columns = [
   { key: 'timestamp', title: t('audits.col_timestamp'), slot: 'cell-timestamp', width: '170px' },
@@ -128,14 +117,15 @@ function buildParams() {
 
 async function fetchAudits() {
   loading.value = true
+  loadErr.value = ''
   try {
     const r = await getAudits(buildParams())
     audits.value = (r && r.audits) || []
     page.value = 1
   } catch (e) {
+    // 加载错误改由骨架统一横幅呈现（原 errorConfirm 模态仅承载该错误，已并入 PageShell :error）
     audits.value = []
-    errorConfirm.message = e.j?.error || t('error.auditsFailed')
-    errorConfirm.show = true
+    loadErr.value = e.j?.error || t('error.auditsFailed')
   } finally {
     loading.value = false
   }
