@@ -331,8 +331,28 @@ func collectCmdbServices() []proto.CmdbAttr {
 	return attrs
 }
 
+// cmdbProcessListTimeout 是进程列表命令的等待上限。ps/tasklist 属"尽力而为"探测：
+// 受限或繁忙主机上 tasklist 实测可耗时 10~20s 甚至挂住，不设上限会把 CMDB 采集
+// 与依赖它的测试一起拖死（曾使 internal/agent 整包测试超时，见 TestCollectCmdbMiddleware_NoPanic）。
+const cmdbProcessListTimeout = 10 * time.Second
+
+// listProcesses 返回当前进程列表原文（Windows=tasklist，其他=ps aux）。以超时兜底，
+// 失败/超时返回错误，调用方降级为 nil。抽成包级变量以便单元测试注入假数据（不依赖真机进程表）。
+var listProcesses = func() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cmdbProcessListTimeout)
+	defer cancel()
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "tasklist")
+	} else {
+		cmd = exec.CommandContext(ctx, "ps", "aux")
+	}
+	out, err := cmd.Output()
+	return string(out), err
+}
+
 // collectCmdbMiddleware 探测常见中间件进程作为 CMDB 属性。
-// 跨平台：Linux/Darwin 用 ps aux，Windows 用 tasklist；任一失败返回 nil（降级）。
+// 跨平台：Linux/Darwin 用 ps aux，Windows 用 tasklist；任一失败/超时返回 nil（降级）。
 // 检测关键词：mysql/redis/nginx/kafka/zookeeper/etcd/consul/elasticsearch/rabbitmq/mongodb/postgres/grafana/prometheus。
 // 命中即产出 middleware.<name>.installed=true 属性，供控制面 CMDB 自动登记中间件 CI。
 func collectCmdbMiddleware() []proto.CmdbAttr {
@@ -340,19 +360,9 @@ func collectCmdbMiddleware() []proto.CmdbAttr {
 		"mysql", "redis", "nginx", "kafka", "zookeeper", "etcd", "consul",
 		"elasticsearch", "rabbitmq", "mongodb", "postgres", "grafana", "prometheus",
 	}
-	var psOutput string
-	if runtime.GOOS == "windows" {
-		out, err := exec.Command("tasklist").Output()
-		if err != nil {
-			return nil // tasklist 不可用或失败，降级跳过
-		}
-		psOutput = string(out)
-	} else {
-		out, err := exec.Command("ps", "aux").Output()
-		if err != nil {
-			return nil // ps 不可用或失败，降级跳过
-		}
-		psOutput = string(out)
+	psOutput, err := listProcesses()
+	if err != nil {
+		return nil // 进程列表不可用或超时，降级跳过
 	}
 	psLower := strings.ToLower(psOutput)
 	// 按行匹配进程名而非全文子串，避免 /home/mysql_backup/script.sh 等路径误报 mysql。

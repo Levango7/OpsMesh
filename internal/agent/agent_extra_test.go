@@ -12,6 +12,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -230,13 +231,57 @@ func TestCollectCmdbServices_NoPanic(t *testing.T) {
 	_ = collectCmdbServices()
 }
 
+// withFakeProcessList 临时替换 listProcesses，测试结束自动还原。
+func withFakeProcessList(t *testing.T, out string, err error) {
+	t.Helper()
+	orig := listProcesses
+	listProcesses = func() (string, error) { return out, err }
+	t.Cleanup(func() { listProcesses = orig })
+}
+
 func TestCollectCmdbMiddleware_NoPanic(t *testing.T) {
+	// 喂畸形/空进程表，只断言不 panic。注入假数据而非跑真机 tasklist/ps：
+	// 真机 tasklist 曾耗时 10~20s 并挂住，导致 internal/agent 整包测试超时。
+	withFakeProcessList(t, "\x00\x01garbage not a process table\n\n  \t ", nil)
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("collectCmdbMiddleware panic: %v", r)
 		}
 	}()
 	_ = collectCmdbMiddleware()
+}
+
+func TestCollectCmdbMiddleware_Detects(t *testing.T) {
+	var list string
+	if runtime.GOOS == "windows" {
+		list = "Image Name                     PID Session Name        Session#    Mem Usage\r\n" +
+			"========================= ======== ================ =========== ============\r\n" +
+			"mysqld.exe                    1234 Console                    1     50,000 K\r\n" +
+			"notepad.exe                   5678 Console                    1      5,000 K\r\n"
+	} else {
+		list = "USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\n" +
+			"root         1  0.0  0.1  12345  6789 ?        Ss   Oct20   0:01 /usr/sbin/mysqld\n" +
+			"root      2222  0.0  0.1  11111  2222 ?        S    Oct20   0:00 /usr/bin/notepad\n"
+	}
+	withFakeProcessList(t, list, nil)
+	attrs := collectCmdbMiddleware()
+	found := map[string]bool{}
+	for _, a := range attrs {
+		found[a.Key] = true
+	}
+	if !found["middleware.mysql.installed"] {
+		t.Fatalf("应检出 mysql；实际属性=%v", attrs)
+	}
+	if found["middleware.kafka.installed"] {
+		t.Fatalf("不应误报 kafka；实际属性=%v", attrs)
+	}
+}
+
+func TestCollectCmdbMiddleware_CommandError(t *testing.T) {
+	withFakeProcessList(t, "", errors.New("boom"))
+	if attrs := collectCmdbMiddleware(); attrs != nil {
+		t.Fatalf("进程列表失败应降级返回 nil；实际=%v", attrs)
+	}
 }
 
 func TestCollectCmdbNetwork_NoPanic(t *testing.T) {
@@ -996,7 +1041,10 @@ func TestCollectDeviceMetrics_NilHistory(t *testing.T) {
 	if m == nil {
 		t.Fatal("首次采集应返回非 nil")
 	}
-	// 第二次应被节流
+	// 第二次应被节流。先把"上次采集时刻"复位到当下：首次 CollectMetrics 的真实探测耗时
+	// 在 Windows 上可 >30s，会让 30s 节流窗口在第二次调用前自然过期，使本断言变成对
+	// 探测速度的脆弱依赖（CI Linux 快故不显）。复位后只验证节流逻辑本身。
+	a.metricsLastCol = time.Now()
 	if m2 := a.collectDeviceMetrics(); m2 != nil {
 		t.Fatal("第二次应被节流")
 	}

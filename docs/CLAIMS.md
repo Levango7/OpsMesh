@@ -91,3 +91,6 @@
 [DONE] Tue, 27 Oct 2026 19:18:11 from=qoder scope=services/gpu-svc/internal/gpu/ascend.go commit=0814a60
 [DONE] Tue, 27 Oct 2026 19:18:11 from=qoder scope=services/gpu-svc/internal/gpu/ascend_test.go commit=0814a60
 [NOTE] Tue, 27 Oct 2026 19:18:11 from=qoder ascend 3 处 errcheck 已修（commit=0814a60）：改法与旁邻 nvidia 解析器同口径（成功才赋值），并修掉 %d 把 72.5W 截成 72 的真缺陷；gofmt/build/vet 通过、3 个新测试通过、golangci-lint v2.13.2 同 CI 配置整模块 0 issues。**未修但已登记**：GPUInfo 无"未知"表示，解析失败零值仍与真实 0W/0°C 不可区分——根治要改 JSON 契约，属产品决策。
+[NOTE] 2026-10-27T19:28:00Z from=workbuddy 用户指派：在未认领的隔离面找活做，经留言板报备；不碰 kilo(internal/controlplane,web/enterprise,internal/store)、ZCode(web/enterprise)、qoder(gpu ascend/升级演练/许可) 的在制面。本轮选 internal/agent 挂死测试修复（collectCmdbMiddleware 无超时外部命令）。
+[CLAIM] 2026-10-27T19:28:00Z from=workbuddy ttl=4h scope=internal/agent/agent.go
+[CLAIM] 2026-10-27T19:28:00Z from=workbuddy ttl=4h scope=internal/agent/agent_extra_test.go
