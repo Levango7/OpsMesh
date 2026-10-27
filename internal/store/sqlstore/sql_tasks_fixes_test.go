@@ -15,7 +15,9 @@
 package sqlstore
 
 import (
+	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -472,5 +474,80 @@ func claimAndAge(t *testing.T, s *SQLStore, agentID, taskID string) {
 	if _, err := s.db.Exec(
 		`UPDATE tasks SET claimed_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR) WHERE task_id=?`, taskID); err != nil {
 		t.Fatalf("拨快 claimed_at: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FIX 7（P1）：迁移 DDL 的 MDL 锁等待必须有上限（升级演练建议二，2026-10-27）
+// ---------------------------------------------------------------------------
+
+// TestMigrationMDLFailFast_MySQL 复现升级演练实证场景（docs/upgrade-rehearsal-2026-10-27.md）：
+// 旧版本容器仍在跑时长事务持有 tasks 的 MDL，迁移 ALTER 若无上限会挂住该表全部写入
+// （默认 @@session.lock_wait_timeout=31536000=1 年）。迁移连接显式设短上限后必须
+// 在窗口内以 1205 快速失败、报错点名 MDL 等待；长事务释放后同一迁移正常成功。
+func TestMigrationMDLFailFast_MySQL(t *testing.T) {
+	s := fixesTestStore(t)
+	defer s.db.Close()
+	t.Setenv("OPSMESH_MIGRATION_LOCK_WAIT_SEC", "2")
+	ctx := context.Background()
+	const probeVersion = 99990001
+	probe := migrationFile{version: probeVersion, name: "99990001_mdl_probe.sql",
+		content: "ALTER TABLE tasks ADD COLUMN mdl_probe_col INT"}
+
+	// 会话 A：持 tasks 的 MDL（事务内 SELECT 不提交）——模拟升级窗口里的长事务。
+	holder, err := s.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("holder conn: %v", err)
+	}
+	defer func() {
+		holder.ExecContext(context.Background(), "ROLLBACK")
+		holder.Close()
+	}()
+	if _, err := holder.ExecContext(ctx, "SET SESSION lock_wait_timeout=31536000"); err != nil {
+		t.Fatalf("holder set lock_wait_timeout: %v", err)
+	}
+	if _, err := holder.ExecContext(ctx, "BEGIN"); err != nil {
+		t.Fatalf("holder begin: %v", err)
+	}
+	if _, err := holder.ExecContext(ctx, "SELECT COUNT(*) FROM tasks"); err != nil {
+		t.Fatalf("holder 持 MDL: %v", err)
+	}
+
+	// 迁移连接：持咨询锁 + 设 2s MDL 上限（复刻 runMigrations 的接线）。
+	migConn, release, err := s.acquireMigrationLock(ctx)
+	if err != nil {
+		t.Fatalf("acquireMigrationLock: %v", err)
+	}
+	defer release()
+	if _, err := migConn.ExecContext(ctx, "SET SESSION lock_wait_timeout=2"); err != nil {
+		t.Fatalf("set lock_wait_timeout: %v", err)
+	}
+
+	start := time.Now()
+	err = s.applyMigration(ctx, migConn, probe)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("长事务持 MDL 时迁移应快速失败；实际成功（上限未生效）")
+	}
+	if !strings.Contains(err.Error(), "MDL 等待超时") {
+		t.Fatalf("报错应点名 MDL 等待（给操作者可执行的指引）；got %v", err)
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("应在上限（2s）附近快速失败；实际耗时 %v（等于没设上限）", elapsed)
+	}
+	t.Logf("fail-fast 实证：%.1fs 后报 %v", elapsed.Seconds(), err)
+
+	// 长事务释放后，同一迁移必须正常成功（fail-fast 不伤正常路径）。
+	holder.ExecContext(context.Background(), "ROLLBACK")
+	holder.Close()
+	if err := s.applyMigration(ctx, migConn, probe); err != nil {
+		t.Fatalf("释放长事务后同一迁移应成功: %v", err)
+	}
+	// 清理探针（列 + 版本记录），不给后续测试留痕。
+	if _, err := migConn.ExecContext(ctx, "ALTER TABLE tasks DROP COLUMN mdl_probe_col"); err != nil {
+		t.Fatalf("清理探针列: %v", err)
+	}
+	if _, err := migConn.ExecContext(ctx, "DELETE FROM schema_migrations WHERE version=?", probeVersion); err != nil {
+		t.Fatalf("清理探针版本记录: %v", err)
 	}
 }

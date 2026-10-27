@@ -453,10 +453,11 @@ func TestMigrationLock_ExcludesOtherSession(t *testing.T) {
 	}
 	lockName := migrationLockName(dbName)
 
-	release, err := s.acquireMigrationLock(context.Background())
+	migConn, release, err := s.acquireMigrationLock(context.Background())
 	if err != nil {
 		t.Fatalf("A 获取迁移锁失败: %v", err)
 	}
+	defer migConn.Close()
 	// MySQL 侧核实：锁确实被某会话持有（而非只在本地标记）。
 	var holder sql.NullInt64
 	if err := s.db.QueryRow(`SELECT IS_USED_LOCK(?)`, lockName).Scan(&holder); err != nil {
@@ -467,7 +468,7 @@ func TestMigrationLock_ExcludesOtherSession(t *testing.T) {
 	}
 	// B 用 1s 超时尝试同一把锁：必须超时失败（证明互斥）。
 	start := time.Now()
-	if _, err := b.acquireMigrationLockTimeout(context.Background(), 1); err == nil {
+	if _, _, err := b.acquireMigrationLockTimeout(context.Background(), 1); err == nil {
 		t.Fatal("锁被持有时 B 不应获得同一把迁移锁")
 	}
 	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
@@ -475,7 +476,7 @@ func TestMigrationLock_ExcludesOtherSession(t *testing.T) {
 	}
 	// A 释放后：B 应立即可得。
 	release()
-	if _, err := b.acquireMigrationLockTimeout(context.Background(), 5); err != nil {
+	if _, _, err := b.acquireMigrationLockTimeout(context.Background(), 5); err != nil {
 		t.Fatalf("A 释放后 B 应能获得锁: %v", err)
 	}
 	// 释放函数的幂等性：重复调用不应 panic/报错。

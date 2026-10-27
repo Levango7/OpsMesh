@@ -280,6 +280,21 @@ func (e *fatalMigrationError) Unwrap() error { return e.err }
 
 func fatalMigration(err error) error { return &fatalMigrationError{err: err} }
 
+// migrationLockWaitSec 迁移 DDL 的 MDL 锁等待上限（秒）。
+// 背景（2026-10-27 升级演练实证，docs/upgrade-rehearsal-2026-10-27.md 建议二）：
+// 客户升级时旧版本容器仍在跑，长事务持有表 MDL ⇒ 迁移 ALTER 排队，排在 ALTER 后面的
+// 业务写入一起等。MySQL 默认 @@session.lock_wait_timeout=31536000（1 年）且代码从未设置
+// ⇒ 等于无限期挂住目标表写入。此处给迁移连接显式设上限：超时 ALTER 报 1205 快速失败，
+// 被堵的写入立即恢复，操作者按报错指引换维护窗口重试（fail-fast 优于无限期挂住）。
+func migrationLockWaitSec() int {
+	if v := strings.TrimSpace(os.Getenv("OPSMESH_MIGRATION_LOCK_WAIT_SEC")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 15
+}
+
 // acquireMigrationLock 用 MySQL 咨询锁（GET_LOCK）串行化迁移（P0-5）。
 //
 // 为什么需要：runMigrations 在每个 *SQLStore 构造时执行（控制面 + 各微服务 + 每租户 schema），
@@ -289,28 +304,28 @@ func fatalMigration(err error) error { return &fatalMigrationError{err: err} }
 // 锁名含库名：同一 MySQL 实例可能承载多个 schema（MultiSchemaStore 的租户库），
 // 不同库的迁移互不阻塞。MySQL 咨询锁是会话级的，故获取与释放必须在同一连接上。
 // 返回的 release 幂等且自带超时（调用方 ctx 可能已取消/超时，锁仍须释放）。
-func (s *SQLStore) acquireMigrationLock(ctx context.Context) (func(), error) {
+func (s *SQLStore) acquireMigrationLock(ctx context.Context) (*sql.Conn, func(), error) {
 	return s.acquireMigrationLockTimeout(ctx, migrationLockTimeoutSec)
 }
 
 // acquireMigrationLockTimeout 是 acquireMigrationLock 的显式超时版本（超时秒数作为参数，
 // 便于测试用极短超时验证互斥性，无需等待生产用 60s）。
-func (s *SQLStore) acquireMigrationLockTimeout(ctx context.Context, timeoutSec int) (func(), error) {
+func (s *SQLStore) acquireMigrationLockTimeout(ctx context.Context, timeoutSec int) (*sql.Conn, func(), error) {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("get conn for migration lock: %w", err)
+		return nil, nil, fmt.Errorf("get conn for migration lock: %w", err)
 	}
 	lockName := migrationLockName(s.databaseName(ctx, conn))
 	var got sql.NullInt64
 	if err := conn.QueryRowContext(ctx,
 		`SELECT GET_LOCK(?, ?)`, lockName, timeoutSec).Scan(&got); err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("acquire migration lock %s: %w", lockName, err)
+		return nil, nil, fmt.Errorf("acquire migration lock %s: %w", lockName, err)
 	}
 	// GET_LOCK 语义：1=获得，0=超时，NULL=出错。
 	if !got.Valid || got.Int64 != 1 {
 		_ = conn.Close()
-		return nil, fmt.Errorf("acquire migration lock %s: 等待 %ds 未获得（另一实例正在迁移）", lockName, timeoutSec)
+		return nil, nil, fmt.Errorf("acquire migration lock %s: 等待 %ds 未获得（另一实例正在迁移）", lockName, timeoutSec)
 	}
 	released := false
 	release := func() {
@@ -325,7 +340,7 @@ func (s *SQLStore) acquireMigrationLockTimeout(ctx context.Context, timeoutSec i
 		}
 		_ = conn.Close()
 	}
-	return release, nil
+	return conn, release, nil
 }
 
 // migrationLockName 构造按库隔离的迁移锁名。
@@ -372,11 +387,17 @@ func (s *SQLStore) runMigrations() error {
 	defer cancel()
 
 	// 0. 串行化：并发迁移是「第一次带 replicas>1 的滚动升级」最常见的事故源。
-	release, err := s.acquireMigrationLock(ctx)
+	// 专用连接同时承载全部 DDL（见 applyMigration）：GET_LOCK 是会话级锁，
+	// 且 MDL 锁等待上限（migrationLockWaitSec）只对设置了它的连接生效。
+	migConn, release, err := s.acquireMigrationLock(ctx)
 	if err != nil {
 		return err
 	}
 	defer release()
+	if _, err := migConn.ExecContext(ctx,
+		fmt.Sprintf("SET SESSION lock_wait_timeout=%d", migrationLockWaitSec())); err != nil {
+		return fmt.Errorf("set migration lock_wait_timeout: %w", err)
+	}
 
 	// 1. 确保 schema_migrations 表存在（复用历史定义，sql.go 原 initSchema 已建此表）。
 	//    G5 / ：增加 checksum 列记录迁移文件 sha256 摘要，启动时校验防篡改。
@@ -454,7 +475,7 @@ func (s *SQLStore) runMigrations() error {
 		if _, ok := applied[mf.version]; ok {
 			continue
 		}
-		if err := s.applyMigration(ctx, mf); err != nil {
+		if err := s.applyMigration(ctx, migConn, mf); err != nil {
 			return fmt.Errorf("apply migration %d (%s): %w", mf.version, mf.name, err)
 		}
 		log.Printf("[store] 迁移 %d (%s) 已应用 (checksum=%s)", mf.version, mf.name, migrationChecksum(mf.content))
@@ -554,19 +575,25 @@ func migrationFiles() ([]migrationFile, error) {
 //
 // G5 / ：执行前计算迁移文件内容的 sha256 摘要，执行后随版本号一并存入
 // schema_migrations.checksum 列，供后续启动时校验防篡改。
-func (s *SQLStore) applyMigration(ctx context.Context, mf migrationFile) error {
+func (s *SQLStore) applyMigration(ctx context.Context, migConn *sql.Conn, mf migrationFile) error {
 	for _, stmt := range splitSQLStatements(mf.content) {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+		if _, err := migConn.ExecContext(ctx, stmt); err != nil {
 			handled, hErr := s.tolerateIdempotentDDLError(ctx, mf, stmt, err)
 			if hErr != nil {
 				return hErr
 			}
 			if !handled {
+				var me *mysqlDriver.MySQLError
+				if errors.As(err, &me) && me.Number == 1205 {
+					return fmt.Errorf("MDL 等待超时（lock_wait_timeout=%ds）：有长事务持有目标表的元数据锁，"+
+						"ALTER 无法获得——被堵住的业务写入已随之恢复。请在无长事务的维护窗口重试，"+
+						"或经 OPSMESH_MIGRATION_LOCK_WAIT_SEC 调大上限: %w", migrationLockWaitSec(), err)
+				}
 				return fmt.Errorf("exec stmt: %w", err)
 			}
 		}
 	}
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := migConn.ExecContext(ctx,
 		`INSERT INTO schema_migrations (version, applied_at, checksum) VALUES (?, ?, ?)`,
 		mf.version, time.Now().UTC(), migrationChecksum(mf.content)); err != nil {
 		return fmt.Errorf("record migration: %w", err)
