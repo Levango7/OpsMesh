@@ -131,6 +131,9 @@
     "col_port": "Port",
     "col_source": "Source",
     "col_rule": "Rule",
+    "query_rules": "Query Rules",
+    "query_failed": "Query Failed",
+    "firewall_rules_result": "Firewall Rules Result",
     "type_system": "System",
     "type_normal": "Normal",
     "tab_services": "Services",
@@ -158,6 +161,7 @@
   },
   "tasks": {
     "title": "Tasks",
+    "task_list_title": "Task List",
     "subtitle": "Dispatch shell / file / service tasks to agents, with status filter and cancel.",
     "dispatch_form_title": "Dispatch Task",
     "agent": "Agent",
@@ -202,6 +206,9 @@
   },
   "alerts": {
     "title": "Alerts",
+    "root_cause": "Root Cause",
+    "confidence": "Confidence",
+    "trace_id": "Trace ID",
     "subtitle": "Real-time alert list with ack and silence actions.",
     "stat_critical": "Critical",
     "stat_warning": "Warning",
@@ -546,6 +553,7 @@
     "scaleFailHttp": "Scale failed: [{code}] {msg}",
     "scaleFailError": "Scale failed: {msg}",
     "restartTriggered": "Restart triggered: {msg}",
+    "restartSuccess": "Restart dispatched",
     "restartFailHttp": "Restart failed: HTTP {code}",
     "restartFailError": "Restart failed: {msg}",
     "col": {

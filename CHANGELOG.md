@@ -54,8 +54,17 @@
 - **协作线并入（workbuddy，`582b916`）**：`pkg/grpcwire`（6 服务共用 gRPC 线路守卫）补自测——
   抽出不依赖 `*testing.T` 的 `generatedFileProblem` 纯函数 + 负向用例（手写/错版本/缺失必须判红）
   + ServeBufconn 真实拨号冒烟；外显报错文案不变，6 个消费方测试全绿。
-- **验证**：全量 vitest **59 文件 / 1186 用例全绿**；eslint 0；`npm run build` 通过；
-  页面骨架门禁与侧栏守卫全绿（EXEMPT 只剩 3 条永久豁免）。
+- **协作线并入（workbuddy，`71317e8`）**：`pkg/retry` 测试提速且真断言——`DoWithConfig` 等待
+  改经可注入包级 sleep（生产恒为 `time.Sleep`，行为不变），`TestDoWithConfigJitterBounds`
+  由「100×100 真实 sleep 16.3s 且只数调用」改为记录器断言每次退避 ∈[0.5ms,1.5ms]、次数=10000
+  （16.3s→0s，整包 20.5s→3.45s）。
+- **全站裸键清零 + 双语守卫（新增）**：98 个视图/组件 × zh/en 全量核验（修正正则排除 `emit(` 误报），
+  修复 12 个真缺键——alerts 根因卡 3 键（root_cause/confidence/trace_id）、AuditEvents 审计链
+  校验 6 键、SystemOps 防火墙 3 键等；新增守卫 `src/i18n/naked-keys.test.js`（字面量键双语
+  解析 + 负向自测）——「k8sDeploy 命名空间错位」一类缺陷今后由门禁拦截，不再靠用户上报。
+- **验证**：全量 vitest **60 文件 / 1188 用例全绿**（含新增侧栏守卫 7 例 + 裸键守卫 2 例）；
+  eslint 0；`npm run build` 通过；页面骨架门禁与侧栏守卫全绿（EXEMPT 只剩 3 条永久豁免）；
+  Playwright mock e2e 80 例本地全绿。
 
 ## [Unreleased] — 2026-10-27（迁移 DDL 的 MDL 锁等待上限：升级演练建议二落地，migrate 不再无限期挂住目标表写入）
 

@@ -166,6 +166,9 @@
     "col_app": "App",
     "col_type": "Type",
     "col_status": "Status",
-    "col_time": "Time"
+    "col_time": "Time",
+    "status_synced": "Synced",
+    "status_outofsync": "Out of Sync",
+    "status_unknown": "Unknown"
   }
 }

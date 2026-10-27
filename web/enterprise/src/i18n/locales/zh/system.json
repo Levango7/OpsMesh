@@ -299,7 +299,13 @@
     "target": "目标",
     "detail": "详情",
     "empty": "暂无审计事件",
-    "count_hint": "共 {n} 条记录"
+    "count_hint": "共 {n} 条记录",
+    "high_risk_only": "仅高风险",
+    "verify_chain": "校验审计链",
+    "verifying": "校验中…",
+    "verify_ok": "审计链校验通过",
+    "verify_fail": "审计链校验失败",
+    "verify_checked": "已校验 {n} 条"
   },
   "platform": {
     "title": "平台配置",
@@ -380,7 +386,8 @@
     "taskstatus_result": "任务结果",
     "taskstatus_failed": "任务状态查询失败: ",
     "field_source": "来源",
-    "field_result": "结果"
+    "field_result": "结果",
+    "taskID_placeholder": "输入任务 ID"
   },
   "approval": {
     "flows_title": "审批流定义",

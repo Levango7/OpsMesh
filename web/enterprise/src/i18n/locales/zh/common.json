@@ -25,6 +25,7 @@
     "infra_console": "基础设施运维台",
     "mwdep": "中间件部署",
     "k8s": "K8s 管理",
+    "k8s_clusters": "K8s 集群",
     "cmdb": "配置项 CMDB",
     "workflows": "作业编排",
     "deploys": "部署中心",
@@ -323,6 +324,8 @@
   },
   "common": {
     "loading": "加载中…",
+    "analyzing": "分析中…",
+    "generating": "生成中…",
     "no_data": "暂无数据",
     "search": "搜索",
     "refresh": "刷新",

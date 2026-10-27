@@ -299,7 +299,13 @@
     "target": "Target",
     "detail": "Detail",
     "empty": "No audit events",
-    "count_hint": "{n} records in total"
+    "count_hint": "{n} records in total",
+    "high_risk_only": "High risk only",
+    "verify_chain": "Verify audit chain",
+    "verifying": "Verifying…",
+    "verify_ok": "Audit chain verified",
+    "verify_fail": "Audit chain verification failed",
+    "verify_checked": "Verified {n} records"
   },
   "platform": {
     "title": "Platform Config",
@@ -380,7 +386,8 @@
     "taskstatus_result": "Task Result",
     "taskstatus_failed": "Task status query failed: ",
     "field_source": "Source",
-    "field_result": "Result"
+    "field_result": "Result",
+    "taskID_placeholder": "Enter task ID"
   },
   "approval": {
     "flows_title": "Approval Flows",

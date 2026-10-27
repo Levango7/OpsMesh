@@ -25,6 +25,7 @@
     "infra_console": "Infra Console",
     "mwdep": "Middleware",
     "k8s": "K8s",
+    "k8s_clusters": "K8s Clusters",
     "cmdb": "CMDB",
     "workflows": "Workflows",
     "deploys": "Deploys",
@@ -323,6 +324,8 @@
   },
   "common": {
     "loading": "Loading…",
+    "analyzing": "Analyzing…",
+    "generating": "Generating…",
     "no_data": "No data",
     "search": "Search",
     "refresh": "Refresh",

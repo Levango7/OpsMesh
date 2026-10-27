@@ -131,6 +131,9 @@
     "col_port": "端口",
     "col_source": "源地址",
     "col_rule": "规则",
+    "query_rules": "查询规则",
+    "query_failed": "查询失败",
+    "firewall_rules_result": "防火墙规则查询结果",
     "type_system": "系统",
     "type_normal": "普通",
     "tab_services": "服务",
@@ -158,6 +161,7 @@
   },
   "tasks": {
     "title": "任务下发",
+    "task_list_title": "任务列表",
     "subtitle": "向采集端下发 shell / file / service 任务，支持按状态过滤与取消。",
     "dispatch_form_title": "下发任务",
     "agent": "采集端",
@@ -202,6 +206,9 @@
   },
   "alerts": {
     "title": "监控告警",
+    "root_cause": "根因",
+    "confidence": "置信度",
+    "trace_id": "Trace ID",
     "subtitle": "实时告警列表，支持确认（ack）与静默（silence）操作。",
     "stat_critical": "严重 Critical",
     "stat_warning": "警告 Warning",
@@ -547,6 +554,7 @@
     "scaleFailHttp": "扩缩容失败: [{code}] {msg}",
     "scaleFailError": "扩缩容失败: {msg}",
     "restartTriggered": "重启已触发: {msg}",
+    "restartSuccess": "重启已下发",
     "restartFailHttp": "重启失败: HTTP {code}",
     "restartFailError": "重启失败: {msg}",
     "col": {

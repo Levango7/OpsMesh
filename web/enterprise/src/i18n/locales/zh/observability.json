@@ -166,6 +166,9 @@
     "col_app": "应用",
     "col_type": "类型",
     "col_status": "状态",
-    "col_time": "时间"
+    "col_time": "时间",
+    "status_synced": "已同步",
+    "status_outofsync": "未同步",
+    "status_unknown": "未知"
   }
 }
