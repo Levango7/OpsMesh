@@ -15,7 +15,7 @@
 
 | 许可证 | 模块数 |
 |---|---|
-| `Apache-2.0` | 50 |
+| `Apache-2.0` | 51 |
 | `MIT` | 47 |
 | `BSD-3-Clause` | 31 |
 | `MPL-2.0` | 24 |
@@ -86,11 +86,12 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 
 ## 全量清单
 
-### `Apache-2.0`（50）
+### `Apache-2.0`（51）
 
 | 模块 | 版本 | 依赖类型 |
 |---|---|---|
 | `github.com/agext/levenshtein` | v1.2.2 | 间接 |
+| `github.com/aliyun/alibaba-cloud-sdk-go` | v1.61.18 | 直接 |
 | `github.com/bufbuild/protocompile` | v0.4.0 | 间接 |
 | `github.com/go-jose/go-jose/v4` | v4.1.4 | 间接 |
 | `github.com/go-logr/logr` | v1.4.4 | 间接 |
@@ -164,7 +165,6 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/evanphx/json-patch/v5` | v5.9.0 | 间接 |
 | `github.com/fsnotify/fsnotify` | v1.10.1 | 直接 |
 | `github.com/gogo/protobuf` | v1.3.2 | 间接 |
-| `github.com/aliyun/alibaba-cloud-sdk-go` | v1.61.18 | 直接 |
 | `github.com/golang/protobuf` | v1.5.4 | 间接 |
 | `github.com/google/go-cmp` | v0.7.0 | 间接 |
 | `github.com/google/uuid` | v1.6.0 | 直接 |

@@ -251,6 +251,14 @@ func (r *ExternalK8sClusterReconciler) reconcileDelete(
 	logger := log.FromContext(ctx)
 	logger.Info("ExternalK8sCluster is being deleted; running finalizer cleanup")
 
+	// 先把删除终态写进 status，再摘 finalizer：finalizer 摘除后对象立即可被 API server
+	// 回收，其后的 status patch 会 404（假客户端与真 API server 行为一致），reconcile
+	// 报错进退避重试循环。顺序颠倒后状态仍如实落账，且不再有摘除后的 404 patch。
+	conditions.setConnectionState(opsmeshv1alpha1.ConnectionStateDisconnected, "deleting")
+	if err := conditions.flush(ctx, r, nil); err != nil {
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+	}
+
 	// Drop the finalizer so the API server can garbage-collect the CR.
 	controllerutil.RemoveFinalizer(cluster, externalk8sclusterFinalizer)
 	if err := r.Update(ctx, cluster); err != nil {
@@ -258,9 +266,7 @@ func (r *ExternalK8sClusterReconciler) reconcileDelete(
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, conditions.flush(ctx, r, err)
 	}
 	logger.Info("finalizer removed; ExternalK8sCluster deletion complete")
-
-	conditions.setConnectionState(opsmeshv1alpha1.ConnectionStateDisconnected, "deleting")
-	return ctrl.Result{}, conditions.flush(ctx, r, nil)
+	return ctrl.Result{}, nil
 }
 
 // loadKubeconfig reads the kubeconfig YAML content from the Secret referenced

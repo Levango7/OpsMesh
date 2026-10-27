@@ -57,6 +57,20 @@ func TestExternalK8sClusterReconcile_FinalizerAdded(t *testing.T) {
 		},
 	}
 
+	cl := fakeclient.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance, secret).
+		WithStatusSubresource(&opsmeshv1alpha1.ExternalK8sCluster{}).
+		Build()
+
+	// Reconcile 会经 KubernetesForConfig 触达外部集群 API——用假 clientset 截住（与 SuccessPath 同法）。
+	fakeClientset := k8sfake.NewSimpleClientset()
+	originalKubernetesForConfig := controller.KubernetesForConfig
+	defer func() { controller.KubernetesForConfig = originalKubernetesForConfig }()
+	controller.KubernetesForConfig = func(cfg *rest.Config) (kubernetes.Interface, error) {
+		return fakeClientset, nil
+	}
+
 	r := &controller.ExternalK8sClusterReconciler{Client: cl, Scheme: scheme}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -187,18 +201,12 @@ func TestExternalK8sClusterReconcile_SuccessPath(t *testing.T) {
 		},
 	}
 
-	cl := fakeclient.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(instance, secret).
-		WithStatusSubresource(&opsmeshv1alpha1.ExternalK8sCluster{}).
-		Build()
-
 	// Save original KubernetesForConfig and restore after test.
 	originalKubernetesForConfig := controller.KubernetesForConfig
 	defer func() { controller.KubernetesForConfig = originalKubernetesForConfig }()
 
 	// Stub KubernetesForConfig to return a fake clientset that succeeds.
-	fakeClientset := k8sfake.NewSimpleClientset()
+	fakeClientset := k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}})
 	controller.KubernetesForConfig = func(cfg *rest.Config) (kubernetes.Interface, error) {
 		return fakeClientset, nil
 	}
@@ -208,7 +216,7 @@ func TestExternalK8sClusterReconcile_SuccessPath(t *testing.T) {
 		Key:                  "kubeconfig",
 	}
 
-	cl = fakeclient.NewClientBuilder().
+	cl := fakeclient.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(instance, secret).
 		WithStatusSubresource(&opsmeshv1alpha1.ExternalK8sCluster{}).
