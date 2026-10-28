@@ -1,7 +1,7 @@
 # 前端（npm）第三方依赖许可证清单（自动生成，勿手改）
 
 > 生成命令：`bash deploy/scripts/gen-third-party-licenses.sh`（CI 用 `--check` 阻止与锁文件漂移）  
-> 生成时间：2026-10-26T14:34:52Z  
+> 生成时间：2026-10-28T04:04:18Z  
 > 依赖来源：`web/enterprise/package-lock.json`（版本与 `license` 字段**均取自锁文件**，不需要 node_modules）  
 > 条目数：342（生产 54 / 构建 288）  
 

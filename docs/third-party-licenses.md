@@ -1,8 +1,8 @@
 # 第三方依赖许可证清单（自动生成，勿手改）
 
 > 生成命令：`bash deploy/scripts/gen-third-party-licenses.sh`（CI 用 `--check` 阻止文档与 go.sum 漂移）  
-> 生成时间：2026-10-26T14:34:52Z  
-> 依赖来源：根模块 + `services/*/go.mod` + `operator/go.mod` 的全部 `go.sum`（162 个 module@version）  
+> 生成时间：2026-10-28T04:04:18Z  
+> 依赖来源：根模块 + `services/*/go.mod` + `operator/go.mod` 的全部 `go.sum`（163 个 module@version）  
 > 许可证识别：读本地 Go 模块缓存里各模块自带的 LICENSE 文件，按签名表分类为常见 SPDX 名。
 
 ## 本清单**不做**的事（必须人判）
@@ -67,7 +67,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `google.golang.org/grpc` | v1.83.2 | `NOTICE.txt` |
 | `gopkg.in/yaml.v3` | v3.0.1 | `NOTICE` |
 
-## 同一模块存在多个版本（7 个）
+## 同一模块存在多个版本（8 个）
 
 上表**按模块取语义最高版本**判定许可证。以下是 `go.sum` 里同时出现多个版本的模块——
 低版本若许可证不同，本清单不会体现，故逐个列出供核对。
@@ -76,6 +76,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 
 | 模块 | go.sum 内全部版本 | 本清单判定用 |
 |---|---|---|
+| `github.com/go-jose/go-jose/v4` | v4.1.4, v4.1.6 | `v4.1.6` |
 | `github.com/klauspost/compress` | v1.15.9, v1.18.7 | `v1.18.7` |
 | `golang.org/x/net` | v0.58.0, v0.59.0, v0.60.0 | `v0.60.0` |
 | `golang.org/x/sync` | v0.22.0, v0.23.0 | `v0.23.0` |
@@ -93,7 +94,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/agext/levenshtein` | v1.2.2 | 间接 |
 | `github.com/aliyun/alibaba-cloud-sdk-go` | v1.61.18 | 直接 |
 | `github.com/bufbuild/protocompile` | v0.4.0 | 间接 |
-| `github.com/go-jose/go-jose/v4` | v4.1.4 | 间接 |
+| `github.com/go-jose/go-jose/v4` | v4.1.6 | 间接 |
 | `github.com/go-logr/logr` | v1.4.4 | 间接 |
 | `github.com/go-logr/stdr` | v1.2.2 | 间接 |
 | `github.com/go-logr/zapr` | v1.3.0 | 间接 |
@@ -288,7 +289,7 @@ agent 镜像跑在 debian-slim 上；手写口径会落后于构建文件，推�
 
 | Dockerfile | 运行时基础镜像 |
 |---|---|
-| `Dockerfile` | `gcr.io/distroless/static-debian12` |
+| `Dockerfile` | `debian:bookworm-slim` |
 | `Dockerfile.agent` | `debian:bookworm-slim` |
 | `Dockerfile.service` | `alpine:3.23` |
 | `deploy/docker/Dockerfile.controlplane` | `alpine:3.23` |
