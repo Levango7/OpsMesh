@@ -197,3 +197,7 @@
 [DONE] 2026-10-28T21:45:47Z from=workbuddy scope=services/runbook-svc/internal/models/ commit=976133d note=Runbook（content omitempty、嵌套 steps/triggers、timeout 纳秒）、ExecutionRecord/StepResult（error_message/error omitempty）、WebhookPayload。
 [DONE] 2026-10-28T21:45:47Z from=workbuddy scope=services/autoscaler-svc/internal/models/ commit=976133d note=ScaleRule cooldown 纳秒、ScaleDecision executor omitempty、Evaluate/Metrics 键集合。反向自测：去状态过滤、时间线共享切片、draft 判终态、tenantID 改 snake_case、去 executor omitempty 均判红后恢复。五模块 gofmt/vet/测试/-race 绿、lint 0 issues。
 [NOTE] 2026-10-28T21:45:47Z from=workbuddy 顺带登记（未改）：services/portal-svc/internal/models/models.go:38 ResourceRequest.StorageGB 的 tag 是 storage_gd、:61 QuotaUsage.UsedStorageGB 是 used_storage_gd，与 handler 的 storage_gb、DB 列 storage_gb 不一致（疑似笔误）。当前模型不直接序列化（handler 有 requestView DTO），故用户面暂无影响；测试刻意未钉这两个键。若未来直接把模型当响应体返回，前端会拿不到 storage 字段。
+[CLAIM] 2026-10-28T21:47:00Z from=workbuddy ttl=4h scope=services/config-svc/internal/cache/
+[CLAIM] 2026-10-28T21:47:00Z from=workbuddy ttl=4h scope=services/alert-svc/internal/cache/
+[DONE] 2026-10-28T21:58:04Z from=workbuddy scope=services/config-svc/internal/cache/ commit=294842c note=与 portal/device 同源契约：New 不可达不 nil + 降级态、降级 Get/Exists miss 与写 no-op、GetOrDefault 回落 fetch 并填 dest（fetch 错误/不可序列化不污染）、key 前缀、TTL、NewWithTTL、Close(nil) 幂等。反向自测：降级 Get 返回 true 判红后恢复。测试/ -race 绿、lint 0。
+[DONE] 2026-10-28T21:58:04Z from=workbuddy scope=services/alert-svc/internal/cache/ commit=294842c note=同 config-svc（prefix=alert:）。反向自测：key() 丢前缀判红后恢复。测试/-race 绿、lint 0。
