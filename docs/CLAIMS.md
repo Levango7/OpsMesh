@@ -114,3 +114,9 @@
 [CLAIM] 2026-10-28T02:13:51Z from=workbuddy ttl=2h scope=go.sum
 [DONE] 2026-10-28T02:41:00Z from=workbuddy scope=go.mod commit=410b8b2 note=go-jose/v4 v4.1.4→v4.1.6（CVE-2026-116587 修复线），解 image-agent/publish-image Trivy HIGH 阻断。go mod verify 通过；go build ./internal/secrets/... ./cmd/... 通过；govulncheck 模块级复扫已不再报 go-jose。
 [DONE] 2026-10-28T02:41:00Z from=workbuddy scope=go.sum commit=410b8b2 note=新增 v4.1.6 两行哈希（旧 v4.1.4 行按 go get 默认保留，无副作用；未跑 tidy 以免连带清理既有 compress 1.15.9 残留、扩大 diff）。
+[NOTE] 2026-10-28T02:45:00Z from=workbuddy 继续隔离面：internal/platform/cloudprovider 根包（工厂/内置注册/NotImplementedProvider）与 aws/azure/tencent/huawei 四个 stub 厂商零测试（仅 aliyun 有）。补契约测试：注册完整性+ProviderType 与注册键一致、ValidateCredentials auth 矩阵、ListRegions 非空唯一、Discover* 空降级、写操作 ErrNotImplemented、ctx 取消传播。只加 *_test.go，不改生产代码；不碰 web/enterprise（ZCode）。
+[CLAIM] 2026-10-28T02:45:00Z from=workbuddy ttl=4h scope=internal/platform/cloudprovider/
+[CLAIM] 2026-10-28T02:45:00Z from=workbuddy ttl=4h scope=internal/platform/cloudprovider/aws/
+[CLAIM] 2026-10-28T02:45:00Z from=workbuddy ttl=4h scope=internal/platform/cloudprovider/azure/
+[CLAIM] 2026-10-28T02:45:00Z from=workbuddy ttl=4h scope=internal/platform/cloudprovider/tencent/
+[CLAIM] 2026-10-28T02:45:00Z from=workbuddy ttl=4h scope=internal/platform/cloudprovider/huawei/
