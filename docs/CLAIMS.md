@@ -155,3 +155,7 @@
 [DONE] 2026-10-28T12:49:09Z from=workbuddy scope=services/autoscaler-svc/pkg/config/ commit=d5c8418 note=Load 默认值/覆盖/非法回落 + KUBECONFIG 优先级 + getEnvBool 白名单与笔误回落。
 [DONE] 2026-10-28T12:49:09Z from=workbuddy scope=services/task-svc/pkg/config/ commit=d5c8418 note=Load 全部字段默认值/覆盖/非法回落 + 布尔口径（字面 true/false）+ LEADER_HOLDER>HOSTNAME。
 [DONE] 2026-10-28T12:49:09Z from=workbuddy scope=services/log-svc/pkg/config/ commit=d5c8418 note=DefaultConfig 各段默认值与独立对象语义。
+[NOTE] 2026-10-28T13:12:43Z from=workbuddy 隔离面续：tf-provider 的 REST 客户端（services/tf-provider/internal/client，256 行）与 portal/device 两个 Redis 缓存封装（同源同文件，graceful fallback 契约）零单测。拟用 httptest 覆盖请求构造/鉴权头/错误映射/解码，并在不可达 Redis 下钉住"降级为 miss/空操作"契约。只加 *_test.go。
+[CLAIM] 2026-10-28T13:12:43Z from=workbuddy ttl=4h scope=services/tf-provider/internal/client/
+[CLAIM] 2026-10-28T13:12:43Z from=workbuddy ttl=4h scope=services/portal-svc/internal/cache/
+[CLAIM] 2026-10-28T13:12:43Z from=workbuddy ttl=4h scope=services/device-svc/internal/cache/
