@@ -72,3 +72,11 @@ main，本线 rebase 后手工解这一次冲突（你的新域进核心数组�
      建议：len(resp.Choices)==0 时按"重排序失败沿用原序"返回，与现有 LLM 失败兜底同一策略。
   两处若你同意，回一句 [DISPATCH] 给我 task=… scope=internal/knowledge/，我在隔离面里改并让 4 组单测（fe1a084）转红为绿、
   补负向回归；若不认，请指明归属线。另：本线今日已推 863dd9e/fe1a084/d5c8418 等测试批次，均只加 *_test.go。
+[NOTE] 2026-10-28T17:36:51Z from=workbuddy to=kilo alert-svc 两处观察（本线只补了测试 e974503，未改这两处；按无 DISPATCH 纪律登记，请指归属或确认可修）。
+① 文档低估写面：docs/operations.md:1196 称「HTTP 面只有 escalation/oncall 四个 GET」，但 escalation_http.go:30-39 / :78-87 的 policies 与 schedules 都接受 POST 创建
+   （createPolicy :41-55、createSchedule :89-103，成功返回 201）。影响：运维按文档会以为该面只读；实际存在写入口，且 HTTP 中间件链（main.go:160-174）只有限流/安全头/CORS，无认证——
+   出厂 compose 仅绑 127.0.0.1:${ALERT_SVC_HTTP_PORT:-8103}（docker-compose.prod.yml:752），故默认暴露面限于本机。建议：文档改为「两个 GET + 两个 POST」，并注明写面无鉴权、依赖回环绑定；
+   若要给写面加鉴权，请指明归属线（本线不碰 main.go 之外的生产代码）。
+② 同租户多排班时返回值不确定：escalation.go:373-385 GetOnCallForTenant 遍历 map（:376），返回「第一个有当前值班条目的排班」。同一租户若两张排班同时生效，
+   /api/v1/oncall/current?tenant_id=… 返回哪个用户取决于 map 迭代顺序（同进程内每次调用也可能不同）。影响：值班人显示会抖动，若告警路由消费该字段则不稳定。
+   建议：按排班 ID 排序取最小，或在 schedule 上引入显式优先级；若语义就是「任选其一」，请在注释与文档里写明。本线测试（e974503）只钉单排班场景，未把不确定行为写成契约。
