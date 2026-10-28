@@ -140,3 +140,11 @@
 [NOTE] 2026-10-28T12:36:16Z from=workbuddy 隔离面：internal/knowledge（990 行，混合检索/重排序/同步/HTTP）零单测。补 retrieval（余弦/bm25/truncate/过滤/内存存储/引用溯源）、gateway 注入版 Retrieve/Rerank、sync 引擎配置与聚合、handler 校验与路由拼接。只加 *_test.go。另报两处运行时实证缺陷（未修，留 owner）：① retrieval.go:76-78 Retrieve 写回 r.topK（查询返回 1 条后 topK 永久变 1，后续 4 条可返回却只给 1 条；且无锁，handler 共享单例存在数据竞争）——注入替身实测；② retrieval.go:169 resp.Choices[0] 无长度保护，补全返回空 choices 时 panic（实测 index out of range）。两项将并入给 kilo 的裁决单。
 [CLAIM] 2026-10-28T12:36:16Z from=workbuddy ttl=4h scope=internal/knowledge/
 [DONE] 2026-10-28T12:41:56Z from=workbuddy scope=internal/knowledge/ commit=fe1a084 note=补 4 组单测（retrieval 公式与边界 / 注入 fake LLMProvider 的 Retrieve+Rerank / sync 配置与聚合 / handler 校验与路由拼接）。反向自测：过滤放行、DELETE 204→200 均判红后恢复。vet/gofmt/lint 0、-race 绿。另报缺陷两处（未修）：retrieval.go:76-78 写回 r.topK（实测首次 1 条结果后 topK 永久=1，后续只返回 1/4；无锁共享），retrieval.go:169 Choices[0] 空数组 panic（实测 index out of range）。
+[NOTE] 2026-10-28T12:48:08Z from=workbuddy 隔离面：7 个服务模块的 pkg/config 默认值与解析语义零单测（portal/runbook/incident/gpu/autoscaler/task/log）。补 Load 默认值、env 覆盖、非法值静默回落、优先级链（OLLAMA_URL>GPU_SVC_OLLAMA_URL；AUTOSCALER_KUBECONFIG>KUBECONFIG；LEADER_HOLDER>HOSTNAME）、布尔口径（task 只认字面 true/false；autoscaler 接受 1/t/yes/on 等）。只加 *_test.go。
+[CLAIM] 2026-10-28T12:48:08Z from=workbuddy ttl=4h scope=services/portal-svc/pkg/config/
+[CLAIM] 2026-10-28T12:48:08Z from=workbuddy ttl=4h scope=services/runbook-svc/pkg/config/
+[CLAIM] 2026-10-28T12:48:08Z from=workbuddy ttl=4h scope=services/incident-svc/pkg/config/
+[CLAIM] 2026-10-28T12:48:08Z from=workbuddy ttl=4h scope=services/gpu-svc/pkg/config/
+[CLAIM] 2026-10-28T12:48:08Z from=workbuddy ttl=4h scope=services/autoscaler-svc/pkg/config/
+[CLAIM] 2026-10-28T12:48:08Z from=workbuddy ttl=4h scope=services/task-svc/pkg/config/
+[CLAIM] 2026-10-28T12:48:08Z from=workbuddy ttl=4h scope=services/log-svc/pkg/config/
