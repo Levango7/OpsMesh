@@ -137,3 +137,5 @@
 [CLAIM] 2026-10-28T09:17:30Z from=workbuddy ttl=4h scope=services/task-svc/internal/approval/
 [RELEASE] 2026-10-28T09:17:00Z from=workbuddy scope=services/task-svc/internal/approval/ note=旧 ts 认领作废（时间戳勘误），随即按真实 UTC 重认领。
 [DONE] 2026-10-28T09:22:26Z from=workbuddy scope=services/task-svc/internal/approval/ commit=863dd9e note=审批状态机补 6 组单测（engine 生命周期/三签批模式/步骤超时与整体过期/待办可见性/深拷贝/回调锁外/8 并发会签 -race；state_machine 全矩阵与 validateDecision 六类校验；flow/request/history/preset）。反向自测：anyof 同意不通过、删审批人校验均判红后恢复。go vet/gofmt/lint 0，本包 + internal/http 审批用例全绿。另：engine.go:112 UpdateFlow『不影响进行中请求』与实现不符（实测实时流生效），DeleteFlow 后 pending 请求只能 Cancel，均未改代码，留 owner 裁决。
+[NOTE] 2026-10-28T12:36:16Z from=workbuddy 隔离面：internal/knowledge（990 行，混合检索/重排序/同步/HTTP）零单测。补 retrieval（余弦/bm25/truncate/过滤/内存存储/引用溯源）、gateway 注入版 Retrieve/Rerank、sync 引擎配置与聚合、handler 校验与路由拼接。只加 *_test.go。另报两处运行时实证缺陷（未修，留 owner）：① retrieval.go:76-78 Retrieve 写回 r.topK（查询返回 1 条后 topK 永久变 1，后续 4 条可返回却只给 1 条；且无锁，handler 共享单例存在数据竞争）——注入替身实测；② retrieval.go:169 resp.Choices[0] 无长度保护，补全返回空 choices 时 panic（实测 index out of range）。两项将并入给 kilo 的裁决单。
+[CLAIM] 2026-10-28T12:36:16Z from=workbuddy ttl=4h scope=internal/knowledge/
