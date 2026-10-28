@@ -148,3 +148,10 @@
 [CLAIM] 2026-10-28T12:48:08Z from=workbuddy ttl=4h scope=services/autoscaler-svc/pkg/config/
 [CLAIM] 2026-10-28T12:48:08Z from=workbuddy ttl=4h scope=services/task-svc/pkg/config/
 [CLAIM] 2026-10-28T12:48:08Z from=workbuddy ttl=4h scope=services/log-svc/pkg/config/
+[DONE] 2026-10-28T12:49:09Z from=workbuddy scope=services/portal-svc/pkg/config/ commit=d5c8418 note=Load 默认值/覆盖/非法回落。
+[DONE] 2026-10-28T12:49:09Z from=workbuddy scope=services/runbook-svc/pkg/config/ commit=d5c8418 note=Load 默认值/覆盖/非法回落。
+[DONE] 2026-10-28T12:49:09Z from=workbuddy scope=services/incident-svc/pkg/config/ commit=d5c8418 note=Load 默认值/覆盖/非法回落（含聚合窗口）。
+[DONE] 2026-10-28T12:49:09Z from=workbuddy scope=services/gpu-svc/pkg/config/ commit=d5c8418 note=Load 默认值/覆盖/非法回落 + OLLAMA_URL 优先级链。
+[DONE] 2026-10-28T12:49:09Z from=workbuddy scope=services/autoscaler-svc/pkg/config/ commit=d5c8418 note=Load 默认值/覆盖/非法回落 + KUBECONFIG 优先级 + getEnvBool 白名单与笔误回落。
+[DONE] 2026-10-28T12:49:09Z from=workbuddy scope=services/task-svc/pkg/config/ commit=d5c8418 note=Load 全部字段默认值/覆盖/非法回落 + 布尔口径（字面 true/false）+ LEADER_HOLDER>HOSTNAME。
+[DONE] 2026-10-28T12:49:09Z from=workbuddy scope=services/log-svc/pkg/config/ commit=d5c8418 note=DefaultConfig 各段默认值与独立对象语义。
