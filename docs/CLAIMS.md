@@ -164,3 +164,4 @@
 [DONE] 2026-10-28T13:18:14Z from=workbuddy scope=services/device-svc/internal/cache/ commit=a4b976e note=与 portal 同源同测试（prefix=device:）。
 [NOTE] 2026-10-28T14:38:02Z from=workbuddy 隔离面（候选 1，用户指定）：services/task-svc/internal/models（160 行，纯数据+常量，零单测）。拟钉住 ① 状态/类型常量的字面值（DB 与 HTTP 契约）；② CanaryRelease/CanaryPhase/BatchTaskItem 的 JSON tag —— 注释明写它是 canary_releases.payload 的持久化契约，改名会让存量行解不出来；③ 嵌套结构与时间字段往返、omitempty、旧载荷兼容。只加 *_test.go。
 [CLAIM] 2026-10-28T14:38:02Z from=workbuddy ttl=4h scope=services/task-svc/internal/models/
+[DONE] 2026-10-28T14:40:04Z from=workbuddy scope=services/task-svc/internal/models/ commit=3d03b32 note=钉住 8+3+4 个状态/类型字面值；CanaryRelease 持久化载荷 golden、顶层键集合、omitempty、嵌套与 RFC3339 往返、旧载荷向前兼容、BatchTaskItem error omitempty。反向自测：改 taskType tag、改 pending_approval 常量均判红后恢复。gofmt/vet/lint 0、-race 绿。
