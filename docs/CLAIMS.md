@@ -112,3 +112,5 @@
 [NOTE] 2026-10-28T02:13:51Z from=workbuddy CI 阻塞真缺陷：image-agent 发布 Trivy 报 go-jose/v4 v4.1.4 HIGH(CVE-2026-116587，修 4.1.6)；间接依赖经 hashicorp/vault/api←internal/secrets，与我的 grpcwire/retry diff 无关。拟 bump 到 4.1.6 解发布阻断，只动 go.mod/go.sum。
 [CLAIM] 2026-10-28T02:13:51Z from=workbuddy ttl=2h scope=go.mod
 [CLAIM] 2026-10-28T02:13:51Z from=workbuddy ttl=2h scope=go.sum
+[DONE] 2026-10-28T02:41:00Z from=workbuddy scope=go.mod commit=410b8b2 note=go-jose/v4 v4.1.4→v4.1.6（CVE-2026-116587 修复线），解 image-agent/publish-image Trivy HIGH 阻断。go mod verify 通过；go build ./internal/secrets/... ./cmd/... 通过；govulncheck 模块级复扫已不再报 go-jose。
+[DONE] 2026-10-28T02:41:00Z from=workbuddy scope=go.sum commit=410b8b2 note=新增 v4.1.6 两行哈希（旧 v4.1.4 行按 go get 默认保留，无副作用；未跑 tidy 以免连带清理既有 compress 1.15.9 残留、扩大 diff）。
