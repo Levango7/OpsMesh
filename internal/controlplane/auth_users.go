@@ -223,8 +223,10 @@ func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// 主路径分发（PUT/DELETE）。
+	// 主路径分发（GET/PUT/DELETE）。
 	switch r.Method {
+	case http.MethodGet:
+		s.getUser(w, r, id)
 	case http.MethodPut:
 		s.handleUpdateUser(w, r, id)
 	case http.MethodDelete:
@@ -233,6 +235,30 @@ func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
+
+// getUser 获取单个用户详情。
+func (s *Server) getUser(w http.ResponseWriter, r *http.Request, id string) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "user:read"); !ok {
+		return
+	}
+	u := s.store.GetUser(id)
+	if u == nil {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	if actx.TenantID != "" && u.TenantID != actx.TenantID {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	// 不暴露密码哈希。
+	u.PasswordHash = ""
+	paginate.WriteJSON(w, http.StatusOK, u)
+}
+
 
 // handleApproveUser 处理 POST /api/v1/users/{id}/approve：管理员审批用户注册（注册安全）。
 // 将用户 Status 从 "pending" 改为 "active"；仅 pending 状态可审批，其他状态返回 409。
