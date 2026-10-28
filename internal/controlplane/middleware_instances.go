@@ -198,9 +198,9 @@ func selectedMiddlewareVersionImage(tpl *MiddlewareTemplate, version string) str
 	if v != nil && v.DockerImage != "" {
 		return v.DockerImage
 	}
-	// Fallback: use template Version field
-	if tpl.Version != "" {
-		return ""
+	// Fallback: resolve default version and use its image.
+	if defaultV := resolveMiddlewareVersion(tpl, ""); defaultV != nil && defaultV.DockerImage != "" {
+		return defaultV.DockerImage
 	}
 	return ""
 }

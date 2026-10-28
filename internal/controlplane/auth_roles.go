@@ -87,6 +87,9 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 //   - DELETE /api/v1/roles/{id}：删除角色（需 role:delete 权限）
 func (s *Server) handleRoleRouting(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/roles/")
+	if idx := strings.Index(id, "/"); idx >= 0 {
+		id = id[:idx]
+	}
 	if id == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "role id required"})
 		return

@@ -426,6 +426,9 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 // handleAlertRuleRouting 分派 /api/v1/alert-rules/{id} 子路径：PUT 更新 / DELETE 删除。
 func (s *Server) handleAlertRuleRouting(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/alert-rules/")
+	if idx := strings.Index(id, "/"); idx >= 0 {
+		id = id[:idx]
+	}
 	if id == "" {
 		paginate.JSONError(w, http.StatusBadRequest, "alert rule id required")
 		return
