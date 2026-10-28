@@ -162,6 +162,7 @@ var PermSpecs = []PermSpec{
 	// 系统级写权限：中间件部署/数据库操作等高危运维端点的 requireProd 校验引用此权限点，
 	// 此前未在目录定义导致 admin 等所有角色恒 403。补种后 RolePermissions 派生生效，
 	// admin 角色自动获得（由 RolePermissions 派生集合），升级部署下次启动自动生效。
+	{"system", "system:read", "系统级读权限（系统状态/配置查询等）"},
 	{"system", "system:write", "系统级写权限（中间件部署/数据库操作等高危运维）"},
 }
 
