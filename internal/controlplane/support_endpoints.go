@@ -486,7 +486,7 @@ func (s *Server) handleAdminStoreFailures(w http.ResponseWriter, r *http.Request
 		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if _, ok := s.requireProd(w, r, levelPermission); !ok {
+	if _, ok := s.requireProd(w, r, "diagnostics:dump"); !ok {
 		return
 	}
 	total, byOp := storefail.StoreFailureStats()

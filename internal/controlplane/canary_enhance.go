@@ -81,11 +81,11 @@ func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request
 	// 路径，导致同一批灰度接口在 demo 部署下「创建/查询能过、改分流/看指标恒 401」，
 	// 与 FIX 1「让 traffic-split / metrics 真正可达」的目标相悖。权限值不变（task:write），
 	// 生产态鉴权强度不变（无身份仍 401）。身份不落地为变量：审计 UserID 统一取 actx.UserID。
-	if _, ok := s.requireProd(w, r, "task:write"); !ok {
-		return
-	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	if actx.TenantID == "" {
@@ -144,11 +144,11 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 	}
 	// 鉴权对齐（2026-10-21）：同 handleCanaryTrafficSplit ——改 requireProd 兼容
 	// demo 模式与网关注入身份（权限值仍为 task:read；无身份生产态仍 401）。
-	if _, ok := s.requireProd(w, r, "task:read"); !ok {
-		return
-	}
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "task:read"); !ok {
 		return
 	}
 	if actx.TenantID == "" {

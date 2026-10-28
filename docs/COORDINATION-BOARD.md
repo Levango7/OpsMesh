@@ -116,10 +116,13 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  web/enterprise/                                <- ZCode  (ttl=24h by ZCode)
+  internal/controlplane,web/enterprise,internal/store <- kilo  (ttl=24h by kilo)
 
 TASKS:
   (无)
+
+ISSUES:
+  CLAIM 过期未闭环：web/enterprise/（认领人 ZCode，ttl 24h）
 ```
 
 ---

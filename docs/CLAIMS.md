@@ -235,3 +235,5 @@
 [DONE] 2026-10-29T01:08:17Z from=workbuddy scope=internal/controlplane/auth_users.go commit=92da5a0 note=gofmt 恢复（0 增 1 删：getUser 与 handleApproveUser 之间的连续空行）。验证：本文件 gofmt -l 干净、全仓 gofmt -l 无输出、包 build/vet 通过。此前四个 run（40780110222/40792863266/40795281250/40795805062）均同一处红且 build-test 下游全 skipped。
 [NOTE] 2026-10-29T01:34:20Z from=workbuddy run 40798633401（2cc2fc4，gofmt 修好后首次真跑测试）确认：build-test 的 lint/Gofmt/四条判据自测全绿，随后 Test (unit, memory store, -race + coverage) 红——不是测试写错，是我新测试暴露的生产 data race：Upgrade/Rollback/RotateCertificates 把 map 里的 *Status 指针直接返回给 HTTP handler，后台 goroutine 随即 updateStatus 就地改写，handler 的 JSON 编码与之并发（handler.go:192 ↔ paginate.WriteJSON）。修复方式=启动 goroutine 前取快照返回（NodeStatus map 一并复制），GetStatus 复用同一快照函数；行为不变。
 [DONE] 2026-10-29T01:34:20Z from=workbuddy scope=internal/k8slifecycle/ commit=d698004 note=消除三条异步作业入口的 data race（+26/-4）。取证：旧码 -count=60 -race 复现 16 次 WARNING: DATA RACE；新码 -count=100 -race 零告警；包 vet/测试/lint 干净。
+
+[CLAIM] 2026-10-28T22:00:00Z from=kilo ttl=24h scope=internal/controlplane,web/enterprise,internal/store
