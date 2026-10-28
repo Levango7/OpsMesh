@@ -159,3 +159,6 @@
 [CLAIM] 2026-10-28T13:12:43Z from=workbuddy ttl=4h scope=services/tf-provider/internal/client/
 [CLAIM] 2026-10-28T13:12:43Z from=workbuddy ttl=4h scope=services/portal-svc/internal/cache/
 [CLAIM] 2026-10-28T13:12:43Z from=workbuddy ttl=4h scope=services/device-svc/internal/cache/
+[DONE] 2026-10-28T13:18:14Z from=workbuddy scope=services/tf-provider/internal/client/ commit=a4b976e note=httptest 覆盖请求构造/鉴权头/错误映射/编解码 + 17 个资源方法的 方法+路径矩阵；反向自测（ListAlerts 回对象应判红）已做。
+[DONE] 2026-10-28T13:18:14Z from=workbuddy scope=services/portal-svc/internal/cache/ commit=a4b976e note=Redis 不可达降级契约（New 不 nil、Get/Exists miss、写 no-op、GetOrDefault 必回落 fetch）+ 前缀/TTL/Close；反向自测：降级标志改 enabled=true、GetOrDefault 改永远命中均判红后恢复。
+[DONE] 2026-10-28T13:18:14Z from=workbuddy scope=services/device-svc/internal/cache/ commit=a4b976e note=与 portal 同源同测试（prefix=device:）。
