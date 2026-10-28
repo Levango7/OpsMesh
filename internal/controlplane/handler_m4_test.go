@@ -195,7 +195,7 @@ func TestHandlerM4AlertRuleRouting_NotFound(t *testing.T) {
 // TestHandlerM4AlertRuleRouting_MethodNotAllowed 验证非 DELETE 方法返回 405。
 func TestHandlerM4AlertRuleRouting_MethodNotAllowed(t *testing.T) {
 	s := newM4TestServer()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/alert-rules/ar-m4-method", nil)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/alert-rules/ar-m4-method", nil)
 	req.Header.Set("X-Tenant-ID", "m4-alert")
 	rec := httptest.NewRecorder()
 	s.handleAlertRuleRouting(rec, req)

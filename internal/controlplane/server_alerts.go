@@ -431,6 +431,8 @@ func (s *Server) handleAlertRuleRouting(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	switch r.Method {
+	case http.MethodGet:
+		s.getAlertRule(w, r, id)
 	case http.MethodPut:
 		s.updateAlertRule(w, r, id)
 	case http.MethodDelete:
@@ -438,6 +440,28 @@ func (s *Server) handleAlertRuleRouting(w http.ResponseWriter, r *http.Request) 
 	default:
 		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// getAlertRule 获取单条告警规则。
+func (s *Server) getAlertRule(w http.ResponseWriter, r *http.Request, id string) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "alert:read"); !ok {
+		return
+	}
+	existing := s.store.GetAlertRule(id)
+	if existing == nil {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		return
+	}
+	if actx.TenantID != "" && existing.TenantID != actx.TenantID {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert rule not found"})
+		return
+	}
+	resp := storeAlertRuleToCP(existing)
+	paginate.WriteJSON(w, http.StatusOK, resp)
 }
 
 // alertRuleUpdateRequest PUT /api/v1/alert-rules/{id} 的请求体。
