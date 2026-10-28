@@ -125,3 +125,4 @@
 [CLAIM] 2026-10-28T03:30:00Z from=workbuddy ttl=2h scope=docs/third-party-licenses.md
 [CLAIM] 2026-10-28T03:30:00Z from=workbuddy ttl=2h scope=docs/CLAIMS.md
 [DONE] 2026-10-28T04:10:00Z from=workbuddy scope=docs/third-party-licenses.md commit=105a57c note=按 go-jose v4.1.6 重生成：全量清单版本更新 + 「同一模块多版本」段新增 go-jose（v4.1.4/v4.1.6→判定 4.1.6）、module@version 162→163；顺带修正根 Dockerfile 运行时镜像陈旧条目（distroless→debian:bookworm-slim，自 5c6f3af 起实际如此）。--check rc=0（覆盖率 100%）。
+[NOTE] 2026-10-28T05:35:00Z from=workbuddy CI 实证：run 40630293550（5f0f8c6）13/13 腿全绿，含 image / image-agent publish-image；Trivy 报告 opsmesh-binary 与 opsmesh-agent 均 Vulnerabilities=0（debian 12.15 与 gobinary 两侧），CVE-2026-116587 已闭环，不再是发布阻断。昨日失败的 b8e2ddf/22138b6 两条 run 红点仅在 security（许可证清单，105a57c 已修），其余腿全绿；105a57c 那条仍在跑，不作结论。
