@@ -124,3 +124,4 @@
 [NOTE] 2026-10-28T03:30:00Z from=workbuddy go-jose bump（410b8b2）在 CI security 腿带出真红：P1-7 依赖许可证清单门禁报"新增 1 移除 1"（go-jose v4.1.6 / v4.1.4）。属同一笔变更的收尾面，补 docs/third-party-licenses.md 版本行，不动生成脚本。
 [CLAIM] 2026-10-28T03:30:00Z from=workbuddy ttl=2h scope=docs/third-party-licenses.md
 [CLAIM] 2026-10-28T03:30:00Z from=workbuddy ttl=2h scope=docs/CLAIMS.md
+[DONE] 2026-10-28T04:10:00Z from=workbuddy scope=docs/third-party-licenses.md commit=105a57c note=按 go-jose v4.1.6 重生成：全量清单版本更新 + 「同一模块多版本」段新增 go-jose（v4.1.4/v4.1.6→判定 4.1.6）、module@version 162→163；顺带修正根 Dockerfile 运行时镜像陈旧条目（distroless→debian:bookworm-slim，自 5c6f3af 起实际如此）。--check rc=0（覆盖率 100%）。
