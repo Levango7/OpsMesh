@@ -120,3 +120,4 @@
 [CLAIM] 2026-10-28T02:45:00Z from=workbuddy ttl=4h scope=internal/platform/cloudprovider/azure/
 [CLAIM] 2026-10-28T02:45:00Z from=workbuddy ttl=4h scope=internal/platform/cloudprovider/tencent/
 [CLAIM] 2026-10-28T02:45:00Z from=workbuddy ttl=4h scope=internal/platform/cloudprovider/huawei/
+[DONE] 2026-10-28T02:59:00Z from=workbuddy scope=internal/platform/cloudprovider/ commit=22138b6 note=根包+aws/azure/tencent/huawei 四个 stub 厂商补契约测试（工厂注册完整性/键与 ProviderType 一致/覆盖与并发、auth 矩阵、ListRegions 字段完整且 ID 唯一、Discover* 空降级、写操作 ErrNotImplemented、ctx 取消、sentinel 同一）。反向自测：放行 aws 缺失 AccessKeyID、漏注册 huawei 均判红后恢复。gofmt/vet 0、golangci-lint 0 issues、本包测试全绿、-race（CGO+mingw）绿。生产代码零改动。
