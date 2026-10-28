@@ -126,3 +126,13 @@
 [CLAIM] 2026-10-28T03:30:00Z from=workbuddy ttl=2h scope=docs/CLAIMS.md
 [DONE] 2026-10-28T04:10:00Z from=workbuddy scope=docs/third-party-licenses.md commit=105a57c note=按 go-jose v4.1.6 重生成：全量清单版本更新 + 「同一模块多版本」段新增 go-jose（v4.1.4/v4.1.6→判定 4.1.6）、module@version 162→163；顺带修正根 Dockerfile 运行时镜像陈旧条目（distroless→debian:bookworm-slim，自 5c6f3af 起实际如此）。--check rc=0（覆盖率 100%）。
 [NOTE] 2026-10-28T05:35:00Z from=workbuddy CI 实证：run 40630293550（5f0f8c6）13/13 腿全绿，含 image / image-agent publish-image；Trivy 报告 opsmesh-binary 与 opsmesh-agent 均 Vulnerabilities=0（debian 12.15 与 gobinary 两侧），CVE-2026-116587 已闭环，不再是发布阻断。昨日失败的 b8e2ddf/22138b6 两条 run 红点仅在 security（许可证清单，105a57c 已修），其余腿全绿；105a57c 那条仍在跑，不作结论。
+[NOTE] 2026-10-28T05:55:00Z from=workbuddy 隔离面继续：services/task-svc/internal/approval（1246 行审批状态机）零单测。拟补 engine/state_machine/request/history/preset 五组测试，只加 *_test.go。另报一处**文档与实现不符**（未修，留 owner 裁决）：engine.go:112 称 UpdateFlow「不影响已基于该流创建的进行中请求」，但 applyDecision 用 e.flows[req.FlowID] 实时流校验（engine.go:254/260），实测更新 Approvers 后原审批人 u1 得到 ErrNotApprover、新审批人 u2 可批；DeleteFlow 后 approve 与 CheckTimeout 均返回 ErrFlowNotFound（engine.go:256-259、401-405），pending 请求除 Cancel 外无法收尾。
+[CLAIM] 2026-10-28T05:55:00Z from=workbuddy ttl=4h scope=services/task-svc/internal/approval/
+[NOTE] 2026-10-28T09:17:30Z from=workbuddy 时间戳勘误：本线此前几条板注/认领的 ts 按本机时区误标（比真实 UTC 少约 3.5h），致 4 个 vendor 子目录与 docs/CLAIMS.md 的 CLAIM 被判"过期未闭环"，实际工作均已 DONE。此后一律以 date -u 取值；以下补记 DONE。
+[DONE] 2026-10-28T09:17:30Z from=workbuddy scope=docs/CLAIMS.md commit=105a57c note=许可证清单重生成批次的板面代理认领，已随 105a57c 闭环。
+[DONE] 2026-10-28T09:17:30Z from=workbuddy scope=internal/platform/cloudprovider/aws/ commit=22138b6 note=aws stub 契约测试已提交（provider_test.go）。
+[DONE] 2026-10-28T09:17:30Z from=workbuddy scope=internal/platform/cloudprovider/azure/ commit=22138b6 note=azure stub 契约测试已提交（provider_test.go）。
+[DONE] 2026-10-28T09:17:30Z from=workbuddy scope=internal/platform/cloudprovider/huawei/ commit=22138b6 note=huawei stub 契约测试已提交（provider_test.go）。
+[DONE] 2026-10-28T09:17:30Z from=workbuddy scope=internal/platform/cloudprovider/tencent/ commit=22138b6 note=tencent stub 契约测试已提交（provider_test.go）。
+[CLAIM] 2026-10-28T09:17:30Z from=workbuddy ttl=4h scope=services/task-svc/internal/approval/
+[RELEASE] 2026-10-28T09:17:00Z from=workbuddy scope=services/task-svc/internal/approval/ note=旧 ts 认领作废（时间戳勘误），随即按真实 UTC 重认领。
