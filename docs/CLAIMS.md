@@ -201,3 +201,20 @@
 [CLAIM] 2026-10-28T21:47:00Z from=workbuddy ttl=4h scope=services/alert-svc/internal/cache/
 [DONE] 2026-10-28T21:58:04Z from=workbuddy scope=services/config-svc/internal/cache/ commit=294842c note=与 portal/device 同源契约：New 不可达不 nil + 降级态、降级 Get/Exists miss 与写 no-op、GetOrDefault 回落 fetch 并填 dest（fetch 错误/不可序列化不污染）、key 前缀、TTL、NewWithTTL、Close(nil) 幂等。反向自测：降级 Get 返回 true 判红后恢复。测试/ -race 绿、lint 0。
 [DONE] 2026-10-28T21:58:04Z from=workbuddy scope=services/alert-svc/internal/cache/ commit=294842c note=同 config-svc（prefix=alert:）。反向自测：key() 丢前缀判红后恢复。测试/-race 绿、lint 0。
+[NOTE] 2026-10-29T00:14:28Z from=workbuddy 零测试包清扫批次③：services/{config,device,task,auth,log}-svc/internal/server（1327 行适配层，零单测）。方法=按生产装配构造（各服务真实 MemoryStore + 真实 service，auth 用真 JWT engine），钉"哨兵错误 → gRPC code"矩阵与成功/透传路径；不碰 internal/logstore 与任何生产文件。log-svc/internal/store 已确认零引用（死代码），不补测试。只加 *_test.go。
+[CLAIM] 2026-10-29T00:14:28Z from=workbuddy ttl=4h scope=services/config-svc/internal/server/
+[CLAIM] 2026-10-29T00:14:28Z from=workbuddy ttl=4h scope=services/device-svc/internal/server/
+[CLAIM] 2026-10-29T00:14:28Z from=workbuddy ttl=4h scope=services/task-svc/internal/server/
+[CLAIM] 2026-10-29T00:14:28Z from=workbuddy ttl=4h scope=services/auth-svc/internal/server/
+[CLAIM] 2026-10-29T00:14:28Z from=workbuddy ttl=4h scope=services/log-svc/internal/server/
+[DONE] 2026-10-29T00:14:28Z from=workbuddy scope=services/config-svc/internal/server/ commit=b5f1fce note=config/secret/channel/template 四组 InvalidArgument+NotFound 全矩阵；secret 返回解密明文（非密文）、版本 1→2→3 与轮换；config 版本递增/历史/回滚（version<=0 InvalidArgument、不存在 NotFound）；channel TestChannel 三态（missing/disabled/enabled 均为业务返回而非 gRPC 错误）、租户隔离；模板语法错误 InvalidArgument。3 处变异判红后恢复。
+[DONE] 2026-10-29T00:14:28Z from=workbuddy scope=services/device-svc/internal/server/ commit=b5f1fce note=device/agent/CMDB/discovery 四组映射；软删除契约=列表消失（非 404）；discovery 仅测写库前拒绝路径（不启动扫描 goroutine），终态 job 直接落 store 验字段映射；租户过滤与空列表非 nil。3 处变异判红后恢复。
+[DONE] 2026-10-29T00:14:28Z from=workbuddy scope=services/task-svc/internal/server/ commit=b5f1fce note=创建默认值（shell/3/pending）、claim 幂等失败 NotFound、epoch 不匹配 FailedPrecondition、审批/拒绝、schedule CRUD、batch 2 任务汇总。3 处变异判红后恢复。
+[DONE] 2026-10-29T00:14:28Z from=workbuddy scope=services/auth-svc/internal/server/ commit=b5f1fce note=Login/Refresh/Validate Unauthenticated、CreateUser 重名 AlreadyExists、用户/角色 CRUD 与 AssignRole NotFound、ChangePassword 旧口令 Unauthenticated 且改密后旧口令失效；首登强制改密仅发改密专用令牌（无 refresh）；CheckPermission 非法令牌业务拒绝。3 处变异判红后恢复。
+[DONE] 2026-10-29T00:14:28Z from=workbuddy scope=services/log-svc/internal/server/ commit=b5f1fce note=tenant_id 校验包装四方法契约 + append→search→stats→sources 闭环 + jsonCodec/Name/String/非法 JSON + bufconn E2E；E2E 按生产实际装配（直接注册原始 service）断言合法租户成功。1 处变异判红后恢复。
+[NOTE] 2026-10-29T00:14:28Z from=workbuddy 本轮顺带取证（均未改，交 owner 裁量）：
+① log-svc 的 tenant_id 校验层在生产未接线：cmd/log-svc/main.go:81 直接 service.NewService，:84 调 server.NewGRPCServer(svc)，而 NewGRPCServer（internal/server/server.go:91-101）把入参 svc 原样 RegisterLogServiceServer，跳过了带校验的 NewServer（:46-52）。后果=gRPC 侧空 tenant_id 不报 InvalidArgument，落库查询按"空租户=不过滤"语义可跨租户读。仓内暂无 SearchLogs 的 in-repo 调用方 ⇒ 潜伏；一旦网关接入即为数据面缺口。修法二选一：main 改 server.NewServer(svc)，或 NewGRPCServer 内包一层。
+② log-svc/internal/store 包零引用（main 用的是 internal/logstore），属死代码：未补测试，建议删除或注明保留理由。
+③ device-svc CreateCIRelation 丢 ID：internal/service/service.go:678-687 把 protoToRelation 的 store 副本交给 CreateRelation（自增 ID 写在该副本上），却返回入参 req.Relation ⇒ gRPC 响应 id 恒 0；且适配层 server.go:220-226 对该调用无 InvalidArgument 分支，服务层的 "relation invalid" 会以 Internal 报出。
+④ device-svc StartDiscovery 的白名单拒绝被包装成 Internal：service.go:714-727 用 fmt.Errorf("%w: %v", ErrJobInvalid, err)，适配层 server.go:236-245 用 `err ==` 身份比较 ⇒ 越界/非法 CIDR 不是 InvalidArgument 而是 Internal（空 CIDR 那条走裸哨兵，映射正确）。同形状的 `err ==` 身份比较在全仓适配层普遍存在，凡服务层包装哨兵的地方都会漂成 Internal，建议统一改 errors.Is。
+⑤ device-svc DeleteDevice 是软删除（store.go:189-198 Retired=true），但 deviceToProto（service.go:837-855）不暴露 Retired ⇒ 删除后 GetDevice 仍 200 且响应无退役标记，唯一可观测差异是列表消失。
