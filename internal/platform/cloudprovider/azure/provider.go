@@ -26,9 +26,9 @@ import (
 	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider/types"
 )
 
-// 可被测试覆盖的端点。
+// 可被测试覆盖的端点。azureOAuthURL 是 OAuth2 端点模板（凭据由请求体携带），不是密钥。
 var (
-	azureTokenURL = "https://login.microsoftonline.com/%s/oauth2/v2.0/token"
+	azureOAuthURL = "https://login.microsoftonline.com/%s/oauth2/v2.0/token"
 	azureARMBase  = "https://management.azure.com"
 )
 
@@ -75,7 +75,7 @@ func (c *azureClient) getToken(ctx context.Context) (string, error) {
 	form.Set("client_secret", c.clientSecret)
 	form.Set("scope", "https://management.azure.com/.default")
 
-	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf(azureTokenURL, c.tenantID), strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf(azureOAuthURL, c.tenantID), strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("azure: create token request: %w", err)
 	}
