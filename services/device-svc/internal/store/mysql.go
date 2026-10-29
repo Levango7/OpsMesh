@@ -228,7 +228,9 @@ func (s *MySQLStore) UpdateDevice(d *models.Device) (*models.Device, bool) {
 	}
 	d.UpdatedAt = time.Now()
 	res, err := s.db.Exec(
-		"UPDATE devices SET tenant_id = ?, name = ?, ip = ?, mac = ?, os = ?, arch = ?, status = ?, agent_id = ?, tags = ?, labels = ?, `group` = ?, lastHeartbeat = ?, updated_at = ?, retired = ? WHERE id = ?",
+		// `AND retired = false` 在 SQL 层拒绝更新已软删设备，避免更新载荷里的
+		// retired=false 把它复活（RowsAffected=0 ⇒ 调用方映射 NotFound）。
+		"UPDATE devices SET tenant_id = ?, name = ?, ip = ?, mac = ?, os = ?, arch = ?, status = ?, agent_id = ?, tags = ?, labels = ?, `group` = ?, lastHeartbeat = ?, updated_at = ?, retired = ? WHERE id = ? AND retired = false",
 		d.TenantID, d.Name, d.IP, d.MAC, d.OS, d.Arch, d.Status, d.AgentID,
 		jsonString(d.Tags), jsonMap(d.Labels), d.Group, nullTime(d.LastHeartbeat), d.UpdatedAt, d.Retired, d.ID,
 	)
@@ -241,6 +243,12 @@ func (s *MySQLStore) UpdateDevice(d *models.Device) (*models.Device, bool) {
 		log.Printf("[store] RowsAffected: %v", err)
 	}
 	if n == 0 {
+		// RowsAffected=0 有两种成因：不存在/已退役，或值完全没变（TIMESTAMP 秒精度下
+		// 同一秒内的同值更新不会产生变更行）。回查 retired 区分，避免把有效更新误判 NotFound。
+		var retired bool
+		if qerr := s.db.QueryRow("SELECT retired FROM devices WHERE id = ?", d.ID).Scan(&retired); qerr == nil && !retired {
+			return d, true
+		}
 		return nil, false
 	}
 	return d, true

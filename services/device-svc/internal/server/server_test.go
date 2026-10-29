@@ -119,6 +119,17 @@ func TestDeviceHandlersMapping(t *testing.T) {
 	if len(resp.GetDevices()) != 0 {
 		t.Fatalf("ListDevices(删除后) = %d 条, want 0（软删除应从列表消失）", len(resp.GetDevices()))
 	}
+
+	// 「防复活」：UpdateDevice 的 proto 载荷没有 retired 字段，若放行整对象覆盖，
+	// 已退役设备会被写回 retired=false 重新出现在列表里（裁决单 2026-10-30 #2）。
+	// 对客户端而言退役即不存在，故统一映射 NotFound。
+	_, err = srv.UpdateDevice(ctx, &devicev1.UpdateDeviceRequest{Device: &devicev1.Device{
+		Id: dev.GetId(), TenantId: "t1", Name: "revived",
+	}})
+	requireCode(t, err, codes.NotFound, "UpdateDevice(已退役)")
+	if got := env.mem.Device(dev.GetId()); got == nil || !got.Retired || got.Name != "web-1-renamed" {
+		t.Fatalf("退役设备被复活/覆盖: %+v", got)
+	}
 }
 
 func TestAgentHandlersMapping(t *testing.T) {
