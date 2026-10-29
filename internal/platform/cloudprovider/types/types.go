@@ -13,7 +13,8 @@ const (
 	ProviderTypeAWS     ProviderType = "aws"
 	ProviderTypeAzure   ProviderType = "azure"
 	ProviderTypeTencent ProviderType = "tencent"
-	ProviderTypeHuawei  ProviderType = "huawei"
+	ProviderTypeHuawei     ProviderType = "huawei"
+	ProviderTypeVolcengine ProviderType = "volcengine"
 )
 
 // AuthType 识别认证方式。

@@ -10,6 +10,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider/azure"
 	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider/huawei"
 	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider/tencent"
+	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider/volcengine"
 )
 
 // fakeProvider 只覆写 ProviderType，其余能力复用 NotImplementedProvider，
@@ -28,6 +29,7 @@ var builtinTypes = []ProviderType{
 	ProviderTypeAzure,
 	ProviderTypeTencent,
 	ProviderTypeHuawei,
+	ProviderTypeVolcengine,
 }
 
 // 编译期断言：5 个内建适配器都满足 CloudProvider 接口。
@@ -37,6 +39,7 @@ var (
 	_ CloudProvider = (*azure.AzureProvider)(nil)
 	_ CloudProvider = (*tencent.TencentProvider)(nil)
 	_ CloudProvider = (*huawei.HuaweiProvider)(nil)
+	_ CloudProvider = (*volcengine.VolcengineProvider)(nil)
 )
 
 // TestNewAdapterFactory_RegistersAllBuiltIns 钉住两件事：
