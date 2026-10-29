@@ -550,6 +550,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	s.logHandler.Authorize = s.subsystemAuthorize
 	s.deployHandler.Authorize = s.subsystemAuthorize
 	s.orchHandler.Authorize = s.subsystemAuthorize
+	// 同款 G1 缺口：k8s 生命周期 9 条路由（含 etcd-restore / node-scale 这类真副作用动作）
+	// 此前无任何鉴权闸，匿名即可触发；本文件只做接线，升级/回滚/轮换的占位语义另行裁决。
+	s.k8sLifecycleHandler.Authorize = s.subsystemAuthorize
 	// 告警通道密钥外置：根据 cfg.SecretProvider 构造 SecretProvider 并注入到 alertNotifier。
 	// cfg.SecretProvider 为空时 FromConfig 返回 (nil, nil)，不启用密钥外置（向后兼容）。
 	// 构造失败时：生产模式 fail-fast（避免运行期渠道鉴权失败），非生产模式打 Warning 继续。
