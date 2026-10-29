@@ -18,6 +18,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/store/model"
@@ -190,5 +192,69 @@ func (s *SQLStore) DeleteCloudResourcesByAccount(ctx context.Context, accountID 
 		return rowsErr
 	}
 	storefail.Record("[store] DeleteCloudResourcesByAccount 删除 (account=%s) 条数=%d", accountID, n)
+	return nil
+}
+
+// UpdateCloudResource 更新云资源（部分字段）。
+func (s *SQLStore) UpdateCloudResource(ctx context.Context, id string, updates map[string]interface{}) error {
+	if id == "" {
+		return errCloudResourceInvalid
+	}
+	// 构建动态 UPDATE 语句
+	setParts := make([]string, 0)
+	args := make([]interface{}, 0)
+	if status, ok := updates["status"].(string); ok && status != "" {
+		setParts = append(setParts, "status=?")
+		args = append(args, status)
+	}
+	if tags, ok := updates["tags"].(string); ok && tags != "" {
+		setParts = append(setParts, "tags=?")
+		args = append(args, tags)
+	}
+	if publicIP, ok := updates["public_ip"].(string); ok && publicIP != "" {
+		setParts = append(setParts, "public_ip=?")
+		args = append(args, publicIP)
+	}
+	if privateIP, ok := updates["private_ip"].(string); ok && privateIP != "" {
+		setParts = append(setParts, "private_ip=?")
+		args = append(args, privateIP)
+	}
+	if tags, ok := updates["tags"].(string); ok && tags != "" {
+		setParts = append(setParts, "tags=?")
+		args = append(args, tags)
+	}
+	if len(setParts) == 0 {
+		return nil // 无更新内容
+	}
+	setParts = append(setParts, "updated_at=?")
+	args = append(args, time.Now().UTC())
+	args = append(args, id)
+
+	query := fmt.Sprintf("UPDATE cloud_resources SET %s WHERE id=?", strings.Join(setParts, ", "))
+	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+		storefail.Record("[store] UpdateCloudResource 更新失败 (id=%s): %v", id, err)
+		return err
+	}
+	return nil
+}
+
+// DeleteCloudResource 删除单个云资源。
+func (s *SQLStore) DeleteCloudResource(ctx context.Context, id string) error {
+	if id == "" {
+		return errCloudResourceInvalid
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM cloud_resources WHERE id=?`, id)
+	if err != nil {
+		storefail.Record("[store] DeleteCloudResource 删除失败 (id=%s): %v", id, err)
+		return err
+	}
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return rowsErr
+	}
+	if n == 0 {
+		return fmt.Errorf("cloud resource not found: %s", id)
+	}
+	storefail.Record("[store] DeleteCloudResource 删除 (id=%s)", id)
 	return nil
 }

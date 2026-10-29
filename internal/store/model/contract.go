@@ -869,15 +869,19 @@ type CloudAccountStore interface {
 	SyncCloudAccount(ctx context.Context, id string, syncStatus string, discoveredCount int) error
 }
 
-// CloudResourceStore 云资源持久化领域（Wave 2-B）：CRUD + 按账号批量删除。
+// CloudResourceStore 云资源持久化领域（Wave 2-B 云资源）：CRUD + 按账号批量删除。
 // 按 (CloudAccountID, ResourceType, ResourceID) 去重，按 TenantID 隔离。
 type CloudResourceStore interface {
 	// CreateCloudResource 创建云资源。ID 为空时由 store 分配随机 ID。
 	CreateCloudResource(ctx context.Context, res *CloudResource) error
 	// GetCloudResource 按 ID 返回单个云资源（不存在返回 (nil, error)）。
 	GetCloudResource(ctx context.Context, id string) (*CloudResource, error)
+	// UpdateCloudResource 更新云资源（部分字段）。
+	UpdateCloudResource(ctx context.Context, id string, updates map[string]interface{}) error
 	// ListCloudResources 返回指定租户的云资源列表（可按 accountID / resourceType 过滤，分页，总数）。
 	ListCloudResources(ctx context.Context, tenantID string, accountID string, resourceType string, offset, limit int) ([]*CloudResource, int, error)
+	// DeleteCloudResource 删除单个云资源。
+	DeleteCloudResource(ctx context.Context, id string) error
 	// DeleteCloudResourcesByAccount 删除指定云账号下全部云资源，返回删除条数。
 	DeleteCloudResourcesByAccount(ctx context.Context, accountID string) error
 }

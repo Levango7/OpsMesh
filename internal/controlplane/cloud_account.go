@@ -633,3 +633,263 @@ func (s *Server) handleListCloudResources(w http.ResponseWriter, r *http.Request
 		"limit":     limit,
 	})
 }
+
+// handleCreateCloudResource 处理 POST /api/v1/cloud-resources：创建云资源。
+// 请求体：{device_id, resource_type, region, name, properties, tags}
+func (s *Server) handleCreateCloudResource(w http.ResponseWriter, r *http.Request) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "cloud:write"); !ok {
+		return
+	}
+
+	var req struct {
+		DeviceID     string            `json:"device_id"`
+		ResourceType string            `json:"resource_type"`
+		Region       string            `json:"region"`
+		Name         string            `json:"name"`
+		Properties   map[string]string `json:"properties"`
+		Tags         map[string]string `json:"tags"`
+	}
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		paginate.JSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	if req.DeviceID == "" || req.ResourceType == "" || req.Region == "" || req.Name == "" {
+		paginate.JSONError(w, http.StatusBadRequest, "device_id, resource_type, region, name are required")
+		return
+	}
+
+	// 获取云账号
+	account, err := s.store.GetCloudAccount(r.Context(), req.DeviceID)
+	if err != nil || account == nil {
+		paginate.JSONError(w, http.StatusNotFound, "cloud account not found")
+		return
+	}
+	if account.TenantID != actx.TenantID {
+		paginate.JSONError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	// 获取对应的 CloudProvider
+	provider, ok := s.cloudProviderFactory.Get(cloudprovider.ProviderType(account.Provider))
+	if !ok {
+		paginate.JSONError(w, http.StatusInternalServerError, "cloud provider not found")
+		return
+	}
+
+	// 调用 Provider 创建资源
+	creds := s.resolveCloudCredentials(account)
+	if creds == nil {
+		paginate.JSONError(w, http.StatusInternalServerError, "resolve credentials failed")
+		return
+	}
+	cloudReq := cloudprovider.CreateResourceRequest{
+		ResourceType: req.ResourceType,
+		Region:       req.Region,
+		Name:         req.Name,
+		Properties:   req.Properties,
+		Tags:         req.Tags,
+	}
+	resource, err := provider.CreateResource(r.Context(), *creds, cloudReq)
+	if err != nil {
+		logx.Error(r.Context(), "create cloud resource failed", err, "region", req.Region)
+		paginate.JSONError(w, http.StatusInternalServerError, "create cloud resource failed")
+		return
+	}
+
+	// 保存到本地存储（Tags 需要序列化为 JSON）
+	tagsJSON, err := json.Marshal(resource.Tags)
+	if err != nil {
+		logx.Error(r.Context(), "marshal tags failed", err)
+		paginate.JSONError(w, http.StatusInternalServerError, "marshal tags failed")
+		return
+	}
+
+	cloudRes := &store.CloudResource{
+		ID:             resource.ResourceID,
+		TenantID:       actx.TenantID,
+		CloudAccountID: req.DeviceID,
+		ResourceType:   resource.ResourceType,
+		ResourceID:     resource.ResourceID,
+		ResourceName:   resource.ResourceName,
+		Region:         resource.Region,
+		Provider:       string(provider.ProviderType()),
+		Status:         resource.Status,
+		PrivateIP:      resource.PrivateIP,
+		PublicIP:       resource.PublicIP,
+		Tags:           string(tagsJSON),
+	}
+	if err := s.store.CreateCloudResource(r.Context(), cloudRes); err != nil {
+		logx.Error(r.Context(), "save cloud resource failed", err)
+		paginate.JSONError(w, http.StatusInternalServerError, "save cloud resource failed")
+		return
+	}
+
+	paginate.WriteJSON(w, http.StatusCreated, map[string]interface{}{
+		"resource": resource,
+	})
+}
+
+// handleDeleteCloudResource 处理 DELETE /api/v1/cloud-resources/{id}：删除云资源。
+func (s *Server) handleDeleteCloudResource(w http.ResponseWriter, r *http.Request) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "cloud:write"); !ok {
+		return
+	}
+
+	resourceID := strings.TrimPrefix(r.URL.Path, "/api/v1/cloud-resources/")
+	if resourceID == "" {
+		paginate.JSONError(w, http.StatusBadRequest, "resource id required")
+		return
+	}
+
+	// 先查找本地资源，获取 cloud_account_id 和 provider
+	resource, err := s.store.GetCloudResource(r.Context(), resourceID)
+	if err != nil || resource == nil {
+		paginate.JSONError(w, http.StatusNotFound, "cloud resource not found")
+		return
+	}
+	if resource.TenantID != actx.TenantID {
+		paginate.JSONError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	provider, ok := s.cloudProviderFactory.Get(cloudprovider.ProviderType(resource.Provider))
+	if !ok {
+		paginate.JSONError(w, http.StatusInternalServerError, "cloud provider not found")
+		return
+	}
+
+	// 调用 Provider 删除资源
+	account, err := s.store.GetCloudAccount(r.Context(), resource.CloudAccountID)
+	if err != nil || account == nil {
+		logx.Error(r.Context(), "get cloud account failed", err)
+		paginate.JSONError(w, http.StatusInternalServerError, "get cloud account failed")
+		return
+	}
+	creds := s.resolveCloudCredentials(account)
+	if creds == nil {
+		paginate.JSONError(w, http.StatusInternalServerError, "resolve credentials failed")
+		return
+	}
+	if err := provider.DeleteResource(r.Context(), *creds, resource.ResourceID); err != nil {
+		logx.Error(r.Context(), "delete cloud resource failed", err, "resource_id", resource.ResourceID)
+		paginate.JSONError(w, http.StatusInternalServerError, "delete cloud resource failed")
+		return
+	}
+
+	// 从本地存储删除
+	if err := s.store.DeleteCloudResource(r.Context(), resourceID); err != nil {
+		logx.Error(r.Context(), "delete local resource failed", err)
+		paginate.JSONError(w, http.StatusInternalServerError, "delete local resource failed")
+		return
+	}
+
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// handleSyncCloudResourceTags 处理 PUT /api/v1/cloud-resources/{id}/tags：同步云资源标签。
+func (s *Server) handleSyncCloudResourceTags(w http.ResponseWriter, r *http.Request) {
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "cloud:write"); !ok {
+		return
+	}
+
+	resourceID := strings.TrimPrefix(r.URL.Path, "/api/v1/cloud-resources/")
+	resourceID = strings.TrimSuffix(resourceID, "/tags")
+	if resourceID == "" {
+		paginate.JSONError(w, http.StatusBadRequest, "resource id required")
+		return
+	}
+
+	var req struct {
+		Tags map[string]string `json:"tags"`
+	}
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		paginate.JSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if len(req.Tags) == 0 {
+		paginate.JSONError(w, http.StatusBadRequest, "tags required")
+		return
+	}
+
+	// 先查找本地资源
+	resource, err := s.store.GetCloudResource(r.Context(), resourceID)
+	if err != nil || resource == nil {
+		paginate.JSONError(w, http.StatusNotFound, "cloud resource not found")
+		return
+	}
+	if resource.TenantID != actx.TenantID {
+		paginate.JSONError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	// 获取完整云账号信息（包含 CredentialsRef）
+	account, err := s.store.GetCloudAccount(r.Context(), resource.CloudAccountID)
+	if err != nil || account == nil {
+		logx.Error(r.Context(), "get cloud account failed", err)
+		paginate.JSONError(w, http.StatusInternalServerError, "get cloud account failed")
+		return
+	}
+	creds := s.resolveCloudCredentials(account)
+	if creds == nil {
+		paginate.JSONError(w, http.StatusInternalServerError, "resolve credentials failed")
+		return
+	}
+
+	provider, ok := s.cloudProviderFactory.Get(cloudprovider.ProviderType(resource.Provider))
+	if !ok {
+		paginate.JSONError(w, http.StatusInternalServerError, "cloud provider not found")
+		return
+	}
+
+	// 解析本地存储的标签（JSON 字符串 -> map）
+	existingTags := make(map[string]string)
+	if resource.Tags != "" {
+		if err := json.Unmarshal([]byte(resource.Tags), &existingTags); err != nil {
+			logx.Error(r.Context(), "parse existing tags failed", err)
+			paginate.JSONError(w, http.StatusInternalServerError, "parse existing tags failed")
+			return
+		}
+	}
+
+	// 调用 Provider 同步标签
+	if err := provider.SyncTags(r.Context(), *creds, resource.ResourceID, req.Tags); err != nil {
+		logx.Error(r.Context(), "sync tags failed", err, "resource_id", resource.ResourceID)
+		paginate.JSONError(w, http.StatusInternalServerError, "sync tags failed")
+		return
+	}
+
+	// 更新本地标签（合并新标签）
+	mergedTags := make(map[string]string)
+	for k, v := range existingTags {
+		mergedTags[k] = v
+	}
+	for k, v := range req.Tags {
+		mergedTags[k] = v
+	}
+	tagsJSON, err := json.Marshal(mergedTags)
+	if err != nil {
+		logx.Error(r.Context(), "marshal tags failed", err)
+		paginate.JSONError(w, http.StatusInternalServerError, "marshal tags failed")
+		return
+	}
+	if err := s.store.UpdateCloudResource(r.Context(), resourceID, map[string]interface{}{"tags": string(tagsJSON)}); err != nil {
+		logx.Error(r.Context(), "update local tags failed", err)
+		paginate.JSONError(w, http.StatusInternalServerError, "update local tags failed")
+		return
+	}
+
+	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "tags synced"})
+}

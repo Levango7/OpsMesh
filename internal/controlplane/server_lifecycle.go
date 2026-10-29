@@ -407,13 +407,19 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/secrets/keys", s.handleSecretsKeys)               // GET 密钥 key 列表（仅名称 + provider）
 	mux.HandleFunc("POST /api/v1/secrets/{key}/rotate", s.handleRotateSecret) // POST 密钥轮换 + 访问审计
 
-	// Wave 2-B 云账号与云资源（租户隔离）。
-	// GET/POST /api/v1/cloud-accounts 列表/创建；子路径 /{id}、/{id}/sync、/{id}/test、/{id}/regions 走 routing。
-	// GET /api/v1/cloud-resources 云资源列表（可按 accountID/resourceType 过滤）。
-	mux.HandleFunc("GET /api/v1/cloud-accounts", s.handleCloudAccounts)
-	mux.HandleFunc("POST /api/v1/cloud-accounts", s.handleCloudAccounts)
-	mux.HandleFunc("/api/v1/cloud-accounts/", s.handleCloudAccountRouting)
-	mux.HandleFunc("GET /api/v1/cloud-resources", s.handleListCloudResources)
+// Wave 2-B 云账号与云资源（租户隔离）。
+// GET/POST /api/v1/cloud-accounts 列表/创建；子路径 /{id}、/{id}/sync、/{id}/test、/{id}/regions 走 routing。
+// GET /api/v1/cloud-resources 云资源列表（可按 accountID/resourceType 过滤）。
+// POST /api/v1/cloud-resources 创建云资源。
+// DELETE /api/v1/cloud-resources/{id} 删除云资源。
+// PUT /api/v1/cloud-resources/{id}/tags 同步云资源标签。
+mux.HandleFunc("GET /api/v1/cloud-accounts", s.handleCloudAccounts)
+mux.HandleFunc("POST /api/v1/cloud-accounts", s.handleCloudAccounts)
+mux.HandleFunc("/api/v1/cloud-accounts/", s.handleCloudAccountRouting)
+mux.HandleFunc("GET /api/v1/cloud-resources", s.handleListCloudResources)
+mux.HandleFunc("POST /api/v1/cloud-resources", s.handleCreateCloudResource)
+mux.HandleFunc("DELETE /api/v1/cloud-resources/", s.handleDeleteCloudResource)
+mux.HandleFunc("PUT /api/v1/cloud-resources/", s.handleSyncCloudResourceTags)
 
 	// CMDB 采集自动化：POST 手动触发全量采集（返回 {collected, failed}）。
 	mux.HandleFunc("/api/v1/cmdb/collect", s.handleCMDBCollect)

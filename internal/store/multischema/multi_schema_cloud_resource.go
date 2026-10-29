@@ -61,3 +61,29 @@ func (m *MultiSchemaStore) DeleteCloudResourcesByAccount(ctx context.Context, ac
 	}
 	return nil
 }
+
+// UpdateCloudResource 更新云资源（部分字段）：遍历全部租户 store 查找并更新。
+func (m *MultiSchemaStore) UpdateCloudResource(ctx context.Context, id string, updates map[string]interface{}) error {
+	if id == "" {
+		return nil
+	}
+	for _, s := range m.allStores() {
+		if err := s.UpdateCloudResource(ctx, id, updates); err == nil {
+			return nil // 找到并更新成功
+		}
+	}
+	return nil // 未找到，不返回 error（宽松语义）
+}
+
+// DeleteCloudResource 删除单个云资源：遍历全部租户 store 查找并删除。
+func (m *MultiSchemaStore) DeleteCloudResource(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	for _, s := range m.allStores() {
+		if err := s.DeleteCloudResource(ctx, id); err == nil {
+			return nil // 找到并删除成功
+		}
+	}
+	return nil // 未找到，宽松语义不返回 error
+}

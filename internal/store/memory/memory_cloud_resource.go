@@ -125,3 +125,52 @@ func (m *MemoryStore) DeleteCloudResourcesByAccount(_ context.Context, accountID
 	_ = n
 	return nil
 }
+
+// UpdateCloudResource 更新云资源（部分字段）。
+func (m *MemoryStore) UpdateCloudResource(_ context.Context, id string, updates map[string]interface{}) error {
+	if id == "" {
+		return errCloudResourceInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	res, ok := m.cloudResources[id]
+	if !ok {
+		return errors.New("cloud resource not found")
+	}
+	// 只允许更新部分字段
+	if status, ok := updates["status"].(string); ok {
+		res.Status = status
+	}
+	if tags, ok := updates["tags"].(string); ok {
+		res.Tags = tags
+	}
+	if status, ok := updates["status"].(string); ok {
+		res.Status = status
+	}
+	if publicIP, ok := updates["public_ip"].(string); ok {
+		res.PublicIP = publicIP
+	}
+	if privateIP, ok := updates["private_ip"].(string); ok {
+		res.PrivateIP = privateIP
+	}
+	if tags, ok := updates["tags"].(string); ok {
+		res.Tags = tags
+	}
+	res.UpdatedAt = time.Now()
+	m.cloudResources[id] = res
+	return nil
+}
+
+// DeleteCloudResource 删除单个云资源。
+func (m *MemoryStore) DeleteCloudResource(_ context.Context, id string) error {
+	if id == "" {
+		return errCloudResourceInvalid
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.cloudResources[id]; !ok {
+		return errors.New("cloud resource not found")
+	}
+	delete(m.cloudResources, id)
+	return nil
+}
