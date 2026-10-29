@@ -259,7 +259,6 @@ func (s *Server) getUser(w http.ResponseWriter, r *http.Request, id string) {
 	paginate.WriteJSON(w, http.StatusOK, u)
 }
 
-
 // handleApproveUser 处理 POST /api/v1/users/{id}/approve：管理员审批用户注册（注册安全）。
 // 将用户 Status 从 "pending" 改为 "active"；仅 pending 状态可审批，其他状态返回 409。
 // 鉴权：需 user:approve 权限（admin 角色自动拥有）。
