@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/platform/ssh"
@@ -632,6 +633,33 @@ type K8sLifecycleHandler struct {
 	certMgr    *CertRotationManager
 	nodeScaler *NodeScaler
 	etcdMgr    *EtcdManager
+
+	// Authorize 鉴权回调（由 controlplane 注入），语义同 cmdb/log/deploy/orch 的
+	// Authorize：失败时回调已写响应并返回 ok=false，调用方直接 return。
+	// nil 时不启用鉴权（独立使用与单测的向后兼容路径）。
+	Authorize func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
+}
+
+// authorize 按请求方法映射权限：GET/HEAD/OPTIONS 只读 → readPerm，其余 → writePerm。
+// 鉴权通过后若租户头缺失，回填回调解析出的租户（与 cmdb 的 G1 修复同范式）。
+func (h *K8sLifecycleHandler) authorize(fn http.HandlerFunc, readPerm, writePerm string) http.HandlerFunc {
+	if h.Authorize == nil {
+		return fn
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		perm := readPerm
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			perm = writePerm
+		}
+		actx, ok := h.Authorize(w, r, perm)
+		if !ok {
+			return
+		}
+		if actx.TenantID != "" && strings.TrimSpace(r.Header.Get("X-Tenant-ID")) == "" {
+			r.Header.Set("X-Tenant-ID", actx.TenantID)
+		}
+		fn(w, r)
+	}
 }
 
 func NewK8sLifecycleHandler() *K8sLifecycleHandler {
@@ -867,17 +895,19 @@ func (h *K8sLifecycleHandler) HandleEtcdListBackups(w http.ResponseWriter, r *ht
 	})
 }
 
-// RegisterK8sLifecycleRoutes 注册 K8s 生命周期路由
+// RegisterK8sLifecycleRoutes 注册 K8s 生命周期路由。
+// 全部经 authorize 包装：GET 需要 k8s:read，其余（含 etcd-restore / node-scale 这类
+// 真副作用动作）需要 k8s:write。若未来要给 etcd-restore 更细的权限点，需先扩 RBAC 目录。
 func RegisterK8sLifecycleRoutes(mux *http.ServeMux, handler *K8sLifecycleHandler) {
-	mux.HandleFunc("POST /api/v1/k8s/lifecycle/upgrade", handler.HandleUpgrade)
-	mux.HandleFunc("POST /api/v1/k8s/lifecycle/upgrade/plan", handler.HandleUpgradePlan)
-	mux.HandleFunc("GET /api/v1/k8s/lifecycle/upgrade/status", handler.HandleUpgradeStatus)
-	mux.HandleFunc("POST /api/v1/k8s/lifecycle/rollback", handler.HandleRollback)
-	mux.HandleFunc("POST /api/v1/k8s/lifecycle/cert-rotate", handler.HandleCertRotation)
-	mux.HandleFunc("POST /api/v1/k8s/lifecycle/node-scale", handler.HandleNodeScale)
-	mux.HandleFunc("POST /api/v1/k8s/lifecycle/etcd-backup", handler.HandleEtcdBackup)
-	mux.HandleFunc("POST /api/v1/k8s/lifecycle/etcd-restore", handler.HandleEtcdRestore)
-	mux.HandleFunc("GET /api/v1/k8s/lifecycle/etcd-backups", handler.HandleEtcdListBackups)
+	mux.HandleFunc("POST /api/v1/k8s/lifecycle/upgrade", handler.authorize(handler.HandleUpgrade, "k8s:read", "k8s:write"))
+	mux.HandleFunc("POST /api/v1/k8s/lifecycle/upgrade/plan", handler.authorize(handler.HandleUpgradePlan, "k8s:read", "k8s:write"))
+	mux.HandleFunc("GET /api/v1/k8s/lifecycle/upgrade/status", handler.authorize(handler.HandleUpgradeStatus, "k8s:read", "k8s:write"))
+	mux.HandleFunc("POST /api/v1/k8s/lifecycle/rollback", handler.authorize(handler.HandleRollback, "k8s:read", "k8s:write"))
+	mux.HandleFunc("POST /api/v1/k8s/lifecycle/cert-rotate", handler.authorize(handler.HandleCertRotation, "k8s:read", "k8s:write"))
+	mux.HandleFunc("POST /api/v1/k8s/lifecycle/node-scale", handler.authorize(handler.HandleNodeScale, "k8s:read", "k8s:write"))
+	mux.HandleFunc("POST /api/v1/k8s/lifecycle/etcd-backup", handler.authorize(handler.HandleEtcdBackup, "k8s:read", "k8s:write"))
+	mux.HandleFunc("POST /api/v1/k8s/lifecycle/etcd-restore", handler.authorize(handler.HandleEtcdRestore, "k8s:read", "k8s:write"))
+	mux.HandleFunc("GET /api/v1/k8s/lifecycle/etcd-backups", handler.authorize(handler.HandleEtcdListBackups, "k8s:read", "k8s:write"))
 }
 
 // 辅助函数

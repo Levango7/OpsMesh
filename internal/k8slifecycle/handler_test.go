@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Levango7/OpsMesh/internal/authctx"
 )
 
 // 本包多数执行路径都要 SSH 到真实节点；这里只覆盖不需要任何外部连接的契约面：
@@ -237,5 +239,99 @@ func TestRouteRegistration(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/k8s/lifecycle/nope", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("未注册路径 = %d, want 404", rec.Code)
+	}
+}
+
+// 鉴权接线：GET 走 k8s:read，其余走 k8s:write；通过后回填租户头。
+func TestAuthorizeMethodMappingAndTenantBackfill(t *testing.T) {
+	h := newTestHandler()
+	var gotPerm, gotTenant string
+	var ran bool
+	h.Authorize = func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool) {
+		gotPerm = perm
+		return authctx.Context{TenantID: "t1"}, true
+	}
+	fn := h.authorize(func(w http.ResponseWriter, r *http.Request) {
+		ran = true
+		gotTenant = r.Header.Get("X-Tenant-ID")
+	}, "k8s:read", "k8s:write")
+
+	doRequest(t, fn, http.MethodGet, "/x", "")
+	if gotPerm != "k8s:read" {
+		t.Fatalf("GET 权限 = %q, want k8s:read", gotPerm)
+	}
+	if !ran || gotTenant != "t1" {
+		t.Fatalf("GET 未执行或租户未回填: ran=%v tenant=%q", ran, gotTenant)
+	}
+
+	gotPerm, ran, gotTenant = "", false, ""
+	doRequest(t, fn, http.MethodPost, "/x", "{}")
+	if gotPerm != "k8s:write" {
+		t.Fatalf("POST 权限 = %q, want k8s:write", gotPerm)
+	}
+	if !ran {
+		t.Fatal("POST 鉴权通过后未执行 handler")
+	}
+
+	// 已有租户头不被覆盖。
+	gotTenant = ""
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("X-Tenant-ID", "t2")
+	fn(httptest.NewRecorder(), req)
+	if gotTenant != "t2" {
+		t.Fatalf("已有租户头被覆盖为 %q", gotTenant)
+	}
+}
+
+// 9 条路由必须全部经过鉴权：拒绝时 401 且回调拿到的方法映射权限正确。
+func TestLifecycleRoutesRequireAuthorization(t *testing.T) {
+	h := newTestHandler()
+	var perms []string
+	h.Authorize = func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool) {
+		perms = append(perms, perm)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return authctx.Context{}, false
+	}
+	mux := http.NewServeMux()
+	RegisterK8sLifecycleRoutes(mux, h)
+
+	cases := []struct {
+		method, path, wantPerm string
+	}{
+		{http.MethodPost, "/api/v1/k8s/lifecycle/upgrade", "k8s:write"},
+		{http.MethodPost, "/api/v1/k8s/lifecycle/upgrade/plan", "k8s:write"},
+		{http.MethodGet, "/api/v1/k8s/lifecycle/upgrade/status?upgradeID=x", "k8s:read"},
+		{http.MethodPost, "/api/v1/k8s/lifecycle/rollback", "k8s:write"},
+		{http.MethodPost, "/api/v1/k8s/lifecycle/cert-rotate", "k8s:write"},
+		{http.MethodPost, "/api/v1/k8s/lifecycle/node-scale", "k8s:write"},
+		{http.MethodPost, "/api/v1/k8s/lifecycle/etcd-backup", "k8s:write"},
+		{http.MethodPost, "/api/v1/k8s/lifecycle/etcd-restore", "k8s:write"},
+		{http.MethodGet, "/api/v1/k8s/lifecycle/etcd-backups?cpNode=n1", "k8s:read"},
+	}
+	for _, c := range cases {
+		perms = nil
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(c.method, c.path, strings.NewReader(`{"clusterId":"c1","targetVersion":"1.30.0"}`))
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s = %d, want 401（鉴权未生效）", c.method, c.path, rec.Code)
+		}
+		if len(perms) != 1 || perms[0] != c.wantPerm {
+			t.Fatalf("%s %s 权限 = %v, want [%s]", c.method, c.path, perms, c.wantPerm)
+		}
+	}
+}
+
+// 未注入 Authorize 时保持向后兼容（独立使用/单测）：路由照常执行。
+func TestRoutesPassThroughWithoutAuthorize(t *testing.T) {
+	h := newTestHandler()
+	mux := http.NewServeMux()
+	RegisterK8sLifecycleRoutes(mux, h)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/k8s/lifecycle/upgrade",
+		strings.NewReader(`{"clusterId":"c1","targetVersion":"1.30.0"}`)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("未注入 Authorize 时 upgrade = %d, want 202", rec.Code)
 	}
 }
