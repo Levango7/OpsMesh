@@ -155,10 +155,11 @@ func (s *Server) handleUpdateTenant(w http.ResponseWriter, r *http.Request, id s
 //
 // L3 级联清理加固：
 //   - 平台租户 "default" 拒绝删除（409 Conflict），防止误删平台根租户导致系统瘫痪；
-//   - 删除成功后对该租户的 APIKey/Webhook/Script 三域执行循环 Delete，
-//     避免租户删除后子资源成为孤儿（store 已有按 tenantID 的 delete 方法）；
-//   - 其余域（Device/Task/Alert/Agent/Subscription/Invoice/Plugin 等）暂未级联，
-//     列入 TODO 待后续补齐。
+//   - 删除成功后对该租户的 APIKey/Webhook/Script/Task/Device/Alert/Subscription/Invoice
+//     七域执行循环 Delete，避免租户删除后子资源成为孤儿；
+//   - Plugin 为平台级资源，不按租户隔离，跳过；
+//   - Agent 无独立 store 方法（Agent 归属 device，随 Device 级联退役）。
+// TODO: 若未来新增租户级域，需在此追加级联清理。
 func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id string) {
 	caller, ok := s.requirePermission(w, r, "tenant:write")
 	if !ok {
