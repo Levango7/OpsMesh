@@ -159,6 +159,7 @@ func (s *Server) handleUpdateTenant(w http.ResponseWriter, r *http.Request, id s
 //     七域执行循环 Delete，避免租户删除后子资源成为孤儿；
 //   - Plugin 为平台级资源，不按租户隔离，跳过；
 //   - Agent 无独立 store 方法（Agent 归属 device，随 Device 级联退役）。
+//
 // TODO: 若未来新增租户级域，需在此追加级联清理。
 func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id string) {
 	caller, ok := s.requirePermission(w, r, "tenant:write")
