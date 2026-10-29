@@ -120,9 +120,6 @@ ACTIVE CLAIMS:
 
 TASKS:
   (无)
-
-ISSUES:
-  CLAIM 过期未闭环：web/enterprise/（认领人 ZCode，ttl 24h）
 ```
 
 ---
