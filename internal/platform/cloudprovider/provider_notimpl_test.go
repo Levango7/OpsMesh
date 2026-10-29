@@ -26,7 +26,8 @@ func TestTypeAliases(t *testing.T) {
 		ProviderTypeAWS:     types.ProviderTypeAWS,
 		ProviderTypeAzure:   types.ProviderTypeAzure,
 		ProviderTypeTencent: types.ProviderTypeTencent,
-		ProviderTypeHuawei:  types.ProviderTypeHuawei,
+		ProviderTypeHuawei:     types.ProviderTypeHuawei,
+		ProviderTypeVolcengine: types.ProviderTypeVolcengine,
 	}
 	for alias, want := range consts {
 		if alias != want {

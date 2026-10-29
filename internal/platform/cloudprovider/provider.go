@@ -31,7 +31,8 @@ const (
 	ProviderTypeAWS     = types.ProviderTypeAWS
 	ProviderTypeAzure   = types.ProviderTypeAzure
 	ProviderTypeTencent = types.ProviderTypeTencent
-	ProviderTypeHuawei  = types.ProviderTypeHuawei
+	ProviderTypeHuawei     = types.ProviderTypeHuawei
+	ProviderTypeVolcengine = types.ProviderTypeVolcengine
 )
 
 const (
