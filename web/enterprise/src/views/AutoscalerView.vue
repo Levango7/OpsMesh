@@ -290,16 +290,6 @@ onMounted(() => {
 .bar-up { background: var(--ok); }
 .bar-down { background: var(--info); }
 
-.modal-mask {
-  position: fixed; inset: 0; z-index: 50;
-  background: var(--modal-mask); display: flex; align-items: center; justify-content: center;
-}
-.modal {
-  width: 540px; max-width: 94vw; max-height: 88vh; overflow: auto;
-  background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
-  padding: 20px 22px;
-}
-.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.modal-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-.modal-body .field label { margin: 0; }
+/* .modal-mask / .modal / .modal-head / .modal-body .field( label) 已改用
+   styles/pages.css 全局对话框家族 A（2026-10-30 收编） */
 </style>

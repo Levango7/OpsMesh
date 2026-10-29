@@ -9,6 +9,10 @@
  *   3. 工具条用 .btnbar（按钮栏）/ .flowbar（筛选表单栏）；错误横幅用 PageShell 的
  *      error prop（内部渲染 .poll-err），不许各页自绘、更不许各页自写 .poll-err 样式。
  *   4. 模态/抽屉分别用 .modal-* 全局类与 DetailDrawer 组件。
+ *   5. 对话框有两套并存的全局家族（历史形成，均在本文档单一来源）：
+ *      A「遮罩+面板」.modal-mask > .modal > .modal-head/.modal-body —— 8 个视图在用；
+ *      B「浮层+盒子」.modal-overlay > .modal-box —— ConfirmModal/PromptModal 在用。
+ *      最终统一目标是把 B 迁到 components/ui/Modal.vue 组件（届时 B 家族删除）。
  *
  * 本文件 owns 什么（全站共享原语的唯一定义处）：
  *   .page__*（页面骨架）· .card / .card h3 / .card__title · .field / .field label
@@ -370,6 +374,235 @@
 @media (prefers-reduced-motion: reduce) {
   .flowbar .field input,
   .flowbar .field select {
+    transition: none !important;
+  }
+}
+
+/* ===========================================================================
+ * 对话框家族 A：遮罩 + 面板（.modal-mask > .modal > .modal-head/.modal-body）
+ * ---------------------------------------------------------------------------
+ * 历史：原寄生 styles/k8s.css（K8s 命名当全站事实标准），2026-10-30 收编至此。
+ * 同时在 8 个视图里各有一份 scoped 副本，实测同选择器最多 5 种写法。
+ * =========================================================================== */
+
+/* 遮罩：居中、z-index 50。需要压过页头/侧栏时用 --top（z 9999 + 16px 内距）。 */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--modal-mask, rgba(0, 0, 0, 0.5));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 历史：K8sClustersView 自写 z-index 9999（同页有更高叠层）且两者都加了 16px 内距，
+   已固化为两个正交修饰类——不要再用捆绑式变体，否则「只要 padding」的页面被迫连带改 z-index。 */
+.modal-mask--inset {
+  padding: var(--space-4, 16px);
+}
+
+.modal-mask--top {
+  z-index: 9999;
+}
+
+/* 面板：固定 540px 宽 + 20/22 内距（自带页头/正文的场景）。 */
+.modal {
+  width: 540px;
+  max-width: 94vw;
+  max-height: 88vh;
+  overflow: auto;
+  background: var(--color-surface-1, #ffffff);
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: var(--shadow-xl, 0 16px 48px rgba(0, 0, 0, 0.5));
+  padding: 20px 22px;
+}
+
+/* 历史：K8sClustersView/ResourcesView 用「撑满 + 520px 上限 + 内距交给页头/正文」
+   的三栏式对话框，已固化为显式变体。配合 --wide/--narrow 调上限宽度
+   （原 K8sResources 自写 .modal.modal-lg{max-width:760px} 才压得住宽度）。 */
+.modal--fluid {
+  width: 100%;
+  max-width: 520px;
+  padding: 0;
+}
+
+.modal--wide {
+  max-width: 760px;
+}
+
+.modal--narrow {
+  max-width: 420px;
+}
+
+.modal-sm { width: 420px; }
+.modal-lg { width: 760px; }
+
+/* 页头：左右分布。分栏式对话框用 --bordered（带上边框与 14/18 内距）。 */
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3, 12px);
+}
+
+.modal-head--bordered {
+  padding: 14px 18px;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--color-hairline, #d3dbe8);
+}
+
+/* 页头标题：K8s 两页自写 margin/字号，与全局 h3 口径一致，收编为通用规则。 */
+.modal-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.modal-body {
+  padding: 16px 18px;
+}
+
+.modal-body .field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+  margin-bottom: var(--space-2, 10px);
+}
+
+.modal-body .field label {
+  margin: 0;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 500;
+  color: var(--color-ink-muted, #6b7280);
+}
+
+.modal-body .field input,
+.modal-body .field textarea {
+  padding: 7px 10px;
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface-1, #ffffff);
+  color: var(--color-ink, #f7f8f8);
+  font-size: var(--font-size-sm, 13px);
+  font-family: inherit;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.modal-body .field input:focus,
+.modal-body .field textarea:focus {
+  border-color: var(--color-primary, #5e6ad2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #5e6ad2) 40%, transparent);
+}
+
+.modal-body .field textarea {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs, 12px);
+  resize: vertical;
+}
+
+/* 必填星号：MiddlewareDeploy/OSOptimize 两页同文，收编为通用规则。 */
+.modal-body .req {
+  color: var(--fail);
+  margin-left: 2px;
+}
+
+/* ===========================================================================
+ * 对话框家族 B：浮层 + 盒子（.modal-overlay > .modal-box）
+ * ---------------------------------------------------------------------------
+ * ConfirmModal / PromptModal 两组件在用，二者互为近乎逐字重复（仅 .modal-message
+ * 的下间距 18 vs 12）。原为各自 scoped，2026-10-30 收编至本文件。
+ * 最终统一目标：迁到 components/ui/Modal.vue，届时本族删除。
+ * =========================================================================== */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--modal-mask);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: var(--space-4, 16px);
+}
+
+.modal-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(31, 37, 64, 0.22);
+  padding: 22px 24px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.modal-title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.modal-message {
+  margin: 0 0 var(--space-4, 18px);
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* PromptModal 的消息下间距更紧（其输入框紧随其后）。 */
+.modal-message--tight {
+  margin-bottom: var(--space-3, 12px);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2, 8px);
+}
+
+/* Vue Transition：进出各 0.18s；盒子上浮 + 淡入。 */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.18s ease;
+}
+
+.modal-enter-active .modal-box,
+.modal-leave-active .modal-box {
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .modal-box,
+.modal-leave-to .modal-box {
+  transform: translateY(-8px) scale(0.98);
+  opacity: 0;
+}
+
+/* 暗色模式（家族 A 的输入控件；B 族的颜色走 tokens.css 语义变量，无需覆盖） */
+[data-theme="dark"] .modal-body .field input,
+[data-theme="dark"] .modal-body .field textarea,
+[data-theme="dark"] .modal-body .field select {
+  background: var(--surface-l1, #131620);
+  border-color: var(--border-primary, #2b3243);
+  color: var(--text-primary, #f9fafb);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-body .field input,
+  .modal-body .field textarea,
+  .modal-enter-active,
+  .modal-leave-active,
+  .modal-enter-active .modal-box,
+  .modal-leave-active .modal-box {
     transition: none !important;
   }
 }

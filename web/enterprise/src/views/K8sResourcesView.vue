@@ -135,9 +135,9 @@
     </div>
 
     <!-- Pod 日志对话框 -->
-    <div v-if="logsOpen" class="modal-mask" data-testid="k8s-logs-modal" @click.self="logsOpen = false">
-      <div class="modal modal-lg">
-        <header class="modal-head">
+    <div v-if="logsOpen" class="modal-mask modal-mask--inset" data-testid="k8s-logs-modal" @click.self="logsOpen = false">
+      <div class="modal modal--fluid modal--wide">
+        <header class="modal-head modal-head--bordered">
           <h3>{{ $t('k8s.viewLogs') }} · <code>{{ logsTarget?.name }}</code></h3>
           <Button variant="ghost" size="sm" @click="logsOpen = false">✕</Button>
         </header>
@@ -159,9 +159,9 @@
     </div>
 
     <!-- 扩缩容对话框 -->
-    <div v-if="scaleOpen" class="modal-mask" data-testid="k8s-scale-modal" @click.self="scaleOpen = false">
-      <div class="modal modal-sm">
-        <header class="modal-head">
+    <div v-if="scaleOpen" class="modal-mask modal-mask--inset" data-testid="k8s-scale-modal" @click.self="scaleOpen = false">
+      <div class="modal modal--fluid modal--narrow">
+        <header class="modal-head modal-head--bordered">
           <h3>{{ $t('k8s.scale') }} · <code>{{ scaleTarget?.name }}</code></h3>
           <Button variant="ghost" size="sm" @click="scaleOpen = false">✕</Button>
         </header>
@@ -768,25 +768,13 @@ onMounted(() => {
 .code-block { background: var(--color-surface-2, #f7f9fc); padding: 12px; border-radius: var(--radius-sm, 6px); overflow: auto; font-size: 12px; font-family: var(--font-family-mono); white-space: pre-wrap; word-break: break-all; max-height: 480px; }
 .logs-block { min-height: 200px; }
 
-.modal-mask {
-  position: fixed; inset: 0; z-index: 50;
-  background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; padding: 16px;
-}
-.modal {
-  background: var(--color-surface-1, #ffffff); border: 1px solid var(--color-hairline, #d3dbe8);
-  border-radius: var(--radius-md, 8px); box-shadow: 0 12px 40px rgba(31, 37, 64, 0.22);
-  width: 100%; max-width: 520px; max-height: 88vh; overflow: auto;
-}
-.modal.modal-lg { max-width: 760px; }
-.modal.modal-sm { max-width: 420px; }
-.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--color-hairline, #d3dbe8); }
-.modal-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
-.modal-body { padding: 16px 18px; }
-.modal-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-.modal-body .field label { margin: 0; font-size: 11px; font-weight: 500; color: var(--color-ink-muted, #6b7280); }
+/* 对话框已全部改用 styles/pages.css 全局家族 A（2026-10-30 收编）：
+   .modal-mask--inset（原 16px 内距，本页 z-index 保持全局 50）/
+   .modal--fluid + .modal--wide/--narrow（原 100%+520px，lg/sm 抬上限到 760/420）/
+   .modal-head--bordered（原带下边框页头）。模板已挂对应修饰类。 */
 
-/* Dark mode */
-[data-theme="dark"] .card, [data-theme="dark"] .modal, [data-theme="dark"] .field input, [data-theme="dark"] .field select {
+/* 暗色模式：.card 的暗色规则在 pages.css；.field 输入控件的暗色规则随对话框家族一并上移 */
+[data-theme="dark"] .card {
   background: var(--color-surface-2, #1e2430); border-color: var(--color-hairline, #23252a); color: var(--color-ink, #f7f8f8);
 }
 </style>

@@ -45,9 +45,9 @@
     </div>
 
     <!-- 添加集群对话框 -->
-    <div v-if="addOpen" class="modal-mask" data-testid="k8s-add-modal" @click.self="addOpen = false">
-      <div class="modal">
-        <header class="modal-head">
+    <div v-if="addOpen" class="modal-mask modal-mask--top" data-testid="k8s-add-modal" @click.self="addOpen = false">
+      <div class="modal modal--fluid">
+        <header class="modal-head modal-head--bordered">
           <h3>{{ $t('k8s.addCluster') }}</h3>
           <Button variant="ghost" size="sm" @click="addOpen = false">✕</Button>
         </header>
@@ -243,52 +243,7 @@ onMounted(() => {
   border-color: var(--color-primary-900, var(--color-primary, #2563eb));
 }
 
-/* Modal overlay + box */
-.modal-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  padding: 16px;
-}
-.modal {
-  background: var(--color-surface-1, #ffffff);
-  border: 1px solid var(--color-hairline, #d3dbe8);
-  border-radius: var(--radius-md, 8px);
-  box-shadow: 0 12px 40px rgba(31, 37, 64, 0.22);
-  width: 100%;
-  max-width: 520px;
-  max-height: 88vh;
-  overflow: auto;
-}
-.modal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--color-hairline, #d3dbe8);
-}
-.modal-head h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-.modal-body {
-  padding: 16px 18px;
-}
-/* .msg / .msg.ok / .msg.err 已改用 styles/pages.css 全局原语 */
-
-/* Dark mode overrides */
-[data-theme="dark"] .modal,
-[data-theme="dark"] .modal-head,
-[data-theme="dark"] .field input,
-[data-theme="dark"] .field textarea,
-[data-theme="dark"] .field select {
-  background: var(--color-surface-2, #1e2430);
-  border-color: var(--color-hairline, #23252a);
-  color: var(--color-ink, #f7f8f8);
-}
+/* 对话框已全部改用 styles/pages.css 全局家族 A（2026-10-30 收编）：
+   .modal-mask--top（本页原 z-index 9999）/ .modal--fluid（原 100%+520px 无内距）/
+   .modal-head--bordered（原带下边框页头）。模板已挂对应修饰类。 */
 </style>

@@ -704,22 +704,10 @@ onUnmounted(() => {
 }
 .version-item.is-default { border-color: var(--accent); background: var(--accent-soft); }
 
-/* 模态对话框 */
-.modal-mask {
-  position: fixed; inset: 0; z-index: 50;
-  background: var(--modal-mask); display: flex; align-items: center; justify-content: center;
-}
-.modal {
-  width: 580px; max-width: 94vw; max-height: 88vh; overflow: auto;
-  background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
-  padding: 20px 22px;
-}
-.modal-sm { width: 420px; }
+/* .modal-mask / .modal / .modal-sm / .modal-head / .modal-body .field( label) /
+   .modal-body .req 已改用 styles/pages.css 全局对话框家族 A（2026-10-30 收编）。
+   .modal-deploy 是本页专属宽度（700px），故保留。 */
 .modal-deploy { width: 700px; }
-.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.modal-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.modal-body .field label { margin: 0; }
-.modal-body .req { color: var(--fail); margin-left: 2px; }
 /* 部署对话框：部署方式 / 版本 / 目标设备 三列并排 */
 .deploy-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .deploy-fields .field { min-width: 0; margin-bottom: 0; }

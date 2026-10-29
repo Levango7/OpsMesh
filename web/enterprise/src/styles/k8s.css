@@ -6,15 +6,15 @@
  * 已于 2026-10-28 收编至 styles/pages.css（单一来源，另有守卫禁 scoped 副本），
  * 本文件不再定义它们，也不得再作为全站事实标准。
  *
- * 本文件owns：
+ * 本文件owns（仅此四项，全部 k8s 专属）：
  *   .k8s-subnav / .k8s-subnav__item        集群 / 资源 两个子页的页签
  *   .res-tabs / .res-tab                   资源类型切换
  *   .code-block / .logs-block              日志与代码块
- *   .modal-* 家族                          对话框（尚未收编，见遗留清单）
  *
- * 遗留（docs/ui-design.md「页面骨架统一规则」）：.modal-* 家族仍寄生在本文件，
- * 且被 9 个视图的 scoped 副本遮蔽（含 .modal-mask 的 z-index 分歧 50 vs 9999），
- * 计划与 DetailDrawer 一并收编进 pages.css，属下一批次。
+ * .modal-* 家族已于 2026-10-30 收编至 styles/pages.css（含两套并存家族：
+ * A 遮罩+面板、B 浮层+盒子，分歧固化为 --top/--fluid/--bordered/--tight 修饰类），
+ * 本文件不再定义它们，也不再作为全站事实标准。
+ * 仍在 pages.css 登记的后续目标：把家族 B 迁到 components/ui/Modal.vue 组件。
  * =========================================================================== */
 
 /* ===== 子页签 ===== */
@@ -113,87 +113,12 @@
   min-height: 200px;
 }
 
-/* ===== 对话框（未收编，见文件头遗留清单） ===== */
-.modal-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: var(--modal-mask, rgba(0, 0, 0, 0.5));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.modal {
-  width: 540px;
-  max-width: 94vw;
-  max-height: 88vh;
-  overflow: auto;
-  background: var(--color-surface-1, #ffffff);
-  border: 1px solid var(--color-hairline, #d3dbe8);
-  border-radius: var(--radius-lg, 12px);
-  box-shadow: var(--shadow-xl, 0 16px 48px rgba(0, 0, 0, 0.5));
-  padding: 20px 22px;
-}
-
-.modal-sm { width: 420px; }
-.modal-lg { width: 760px; }
-
-.modal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-3, 12px);
-}
-
-.modal-body .field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1, 4px);
-  margin-bottom: var(--space-2, 10px);
-}
-
-.modal-body .field label {
-  margin: 0;
-  font-size: var(--font-size-xs, 11px);
-  font-weight: 500;
-  color: var(--color-ink-muted, #6b7280);
-}
-
-.modal-body .field input,
-.modal-body .field textarea {
-  padding: 7px 10px;
-  border: 1px solid var(--color-hairline, #d3dbe8);
-  border-radius: var(--radius-sm, 6px);
-  background: var(--color-surface-1, #ffffff);
-  color: var(--color-ink, #f7f8f8);
-  font-size: var(--font-size-sm, 13px);
-  font-family: inherit;
-  outline: none;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.modal-body .field input:focus,
-.modal-body .field textarea:focus {
-  border-color: var(--color-primary, #5e6ad2);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #5e6ad2) 40%, transparent);
-}
-
-.modal-body .field textarea {
-  font-family: var(--font-mono, monospace);
-  font-size: var(--font-size-xs, 12px);
-  resize: vertical;
-}
-
 /* ===== 暗色模式覆盖 ===== */
 [data-theme="dark"] .k8s-subnav__item.is-active {
   background: var(--surface-l1, #131620);
   border-color: var(--border-primary, #2b3243);
 }
 
-[data-theme="dark"] .modal-body .field input,
-[data-theme="dark"] .modal-body .field textarea,
-[data-theme="dark"] .modal-body .field select,
 [data-theme="dark"] .res-tab {
   background: var(--surface-l1, #131620);
   border-color: var(--border-primary, #2b3243);
@@ -202,9 +127,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .k8s-subnav__item,
-  .res-tab,
-  .modal-body .field input,
-  .modal-body .field textarea {
+  .res-tab {
     transition: none !important;
   }
 }

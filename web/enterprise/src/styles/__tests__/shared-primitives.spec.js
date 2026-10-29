@@ -59,7 +59,37 @@ const OWNED = new Set([
   '.status-row',
   '.status-label',
   '.status-value',
-  '.node-row'
+  '.node-row',
+  // 对话框家族 A（遮罩 + 面板）
+  '.modal-mask',
+  '.modal',
+  '.modal-sm',
+  '.modal-lg',
+  '.modal-head',
+  '.modal-head h3',
+  '.modal-body',
+  '.modal-body .field',
+  '.modal-body .field label',
+  '.modal-body .field input',
+  '.modal-body .field textarea',
+  '.modal-body .field input:focus',
+  '.modal-body .field textarea:focus',
+  '.modal-body .req',
+  // 对话框家族 B（浮层 + 盒子）。BEM 的 .modal__* / .modal--* 是 ui/Modal.vue 组件
+  // 的另一套命名，不遮蔽本家族，故不列入。
+  '.modal-overlay',
+  '.modal-box',
+  '.modal-title',
+  '.modal-message',
+  '.modal-actions',
+  '.modal-enter-active',
+  '.modal-leave-active',
+  '.modal-enter-from',
+  '.modal-leave-to',
+  '.modal-enter-active .modal-box',
+  '.modal-leave-active .modal-box',
+  '.modal-enter-from .modal-box',
+  '.modal-leave-to .modal-box'
 ])
 
 /** 已知例外：file → reasons。只减不增，空表即全清。 */
