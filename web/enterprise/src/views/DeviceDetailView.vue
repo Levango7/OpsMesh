@@ -477,12 +477,6 @@ onUnmounted(() => {
 }
 
 /* 两栏布局 */
-.row {
-  display: flex;
-  gap: var(--space-3, 12px);
-  flex-wrap: wrap;
-  align-items: stretch;
-}
 .col-half {
   flex: 1;
   min-width: 320px;

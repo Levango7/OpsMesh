@@ -13,7 +13,7 @@
 
     <!-- ========== Tab 1: 告警规则 ========== -->
     <div v-show="activeTab === 'rules'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="primary" size="md" @click="openRuleCreate" data-testid="alert-rule-create-btn">
           <Icon name="add" :size="14" /> {{ $t('alertRules.add_rule') }}
         </Button>
@@ -45,7 +45,7 @@
 
     <!-- ========== Tab 2: 引擎规则 ========== -->
     <div v-show="activeTab === 'engine'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="primary" size="md" @click="openEngineCreate" data-testid="alert-engine-create-btn">
           <Icon name="add" :size="14" /> {{ $t('alertRules.add_engine') }}
         </Button>
@@ -74,7 +74,7 @@
 
     <!-- ========== Tab 3: 静默规则 ========== -->
     <div v-show="activeTab === 'silences'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="primary" size="md" @click="openSilenceCreate" data-testid="alert-silence-create-btn">
           <Icon name="add" :size="14" /> {{ $t('alertRules.add_silence') }}
         </Button>
@@ -143,7 +143,7 @@
           </label>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="ruleForm = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -177,7 +177,7 @@
           </select>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="engineForm = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -206,7 +206,7 @@
           <input v-model.trim="silenceForm.comment" type="text" />
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="silenceForm = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -471,8 +471,6 @@ onMounted(() => { store.fetchRules() })
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab:hover { color: var(--text); }
 
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
-.row-actions { display: flex; gap: 4px; }
 .status-pill {
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
@@ -481,10 +479,7 @@ onMounted(() => { store.fetchRules() })
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
 
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.btnbar { margin-top: 8px; }
 
 @media (max-width: 600px) { .row-2 { grid-template-columns: 1fr; } }
 </style>

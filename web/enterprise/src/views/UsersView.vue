@@ -1,6 +1,6 @@
 <template>
   <PageShell :title="$t('users.title')" :desc="$t('users.subtitle')" testid="users" :error="loadErr">
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" data-testid="users-add-btn" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('users.add') }}
@@ -71,7 +71,7 @@
           </select>
         </div>
         <div v-if="formError" class="msg err" data-testid="users-form-error">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit" data-testid="users-save-btn"><Icon name="success" :size="14" /> {{ $t('users.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" data-testid="users-cancel-btn" @click="form = null">{{ $t('users.cancel') }}</Button>
         </div>
@@ -263,10 +263,8 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .user-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
+/* .row-actions / .field / .field > label / .btnbar 已改用 styles/pages.css 全局原语 */
 .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
 .checkbox-item {
   display: inline-flex; align-items: center; gap: 5px;
@@ -274,5 +272,4 @@ onMounted(() => {
   padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--surface-2); cursor: pointer;
 }
-.btnbar { margin-top: 8px; }
 </style>

@@ -166,12 +166,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .search-bar { margin-bottom: 16px; }
 .search-field { flex: 1; min-width: 200px; }
 .search-field input { width: 100%; }
-.flowbar .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 0; }
-.flowbar .field label { margin: 0; }
 
 .plugin-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px;

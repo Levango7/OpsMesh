@@ -211,8 +211,6 @@ onMounted(() => {
 .row .col:nth-child(1) { flex: 45; }
 .row .col:nth-child(2) { flex: 55; }
 
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.row-actions { display: inline-flex; gap: 6px; }
 .metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .metric-value { font-size: 28px; font-weight: 700; color: var(--text); }
 
@@ -257,10 +255,4 @@ onMounted(() => {
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .modal-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .modal-body .field label { margin: 0; }
-.row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
 </style>

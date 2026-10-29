@@ -189,14 +189,3 @@ async function onOpen(id) { await store.open(id) }
 onMounted(() => { store.fetchList() })
 </script>
 
-<style scoped>
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
-.field label { margin: 0; }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-</style>

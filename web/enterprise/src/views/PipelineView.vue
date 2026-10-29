@@ -1,6 +1,6 @@
 <template>
   <PageShell :title="$t('pipeline.title')" :desc="$t('pipeline.subtitle')" testid="pipeline" :error="loadErr">
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('pipeline.add') }}
@@ -68,7 +68,7 @@
           <textarea v-model="form.yaml" rows="8" :placeholder="$t('pipeline.yaml_hint')"></textarea>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('pipeline.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('pipeline.cancel') }}</Button>
         </div>
@@ -248,7 +248,7 @@ onMounted(fetchAll)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
+/* .row-actions / .field / .field > label / .btnbar 已改用 styles/pages.css 全局原语 */
 .section-title { margin: 22px 0 4px; font-size: 15px; }
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
@@ -259,8 +259,6 @@ onMounted(fetchAll)
 .tag.st-running { background: var(--info-bg); color: var(--info); }
 .tag.st-pending { background: var(--surface-3); color: var(--text-3); }
 .tpl-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
+/* .field / .field > label 已改用 styles/pages.css 全局原语 */
 .field textarea { font-family: var(--font-mono, monospace); font-size: 12.5px; }
-.btnbar { margin-top: 8px; }
 </style>

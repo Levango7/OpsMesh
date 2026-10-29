@@ -271,9 +271,6 @@ onMounted(() => {
 .row .col:nth-child(1) { flex: 45; }
 .row .col:nth-child(2) { flex: 55; }
 
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.row-actions { display: inline-flex; gap: 6px; }
-
 .cooldown-badge {
   display: inline-flex; align-items: center; height: 20px;
   padding: 0 9px; border-radius: 999px;
@@ -293,12 +290,6 @@ onMounted(() => {
 .bar-up { background: var(--ok); }
 .bar-down { background: var(--info); }
 
-.row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
 .modal-mask {
   position: fixed; inset: 0; z-index: 50;
   background: var(--modal-mask); display: flex; align-items: center; justify-content: center;

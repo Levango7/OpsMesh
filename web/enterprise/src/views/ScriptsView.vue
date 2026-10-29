@@ -5,7 +5,7 @@
     testid="scripts"
     :error="loadErr"
   >
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('scripts.add') }}
@@ -58,7 +58,7 @@
           <input v-model.number="form.timeoutSec" type="number" min="1" max="600" />
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('scripts.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('scripts.cancel') }}</Button>
         </div>
@@ -77,7 +77,7 @@
           <input v-model.trim="execForm.params" type="text" :placeholder="$t('scripts.exec_params_placeholder')" />
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="task" :size="14" /> {{ $t('scripts.execute') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="execForm = null">{{ $t('scripts.cancel') }}</Button>
         </div>
@@ -276,7 +276,6 @@ onMounted(fetchScripts)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .status-pill {
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
@@ -286,11 +285,8 @@ onMounted(fetchScripts)
 .status-pill.bad { background: var(--fail-bg); color: var(--fail); }
 .status-pill.warn { background: var(--warn-bg); color: var(--warn); }
 .script-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .field textarea {
   font-family: var(--font-mono, monospace);
   font-size: 12.5px; resize: vertical;
 }
-.btnbar { margin-top: 8px; }
 </style>

@@ -190,7 +190,6 @@ onMounted(() => { loadList() })
 
 <style scoped>
 .filter-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
-.btnbar { display: flex; gap: 8px; }
 
 .detail-body .kv { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
 .detail-body .k { font-size: 11.5px; color: var(--text-3); }

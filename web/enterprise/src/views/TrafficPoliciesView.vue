@@ -1,6 +1,6 @@
 <template>
   <PageShell :title="$t('traffic.title')" :desc="$t('traffic.subtitle')" testid="traffic-policies" :error="loadErr">
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('traffic.add') }}
@@ -69,7 +69,7 @@
           <input v-model.number="form.mirrorPercent" type="number" min="0" max="100" />
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('traffic.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('traffic.cancel') }}</Button>
         </div>
@@ -234,7 +234,7 @@ onMounted(fetchPolicies)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
+/* .row-actions / .field / .field > label / .btnbar 已改用 styles/pages.css 全局原语 */
 .status-pill {
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
@@ -242,7 +242,4 @@ onMounted(fetchPolicies)
 .status-pill.ok { background: var(--accent-soft); color: var(--accent); }
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
 .policy-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
-.btnbar { margin-top: 8px; }
 </style>

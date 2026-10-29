@@ -1,19 +1,32 @@
 /* ===========================================================================
- * 页面骨架层（pages.css）—— 全站页面统一规则的单一来源
+ * 页面骨架与共享原语层（pages.css）—— 全站页面统一规则的单一来源
  * ---------------------------------------------------------------------------
- * 统一规则（2026-10-27 前端布局专项）：
+ * 统一规则（2026-10-27 前端布局专项，2026-10-28 共享原语收编）：
  *   1. 每个视图的内容层必须由 PageShell 组件包裹（<PageShell title desc testid>），
  *      页面标题/描述/操作区一律走 PageShell，不许页面自造标题类名。
  *   2. 表格数据用 DataTable 组件；原生 <table> 仅限非数据网格场景（矩阵/时间轴），
  *      且须在视图头注释写明理由。
  *   3. 工具条用 .btnbar（按钮栏）/ .flowbar（筛选表单栏）；错误横幅用 PageShell 的
- *      error prop（内部渲染 .poll-err），不许各页自绘。
+ *      error prop（内部渲染 .poll-err），不许各页自绘、更不许各页自写 .poll-err 样式。
  *   4. 模态/抽屉分别用 .modal-* 全局类与 DetailDrawer 组件。
  *
- * 历史沿革（为什么有这个文件）：此前各页自造根容器/标题类名（实测 7 种标题写法
- * + 一堆一次性类名），共享原语（.btnbar/.card/.poll-err 等）寄生在 k8s.css 里——
- * 后者仍在使用中，本文件不重复定义，**合并不动**（收编为 UI 债，见 docs/ui-design.md
- * 「页面骨架统一规则」节的遗留清单）。
+ * 本文件 owns 什么（全站共享原语的唯一定义处）：
+ *   .page__*（页面骨架）· .card / .card h3 / .card__title · .field / .field label
+ *   .flowbar / .flowbar .field* · .row / .row-actions · .btnbar · .muted / .msg /
+ *   .hint / .poll-err · .status-* / .node-row
+ * 页面里一律不允许再写这些选择器的 scoped 副本；守卫见 views/__tests__/
+ * page-conventions.spec.js 的 SHARED_PRIMITIVES 段（白名单只减不增）。
+ *
+ * 历史沿革（为什么原语从 k8s.css 搬到这里）：此前共享原语寄生在 styles/k8s.css
+ * 里，靠 main.js 的 import 顺序压过 assets/tokens.css 的同名规则取胜，实际形成
+ * 「k8s 命名 = 全站事实标准」；同时 78 个视图各自复制一份 scoped 副本，导致同名
+ * 类在不同页有 8 种 .card / 16 种 .btnbar / 10 种 .field 写法（2026-10-28 实测）。
+ * 本批次把这些定义统一收编到本文件，k8s.css 只留 k8s 专属类（.k8s-subnav/.res-tab/
+ * .code-block/.logs-block）；.modal-* 家族仍暂留 k8s.css，留待下一批次。
+ *
+ * Token 口径：一律走 styles/design-tokens.css（--space-*/--radius-*/--color-*/--font-size-*），
+ * 这是与 components/ui/* 一致的「新刻度」；仅在 design-tokens 没有对应变量时才回落到
+ * assets/tokens.css 的旧变量（--text-2/--text-3/--surface-l1），并写成 ladder 兜底。
  * =========================================================================== */
 
 /* ===== 页面骨架 ===== */
@@ -49,4 +62,314 @@
   flex-shrink: 0;
 }
 
-/* ===== 暗色模式（骨架仅用语义色变量，无需覆盖；此段留作将来硬编码色补丁位） ===== */
+/* ===== 按钮栏 =====
+ * 全站唯一口径：横向排布 + 8px 间距 + 12px 下间距 + 允许换行。
+ * 历史：此前 49 个文件各自复制一份，实测出 16 种写法（其中 23 个只写
+ * margin-top: 8px 去部分遮蔽全局），本批次统一收编，页面里禁止再写 .btnbar。 */
+.btnbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  margin-bottom: var(--space-3, 12px);
+  flex-wrap: wrap;
+}
+
+/* ===== 筛选表单栏 ===== */
+.flowbar {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3, 12px);
+}
+
+.flowbar .field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+  margin-bottom: 0;
+  min-width: 200px;
+}
+
+.flowbar .field > label,
+.flowbar .field label {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2, #4e5674);
+}
+
+.flowbar .field select,
+.flowbar .field input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface-1, #ffffff);
+  color: var(--color-ink, #f7f8f8);
+  font-size: var(--font-size-sm, 13px);
+  font-family: inherit;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.flowbar .field select:focus,
+.flowbar .field input:focus {
+  border-color: var(--color-primary, #5e6ad2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #5e6ad2) 40%, transparent);
+}
+
+/* 横向筛选栏：字段左右排布（label 在控件左侧），用于筛选行较短的场景。
+ * 历史：WorkflowsView 自带 .flowbar .field { align-items: center } 实现同一效果，
+ * 与本文件的纵向口径并存，故收编为显式变体。 */
+.flowbar--inline {
+  align-items: center;
+}
+
+.flowbar--inline .field {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.flowbar--inline .field > label,
+.flowbar--inline .field label {
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* ===== 卡片：抬升变体 =====
+ * 用于需要视觉浮起的卡片。历史：10 个页面自带 box-shadow + margin-top，
+ * 与其它 20 页的无边框影卡片并存导致同页两种卡片观感，此处收编为显式变体。 */
+.card--raised {
+  box-shadow: var(--shadow, 0 1px 2px rgba(28, 35, 64, .04), 0 6px 20px rgba(28, 35, 64, .08));
+  margin-top: 14px;
+  margin-bottom: 0;
+}
+
+/* ===== 卡片：紧凑变体 =====
+ * 四边等距内距、无下间距（用于 tab 面板容器这类「卡片即容器」的场景）。
+ * 历史：SystemOpsView 自带一份只差 padding/margin-bottom 的 .card，收编为显式变体。 */
+.card--flat {
+  padding: var(--space-4, 16px);
+  margin-bottom: 0;
+}
+
+/* ===== 按钮栏：位置变体 =====
+ * 页面顶部工具栏（位于内容之前）用裸 .btnbar（下间距 12px）。
+ * 内容之后的动作行（表单/卡片底部）用 .btnbar--bottom（上间距 8px）。
+ * 历史：48 处 scoped 只写 margin-top 去遮蔽全局，本批次改由本修饰类接管。 */
+.btnbar--bottom {
+  margin-top: var(--space-2, 8px);
+  margin-bottom: 0;
+}
+
+/* 右对齐动作行（如模态底部的取消/确认） */
+.btnbar--end {
+  justify-content: flex-end;
+}
+
+/* 作为栅格子项横跨整行的动作行（父容器为 grid） */
+.btnbar--grid-row {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  margin-top: var(--space-2, 8px);
+  margin-bottom: 0;
+}
+
+/* ===== 表单字段 =====
+ * 竖向字段容器。页面里的筛选/表单字段一律用 .field + <label> 结构；
+ * min-width 之类属于栅格上下文的事，需要时套在 .row 上用辅助类，不要在 .field 上写。 */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+  margin-bottom: var(--space-2, 8px);
+}
+
+.field > label,
+.field label {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2, #4e5674);
+}
+
+/* 固定宽度字段：筛选行里需要等宽排列时用。
+ * 口径与 .flowbar .field 的 min-width: 200px 一致（同一份约定，不再各页手写）。 */
+.field--fixed {
+  min-width: 200px;
+}
+
+/* ===== 行布局 ===== */
+.row {
+  display: flex;
+  gap: var(--space-4, 16px);
+  flex-wrap: wrap;
+  align-items: flex-start;
+  margin-bottom: var(--space-4, 16px);
+}
+
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 6px);
+  flex-wrap: wrap;
+}
+
+/* ===== 卡片 =====
+ * 卡片统一口径：surface-1 底面 + hairline 边框 + --radius-md 圆角（与 components/ui/*
+ * 同一刻度）+ 16/18 内距 + 16 下间距 + 13px 正文字号（无对应 token，沿用既有观感）。
+ * 卡片内标题：结构上用 .card h3（实色、主文本色）；要做成弱化的栏位小标用 .card__title。 */
+.card {
+  background: var(--color-surface-1, var(--surface-l1, #ffffff));
+  border: 1px solid var(--color-hairline, var(--border-primary, #d3dbe8));
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-4, 16px) 18px;
+  margin-bottom: var(--space-4, 16px);
+  font-size: 13px;
+}
+
+.card > h3:first-child {
+  margin-top: 0;
+}
+
+.card h3 {
+  margin: 0 0 var(--space-3, 12px) 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink, var(--text-primary, #111827));
+}
+
+.card__title {
+  margin: 0 0 var(--space-3, 12px) 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink-muted, var(--text-2, #4b5563));
+}
+
+.card + .card {
+  margin-top: 0;
+}
+
+/* 暗色模式：card 升至 surface-2（原 TasksView 局部覆盖，随原语收编上移） */
+[data-theme="dark"] .card {
+  background: var(--color-surface-2, #1e2430);
+  border-color: var(--color-hairline, #23252a);
+}
+
+/* ===== 文本辅助 ===== */
+.muted {
+  color: var(--color-ink-muted, var(--text-3, #67708f));
+  font-size: 12.5px;
+}
+
+.msg {
+  margin: var(--space-2, 8px) 0 0 0;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+
+.msg.ok {
+  color: var(--color-success, var(--ok, #059669));
+}
+
+.msg.err {
+  color: var(--color-error, var(--fail, #e11d48));
+}
+
+.hint {
+  margin: 0 0 var(--space-3, 12px) 0;
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-ink-tertiary, var(--text-3, #67708f));
+}
+
+/* ===== 错误横幅 =====
+ * 由 PageShell 渲染（见规则 3）。视图一律通过 :error prop 传入，不得自绘 DOM，
+ * 也不得在本文件之外再定义 .poll-err 样式（原 k8s.css 版本已收编至此）。 */
+.poll-err {
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  margin: var(--space-1, 6px) 0 var(--space-3, 12px) 0;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-error-soft, #fef2f2);
+  border: 1px solid var(--color-error-light, #fecaca);
+  color: var(--color-error, #ef4444);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* ===== 状态行 / 节点行 ===== */
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  margin-bottom: var(--space-1, 6px);
+  font-size: 13px;
+}
+
+.status-label {
+  color: var(--color-ink-muted, var(--text-3, #67708f));
+  font-weight: 500;
+}
+
+.status-value {
+  font-weight: 600;
+}
+
+/* 分隔线变体：列表型状态行（每行下边框分隔）。 */
+.status-row--divided {
+  padding: var(--space-1, 6px) 0;
+  border-bottom: 1px dashed var(--border, var(--border-primary, #d3dbe8));
+}
+
+.node-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3, 12px);
+  padding: var(--space-2, 8px) 10px;
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-sm, 6px);
+}
+
+/* ===== 暗色模式输入框 ===== */
+[data-theme="dark"] .flowbar .field select,
+[data-theme="dark"] .flowbar .field input {
+  background: var(--surface-l1, #131620);
+  border-color: var(--border-primary, #2b3243);
+  color: var(--text-primary, #f9fafb);
+}
+
+/* ===== 响应式 =====
+ * 沿用 legacy tokens.css 的同名响应式口径（原随 .row/.card/.btnbar 的定义迁出），
+ * 与 components/ui/* 的 768 断点保持一致。 */
+@media (max-width: 768px) {
+  .row {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .card {
+    padding: 14px 14px;
+    margin-bottom: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .btnbar {
+    width: 100%;
+  }
+
+  .btnbar button {
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flowbar .field input,
+  .flowbar .field select {
+    transition: none !important;
+  }
+}

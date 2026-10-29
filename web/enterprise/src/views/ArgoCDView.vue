@@ -5,7 +5,7 @@
     testid="argo-cd"
     :error="loadErr"
   >
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('argocd.add') }}
@@ -76,7 +76,7 @@
           </select>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('argocd.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('argocd.cancel') }}</Button>
         </div>
@@ -252,7 +252,6 @@ onMounted(fetchApps)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; background: var(--accent-soft); color: var(--accent);
@@ -264,7 +263,4 @@ onMounted(fetchApps)
 .tag.hst-missing { background: var(--warn-bg); color: var(--warn); }
 .repo { font-size: 12px; }
 .app-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
-.btnbar { margin-top: 8px; }
 </style>

@@ -112,8 +112,8 @@ code {
   color: var(--code-color);
 }
 p { color: var(--text-2); margin: 6px 0; }
-.muted { color: var(--text-3); }
-.hint { font-size: var(--fs-sm); color: var(--text-3); margin: 4px 0 10px; }
+/* .muted / .hint / .card / .row / .btnbar / .msg 等共享原语已于 2026-10-28
+   收编至 styles/pages.css（单一来源），此处不再重复定义。 */
 
 /* 通用按钮 */
 button {
@@ -159,45 +159,22 @@ input:focus, select:focus, textarea:focus {
 }
 label { display: inline-flex; align-items: center; gap: 6px; margin: 4px 12px 8px 0; color: var(--text-2); font-size: 13px; }
 
-/* 通用工具类 */
-.btnbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
-.row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+/* 通用工具类（.col 保留：与 .row 配合的两栏栅格辅助；原语见 styles/pages.css） */
 .col { flex: 1; min-width: 380px; }
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 20px;
-  box-shadow: var(--shadow);
-  margin-bottom: 18px;
-}
-.card > h2:first-child, .card > h3:first-child { margin-top: 0; }
 .divider { height: 1px; background: var(--border); border: 0; margin: 16px 0; }
-.msg { margin-top: 10px; font-size: var(--fs-base); white-space: pre-wrap; }
-.msg.ok { color: var(--ok); }
-.msg.err { color: var(--fail); }
 
 /* 路由切换淡入 */
 .fade-enter-active, .fade-leave-active { transition: opacity .2s ease, transform .2s ease; }
 .fade-enter-from { opacity: 0; transform: translateY(4px); }
 .fade-leave-to { opacity: 0; transform: translateY(-4px); }
 
-/* 响应式 */
+/* 响应式（.row / .card / .btnbar 的原生响应式规则随原语一并迁至 styles/pages.css） */
 @media (max-width: 768px) {
   .col { min-width: 100%; }
-  /* 两栏 .row 在小屏堆叠为单列 */
-  .row { flex-direction: column; gap: 14px; }
-  /* 卡片内边距收窄，节省小屏空间 */
-  .card { padding: 14px 14px; margin-bottom: 14px; }
   /* 底栏单列居中 */
   .footbar { flex-direction: column; gap: 4px; text-align: center; }
   /* h2 标题略缩 */
   h2 { font-size: 15px; }
-}
-@media (max-width: 480px) {
-  /* 极窄屏：按钮栏允许换行且占满宽度 */
-  .btnbar { width: 100%; }
-  .btnbar button { flex: 1 1 auto; }
 }
 
 /* 路由懒加载骨架屏 */

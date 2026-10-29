@@ -5,7 +5,7 @@
 
     <div class="card">
       <div class="flowbar">
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('k8s.selectCluster') }}</label>
           <select v-model="store.currentClusterID" @change="onClusterChange" data-testid="k8s-cluster-select">
             <option value="">— {{ $t('k8s.selectCluster') }} —</option>
@@ -14,7 +14,7 @@
             </option>
           </select>
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('k8s.namespace') }}</label>
           <input
             v-model="nsInput"
@@ -143,11 +143,11 @@
         </header>
         <div class="modal-body">
           <div class="flowbar">
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('k8s.tailLines') }}</label>
               <input v-model.number="logsForm.tailLines" type="number" min="1" max="10000" style="width: 100px" />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('k8s.container') }}</label>
               <input v-model="logsForm.container" :placeholder="$t('k8s.containerHint')" />
             </div>
@@ -168,7 +168,7 @@
         <div class="modal-body">
           <p class="muted">{{ $t('k8s.scaleHint') }}</p>
           <p>{{ $t('k8s.scaleCurrent', { replicas: scaleTarget?.replicas || 0, available: scaleTarget?.availableReplicas || 0 }) }}</p>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('k8s.targetReplicas') }}</label>
             <input v-model.number="scaleReplicas" type="number" min="0" data-testid="k8s-scale-replicas" />
           </div>
@@ -756,18 +756,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--color-surface-1, #ffffff);
-  border: 1px solid var(--color-hairline, #d3dbe8);
-  border-radius: var(--radius-md, 8px);
-  padding: 16px 18px;
-  margin-bottom: 16px;
-}
-.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
-
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; min-width: 200px; }
-.field label { font-size: 11px; font-weight: 500; color: var(--color-ink-muted, #6b7280); }
 .field input, .field select {
   padding: 7px 9px; border: 1px solid var(--color-hairline, #d3dbe8);
   border-radius: var(--radius-sm, 6px); font-size: 13px;
@@ -776,9 +764,6 @@ onMounted(() => {
 
 .res-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .res-tab { font-size: 12px; }
-
-.row-actions { display: inline-flex; gap: 4px; flex-wrap: wrap; }
-.muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
 
 .code-block { background: var(--color-surface-2, #f7f9fc); padding: 12px; border-radius: var(--radius-sm, 6px); overflow: auto; font-size: 12px; font-family: var(--font-family-mono); white-space: pre-wrap; word-break: break-all; max-height: 480px; }
 .logs-block { min-height: 200px; }
@@ -799,10 +784,6 @@ onMounted(() => {
 .modal-body { padding: 16px 18px; }
 .modal-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .modal-body .field label { margin: 0; font-size: 11px; font-weight: 500; color: var(--color-ink-muted, #6b7280); }
-
-.msg { margin-top: 10px; font-size: 12.5px; }
-.msg.ok { color: var(--color-success, #059669); }
-.msg.err { color: var(--color-error, #ef4444); }
 
 /* Dark mode */
 [data-theme="dark"] .card, [data-theme="dark"] .modal, [data-theme="dark"] .field input, [data-theme="dark"] .field select {

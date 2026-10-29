@@ -147,10 +147,6 @@ onMounted(() => {
 .row .col:nth-child(1) { flex: 55; }
 .row .col:nth-child(2) { flex: 45; }
 
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.flowbar .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 0; min-width: 200px; }
-.flowbar .field label { margin: 0; }
-
 .quick-commands { margin-bottom: 14px; }
 .quick-label { font-size: 12px; color: var(--text-2); margin-bottom: 6px; display: block; }
 .quick-btns { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -182,10 +178,4 @@ onMounted(() => {
 .history-cmd { font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-platform { font-size: 11.5px; color: var(--text-3); }
 .history-time { font-size: 11.5px; color: var(--text-3); }
-.row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
 </style>

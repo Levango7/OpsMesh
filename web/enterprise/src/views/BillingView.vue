@@ -1,7 +1,7 @@
 <template>
   <PageShell :title="$t('billing.title')" :desc="$t('billing.subtitle')" testid="billing" :error="loadErr">
     <!-- tab 分区：订阅计划 / 订阅 / 账单 / 用量 -->
-    <div class="btnbar tabs">
+    <div class="btnbar btnbar--bottom tabs">
       <Button
         variant="primary" size="md" v-for="tb in tabs"
         :key="tb.key"
@@ -14,7 +14,7 @@
 
     <!-- ============ 订阅计划 ============ -->
     <template v-if="tab === 'plans'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="primary" size="md" data-testid="billing-add-plan-btn" @click="openPlanCreate">
           <Icon name="add" :size="14" />
           {{ $t('billing.add_plan') }}
@@ -42,7 +42,7 @@
 
     <!-- ============ 订阅 ============ -->
     <template v-else-if="tab === 'subscriptions'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="primary" size="md" data-testid="billing-add-sub-btn" @click="openSubCreate">
           <Icon name="add" :size="14" />
           {{ $t('billing.add_sub') }}
@@ -71,7 +71,7 @@
 
     <!-- ============ 账单（只读） ============ -->
     <template v-else-if="tab === 'invoices'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="ghost" size="md" @click="fetchInvoices">
           <Icon name="refresh" :size="14" />
           {{ $t('common.refresh') }}
@@ -99,7 +99,7 @@
 
     <!-- ============ 用量统计（只读） ============ -->
     <template v-else>
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="ghost" size="md" @click="fetchUsage">
           <Icon name="refresh" :size="14" />
           {{ $t('common.refresh') }}
@@ -154,7 +154,7 @@
           <textarea v-model.trim="planForm.featuresText" rows="3" :placeholder="$t('billing.plan_features_ph')" />
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('billing.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="planForm = null">{{ $t('billing.cancel') }}</Button>
         </div>
@@ -180,7 +180,7 @@
           </select>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('billing.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="subForm = null">{{ $t('billing.cancel') }}</Button>
         </div>
@@ -528,10 +528,7 @@ onMounted(() => {
   border-color: var(--accent);
   font-weight: 600;
 }
-.row-actions { display: flex; gap: 4px; }
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .usage-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
 .usage-card {
   min-width: 150px; padding: 16px 20px;
@@ -544,5 +541,4 @@ onMounted(() => {
 .usage-num { font-size: 26px; font-weight: 700; color: var(--accent); }
 .usage-num.small { font-size: 15px; color: var(--text); font-weight: 600; }
 .usage-label { margin-top: 6px; font-size: 12.5px; color: var(--text-3); }
-.btnbar { margin-top: 8px; }
 </style>

@@ -188,12 +188,4 @@ async function provisionDiscovered(row) {
 
 <style scoped>
 .cidr-input { width: 260px; }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
-.row-actions { display: inline-flex; gap: 4px; flex-wrap: wrap; }
-.muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
-.msg { margin-top: 8px; font-size: 12.5px; }
-.msg.ok { color: var(--color-success, #059669); }
-.msg.err { color: var(--color-error, #ef4444); }
-.card { margin-bottom: 16px; }
 </style>

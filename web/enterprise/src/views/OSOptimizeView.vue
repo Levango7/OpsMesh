@@ -311,14 +311,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--color-surface-1, var(--surface-l1, #ffffff));
-  border: 1px solid var(--color-hairline, var(--border-primary, #d3dbe8));
-  border-radius: var(--radius-md, 8px);
-  padding: 16px 18px;
-  margin-bottom: 16px;
-}
-.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
 .cat-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
 .cat-btn {
   padding: 5px 12px; font-size: 12.5px; border-radius: 999px;
@@ -327,7 +319,6 @@ onUnmounted(() => {
 }
 .cat-btn:hover { background: var(--bg-soft); color: var(--text); }
 .cat-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-.row-actions { display: inline-flex; gap: 6px; }
 .detail-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .field-hint { font-size: 11.5px; color: var(--text-3); margin-right: 6px; }
 .badge { display: inline-flex; align-items: center; height: 20px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; margin-right: 4px; }

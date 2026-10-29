@@ -21,15 +21,15 @@
       <!-- 简单搜索：字段过滤 -->
       <template v-if="store.mode === 'simple'">
         <div class="row">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.device_id_label') }}</label>
             <input v-model="store.filters.deviceID" :placeholder="$t('logs.device_id_placeholder')" data-testid="input-device-id" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.agent_label') }}</label>
             <input v-model="store.filters.agentID" data-testid="input-agent-id" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.level_label') }}</label>
             <select v-model="store.filters.level" data-testid="input-level">
               <option value="">{{ $t('common.all') }}</option>
@@ -38,7 +38,7 @@
               <option value="info">info</option>
             </select>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.source_label') }}</label>
             <select v-model="store.filters.source" data-testid="input-source">
               <option value="">{{ $t('common.all') }}</option>
@@ -51,7 +51,7 @@
           </div>
         </div>
         <div class="row">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.keyword_label') }}</label>
             <input
               v-model="store.filters.keyword"
@@ -60,15 +60,15 @@
               @keyup.enter="store.search(0)"
             />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.from_label') }}</label>
             <input v-model="store.filters.from" placeholder="2026-01-01T00:00:00Z" data-testid="input-from" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.to_label') }}</label>
             <input v-model="store.filters.to" data-testid="input-to" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.limit_label') }}</label>
             <input v-model.number="store.filters.limit" type="number" min="10" max="1000" data-testid="input-limit" />
           </div>
@@ -88,15 +88,15 @@
           />
         </div>
         <div class="row">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.from_label') }}</label>
             <input v-model="store.filters.from" placeholder="2026-01-01T00:00:00Z" data-testid="input-from" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.to_label') }}</label>
             <input v-model="store.filters.to" data-testid="input-to" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('logs.limit_label') }}</label>
             <input v-model.number="store.filters.limit" type="number" min="10" max="1000" data-testid="input-limit" />
           </div>
@@ -230,9 +230,6 @@ onMounted(() => { /* 不自动查询，等用户点查询 */ })
 </script>
 
 <style scoped>
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; min-width: 200px; }
-.field label { margin: 0; }
-
 /* 模式切换 Tab */
 .mode-tabs {
   display: inline-flex;
@@ -319,10 +316,4 @@ onMounted(() => { /* 不自动查询，等用户点查询 */ })
 
 /* 深色主题下提示面板背景 */
 :global([data-theme="dark"]) .syntax-hint { background: var(--surface-3); }
-.row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
 </style>

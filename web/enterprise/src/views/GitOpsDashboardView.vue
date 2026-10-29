@@ -272,13 +272,6 @@ onMounted(() => {
   font-size: 12px;
   color: var(--text-2);
 }
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px;
-  margin-bottom: 14px;
-}
 .chart-placeholder {
   margin-top: 10px;
 }

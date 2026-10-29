@@ -5,7 +5,7 @@
     testid="cmdb-attr-templates"
     :error="store.error"
   >
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate" data-testid="cmdb-attr-template-create-btn">
         <Icon name="add" :size="14" /> {{ $t('cmdbAttrTemplates.add') }}
       </Button>
@@ -40,12 +40,12 @@
     <!-- 创建/编辑抽屉 -->
     <DetailDrawer :open="!!form" :title="form && form.id ? $t('cmdbAttrTemplates.edit') : $t('cmdbAttrTemplates.add')" @close="form = null">
       <form v-if="form" class="entity-form" @submit.prevent="onSave">
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('cmdbAttrTemplates.field_name') }}</label>
           <input v-model.trim="form.name" type="text" required />
         </div>
         <div class="row-2">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('cmdbAttrTemplates.field_type') }}</label>
             <select v-model="form.type">
               <option value="string">string</option>
@@ -55,27 +55,27 @@
               <option value="json">json</option>
             </select>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('cmdbAttrTemplates.field_category') }}</label>
             <input v-model.trim="form.category" type="text" />
           </div>
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>
             <input type="checkbox" v-model="form.required" />
             {{ $t('cmdbAttrTemplates.field_required') }}
           </label>
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('cmdbAttrTemplates.field_defaultValue') }}</label>
           <input v-model.trim="form.defaultValue" type="text" />
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('cmdbAttrTemplates.field_options') }}</label>
           <textarea v-model="form.optionsRaw" rows="3" :placeholder="$t('cmdbAttrTemplates.options_placeholder')"></textarea>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -207,9 +207,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.btnbar { display: flex; gap: 8px; margin-top: 8px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .options-cell { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

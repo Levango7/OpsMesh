@@ -1,30 +1,30 @@
 <template>
   <PageShell :title="$t('canary.title')" :desc="$t('canary.subtitle')" testid="canary" :error="store.error">
     <!-- 创建灰度发布（详情页不显示） -->
-    <div v-if="!detailId" class="card">
+    <div v-if="!detailId" class="card card--raised">
       <h3>{{ $t('canary.create_title') }}</h3>
       <form @submit.prevent="onCreate">
         <div class="row-2">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('canary.field_service') }}</label>
             <Input v-model.trim="form.serviceName" type="text" required data-testid="canary-service-input" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('canary.field_target_version') }}</label>
             <Input v-model.trim="form.targetVersion" type="text" required data-testid="canary-target-version-input" />
           </div>
         </div>
         <div class="row-2">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('canary.field_baseline_version') }}</label>
             <Input v-model.trim="form.baselineVersion" type="text" :placeholder="$t('canary.optional')" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('canary.field_steps') }}</label>
             <Input v-model.trim="form.steps" type="text" placeholder="10,30,50,100" />
           </div>
         </div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button type="button" variant="primary" :disabled="creating" data-testid="canary-create-btn">
             <Icon name="add" :size="14" />
             {{ creating ? $t('common.loading') : $t('canary.create_btn') }}
@@ -35,7 +35,7 @@
     </div>
 
     <!-- 当前灰度状态 -->
-    <div v-if="store.current" class="card">
+    <div v-if="store.current" class="card card--raised">
       <div class="flowbar">
         <h3>{{ $t('canary.status_title') }} · {{ store.current.canaryID || '—' }}</h3>
         <Button v-if="store.current.canaryID" variant="ghost" size="small" @click="refreshCurrent">
@@ -63,7 +63,7 @@
         </div>
       </div>
 
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button
           variant="primary"
           @click="onAdvance"
@@ -77,7 +77,7 @@
     </div>
 
     <!-- 流量分割 -->
-    <div v-if="store.current" class="card">
+    <div v-if="store.current" class="card card--raised">
       <h3>{{ $t('canary.traffic_title') }}</h3>
       <div v-if="!trafficEdit" class="traffic-view">
         <div class="traffic-bar">
@@ -88,16 +88,16 @@
           <span class="dot canary"></span> {{ $t('canary.legend_canary') }} {{ canaryPercent }}%
           <span class="dot baseline"></span> {{ $t('canary.legend_baseline') }} {{ baselinePercent }}%
         </div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="ghost" size="small" @click="openTrafficEdit" data-testid="canary-traffic-edit-btn">{{ $t('canary.traffic_edit') }}</Button>
         </div>
       </div>
       <form v-else class="traffic-form" @submit.prevent="onTrafficSave">
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('canary.field_canary_percent') }}（0-100）</label>
           <Input v-model.number="trafficForm.canaryPercent" type="number" min="0" max="100" step="1" required />
         </div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button type="submit" variant="primary" :disabled="trafficSaving">{{ $t('common.save') }}</Button>
           <Button type="button" variant="ghost" size="small" @click="trafficEdit = false">{{ $t('common.cancel') }}</Button>
         </div>
@@ -105,7 +105,7 @@
     </div>
 
     <!-- 灰度指标 -->
-    <div v-if="store.current" class="card">
+    <div v-if="store.current" class="card card--raised">
       <div class="flowbar">
         <h3>{{ $t('canary.metrics_title') }}</h3>
         <Button v-if="store.current.canaryID" variant="ghost" size="small" @click="refreshMetrics">
@@ -140,7 +140,7 @@
     </div>
 
     <!-- 历史灰度 -->
-    <div v-if="store.list.length" class="card">
+    <div v-if="store.list.length" class="card card--raised">
       <h3>{{ $t('canary.history_title') }}</h3>
       <Table
         :data="store.list"
@@ -336,20 +336,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; margin-top: 14px;
-  box-shadow: var(--shadow);
-}
-.card h3 { margin: 0 0 12px; font-size: 14px; }
 .card h4 { margin: 0 0 8px; font-size: 13px; }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .flowbar h3 { margin: 0; }
 
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.btnbar { display: flex; gap: 8px; margin-top: 8px; }
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
 .stat {

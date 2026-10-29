@@ -261,15 +261,6 @@ onMounted(() => {
 <style scoped>
 .row .col:nth-child(1) { flex: 40; }
 .row .col:nth-child(2) { flex: 60; }
-.row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.row-actions { display: inline-flex; gap: 6px; }
 
 .code-editor {
   width: 100%; font-family: var(--font-mono); font-size: 12.5px;

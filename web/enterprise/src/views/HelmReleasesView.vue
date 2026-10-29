@@ -295,19 +295,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--color-surface-1, var(--surface-l1, #ffffff));
-  border: 1px solid var(--color-hairline, var(--border-primary, #d3dbe8));
-  border-radius: var(--radius-md, 8px);
-  padding: 16px 18px;
-  margin-bottom: 16px;
-}
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-.row-actions { display: flex; gap: 4px; }
-
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .field .hint { font-size: 11.5px; color: var(--text-3); }
 
 .tag {

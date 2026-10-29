@@ -18,29 +18,29 @@
 
     <!-- ========== Tab 1: 热推送 ========== -->
     <div v-show="activeTab === 'hotpush'">
-      <div class="card">
+      <div class="card card--raised">
         <h3 class="card__title">{{ $t('configHotpush.hotpush_form_title') }}</h3>
         <form @submit.prevent="onHotpush">
           <div class="row-2">
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('configHotpush.field_agentID') }}</label>
               <input v-model.trim="hotpushForm.agentID" type="text" :placeholder="$t('configHotpush.agentID_placeholder')" required />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('configHotpush.field_key') }}</label>
               <input v-model.trim="hotpushForm.key" type="text" :placeholder="$t('configHotpush.key_placeholder')" required />
             </div>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('configHotpush.field_value') }}</label>
             <textarea v-model="hotpushForm.value" rows="3" :placeholder="$t('configHotpush.value_placeholder')" required></textarea>
           </div>
           <div class="row-2">
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('configHotpush.field_path') }}</label>
               <input v-model.trim="hotpushForm.path" type="text" :placeholder="$t('configHotpush.path_placeholder')" />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('configHotpush.field_format') }}</label>
               <select v-model="hotpushForm.format">
                 <option value="json">json</option>
@@ -51,11 +51,11 @@
               </select>
             </div>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('configHotpush.field_description') }}</label>
             <input v-model.trim="hotpushForm.description" type="text" :placeholder="$t('configHotpush.description_placeholder')" />
           </div>
-          <div class="btnbar">
+          <div class="btnbar btnbar--bottom">
             <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="config-hotpush-btn">
               {{ submitting ? $t('common.loading') : $t('configHotpush.hotpush') }}
             </Button>
@@ -63,7 +63,7 @@
           <p v-if="hotpushMsg" :class="['msg', hotpushMsgOk ? 'ok' : 'err']">{{ hotpushMsg }}</p>
         </form>
       </div>
-      <div class="card" v-if="store.lastHotpush">
+      <div class="card card--raised" v-if="store.lastHotpush">
         <h3 class="card__title">{{ $t('configHotpush.result_title') }}</h3>
         <div class="kv-grid">
           <div class="kv"><span class="k">{{ $t('configHotpush.field_taskID') }}</span><span class="v"><code>{{ store.lastHotpush.taskID || '—' }}</code></span></div>
@@ -77,19 +77,19 @@
 
     <!-- ========== Tab 2: 灰度发布 ========== -->
     <div v-show="activeTab === 'canary'">
-      <div class="card">
+      <div class="card card--raised">
         <h3 class="card__title">{{ $t('configHotpush.canary_form_title') }}</h3>
         <form @submit.prevent="onCanary">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('configHotpush.field_agentIDs') }}</label>
             <textarea v-model.trim="canaryForm.agentIDsRaw" rows="2" :placeholder="$t('configHotpush.agentIDs_placeholder')" required></textarea>
           </div>
           <div class="row-2">
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('configHotpush.field_key') }}</label>
               <input v-model.trim="canaryForm.key" type="text" required />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('configHotpush.field_format') }}</label>
               <select v-model="canaryForm.format">
                 <option value="json">json</option>
@@ -100,16 +100,16 @@
               </select>
             </div>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('configHotpush.field_value') }}</label>
             <textarea v-model="canaryForm.value" rows="3" required></textarea>
           </div>
           <div class="row-2">
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('configHotpush.field_path') }}</label>
               <input v-model.trim="canaryForm.path" type="text" />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('configHotpush.field_strategy') }}</label>
               <select v-model="canaryForm.strategy">
                 <option value="rollout">rollout</option>
@@ -118,11 +118,11 @@
               </select>
             </div>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('configHotpush.field_percentage') }}</label>
             <input v-model.number="canaryForm.percentage" type="number" min="0" max="100" />
           </div>
-          <div class="btnbar">
+          <div class="btnbar btnbar--bottom">
             <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="config-canary-btn">
               {{ submitting ? $t('common.loading') : $t('configHotpush.canary') }}
             </Button>
@@ -130,7 +130,7 @@
           <p v-if="canaryMsg" :class="['msg', canaryMsgOk ? 'ok' : 'err']">{{ canaryMsg }}</p>
         </form>
       </div>
-      <div class="card" v-if="store.lastCanary">
+      <div class="card card--raised" v-if="store.lastCanary">
         <h3 class="card__title">{{ $t('configHotpush.canary_result_title') }}</h3>
         <div class="kv"><span class="k">{{ $t('configHotpush.field_canaryID') }}</span><span class="v"><code>{{ store.lastCanary.canaryID || '—' }}</code></span></div>
       </div>
@@ -288,15 +288,6 @@ onMounted(() => {})
 </script>
 
 <style scoped>
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; margin-top: 14px;
-  box-shadow: var(--shadow);
-}
-.card h3 { margin: 0 0 12px; font-size: 14px; }
-.btnbar { display: flex; gap: 8px; margin-top: 8px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .filter-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }

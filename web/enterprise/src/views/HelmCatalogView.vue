@@ -86,7 +86,7 @@
           </span>
           <span v-else>—</span>
         </div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" @click="goInstall" data-testid="helm-chart-install-btn">
             <Icon name="success" :size="14" /> {{ $t('helm.install_btn') }}
           </Button>
@@ -178,7 +178,7 @@ onMounted(loadCatalog)
 </script>
 
 <style scoped>
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+/* .btnbar / .field / .field > label 已改用 styles/pages.css 全局原语 */
 .search-box {
   display: flex; align-items: center; gap: 6px; flex: 1; max-width: 480px;
   padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -194,10 +194,8 @@ onMounted(loadCatalog)
 .chart-link:hover code { color: var(--accent); }
 
 .chart-detail { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
+/* .field / .field > label 已改用 styles/pages.css 全局原语 */
 .keywords { display: flex; flex-wrap: wrap; gap: 4px; }
-.btnbar { margin-top: 8px; }
 
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;

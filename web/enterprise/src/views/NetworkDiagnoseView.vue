@@ -13,15 +13,15 @@
 
     <!-- ========== Tab 1: 诊断工具 ========== -->
     <div v-show="activeTab === 'diagnose'">
-      <div class="card">
+      <div class="card card--raised">
         <h3>{{ $t('network.diagnose_form_title') }}</h3>
         <form @submit.prevent="onDiagnose">
           <div class="row-2">
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('network.field_agentID') }}</label>
               <input v-model.trim="diagnoseForm.agentID" type="text" :placeholder="$t('network.agentID_placeholder')" required />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('network.field_command') }}</label>
               <select v-model="diagnoseForm.command">
                 <option value="ping">ping</option>
@@ -32,21 +32,21 @@
               </select>
             </div>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('network.field_target') }}</label>
             <input v-model.trim="diagnoseForm.target" type="text" :placeholder="$t('network.target_placeholder')" required />
           </div>
           <div class="row-2">
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('network.field_count') }}</label>
               <input v-model.number="diagnoseForm.count" type="number" min="1" />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('network.field_timeout') }}</label>
               <input v-model.number="diagnoseForm.timeout" type="number" min="1" />
             </div>
           </div>
-          <div class="btnbar">
+          <div class="btnbar btnbar--bottom">
             <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="network-diagnose-btn">
               {{ submitting ? $t('common.loading') : $t('network.diagnose') }}
             </Button>
@@ -59,7 +59,7 @@
       </div>
 
       <!-- 诊断任务信息 -->
-      <div class="card" v-if="store.diagnoseTask">
+      <div class="card card--raised" v-if="store.diagnoseTask">
         <h3>{{ $t('network.diagnose_task_title') }}</h3>
         <div class="kv-grid">
           <div class="kv"><span class="k">{{ $t('network.field_taskID') }}</span><span class="v"><code>{{ store.diagnoseTask.taskID || '—' }}</code></span></div>
@@ -68,7 +68,7 @@
       </div>
 
       <!-- 诊断结果 -->
-      <div class="card" v-if="store.diagnoseResult">
+      <div class="card card--raised" v-if="store.diagnoseResult">
         <h3>{{ $t('network.diagnose_result_title') }}</h3>
         <div class="kv-grid">
           <div class="kv"><span class="k">{{ $t('network.field_taskID') }}</span><span class="v"><code>{{ store.diagnoseResult.taskID || '—' }}</code></span></div>
@@ -82,19 +82,19 @@
 
     <!-- ========== Tab 2: 批量连通性检测 ========== -->
     <div v-show="activeTab === 'connectivity'">
-      <div class="card">
+      <div class="card card--raised">
         <h3>{{ $t('network.connectivity_form_title') }}</h3>
         <form @submit.prevent="onConnectivity">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('network.field_targets') }}</label>
             <textarea v-model="connectivityForm.targetsRaw" rows="4" :placeholder="$t('network.targets_placeholder')" required></textarea>
             <small class="hint">{{ $t('network.targets_hint') }}</small>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('network.field_timeout') }}</label>
             <input v-model.number="connectivityForm.timeout" type="number" min="1" />
           </div>
-          <div class="btnbar">
+          <div class="btnbar btnbar--bottom">
             <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="network-connectivity-btn">
               {{ submitting ? $t('common.loading') : $t('network.check_connectivity') }}
             </Button>
@@ -255,16 +255,7 @@ onMounted(() => {})
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab:hover { color: var(--text); }
 
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; margin-top: 14px;
-  box-shadow: var(--shadow);
-}
-.card h3 { margin: 0 0 12px; font-size: 14px; }
 .card h4 { margin: 14px 0 6px; font-size: 12.5px; color: var(--text-2); }
-.btnbar { display: flex; gap: 8px; margin-top: 8px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .field .hint { font-size: 11.5px; color: var(--text-3); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 

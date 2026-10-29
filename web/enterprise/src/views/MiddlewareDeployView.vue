@@ -674,8 +674,6 @@ onUnmounted(() => {
 }
 .cat-btn:hover { background: var(--bg-soft); color: var(--text); }
 .cat-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-.row-actions { display: inline-flex; gap: 6px; }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
 .detail-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .field-hint { font-size: 11.5px; color: var(--text-3); margin-right: 6px; }
 .badge { display: inline-flex; align-items: center; height: 20px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; margin-right: 4px; }

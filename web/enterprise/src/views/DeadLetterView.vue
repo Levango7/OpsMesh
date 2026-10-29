@@ -85,15 +85,3 @@ onMounted(() => {
   store.fetchDeadLetterTasks()
 })
 </script>
-
-<style scoped>
-.card {
-  background: var(--color-surface-1, var(--surface-l1, #ffffff));
-  border: 1px solid var(--color-hairline, var(--border-primary, #d3dbe8));
-  border-radius: var(--radius-md, 8px);
-  padding: 16px 18px;
-  margin-bottom: 16px;
-}
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.row-actions { display: flex; gap: 4px; }
-</style>

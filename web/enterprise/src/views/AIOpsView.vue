@@ -400,8 +400,6 @@ onMounted(() => {
   padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--text-2);
 }
 .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
-.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .form-field { display: flex; flex-direction: column; gap: 4px; }
 .form-field label { display: block; font-size: 12px; color: var(--text-2); }
@@ -417,7 +415,6 @@ onMounted(() => {
 .warn { color: var(--fail); }
 ul { margin: 6px 0; padding-left: 20px; }
 code { background: var(--muted); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 12px; }
-.hint { font-size: 12px; color: var(--text-2); margin-top: 4px; }
 .data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
 .data-table th, .data-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
 .data-table th { background: var(--muted); color: var(--text-2); font-size: 12px; }

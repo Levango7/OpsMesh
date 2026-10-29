@@ -1,6 +1,6 @@
 <template>
   <PageShell :title="$t('roles.title')" :desc="$t('roles.subtitle')" testid="roles" :error="loadErr">
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('roles.add') }}
@@ -53,7 +53,7 @@
           <span v-if="!permissions.length" class="muted">{{ $t('common.none') }}</span>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('roles.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('roles.cancel') }}</Button>
         </div>
@@ -206,7 +206,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .perm-count {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 26px; height: 22px; padding: 0 7px;
@@ -214,8 +213,6 @@ onMounted(() => {
   border-radius: 999px; font-size: 12px; font-weight: 600;
 }
 .role-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .perm-group { margin-bottom: 10px; }
 .perm-group-title {
   font-size: 12px; font-weight: 600; color: var(--text-3);
@@ -228,5 +225,4 @@ onMounted(() => {
   padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--surface-2); cursor: pointer;
 }
-.btnbar { margin-top: 8px; }
 </style>

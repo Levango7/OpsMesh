@@ -110,12 +110,8 @@ async function send() {
 .chat-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .model-select { padding: 6px 8px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 12px; background: var(--color-surface-1, #ffffff); }
 .chk { display: flex; align-items: center; gap: 4px; font-size: 12px; }
-.card { background: var(--color-surface-1, #ffffff); border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); padding: 16px 18px; margin-bottom: 16px; }
-.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .usage-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .usage-item { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--color-surface-2, #f7f9fc); border-radius: var(--radius-sm, 6px); }
 .usage-label { font-size: 11px; color: var(--color-ink-muted, #6b7280); }
 .usage-value { font-size: 16px; font-weight: 600; }
-.muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
 </style>

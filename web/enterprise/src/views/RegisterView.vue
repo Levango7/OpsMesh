@@ -191,8 +191,6 @@ function toggleLang() {
 .brand .sub { font-size: 12.5px; color: var(--text-3); margin: 4px 0 0; }
 
 .auth-form { display: flex; flex-direction: column; gap: 14px; }
-.field { display: flex; flex-direction: column; gap: 6px; }
-.field label { font-size: 12.5px; color: var(--text-2); margin: 0; }
 .field input { width: 100%; }
 
 .err-msg, .ok-msg {

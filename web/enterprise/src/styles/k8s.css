@@ -1,65 +1,21 @@
 /* ===========================================================================
- * K8s 模块共享样式
+ * K8s 模块共享样式（仅 k8s 专属类）
  * ---------------------------------------------------------------------------
- * K8s 管理拆分为「集群管理 / 资源管理」两个子页面后，两页共用以下样式：
- *   - .k8s-subnav                 子页签（集群 / 资源）
- * 页面骨架（.k8s-page / .k8s-page__head / .k8s-page__title / .k8s-page__desc）
- * 已随布局统一专项迁入 PageShell + pages.css（2026-10-27），此处删除。
- *   - .poll-err                    错误横幅
- *   - .flowbar / .field            工具条与表单字段
- *   - .row-actions                 表格行内操作组
- *   - .res-tabs / .res-tab         资源类型切换
- *   - .modal-mask / .modal-*       对话框
- * 放在全局（非 scoped）供两个子页面共用，避免重复。
+ * 页面骨架与全站共享原语（.page__* / .btnbar / .field / .card / .row / .msg /
+ * .muted / .hint / .poll-err / .flowbar / .row-actions / .status-* / .node-row）
+ * 已于 2026-10-28 收编至 styles/pages.css（单一来源，另有守卫禁 scoped 副本），
+ * 本文件不再定义它们，也不得再作为全站事实标准。
+ *
+ * 本文件owns：
+ *   .k8s-subnav / .k8s-subnav__item        集群 / 资源 两个子页的页签
+ *   .res-tabs / .res-tab                   资源类型切换
+ *   .code-block / .logs-block              日志与代码块
+ *   .modal-* 家族                          对话框（尚未收编，见遗留清单）
+ *
+ * 遗留（docs/ui-design.md「页面骨架统一规则」）：.modal-* 家族仍寄生在本文件，
+ * 且被 9 个视图的 scoped 副本遮蔽（含 .modal-mask 的 z-index 分歧 50 vs 9999），
+ * 计划与 DetailDrawer 一并收编进 pages.css，属下一批次。
  * =========================================================================== */
-
-/* ===== 按钮栏 ===== */
-.btnbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 8px);
-  margin-bottom: var(--space-3, 12px);
-  flex-wrap: wrap;
-}
-
-/* ===== 表单字段 ===== */
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1, 4px);
-  margin-bottom: var(--space-2, 8px);
-}
-.field label {
-  margin: 0;
-  font-size: var(--font-size-xs, 11px);
-  font-weight: 500;
-  color: var(--color-ink-muted, #6b7280);
-}
-
-/* ===== 卡片 ===== */
-.card {
-  background: var(--surface, var(--surface-l1), var(--color-surface-1, #ffffff));
-  border: 1px solid var(--border, var(--border-primary), #d3dbe8);
-  border-radius: var(--radius, var(--radius-md), 8px);
-  padding: 16px 18px;
-  margin-bottom: 16px;
-  font-size: 13px;
-}
-.card h3 {
-  margin: 0 0 12px 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-ink, var(--text-secondary), #6b7280);
-}
-.card__title {
-  margin: 0 0 12px 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-ink, var(--text-secondary), #6b7280);
-}
-.card + .card {
-  margin-top: 0;
-}
 
 /* ===== 子页签 ===== */
 .k8s-subnav {
@@ -105,80 +61,6 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #5e6ad2) 40%, transparent);
 }
 
-/* ===== 错误横幅 ===== */
-.poll-err {
-  padding: var(--space-2, 8px) var(--space-3, 12px);
-  margin: var(--space-1, 6px) 0 var(--space-3, 12px) 0;
-  border-radius: var(--radius-sm, 6px);
-  background: var(--color-error-soft, #fef2f2);
-  border: 1px solid var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444);
-  font-size: var(--font-size-sm, 12px);
-  font-weight: 500;
-}
-
-/* ===== 工具条 ===== */
-.flowbar {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-3, 12px);
-  flex-wrap: wrap;
-  margin-bottom: var(--space-3, 12px);
-}
-
-.flowbar .field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1, 4px);
-  margin-bottom: 0;
-  min-width: 200px;
-}
-
-.flowbar .field label {
-  margin: 0;
-  font-size: var(--font-size-xs, 11px);
-  font-weight: 500;
-  color: var(--color-ink-muted, #6b7280);
-}
-
-.flowbar .field select,
-.flowbar .field input {
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--color-hairline, #d3dbe8);
-  border-radius: var(--radius-sm, 6px);
-  background: var(--color-surface-1, #ffffff);
-  color: var(--color-ink, #f7f8f8);
-  font-size: var(--font-size-sm, 13px);
-  font-family: inherit;
-  outline: none;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.flowbar .field select:focus,
-.flowbar .field input:focus {
-  border-color: var(--color-primary, #5e6ad2);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #5e6ad2) 40%, transparent);
-}
-
-/* ===== 暗色模式输入框 ===== */
-[data-theme="dark"] .flowbar .field select,
-[data-theme="dark"] .flowbar .field input,
-[data-theme="dark"] .modal-body .field input,
-[data-theme="dark"] .modal-body .field textarea,
-[data-theme="dark"] .modal-body .field select,
-[data-theme="dark"] .res-tab {
-  background: var(--surface-l1, #131620);
-  border-color: var(--border-primary, #2b3243);
-  color: var(--text-primary, #f9fafb);
-}
-
-.row-actions {
-  display: inline-flex;
-  gap: var(--space-1, 6px);
-  flex-wrap: wrap;
-}
-
 /* ===== 资源类型切换 ===== */
 .res-tabs {
   display: flex;
@@ -197,7 +79,7 @@
   border: 1px solid var(--color-hairline, #d3dbe8);
   color: var(--color-ink-muted, #6b7280);
   cursor: pointer;
-  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+  transition: background-color 150ms ease, border-color 150ms ease;
 }
 
 .res-tab:hover {
@@ -211,7 +93,27 @@
   border-color: var(--color-primary, #5e6ad2);
 }
 
-/* ===== 对话框 ===== */
+/* ===== 代码 / 日志块 ===== */
+.code-block {
+  background: var(--color-surface-2, #f7f9fc);
+  color: var(--color-ink, #f7f8f8);
+  padding: var(--space-3, 12px);
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-sm, 6px);
+  overflow: auto;
+  font-size: var(--font-size-xs, 12px);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--font-mono, monospace);
+}
+
+.logs-block {
+  max-height: 480px;
+  min-height: 200px;
+}
+
+/* ===== 对话框（未收编，见文件头遗留清单） ===== */
 .modal-mask {
   position: fixed;
   inset: 0;
@@ -283,53 +185,24 @@
   resize: vertical;
 }
 
-.code-block {
-  background: var(--color-surface-2, #f7f9fc);
-  color: var(--color-ink, #f7f8f8);
-  padding: var(--space-3, 12px);
-  border: 1px solid var(--color-hairline, #d3dbe8);
-  border-radius: var(--radius-sm, 6px);
-  overflow: auto;
-  font-size: var(--font-size-xs, 12px);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-  font-family: var(--font-mono, monospace);
-}
-
-.logs-block {
-  max-height: 480px;
-  min-height: 200px;
-}
-
-.msg {
-  margin: var(--space-2, 8px) 0 0 0;
-  font-size: var(--font-size-sm, 12px);
-}
-.msg.ok { color: var(--color-success, #27a644); }
-.msg.err { color: var(--color-error, #ef4444); }
-
-.muted {
-  color: var(--color-ink-muted, #6b7280);
-}
-
-.hint {
-  margin: 0 0 var(--space-3, 12px) 0;
-  font-size: var(--font-size-xs, 11px);
-  color: var(--color-ink-tertiary, #9ca3af);
-}
-
 /* ===== 暗色模式覆盖 ===== */
 [data-theme="dark"] .k8s-subnav__item.is-active {
   background: var(--surface-l1, #131620);
   border-color: var(--border-primary, #2b3243);
 }
 
+[data-theme="dark"] .modal-body .field input,
+[data-theme="dark"] .modal-body .field textarea,
+[data-theme="dark"] .modal-body .field select,
+[data-theme="dark"] .res-tab {
+  background: var(--surface-l1, #131620);
+  border-color: var(--border-primary, #2b3243);
+  color: var(--text-primary, #f9fafb);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .k8s-subnav__item,
   .res-tab,
-  .flowbar .field input,
-  .flowbar .field select,
   .modal-body .field input,
   .modal-body .field textarea {
     transition: none !important;

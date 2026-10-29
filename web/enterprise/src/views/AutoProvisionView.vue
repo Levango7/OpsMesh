@@ -5,20 +5,20 @@
     testid="auto-provision"
     :error="store.error"
   >
-    <div class="card">
+    <div class="card card--raised">
       <h3>{{ $t('provision.form_title') }}</h3>
       <form @submit.prevent="onSubmit">
         <div class="row-2">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('provision.field_segment') }}</label>
             <input v-model.trim="form.segment" type="text" :placeholder="$t('provision.segment_placeholder')" required />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('provision.field_agentVersion') }}</label>
             <input v-model.trim="form.agentVersion" type="text" :placeholder="$t('provision.agentVersion_placeholder')" />
           </div>
         </div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit" :disabled="store.loading" data-testid="auto-provision-btn">
             <Icon name="success" :size="14" />
             {{ store.loading ? $t('common.loading') : $t('provision.submit') }}
@@ -29,7 +29,7 @@
     </div>
 
     <!-- 结果展示 -->
-    <div class="card" v-if="store.result">
+    <div class="card card--raised" v-if="store.result">
       <h3>{{ $t('provision.result_title') }}</h3>
       <div class="stats">
         <div class="stat indigo">
@@ -120,16 +120,7 @@ onMounted(() => {})
 </script>
 
 <style scoped>
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; margin-top: 14px;
-  box-shadow: var(--shadow);
-}
-.card h3 { margin: 0 0 12px; font-size: 14px; }
 .card h4 { margin: 16px 0 8px; font-size: 13px; }
-.btnbar { display: flex; gap: 8px; margin-top: 8px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 4px; }

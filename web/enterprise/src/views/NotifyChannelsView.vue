@@ -6,7 +6,7 @@
     :error="loadErr"
   >
     <!-- tab 分区：通知渠道 / 通知模板 -->
-    <div class="btnbar tabs">
+    <div class="btnbar btnbar--bottom tabs">
       <Button variant="primary" size="md" :class="['tab-btn', { active: tab === 'channels' }]" @click="tab = 'channels'">
         {{ $t('notify.tab_channels') }}
       </Button>
@@ -17,7 +17,7 @@
 
     <!-- ============ 通知渠道 ============ -->
     <template v-if="tab === 'channels'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="primary" size="md" data-testid="notify-add-channel-btn" @click="openChannelCreate">
           <Icon name="add" :size="14" />
           {{ $t('notify.add_channel') }}
@@ -50,7 +50,7 @@
 
     <!-- ============ 通知模板 ============ -->
     <template v-else>
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="primary" size="md" data-testid="notify-add-template-btn" @click="openTemplateCreate">
           <Icon name="add" :size="14" />
           {{ $t('notify.add_template') }}
@@ -108,7 +108,7 @@
           </label>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('notify.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="channelForm = null">{{ $t('notify.cancel') }}</Button>
         </div>
@@ -147,7 +147,7 @@
           <textarea v-model="templateForm.body" rows="6" :placeholder="$t('notify.body_ph')" />
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('notify.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="templateForm = null">{{ $t('notify.cancel') }}</Button>
         </div>
@@ -414,7 +414,6 @@ onMounted(() => {
   border-color: var(--accent);
   font-weight: 600;
 }
-.row-actions { display: flex; gap: 4px; }
 .type-tag {
   display: inline-flex; align-items: center; height: 19px;
   padding: 0 8px; border-radius: 999px;
@@ -427,14 +426,10 @@ onMounted(() => {
   vertical-align: bottom; font-size: 12.5px;
 }
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .checkbox-item {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 13px; color: var(--text); margin: 0;
   padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--surface-2); cursor: pointer; width: fit-content;
 }
-.hint { font-size: 12px; color: var(--text-3); }
-.btnbar { margin-top: 8px; }
 </style>

@@ -18,7 +18,7 @@
 
     <!-- ========== Tab 1: Peer 管理 ========== -->
     <div v-show="activeTab === 'peers'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="ghost" size="md" @click="store.fetchPeers()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.peers.length" class="muted">{{ $t('common.loading') }}</div>
@@ -40,7 +40,7 @@
 
     <!-- ========== Tab 2: 设备聚合视图（分页+搜索） ========== -->
     <div v-show="activeTab === 'devices'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="ghost" size="md" @click="loadDevices()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
         <input
           v-model="deviceSearch"
@@ -92,10 +92,10 @@
 
     <!-- ========== Tab 3: 任务转发 ========== -->
     <div v-show="activeTab === 'forward'">
-      <div class="card">
+      <div class="card card--raised">
         <h3>{{ $t('federation.forward_form_title') }}</h3>
         <form @submit.prevent="onForward">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('federation.field_peerURL') }}</label>
             <select v-model="form.peerURL" required>
               <option value="">{{ $t('federation.please_select') }}</option>
@@ -103,7 +103,7 @@
             </select>
           </div>
           <div class="row-2">
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('federation.field_taskType') }}</label>
               <select v-model="form.taskType">
                 <option value="shell">shell</option>
@@ -111,20 +111,20 @@
                 <option value="service">service</option>
               </select>
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('federation.field_deviceID') }}</label>
               <input v-model.trim="form.deviceID" type="text" :placeholder="$t('federation.deviceID_placeholder')" />
             </div>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('federation.field_command') }}</label>
             <input v-model.trim="form.command" type="text" :placeholder="$t('federation.command_placeholder')" required />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('federation.field_timeoutSec') }}</label>
             <input v-model.number="form.timeoutSec" type="number" min="1" />
           </div>
-          <div class="btnbar">
+          <div class="btnbar btnbar--bottom">
             <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="federation-forward-btn">
               {{ submitting ? $t('common.loading') : $t('federation.forward') }}
             </Button>
@@ -134,7 +134,7 @@
       </div>
 
       <!-- 最近一次转发结果 -->
-      <div class="card" v-if="store.lastForward">
+      <div class="card card--raised" v-if="store.lastForward">
         <h3>{{ $t('federation.forward_result_title') }}</h3>
         <div class="kv-grid">
           <div class="kv"><span class="k">{{ $t('federation.field_taskID') }}</span><span class="v"><code>{{ store.lastForward.taskID || '—' }}</code></span></div>
@@ -147,16 +147,16 @@
 
     <!-- ========== Tab 4: 联邦任务状态查询 ========== -->
     <div v-show="activeTab === 'taskstatus'">
-      <div class="card">
+      <div class="card card--raised">
         <h3>{{ $t('federation.taskstatus_title') }}</h3>
         <p class="muted">{{ $t('federation.taskstatus_desc') }}</p>
         <form @submit.prevent="queryTaskStatus">
           <div class="row-2">
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('federation.field_taskID') }}</label>
               <input v-model="taskStatusForm.taskID" type="text" :placeholder="$t('federation.taskID_placeholder')" required />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('federation.field_peerURL') }}</label>
               <select v-model="taskStatusForm.peerURL" required>
                 <option value="">{{ $t('federation.please_select') }}</option>
@@ -164,7 +164,7 @@
               </select>
             </div>
           </div>
-          <div class="btnbar">
+          <div class="btnbar btnbar--bottom">
             <Button variant="primary" size="md" native-type="submit" :disabled="taskStatusLoading" data-testid="federation-taskstatus-query">
               {{ taskStatusLoading ? $t('common.loading') : $t('federation.taskstatus_query') }}
             </Button>
@@ -172,7 +172,7 @@
         </form>
       </div>
 
-      <div v-if="taskStatusResult" class="card result-box">
+      <div v-if="taskStatusResult" class="card card--raised result-box">
         <h4>{{ $t('federation.taskstatus_result') }}</h4>
         <div class="kv-grid">
           <div class="kv"><span class="k">{{ $t('federation.field_taskID') }}</span><span class="v"><code>{{ taskStatusResult.taskID || taskStatusForm.taskID }}</code></span></div>
@@ -340,20 +340,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; margin-top: 14px;
-  box-shadow: var(--shadow);
-}
-.card h3 { margin: 0 0 12px; font-size: 14px; }
-.btnbar {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-  align-items: center;
-}
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .search-input {

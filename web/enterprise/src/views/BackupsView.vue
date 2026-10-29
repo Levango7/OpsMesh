@@ -5,7 +5,7 @@
     testid="backups"
     :error="loadErr"
   >
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="ghost" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('backups.create') }}
@@ -51,7 +51,7 @@
         </div>
         <p class="muted">{{ $t('backups.create_hint') }}</p>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('backups.submit') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="createForm = null">{{ $t('backups.cancel') }}</Button>
         </div>
@@ -210,7 +210,6 @@ onMounted(fetchBackups)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; background: var(--accent-soft); color: var(--accent);
@@ -219,7 +218,4 @@ onMounted(fetchBackups)
 .tag.st-creating { background: var(--info-bg); color: var(--info); }
 .tag.st-failed { background: var(--fail-bg); color: var(--fail); }
 .backup-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
-.btnbar { margin-top: 8px; }
 </style>

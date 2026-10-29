@@ -1,6 +1,6 @@
 <template>
   <PageShell :title="$t('slos.title')" :desc="$t('slos.subtitle')" testid="slos" :error="loadErr">
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('slos.add') }}
@@ -54,7 +54,7 @@
           </select>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('slos.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('slos.cancel') }}</Button>
         </div>
@@ -228,7 +228,6 @@ onMounted(fetchSLOs)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .target-badge {
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
@@ -242,7 +241,4 @@ onMounted(fetchSLOs)
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
 .status-pill.bad { background: var(--fail-bg); color: var(--fail); }
 .slo-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
-.btnbar { margin-top: 8px; }
 </style>

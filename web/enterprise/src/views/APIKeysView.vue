@@ -1,6 +1,6 @@
 <template>
   <PageShell :title="$t('apikeys.title')" :desc="$t('apikeys.subtitle')" testid="api-keys" :error="loadErr">
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" data-testid="apikeys-add-btn" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('apikeys.add') }}
@@ -72,7 +72,7 @@
           <span class="hint">{{ $t('apikeys.expires_hint') }}</span>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('apikeys.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('apikeys.cancel') }}</Button>
         </div>
@@ -265,7 +265,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .scope-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .scope-tag {
   display: inline-flex; align-items: center; height: 19px;
@@ -274,8 +273,6 @@ onMounted(() => {
   font-size: 11px; font-weight: 600; font-family: var(--mono, monospace);
 }
 .key-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
 .checkbox-item {
   display: inline-flex; align-items: center; gap: 5px;
@@ -283,6 +280,4 @@ onMounted(() => {
   padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--surface-2); cursor: pointer;
 }
-.hint { font-size: 12px; color: var(--text-3); }
-.btnbar { margin-top: 8px; }
 </style>

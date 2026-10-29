@@ -184,7 +184,6 @@ onMounted(fetchAll)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .section-title { margin: 22px 0 4px; font-size: 15px; }
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
@@ -198,8 +197,6 @@ onMounted(fetchAll)
 .tag.pass { background: var(--ok-bg); color: var(--ok); }
 .tag.nopass { background: var(--fail-bg); color: var(--fail); }
 .scan-form { display: flex; flex-direction: column; gap: 8px; max-width: 380px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .report-detail { display: flex; flex-direction: column; gap: 10px; }
 .meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--text-2); }
 .output { font-size: 12px; }

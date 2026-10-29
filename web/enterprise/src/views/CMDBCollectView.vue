@@ -6,10 +6,10 @@
     :error="store.error"
   >
     <!-- ========== 采集触发 ========== -->
-    <div class="card">
+    <div class="card card--raised">
       <h3>{{ $t('cmdbCollect.collect_title') }}</h3>
       <p class="muted">{{ $t('cmdbCollect.collect_hint') }}</p>
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="primary" size="md" :disabled="collecting" @click="onCollect" data-testid="cmdb-collect-btn">
           <Icon name="refresh" :size="14" /> {{ collecting ? $t('common.loading') : $t('cmdbCollect.collect') }}
         </Button>
@@ -21,17 +21,17 @@
     </div>
 
     <!-- ========== CI 导入导出 ========== -->
-    <div class="card">
+    <div class="card card--raised">
       <h3>{{ $t('cmdbCollect.import_export_title') }}</h3>
       <div class="row-2">
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('cmdbCollect.import_label') }}</label>
           <textarea v-model="importRaw" rows="4" :placeholder="$t('cmdbCollect.import_placeholder')"></textarea>
           <Button variant="primary" size="sm" :disabled="importing" @click="onImport" data-testid="cmdb-import-btn">
             {{ importing ? $t('common.loading') : $t('cmdbCollect.import') }}
           </Button>
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('cmdbCollect.export_label') }}</label>
           <Button variant="ghost" size="sm" :disabled="exporting" @click="onExport" data-testid="cmdb-export-btn">
             <Icon name="refresh" :size="13" /> {{ exporting ? $t('common.loading') : $t('cmdbCollect.export') }}
@@ -46,7 +46,7 @@
     </div>
 
     <!-- ========== 待审批 CI 列表 ========== -->
-    <div class="card">
+    <div class="card card--raised">
       <div class="flowbar">
         <h3>{{ $t('cmdbCollect.pending_title') }}</h3>
         <Button variant="ghost" size="sm" @click="store.fetchPendingCIs()"><Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}</Button>
@@ -75,12 +75,12 @@
     <!-- CI 编辑抽屉 -->
     <DetailDrawer :open="!!ciForm" :title="$t('cmdbCollect.ci_edit_title')" @close="ciForm = null">
       <form v-if="ciForm" class="entity-form" @submit.prevent="onCISave">
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('cmdbCollect.ci_attributes') }}</label>
           <textarea v-model="ciForm.attrsRaw" rows="8" :placeholder="$t('cmdbCollect.attrs_placeholder')"></textarea>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="ciForm = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -271,17 +271,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; margin-top: 14px;
-  box-shadow: var(--shadow);
-}
-.card h3 { margin: 0 0 8px; font-size: 14px; }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .flowbar h3 { margin: 0; }
-.btnbar { display: flex; gap: 8px; margin-top: 8px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .collect-result { display: flex; gap: 8px; margin-top: 10px; }

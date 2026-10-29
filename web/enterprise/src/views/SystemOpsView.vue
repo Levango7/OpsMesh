@@ -32,7 +32,7 @@
       </Tabs>
 
       <!-- 用户 -->
-      <div v-show="tab === 'users'" class="card">
+      <div v-show="tab === 'users'" class="card card--flat">
         <div class="flowbar">
           <h3 class="card__title">{{ $t('system_ops.users_title') }}</h3>
           <Input v-model="userSearch" :placeholder="$t('system_ops.search_user')" class="search-input" />
@@ -49,7 +49,7 @@
       </div>
 
       <!-- 用户组 -->
-      <div v-show="tab === 'groups'" class="card">
+      <div v-show="tab === 'groups'" class="card card--flat">
         <div class="flowbar">
           <h3 class="card__title">{{ $t('system_ops.groups_title') }}</h3>
           <Input v-model="groupSearch" :placeholder="$t('system_ops.search_group')" class="search-input" />
@@ -65,7 +65,7 @@
       </div>
 
       <!-- 防火墙 -->
-      <div v-show="tab === 'firewall'" class="card">
+      <div v-show="tab === 'firewall'" class="card card--flat">
         <div class="flowbar">
           <h3 class="card__title">{{ $t('system_ops.firewall_title') }}</h3>
           <span class="tag">{{ $t('system_ops.backend') }}: {{ firewallBackend || '—' }}</span>
@@ -87,7 +87,7 @@
       </div>
 
       <!-- 服务管理 -->
-      <div v-show="tab === 'services'" class="card">
+      <div v-show="tab === 'services'" class="card card--flat">
         <div class="flowbar">
           <h3 class="card__title">{{ $t('system_ops.services_title') }}</h3>
           <span class="muted">{{ $t('system_ops.services_hint') }}</span>
@@ -102,7 +102,7 @@
       </div>
 
       <!-- journal 日志查询 -->
-      <div v-show="tab === 'journal'" class="card">
+      <div v-show="tab === 'journal'" class="card card--flat">
         <div class="flowbar">
           <h3 class="card__title">{{ $t('system_ops.journal_title') }}</h3>
         </div>
@@ -157,7 +157,7 @@
         <FormItem :label="t('system_ops.col_shell')">
           <Input v-model.trim="userForm.shell" placeholder="/bin/bash" />
         </FormItem>
-        <div class="btnbar">
+        <div class="btnbar btnbar--end btnbar--bottom">
           <Button type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
           <Button variant="ghost" size="sm" @click="showUserForm = false">{{ $t('common.cancel') }}</Button>
         </div>
@@ -170,7 +170,7 @@
         <FormItem :label="t('system_ops.col_group_name') + ' *'" required>
           <Input v-model.trim="groupForm.groupName" placeholder="deploy" />
         </FormItem>
-        <div class="btnbar">
+        <div class="btnbar btnbar--end btnbar--bottom">
           <Button type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
           <Button variant="ghost" size="sm" @click="showGroupForm = false">{{ $t('common.cancel') }}</Button>
         </div>
@@ -189,7 +189,7 @@
         <FormItem :label="t('system_ops.col_source')">
           <Input v-model.trim="ruleForm.source" placeholder="0.0.0.0/0" />
         </FormItem>
-        <div class="btnbar">
+        <div class="btnbar btnbar--end btnbar--bottom">
           <Button type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
           <Button variant="ghost" size="sm" @click="showRuleForm = false">{{ $t('common.cancel') }}</Button>
         </div>
@@ -199,7 +199,7 @@
     <!-- 删除确认 -->
     <Modal v-model="deleteConfirm.show" :title="$t('common.delete')" @close="deleteConfirm.show = false">
       <p>{{ deleteConfirm.message }}</p>
-      <div class="btnbar" style="justify-content: flex-end">
+      <div class="btnbar btnbar--end btnbar--bottom">
         <Button variant="ghost" size="sm" @click="deleteConfirm.show = false">{{ $t('common.cancel') }}</Button>
         <Button variant="danger" size="sm" @click="doDelete">{{ $t('common.delete') }}</Button>
       </div>
@@ -490,47 +490,11 @@ onMounted(() => {
   margin-bottom: var(--space-4, 16px);
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1, 4px);
-}
-
+/* .field / .flowbar / .card（本页用 --flat 变体）/ .card__title / .card h3 /
+   .poll-err / .muted 已改用 styles/pages.css 全局原语 */
 .field__label {
   font-size: var(--font-size-xs, 11px);
   font-weight: 500;
-  color: var(--color-ink-muted, #d0d6e0);
-}
-
-.flowbar {
-  display: flex;
-  gap: var(--space-3, 12px);
-  align-items: center;
-  margin-bottom: var(--space-3, 12px);
-  flex-wrap: wrap;
-}
-
-.card {
-  background: var(--color-surface-1, #0f1011);
-  border: 1px solid var(--color-hairline, #23252a);
-  border-radius: var(--radius-md, 8px);
-  padding: var(--space-4, 16px);
-}
-.card__title,
-.card h3 { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
-
-.poll-err {
-  padding: var(--space-2, 8px) var(--space-3, 12px);
-  margin: var(--space-1, 6px) 0;
-  border-radius: var(--radius-sm, 6px);
-  background: var(--color-error-soft, #fef2f2);
-  border: 1px solid var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444);
-  font-size: var(--font-size-sm, 12px);
-  font-weight: 500;
-}
-
-.muted {
   color: var(--color-ink-muted, #d0d6e0);
 }
 
@@ -560,13 +524,6 @@ onMounted(() => {
   gap: var(--space-3, 12px);
 }
 
-.btnbar {
-  display: flex;
-  gap: var(--space-2, 8px);
-  justify-content: flex-end;
-  margin-top: var(--space-2, 8px);
-}
-
 .journal-form {
   display: flex;
   gap: var(--space-3, 12px);
@@ -593,11 +550,5 @@ onMounted(() => {
   gap: var(--space-1, 4px);
   flex-wrap: wrap;
 }
-
-/* Light mode */
-[data-theme="light"] .poll-err {
-  background: var(--color-error-soft, #fef2f2);
-  border-color: var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444);
-}
+/* .btnbar / [data-theme=light] .poll-err 的局部覆盖已随原语收编移除 */
 </style>

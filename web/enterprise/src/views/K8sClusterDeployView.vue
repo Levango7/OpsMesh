@@ -12,11 +12,11 @@
       </div>
       <form @submit.prevent="onDeploy">
         <div class="row">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('k8sDeploy.cluster_name') }}</label>
             <input v-model.trim="form.clusterName" required :placeholder="$t('k8sDeploy.cluster_name_placeholder')" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('k8sDeploy.k8s_version') }}</label>
             <select v-model="form.k8sVersion">
               <option value="1.29.4">v1.29.4</option>
@@ -27,14 +27,14 @@
           </div>
         </div>
         <div class="row">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('k8sDeploy.container_runtime') }}</label>
             <select v-model="form.containerRuntime">
               <option value="containerd">containerd</option>
               <option value="cri-o">CRI-O</option>
             </select>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('k8sDeploy.cni') }}</label>
             <select v-model="form.cni">
               <option value="calico">Calico</option>
@@ -42,7 +42,7 @@
               <option value="flannel">Flannel</option>
             </select>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('k8sDeploy.csi') }}</label>
             <select v-model="form.csi">
               <option value="local-path">Local Path</option>
@@ -52,11 +52,11 @@
           </div>
         </div>
         <div class="row">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('k8sDeploy.registry') }}</label>
             <input v-model.trim="form.registry" :placeholder="$t('k8sDeploy.registry_placeholder')" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('k8sDeploy.ha_enabled') }}</label>
             <input type="checkbox" v-model="form.haEnabled" />
           </div>
@@ -69,9 +69,9 @@
             <Button variant="primary" size="sm" @click="addCPNode">{{ $t('k8sDeploy.add_node') }}</Button>
           </div>
           <div v-for="(node, idx) in form.controlPlaneNodes" :key="idx" class="node-row">
-            <div class="field"><label>Host</label><input v-model="node.host" required placeholder="192.168.1.10" /></div>
-            <div class="field"><label>User</label><input v-model="node.user" placeholder="root" /></div>
-            <div class="field"><label>SSH Key</label><textarea v-model="node.sshKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" /></div>
+            <div class="field field--fixed"><label>Host</label><input v-model="node.host" required placeholder="192.168.1.10" /></div>
+            <div class="field field--fixed"><label>User</label><input v-model="node.user" placeholder="root" /></div>
+            <div class="field field--fixed"><label>SSH Key</label><textarea v-model="node.sshKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" /></div>
             <Button variant="danger" size="sm" @click="removeCPNode(idx)">{{ $t('common.delete') }}</Button>
           </div>
         </div>
@@ -83,9 +83,9 @@
             <Button variant="primary" size="sm" @click="addWorkerNode">{{ $t('k8sDeploy.add_node') }}</Button>
           </div>
           <div v-for="(node, idx) in form.workerNodes" :key="idx" class="node-row">
-            <div class="field"><label>Host</label><input v-model="node.host" required placeholder="192.168.1.20" /></div>
-            <div class="field"><label>User</label><input v-model="node.user" placeholder="root" /></div>
-            <div class="field"><label>SSH Key</label><textarea v-model="node.sshKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" /></div>
+            <div class="field field--fixed"><label>Host</label><input v-model="node.host" required placeholder="192.168.1.20" /></div>
+            <div class="field field--fixed"><label>User</label><input v-model="node.user" placeholder="root" /></div>
+            <div class="field field--fixed"><label>SSH Key</label><textarea v-model="node.sshKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" /></div>
             <Button variant="danger" size="sm" @click="removeWorkerNode(idx)">{{ $t('common.delete') }}</Button>
           </div>
         </div>
@@ -96,11 +96,11 @@
             <h3 class="card__title">{{ $t('k8sDeploy.ha_title') }}</h3>
           </div>
           <div class="row">
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('k8sDeploy.vip') }}</label>
               <input v-model.trim="form.loadBalancer.vip" required placeholder="192.168.1.100" />
             </div>
-            <div class="field">
+            <div class="field field--fixed">
               <label>{{ $t('k8sDeploy.interface') }}</label>
               <input v-model.trim="form.loadBalancer.interface" placeholder="eth0" />
             </div>
@@ -248,34 +248,13 @@ function startPolling(deployID) {
 </script>
 
 <style scoped>
-.card {
-  background: var(--color-surface-1, #ffffff);
-  border: 1px solid var(--color-hairline, #d3dbe8);
-  border-radius: var(--radius-md, 8px);
-  padding: 16px 18px;
-  margin-bottom: 16px;
-}
-.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
-.row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; min-width: 200px; }
-.field label { font-size: 11px; font-weight: 500; color: var(--color-ink-muted, #6b7280); }
+/* .card / .card__title / .row / .field / .field label / .node-row / .btnbar /
+   .status-row / .status-label / .status-value / .muted / .poll-err /
+   .msg / .msg.ok / .msg.err
+   已全部改用 styles/pages.css 全局原语（字段挂 --fixed 变体保持原等宽效果） */
 .field input, .field select, .field textarea {
   padding: 7px 9px; border: 1px solid var(--color-hairline, #d3dbe8);
   border-radius: var(--radius-sm, 6px); font-size: 13px;
   background: var(--color-surface-1, #ffffff); color: var(--color-ink, #1f2937);
 }
-.node-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; padding: 10px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); }
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
-.status-row { display: flex; gap: 8px; margin-bottom: 6px; font-size: 13px; }
-.status-label { color: var(--color-ink-muted, #6b7280); font-weight: 500; }
-.status-value { font-weight: 600; }
-.muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
-.poll-err {
-  padding: 8px 12px; margin: 6px 0 12px; border-radius: var(--radius-sm, 6px);
-  background: var(--color-error-soft, #fef2f2); border: 1px solid var(--color-error-light, #fecaca);
-  color: var(--color-error, #ef4444); font-size: 12.5px; font-weight: 500;
-}
-.msg { margin-top: 8px; font-size: 12.5px; }
-.msg.ok { color: var(--color-success, #059669); }
-.msg.err { color: var(--color-error, #ef4444); }
 </style>

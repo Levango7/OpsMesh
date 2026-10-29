@@ -10,7 +10,7 @@
     </div>
 
     <div v-if="store.loading && !store.topology" class="muted">{{ $t('common.loading') }}</div>
-    <div v-else-if="store.topology" class="card">
+    <div v-else-if="store.topology" class="card card--raised">
       <div class="kv-grid">
         <div class="kv"><span class="k">{{ $t('network.field_generatedAt') }}</span><span class="v">{{ store.topology.generatedAt || '—' }}</span></div>
         <div class="kv"><span class="k">{{ $t('network.field_tenantID') }}</span><span class="v">{{ store.topology.tenantID || '—' }}</span></div>
@@ -160,14 +160,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; margin-top: 14px;
-  box-shadow: var(--shadow);
-}
-.card h3 { margin: 16px 0 8px; font-size: 13px; }
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
-
 .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
 .kv { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); }
 .kv .k { font-size: 11.5px; color: var(--text-3); }

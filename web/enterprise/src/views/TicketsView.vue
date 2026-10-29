@@ -5,7 +5,7 @@
     testid="tickets"
     :error="loadErr"
   >
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('tickets.add') }}
@@ -87,7 +87,7 @@
           <input v-model.trim="form.relatedDevice" type="text" />
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('tickets.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('tickets.cancel') }}</Button>
         </div>
@@ -258,7 +258,6 @@ onMounted(fetchTickets)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .t-title { font-weight: 600; }
 .status-pill {
   display: inline-flex; align-items: center;
@@ -270,8 +269,6 @@ onMounted(fetchTickets)
 .status-pill.warn { background: var(--warn-bg); color: var(--warn); }
 .status-pill.info { background: var(--info-bg); color: var(--info); }
 .ticket-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
+/* .row-actions / .field / .field > label / .btnbar 已改用 styles/pages.css 全局原语 */
 .field textarea { resize: vertical; }
-.btnbar { margin-top: 8px; }
 </style>

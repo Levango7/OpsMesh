@@ -158,8 +158,6 @@ onMounted(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12px; color: var(--text-2); }
 .field input, .field select {
   min-width: 140px; padding: 6px 10px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);

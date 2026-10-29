@@ -14,12 +14,12 @@
 
     <!-- ========== Tab 1: 平台配置 ========== -->
     <div v-show="activeTab === 'config'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="ghost" size="md" @click="store.fetchConfig()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
         <Button variant="primary" size="md" @click="openEdit" data-testid="platform-config-edit-btn"><Icon name="edit" :size="14" /> {{ $t('platform.edit') }}</Button>
       </div>
       <div v-if="store.loading && !store.config" class="muted">{{ $t('common.loading') }}</div>
-      <div v-else-if="store.config" class="card">
+      <div v-else-if="store.config" class="card card--raised">
         <div class="kv-grid">
           <div class="kv"><span class="k">{{ $t('platform.field_version') }}</span><span class="v"><code>{{ store.config.version || '—' }}</code></span></div>
           <div class="kv"><span class="k">{{ $t('platform.field_buildTime') }}</span><span class="v">{{ store.config.buildTime || '—' }}</span></div>
@@ -35,11 +35,11 @@
 
     <!-- ========== Tab 2: 健康检查 ========== -->
     <div v-show="activeTab === 'health'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="ghost" size="md" @click="store.fetchHealth()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.health" class="muted">{{ $t('common.loading') }}</div>
-      <div v-else-if="store.health" class="card">
+      <div v-else-if="store.health" class="card card--raised">
         <div class="row-2">
           <div class="kv"><span class="k">{{ $t('platform.health_status') }}</span><span class="v"><span class="status-pill" :class="healthClass(store.health.status)">{{ store.health.status || '—' }}</span></span></div>
           <div class="kv"><span class="k">{{ $t('platform.health_timestamp') }}</span><span class="v">{{ store.health.timestamp || '—' }}</span></div>
@@ -57,7 +57,7 @@
 
     <!-- ========== Tab 3: 指标汇总 ========== -->
     <div v-show="activeTab === 'metrics'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="ghost" size="md" @click="store.fetchMetrics()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.metrics" class="muted">{{ $t('common.loading') }}</div>
@@ -76,28 +76,28 @@
     <!-- 编辑配置抽屉 -->
     <DetailDrawer :open="!!form" :title="$t('platform.edit')" @close="form = null">
       <form v-if="form" class="entity-form" @submit.prevent="onSave">
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('platform.field_defaultTenant') }}</label>
           <input v-model.trim="form.defaultTenant" type="text" />
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('platform.field_maxTenants') }}</label>
           <input v-model.number="form.maxTenants" type="number" min="0" />
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>
             <input type="checkbox" v-model="form.enableMarketplace" />
             {{ $t('platform.field_enableMarketplace') }}
           </label>
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>
             <input type="checkbox" v-model="form.enableBilling" />
             {{ $t('platform.field_enableBilling') }}
           </label>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -189,20 +189,12 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; margin-top: 14px;
-  box-shadow: var(--shadow);
-}
 .card h4 { margin: 16px 0 8px; font-size: 13px; }
 .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
 .kv { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); }
 .kv .k { font-size: 11.5px; color: var(--text-3); }
 .kv .v { font-size: 13px; color: var(--text); word-break: break-all; }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 8px; }
-.btnbar { display: flex; gap: 8px; margin-top: 8px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
 .stat {

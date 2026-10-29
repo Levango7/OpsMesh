@@ -250,17 +250,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
 .row .col:nth-child(1) { flex: 40; }
 .row .col:nth-child(2) { flex: 60; }
 
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.row-actions { display: inline-flex; gap: 6px; }
 .metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .metric-value { font-size: 28px; font-weight: 700; color: var(--text); }
 

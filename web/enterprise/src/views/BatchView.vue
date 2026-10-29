@@ -1,10 +1,10 @@
 <template>
   <PageShell :title="$t('batch.title')" :desc="$t('batch.subtitle')" testid="batch" :error="store.error">
     <!-- 批量下发表单（详情页不显示） -->
-    <div v-if="!detailId" class="card">
+    <div v-if="!detailId" class="card card--raised">
       <h3>{{ $t('batch.dispatch_form_title') }}</h3>
       <form @submit.prevent="onSubmit">
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('batch.agent_select') }}</label>
           <div class="agent-picker">
             <div class="agent-toolbar">
@@ -25,26 +25,26 @@
         </div>
 
         <div class="row-2">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('batch.type') }}</label>
             <Select v-model="form.type" :options="typeOptions" placeholder="shell" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('batch.command') }}</label>
             <Input v-model="form.command" :placeholder="$t('batch.command_placeholder')" required />
           </div>
         </div>
         <div class="row-2">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('batch.path') }}</label>
             <Input v-model="form.path" :placeholder="$t('batch.optional')" />
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('batch.content') }}</label>
             <Input v-model="form.content" :placeholder="$t('batch.optional')" />
           </div>
         </div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button
             variant="primary"
             native-type="submit"
@@ -59,7 +59,7 @@
     </div>
 
     <!-- 当前批量详情 -->
-    <div v-if="store.current" class="card">
+    <div v-if="store.current" class="card card--raised">
       <div class="flowbar">
         <h3>{{ $t('batch.status_title') }} · {{ store.current.batchID || '—' }}</h3>
         <Button v-if="store.current.batchID" variant="ghost" size="small" @click="refreshCurrent">
@@ -99,7 +99,7 @@
     </div>
 
     <!-- 历史批量 -->
-    <div v-if="store.history.length" class="card">
+    <div v-if="store.history.length" class="card card--raised">
       <h3>{{ $t('batch.history_title') }}</h3>
       <Table
         :data="store.history"
@@ -243,19 +243,9 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; margin-top: 14px;
-  box-shadow: var(--shadow);
-}
-.card h3 { margin: 0 0 12px; font-size: 14px; }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .flowbar h3 { margin: 0; }
 
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.btnbar { display: flex; gap: 8px; margin-top: 8px; }
 
 .agent-picker { display: flex; flex-direction: column; gap: 8px; }
 .agent-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

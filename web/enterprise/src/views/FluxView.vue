@@ -83,7 +83,7 @@
           </select>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--grid-row">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('flux.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('flux.cancel') }}</Button>
         </div>
@@ -231,24 +231,10 @@ fetchApps()
 </script>
 
 <style scoped>
-.btnbar {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 14px;
-}
 .app-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.field label {
-  font-size: 12px;
-  color: var(--text-2);
 }
 .field input,
 .field select {
@@ -256,22 +242,5 @@ fetchApps()
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 13px;
-}
-.msg.err {
-  grid-column: 1 / -1;
-  color: var(--fail);
-  font-size: 12.5px;
-  margin-bottom: 8px;
-}
-.btnbar {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  margin-top: 8px;
-}
-.row-actions {
-  display: flex;
-  gap: 6px;
 }
 </style>

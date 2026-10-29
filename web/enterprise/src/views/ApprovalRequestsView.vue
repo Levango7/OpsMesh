@@ -53,7 +53,7 @@
 
     <!-- ========== Tab 2: 待我审批 ========== -->
     <div v-show="activeTab === 'pending'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="ghost" size="md" @click="store.fetchPending()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.pending.length" class="muted">{{ $t('common.loading') }}</div>
@@ -89,7 +89,7 @@
           <textarea v-model.trim="actionForm.comment" rows="3" :placeholder="$t('approval.comment_placeholder')"></textarea>
         </div>
         <div v-if="actionError" class="msg err">{{ actionError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.confirm') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="actionForm = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -271,8 +271,6 @@ onMounted(() => {
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab:hover { color: var(--text); }
 
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
-.row-actions { display: flex; gap: 4px; }
 .status-pill {
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
@@ -286,7 +284,4 @@ onMounted(() => {
 .filter-bar .field > label { margin: 0; font-size: 12px; color: var(--text-2); }
 
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
-.btnbar { margin-top: 8px; }
 </style>

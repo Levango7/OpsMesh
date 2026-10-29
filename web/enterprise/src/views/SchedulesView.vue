@@ -5,7 +5,7 @@
     testid="schedules"
     :error="loadErr"
   >
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('schedules.add') }}
@@ -61,7 +61,7 @@
           <input v-model.trim="form.cronExpr" type="text" placeholder="*/5 * * * *" required />
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('schedules.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('schedules.cancel') }}</Button>
         </div>
@@ -211,7 +211,6 @@ onMounted(fetchSchedules)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .status-pill {
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
@@ -219,7 +218,4 @@ onMounted(fetchSchedules)
 .status-pill.ok { background: var(--accent-soft); color: var(--accent); }
 .status-pill.warn { background: var(--warn-bg); color: var(--warn); }
 .schedule-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
-.btnbar { margin-top: 8px; }
 </style>

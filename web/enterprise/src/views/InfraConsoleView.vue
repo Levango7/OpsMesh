@@ -418,7 +418,6 @@ button:focus-visible {
   white-space: pre-wrap;
   word-break: break-all;
 }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .task-output { margin-top: 8px; }
 @media (max-width: 900px) {
   .console-wrap { flex-direction: column; }

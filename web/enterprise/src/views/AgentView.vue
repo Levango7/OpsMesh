@@ -6,7 +6,7 @@
         <h3 class="card__title">{{ $t('agent.classify_title') }}</h3>
       </div>
       <div class="row">
-        <div class="field" style="flex: 1;">
+        <div class="field field--fixed" style="flex: 1;">
           <label>{{ $t('agent.input_label') }}</label>
           <textarea v-model="input" rows="3" :placeholder="$t('agent.input_placeholder')" class="agent-input"></textarea>
         </div>
@@ -130,13 +130,9 @@ async function execute() {
 </script>
 
 <style scoped>
-.card { background: var(--color-surface-1, #ffffff); border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); padding: 16px 18px; margin-bottom: 16px; }
-.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
-.row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; min-width: 200px; }
-.field label { font-size: 11px; font-weight: 500; color: var(--color-ink-muted, #6b7280); }
+/* .card / .card__title / .row / .field / .field label / .btnbar / .muted
+   已改用 styles/pages.css 全局原语（.field 处挂了 --fixed 变体） */
 .agent-input { width: 100%; padding: 8px 10px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 13px; resize: vertical; min-height: 80px; background: var(--color-surface-1, #ffffff); }
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
 .chk { display: flex; align-items: center; gap: 4px; font-size: 12px; }
 .result-box { margin-top: 12px; padding: 12px; background: var(--color-surface-2, #f7f9fc); border-radius: var(--radius-sm, 6px); }
 .result-row { display: flex; justify-content: space-between; margin: 4px 0; font-size: 13px; }
@@ -156,5 +152,5 @@ async function execute() {
 .tool-card { padding: 10px 12px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); }
 .tool-card .tool-name { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .tool-card .tool-desc { font-size: 11px; color: var(--color-ink-muted, #6b7280); }
-.muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
+/* .muted 已改用 styles/pages.css 全局原语 */
 </style>

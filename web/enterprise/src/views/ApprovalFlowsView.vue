@@ -1,6 +1,6 @@
 <template>
   <PageShell :title="$t('approval.flows_title')" :desc="$t('approval.flows_subtitle')" testid="approval-flows" :error="store.error">
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate" data-testid="approval-flow-create-btn">
         <Icon name="add" :size="14" /> {{ $t('approval.add_flow') }}
       </Button>
@@ -44,7 +44,7 @@
           <small class="hint">{{ $t('approval.steps_hint') }}</small>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -169,12 +169,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
-.row-actions { display: flex; gap: 4px; }
-
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .field .hint { font-size: 11.5px; color: var(--text-3); }
-.btnbar { margin-top: 8px; }
 </style>

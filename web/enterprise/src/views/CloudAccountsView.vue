@@ -463,11 +463,6 @@ onMounted(fetchAccounts)
 <style scoped>
 .toolbar { display: flex; gap: var(--space-2); align-items: center; }
 .table-wrap { display: flex; flex-direction: column; min-height: 320px; }
-.flowbar { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); flex-wrap: wrap; }
-.card { background: var(--surface-l1); border: 1px solid var(--border-primary); border-radius: var(--radius-md); padding: 16px 18px; margin-bottom: var(--space-4); }
-.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
-.row-actions { display: inline-flex; gap: var(--space-1); }
 .account-form { display: flex; flex-direction: column; gap: var(--space-3); }
-.msg.err { font-size: var(--font-size-xs); color: var(--color-error); margin-top: var(--space-1); }
 .empty-state { padding: var(--space-6); text-align: center; color: var(--text-tertiary); }
 </style>

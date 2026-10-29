@@ -13,7 +13,7 @@
 
     <!-- ========== Tab 1: 设备列表 ========== -->
     <div v-show="activeTab === 'devices'">
-      <div class="btnbar">
+      <div class="btnbar btnbar--bottom">
         <Button variant="primary" size="md" @click="openCreate" data-testid="network-device-create-btn">
           <Icon name="add" :size="14" /> {{ $t('network.add_device') }}
         </Button>
@@ -43,7 +43,7 @@
 
     <!-- ========== Tab 2: 网络发现 ========== -->
     <div v-show="activeTab === 'discover'">
-      <div class="card">
+      <div class="card card--raised">
         <h3>{{ $t('network.discover_form_title') }}</h3>
         <form @submit.prevent="onDiscover">
           <div class="row-2">
@@ -56,7 +56,7 @@
               <input v-model.trim="discoverForm.agentID" type="text" :placeholder="$t('network.agentID_placeholder')" required />
             </div>
           </div>
-          <div class="btnbar">
+          <div class="btnbar btnbar--bottom">
             <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="network-discover-btn">
               {{ submitting ? $t('common.loading') : $t('network.discover') }}
             </Button>
@@ -119,7 +119,7 @@
           </div>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -146,7 +146,7 @@
           <textarea v-model="configForm.config" rows="6" :placeholder="$t('network.config_placeholder')" required></textarea>
         </div>
         <div v-if="configError" class="msg err">{{ configError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('network.push_config') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="configForm = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -360,14 +360,6 @@ onMounted(() => {
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab:hover { color: var(--text); }
 
-.card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; margin-top: 14px;
-  box-shadow: var(--shadow);
-}
-.card h3 { margin: 0 0 12px; font-size: 14px; }
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
-.row-actions { display: flex; gap: 4px; }
 .status-pill {
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
@@ -376,10 +368,7 @@ onMounted(() => {
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
 
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.btnbar { margin-top: 8px; }
 
 @media (max-width: 768px) { .row-2 { grid-template-columns: 1fr; } }
 </style>

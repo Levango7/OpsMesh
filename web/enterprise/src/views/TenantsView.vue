@@ -5,7 +5,7 @@
     testid="tenants"
     :error="loadErr"
   >
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('tenants.add') }}
@@ -62,7 +62,7 @@
           <input v-model.trim="form.displayName" type="text" />
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('tenants.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('tenants.cancel') }}</Button>
         </div>
@@ -243,7 +243,6 @@ onMounted(fetchTenants)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
 .dn { margin-left: 8px; color: var(--text-3); font-size: 12px; }
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
@@ -253,7 +252,5 @@ onMounted(fetchTenants)
 .tag.st-suspended { background: var(--warn-bg); color: var(--warn); }
 .tag.st-disabled { background: var(--fail-bg); color: var(--fail); }
 .tenant-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
-.btnbar { margin-top: 8px; }
+/* .row-actions / .field / .field > label / .btnbar 已改用 styles/pages.css 全局原语 */
 </style>

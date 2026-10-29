@@ -411,12 +411,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
 .row .col {
   flex: 1;
   min-width: 0;
@@ -424,28 +418,12 @@ onMounted(() => {
 .row .col:nth-child(1) { flex: 45; }
 .row .col:nth-child(2) { flex: 55; }
 
-.card {
-  background: var(--surface, var(--surface-l1), var(--color-surface-1, #ffffff));
-  border: 1px solid var(--border, var(--border-primary), #d3dbe8);
-  border-radius: var(--radius, var(--radius-md), 8px);
-  padding: 16px 18px;
-  margin-bottom: 16px;
-}
-.card__title {
-  margin: 0 0 12px 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-ink-muted, #6b7280);
-}
-
 .src-warn, .src-ok {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 10px; margin: 6px 0; border-radius: var(--radius-sm); font-size: 12.5px;
 }
 .src-warn { background: var(--warn-soft); border: 1px solid var(--warn-bg); color: var(--warn); font-weight: 500; }
 .src-ok { background: var(--ok-soft); border: 1px solid var(--ok-bg); color: var(--ok); }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.row-actions { display: inline-flex; gap: 6px; }
 .metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .metric-value { font-size: 28px; font-weight: 700; color: var(--text); }
 

@@ -803,6 +803,29 @@ i18n 采用自研轻量模块（`src/i18n/index.js`），不依赖 vue-i18n，�
 8. **翻译映射必须同步**：新路由必须登记 `src/i18n/index.js` 的 `ROUTE_DOMAIN_MAP`（漏登记 = 页面裸键），
    守卫 ⑦ 强制；侧栏标签键须 zh/en 双语可解析（守卫 ④）。
 
-**已知遗留（UI 债，择机收编）**：共享原语（`.btnbar/.field/.card/.poll-err/.modal-*` 等）目前寄生在
-`styles/k8s.css`（K8s 命名当全站事实标准）；计划在后续批次迁入 `styles/pages.css` 并令 k8s.css 只留 k8s 专属类。
-（2026-10-27 已先清其中的死件 `.k8s-page*` 四规则——K8s 页面迁 PageShell 后已无引用。）
+**共享原语收编（2026-10-28，已完成）**：此前共享原语寄生在 `styles/k8s.css`（K8s 命名当全站事实标准，
+靠 main.js 的 import 顺序压过 `assets/tokens.css` 的同名规则取胜），同时 78 个视图各自复制一份
+`<style scoped>` 副本——实测 **178 处 scoped 声明**，同名类最多 **8 种 `.card` / 16 种 `.btnbar` /
+10 种 `.field`** 写法。这正是「东一榔头西一棒子」的技术根源。
+
+已收编至 `styles/pages.css`（唯一权威）的原语：`.card`（含 `.card h3` / `.card__title`）、
+`.field`（含 `.field label`）、`.btnbar`、`.flowbar`（含 `.flowbar .field*`）、`.row`、
+`.row-actions`、`.muted`、`.msg`（含 `.msg.ok/.err`）、`.hint`、`.poll-err`、
+`.status-row/.status-label/.status-value`、`.node-row`；`assets/tokens.css` 的同名定义与响应式规则
+一并移除（不再靠 import 顺序决胜）。
+
+**变体走显式修饰类，不靠各页自写**（原 67 处 scoped 携带 canonical 没有的属性，一刀删会造成渲染回退）：
+`.card--raised`（抬升卡片）/ `.card--flat`（紧凑容器）/ `.btnbar--bottom`（内容之后的动作行）/
+`.btnbar--end`（右对齐）/ `.btnbar--grid-row`（栅格整行）/ `.field--fixed`（等宽筛选字段）/
+`.flowbar--inline`（横向字段筛选栏）/ `.status-row--divided`（分隔列表行）。
+因原 scoped 规则作用于该文件全部实例，删除时同步在模板给全部实例挂上对应修饰类，渲染等价。
+
+**守卫**：`src/styles/__tests__/shared-primitives.spec.js`——按归一化选择器串**精确匹配**（不按类名前缀猜，
+`.card h4`/`.field-hint`/`.card-grid` 等页面专属派生类不会误伤），用括号配对解析（**不能按 `;` 切分**，
+那会把上条规则的 `}` 带进下一条选择器，导致每个 style 块只抓到第一条规则——这个漏报陷阱开发中真实踩到过），
+`@media` 内嵌套规则同样检查；豁免清单只减不增。
+
+**仍遗留（下一批次）**：`.modal-*` 家族仍寄生在 `styles/k8s.css`，被 9 个视图的 scoped 副本遮蔽，
+其中 `.modal-mask` 存在 **z-index 50 vs 9999 的真实行为分歧**；计划与 DetailDrawer 一并收编。
+另有一批跨文件重复的派生类待处置：`.field > label`（26 文件同文）、`.row-2`（10 文件）、
+`.card h4`（2 文件）、`.field input/.select`（AuditEvents/Audits 同文）等。

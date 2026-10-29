@@ -163,9 +163,6 @@ onMounted(() => { store.fetchTypes() })
 </script>
 
 <style scoped>
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
-.field label { margin: 0; }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .rel {
   font-size: 13px; padding: 7px 12px;
   border-left: 3px solid var(--teal); margin: 5px 0;
@@ -181,10 +178,4 @@ onMounted(() => { store.fetchTypes() })
 .graph-tab:hover { background: var(--bg-soft); color: var(--text); }
 .graph-tab.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 600; }
 .graph-list { margin-top: 6px; }
-.row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
 </style>

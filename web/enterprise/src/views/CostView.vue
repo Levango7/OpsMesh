@@ -29,19 +29,19 @@
         <h3 class="card__title">{{ $t('cost.budget_title') }}</h3>
       </div>
       <div class="row">
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('cost.daily_limit') }}</label>
           <input v-model.number="budgetForm.daily" type="number" min="0" />
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('cost.monthly_limit') }}</label>
           <input v-model.number="budgetForm.monthly" type="number" min="0" />
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('cost.threshold') }}</label>
           <input v-model.number="budgetForm.threshold" type="number" min="0" max="1" step="0.1" />
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <Button variant="primary" size="sm" @click="updateBudget">{{ $t('cost.save_budget') }}</Button>
         </div>
       </div>
@@ -205,16 +205,7 @@ onMounted(() => {
 
 <style scoped>
 .metrics-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
-.card { background: var(--color-surface-1, #ffffff); border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); padding: 16px 18px; margin-bottom: 16px; }
-.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; min-width: 160px; }
-.field label { font-size: 11px; font-weight: 500; color: var(--color-ink-muted, #6b7280); }
 .field input { padding: 7px 9px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 13px; background: var(--color-surface-1, #ffffff); }
-.btnbar { display: flex; gap: 8px; margin-bottom: 12px; }
-.row-actions { display: inline-flex; gap: 4px; flex-wrap: wrap; }
-.muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
 .metric-value { font-size: 24px; font-weight: 700; }
 .metric-sub { font-size: 11px; color: var(--color-ink-muted, #6b7280); }
 .report-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }

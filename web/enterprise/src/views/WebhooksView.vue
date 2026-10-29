@@ -5,7 +5,7 @@
     testid="webhooks"
     :error="loadErr"
   >
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate">
         <Icon name="add" :size="14" />
         {{ $t('webhooks.add') }}
@@ -67,7 +67,7 @@
           </label>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('webhooks.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('webhooks.cancel') }}</Button>
         </div>
@@ -263,7 +263,7 @@ onMounted(fetchWebhooks)
 </script>
 
 <style scoped>
-.row-actions { display: flex; gap: 4px; }
+/* .row-actions / .field / .field > label / .btnbar 已改用 styles/pages.css 全局原语 */
 .url-cell { font-size: 12px; }
 .status-pill {
   display: inline-flex; align-items: center;
@@ -273,8 +273,7 @@ onMounted(fetchWebhooks)
 .status-pill.off { background: var(--surface-3); color: var(--text-3); }
 .status-pill.bad { background: var(--fail-bg); color: var(--fail); }
 .webhook-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
+/* .field / .field > label 已改用 styles/pages.css 全局原语 */
 .field textarea { resize: vertical; }
 .checkbox-item {
   display: inline-flex; padding: 4px 10px;
@@ -282,5 +281,4 @@ onMounted(fetchWebhooks)
   background: var(--surface-2); width: fit-content;
 }
 .inline { display: inline-flex; align-items: center; gap: 5px; margin: 0; cursor: pointer; }
-.btnbar { margin-top: 8px; }
 </style>

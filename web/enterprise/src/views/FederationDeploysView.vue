@@ -5,7 +5,7 @@
     testid="federation-deploys"
     :error="store.error"
   >
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openCreate" data-testid="federation-deploys-create-btn">
         <Icon name="add" :size="14" /> {{ $t('federationDeploys.add') }}
       </Button>
@@ -43,24 +43,24 @@
     <!-- 创建联邦部署抽屉 -->
     <DetailDrawer :open="!!form" :title="$t('federationDeploys.add')" @close="form = null">
       <form v-if="form" class="entity-form" @submit.prevent="onCreate">
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('federationDeploys.field_name') }}</label>
           <input v-model.trim="form.name" type="text" required />
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('federationDeploys.field_clusters') }}</label>
           <textarea v-model.trim="form.clustersRaw" rows="3" :placeholder="$t('federationDeploys.clusters_placeholder')" required></textarea>
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('federationDeploys.field_template') }}</label>
           <input v-model.trim="form.template" type="text" :placeholder="$t('federationDeploys.template_placeholder')" />
         </div>
-        <div class="field">
+        <div class="field field--fixed">
           <label>{{ $t('federationDeploys.field_params') }}</label>
           <textarea v-model="form.paramsRaw" rows="3" :placeholder="$t('federationDeploys.params_placeholder')"></textarea>
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
@@ -185,10 +185,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.btnbar { display: flex; gap: 8px; margin-top: 8px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; min-width: 220px; }
-.field label { margin: 0; font-size: 12.5px; color: var(--text-2); }
-
 .cluster-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .cluster-chip {
   display: inline-block; padding: 1px 6px; border-radius: var(--radius-sm);

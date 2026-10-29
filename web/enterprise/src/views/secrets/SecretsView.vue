@@ -1,6 +1,6 @@
 <template>
   <PageShell :title="$t('secrets.title')" :desc="$t('secrets.subtitle')" testid="secrets" :error="loadError">
-    <div class="row">
+    <div class="secret-cols">
       <!-- 左：提供者状态 + Vault 配置 -->
       <div class="col">
         <!-- 提供者状态卡片 -->
@@ -8,7 +8,7 @@
           <h3>{{ $t('secrets.provider_status') }}</h3>
           <div v-if="loading" class="muted">{{ $t('secrets.loading') }}</div>
           <div v-else>
-            <div class="status-row">
+            <div class="status-row status-row--divided">
               <span class="field-hint">{{ $t('secrets.provider_type') }}</span>
               <span class="badge info">{{ status.provider || '—' }}</span>
               <StatusBadge
@@ -16,15 +16,15 @@
                 :text="status.enabled ? $t('secrets.enabled') : $t('secrets.disabled')"
               />
             </div>
-            <div class="status-row">
+            <div class="status-row status-row--divided">
               <span class="field-hint">{{ $t('secrets.vault_addr') }}</span>
               <code>{{ status.addr || '—' }}</code>
             </div>
-            <div class="status-row">
+            <div class="status-row status-row--divided">
               <span class="field-hint">{{ $t('secrets.vault_mount') }}</span>
               <code>{{ status.mount || '—' }}</code>
             </div>
-            <div class="status-row">
+            <div class="status-row status-row--divided">
               <span class="field-hint">{{ $t('secrets.secret_file') }}</span>
               <code>{{ status.file || '—' }}</code>
             </div>
@@ -54,7 +54,7 @@
               <label>{{ $t('secrets.vault_mount') }}</label>
               <input v-model="form.mount" placeholder="secret" />
             </div>
-            <div class="btnbar">
+            <div class="btnbar btnbar--bottom">
               <Button variant="primary" size="md" native-type="submit" :disabled="testing">
                 {{ testing ? $t('secrets.testing') : $t('secrets.test_connection') }}
               </Button>
@@ -109,7 +109,7 @@
               <option value="ecdsa">ecdsa</option>
             </select>
           </div>
-          <div class="btnbar">
+          <div class="btnbar btnbar--bottom">
             <Button variant="primary" size="md" @click="confirmRotate" :disabled="!rotateConfirm.newValue || rotating">
               {{ rotating ? $t('secrets.rotating') : $t('secrets.rotate_confirm') }}
             </Button>
@@ -279,23 +279,16 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 960px) { .row { grid-template-columns: 1fr; } }
+/* 两栏栅格：本页用 .secret-cols 而非全局 .row —— 后者是全站横向 flex 原语，
+   这里要的是 1fr 1fr 网格，同名会造成语义冲突（历史遗留，收编时改名保留观感） */
+.secret-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 960px) { .secret-cols { grid-template-columns: 1fr; } }
 .col { display: flex; flex-direction: column; gap: 14px; }
 
-.status-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 0; font-size: 13px;
-  border-bottom: 1px dashed var(--border);
-}
-.status-row:last-child { border-bottom: none; }
+/* .field / .field label / .flowbar / .btnbar 已改用 styles/pages.css 全局原语 */
 .field-hint { font-size: 11.5px; color: var(--text-3); min-width: 84px; }
-
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-.field label { margin: 0; }
-
-.flowbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.btnbar { display: flex; gap: 8px; margin-top: 4px; }
+/* .status-row 用全局 --divided 变体（保留 padding 与虚线下边框） */
+.status-row:last-child { border-bottom: none; }
 
 .badge {
   display: inline-flex; align-items: center; height: 20px;
@@ -313,8 +306,5 @@ onMounted(() => {
 
 .help-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.7; }
 .help-list code { font-size: 12px; }
-
-.msg { margin-top: 8px; font-size: 12.5px; }
-.msg.ok { color: var(--teal); }
-.msg.err { color: var(--fail); }
+/* .msg / .msg.ok / .msg.err 已改用 styles/pages.css 全局原语 */
 </style>

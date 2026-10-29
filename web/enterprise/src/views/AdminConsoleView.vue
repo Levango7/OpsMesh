@@ -125,13 +125,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.btnbar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .field-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .field-inline select { padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.card { background: var(--surface, var(--surface-l1), var(--color-surface-1, #ffffff)); border: 1px solid var(--border, var(--border-primary), #d3dbe8); border-radius: var(--radius, var(--radius-md), 8px); padding: 16px 18px; margin-bottom: 16px; }
-.card h3,
-.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, var(--text-secondary), #6b7280); }
 .code-block { background: var(--surface-3); color: var(--text); padding: 10px; border-radius: var(--radius-sm); overflow: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; font-family: var(--font-mono); max-height: 400px; }
-.muted { color: var(--text-3); font-size: 12.5px; }
-.row-actions { display: inline-flex; gap: 6px; }
 </style>

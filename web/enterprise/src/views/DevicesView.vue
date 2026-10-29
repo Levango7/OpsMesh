@@ -221,11 +221,6 @@ onMounted(() => { if (!store.total) store.fetchDevices() })
   color: var(--color-ink, #f7f8f8);
 }
 
-.row-actions {
-  display: inline-flex;
-  gap: var(--space-1, 4px);
-}
-
 :deep(.fail-row) {
   background: var(--color-error-soft, #fef2f2) !important;
 }
@@ -258,11 +253,5 @@ onMounted(() => { if (!store.total) store.fetchDevices() })
   font-size: var(--font-size-sm, 13px);
   font-weight: 600;
   color: var(--color-ink-muted, #d0d6e0);
-}
-
-.btnbar {
-  display: flex;
-  gap: var(--space-1, 4px);
-  margin-bottom: var(--space-3, 12px);
 }
 </style>

@@ -64,7 +64,7 @@
             <label>{{ $t('k8s.kubeconfig') }}</label>
             <textarea v-model="addForm.kubeconfig" rows="8" :placeholder="$t('k8s.kubeconfigHint')" data-testid="k8s-add-kubeconfig"></textarea>
           </div>
-          <div class="btnbar">
+          <div class="btnbar btnbar--bottom">
             <Button variant="primary" size="sm" @click="confirmAdd" :disabled="adding" data-testid="k8s-add-confirm">
               {{ $t('k8s.confirm') }}
             </Button>
@@ -220,49 +220,11 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.card {
-  background: var(--color-surface-1, #ffffff);
-  border: 1px solid var(--color-hairline, #d3dbe8);
-  border-radius: var(--radius-md, 8px);
-  padding: 16px 18px;
-  margin-bottom: 16px;
-}
-.card__title {
-  margin: 0 0 12px 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-ink-muted, #6b7280);
-}
-
-/* Dark mode card background */
-[data-theme="dark"] .card {
-  background: var(--color-surface-1, var(--surface-l1, #131620));
-  border-color: var(--color-hairline, #23252a);
-}
-[data-theme="dark"] .card__title {
-  color: var(--color-ink-muted, var(--text-secondary, #9aa0b1));
-}
-
-.flowbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
+/* .card / .card__title / .flowbar / .field / .field label / .btnbar / .row-actions /
+   .muted / .msg / .msg.ok / .msg.err 及其暗色覆盖
+   已改用 styles/pages.css 全局原语与全局暗色规则 */
 .flowbar h3 { flex: 1 1 auto; }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-.field label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-ink-muted, #6b7280);
-}
 .field input,
 .field textarea,
 .field select {
@@ -279,24 +241,6 @@ onMounted(() => {
 .field select:focus {
   outline: none;
   border-color: var(--color-primary-900, var(--color-primary, #2563eb));
-}
-
-.btnbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: 12px;
-}
-
-.row-actions {
-  display: inline-flex;
-  gap: 4px;
-}
-
-.muted {
-  color: var(--color-ink-muted, #6b7280);
-  font-size: 12.5px;
 }
 
 /* Modal overlay + box */
@@ -335,12 +279,7 @@ onMounted(() => {
 .modal-body {
   padding: 16px 18px;
 }
-.msg {
-  margin-top: 10px;
-  font-size: 12.5px;
-}
-.msg.ok { color: var(--color-success, #059669); }
-.msg.err { color: var(--color-error, #ef4444); }
+/* .msg / .msg.ok / .msg.err 已改用 styles/pages.css 全局原语 */
 
 /* Dark mode overrides */
 [data-theme="dark"] .modal,

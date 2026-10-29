@@ -9,7 +9,7 @@
       <h3 class="card__title" data-testid="task-form-title">{{ $t('tasks.dispatch_form_title') }}</h3>
       <form @submit.prevent="onSubmit">
         <div class="row">
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('tasks.agent') }}</label>
             <select v-model="form.agentID" required data-testid="task-agent-select">
               <option value="">{{ $t('tasks.please_select') }}</option>
@@ -18,7 +18,7 @@
               </option>
             </select>
           </div>
-          <div class="field">
+          <div class="field field--fixed">
             <label>{{ $t('tasks.type') }}</label>
             <select v-model="form.type" data-testid="task-type-select">
               <option value="shell">shell</option>
@@ -41,7 +41,7 @@
             <input v-model="form.content" :placeholder="$t('tasks.content_placeholder')" />
           </div>
         </div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button native-type="submit" variant="primary" data-testid="task-submit-btn" :disabled="submitting">
             {{ submitting ? $t('common.loading') : $t('tasks.submit') }}
           </Button>
@@ -246,28 +246,7 @@ function onTaskStatus() {
 </script>
 
 <style scoped>
-.card {
-  background: var(--color-surface-1, var(--surface-l1, #ffffff));
-  border: 1px solid var(--color-hairline, var(--border-primary, #d3dbe8));
-  border-radius: var(--radius-md, 8px);
-  padding: 16px 18px;
-  margin-bottom: 16px;
-}
-.card__title { margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-ink-muted, #6b7280); }
-.row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; min-width: 220px; }
-.field label { display: block; margin: 0; font-size: 11px; font-weight: 500; color: var(--color-ink-muted, #6b7280); }
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.row-actions { display: inline-flex; gap: 6px; align-items: center; }
-.btnbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
-.muted { color: var(--color-ink-muted, #6b7280); font-size: 12.5px; }
-.msg { margin-top: 8px; font-size: 12.5px; }
-.msg.ok { color: var(--color-success, #059669); }
-.msg.err { color: var(--color-error, #ef4444); }
-
-/* Dark mode */
-[data-theme="dark"] .card {
-  background: var(--color-surface-2, #1e2430);
-  border-color: var(--color-hairline, #23252a);
-}
+/* .card / .card__title / .row / .field / .field label / .flowbar / .row-actions /
+   .btnbar / .muted / .msg / .msg.ok / .msg.err
+   已改用 styles/pages.css 全局原语（含 .field--fixed 用在表单两栏字段上） */
 </style>

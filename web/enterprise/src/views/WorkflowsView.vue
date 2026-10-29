@@ -9,7 +9,7 @@
     data-testid="workflows-view"
   >
 
-    <div class="flowbar">
+    <div class="flowbar flowbar--inline">
       <div class="field">
         <label>{{ $t('workflows.workflow_label') }}</label>
         <select v-model="selectedId" data-testid="workflows-select" @change="onOpen">
@@ -221,11 +221,9 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.flowbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.flowbar .field { display: flex; align-items: center; gap: 6px; }
+/* .flowbar / .flowbar .field / .field / .field label / .row
+   已改用 styles/pages.css 全局原语（本页筛选栏是横向字段，用 --inline 变体） */
 .flowbar label { margin: 0; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
-.field label { margin: 0; }
 
 .canvas {
   display: block; width: 100%; height: 560px;
@@ -251,10 +249,5 @@ onMounted(async () => {
   background: var(--bg-soft); border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
-.row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
+/* .row 已改用 styles/pages.css 全局原语 */
 </style>

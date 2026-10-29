@@ -6,6 +6,17 @@
 
 ## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
+- **共享原语单一来源收编（CSS 去重，用户担忧②的根治）**：78 个视图各自复制 `<style scoped>`
+  共享原语副本的形态已清除——实测 178 处 scoped 声明遮蔽全局同名规则，同名类最多 8 种 `.card` /
+  16 种 `.btnbar` / 10 种 `.field` 写法。`styles/pages.css` 现为 `.card`/`.card__title`/`.field`/
+  `.btnbar`/`.flowbar`/`.row`/`.row-actions`/`.muted`/`.msg`/`.hint`/`.poll-err`/`.status-*`/
+  `.node-row` 的唯一权威；`styles/k8s.css` 只留 k8s 专属类（`.k8s-subnav`/`.res-tab`/`.code-block`/
+  `.logs-block` + 待下一批的 `.modal-*`），`assets/tokens.css` 的同名定义与响应式规则移除——
+  全局层不再靠 import 顺序决胜。变体收敛为显式修饰类（`.card--raised`/`.card--flat`/
+  `.btnbar--bottom`/`.btnbar--end`/`.btnbar--grid-row`/`.field--fixed`/`.flowbar--inline`/
+  `.status-row--divided`），删除时同步在模板给全部实例挂 modifier，渲染等价。
+  新增棘轮守卫 `src/styles/__tests__/shared-primitives.spec.js`（归一化选择器串精确匹配 +
+  括号配对解析 + `@media` 嵌套同查，豁免只减不增）。
 - **背景（用户指派）**：两大担忧——① 后端能力做了、前端没做或做残；② 各页面布局各行其是。
   专项审计方法：468 条后端 REST 路由 ×（前端静态调用 + 动态目录枚举）⇒ 181 条缺口定性，
   按域拆为目录分片补齐；布局走「统一骨架 + 棘轮门禁」。

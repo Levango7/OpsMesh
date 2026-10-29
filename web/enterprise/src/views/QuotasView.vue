@@ -5,7 +5,7 @@
     testid="quotas"
     :error="loadErr"
   >
-    <div class="btnbar">
+    <div class="btnbar btnbar--bottom">
       <Button variant="primary" size="md" @click="openEdit">
         <Icon name="edit" :size="14" />
         {{ $t('quotas.edit') }}
@@ -44,7 +44,7 @@
         </div>
         <p class="muted">{{ $t('quotas.unlimited_hint') }}</p>
         <div v-if="formError" class="msg err">{{ formError }}</div>
-        <div class="btnbar">
+        <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('quotas.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('quotas.cancel') }}</Button>
         </div>
@@ -199,7 +199,4 @@ onMounted(fetchQuota)
 .quota-bar-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width .3s; }
 .quota-bar-fill.over { background: var(--fail); }
 .quota-form { display: flex; flex-direction: column; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 5px; }
-.field > label { margin: 0; font-size: 12.5px; color: var(--text-2); }
-.btnbar { margin-top: 8px; }
 </style>
