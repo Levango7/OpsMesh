@@ -677,13 +677,17 @@ func (s *Service) ListCIs(ctx context.Context, req *devicev1.ListCIsRequest) (*d
 // CreateCIRelation creates a CI relationship.
 func (s *Service) CreateCIRelation(ctx context.Context, req *devicev1.CreateCIRelationRequest) (*devicev1.CIRelation, error) {
 	if req.Relation == nil {
-		return nil, errors.New("relation invalid")
+		return nil, ErrCIInvalid
 	}
 
 	storeRel := protoToRelation(req.Relation)
-	s.ciStore.CreateRelation(storeRel)
-
-	return req.Relation, nil
+	// 自增 ID 由 store 分配在它自己的副本上，必须回出 store 的返回值，
+	// 否则 gRPC 响应里的 id 恒为 0，调用方拿不到可引用的关系主键。
+	created := s.ciStore.CreateRelation(storeRel)
+	if created == nil {
+		return nil, errors.New("create relation failed")
+	}
+	return relationToProto(created), nil
 }
 
 // GetCIRelations retrieves CI relations.

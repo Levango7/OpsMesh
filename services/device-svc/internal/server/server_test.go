@@ -17,6 +17,7 @@ import (
 
 type testEnv struct {
 	srv *Server
+	svc *service.Service
 	mem *store.MemoryStore
 }
 
@@ -26,7 +27,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	mem := store.NewMemoryStore()
 	svc := service.NewService(mem, mem, mem, mem, mem, tenant.NewManager(nil, nil, nil))
-	return &testEnv{srv: NewServer(svc), mem: mem}
+	return &testEnv{srv: NewServer(svc), svc: svc, mem: mem}
 }
 
 func requireCode(t *testing.T, err error, want codes.Code, what string) {
@@ -219,13 +220,17 @@ func TestCMDBHandlersMapping(t *testing.T) {
 		t.Fatalf("ListCIs(t1,server) = %d 条, want 1", len(list.GetCis()))
 	}
 
-	// 关系的成功写入以"能被查回来"为准。注意：服务层把 store 写入结果的
-	// 自增 ID 丢掉了（service.go CreateCIRelation 返回的是入参 req.Relation），
-	// 所以响应里的 id 恒为 0 —— 该缺陷已上报留言板，此处不为其背书。
-	if _, err := srv.CreateCIRelation(ctx, &devicev1.CreateCIRelationRequest{Relation: &devicev1.CIRelation{
+	_, err = srv.CreateCIRelation(ctx, &devicev1.CreateCIRelationRequest{})
+	requireCode(t, err, codes.InvalidArgument, "CreateCIRelation(nil relation)")
+
+	rel, err := srv.CreateCIRelation(ctx, &devicev1.CreateCIRelationRequest{Relation: &devicev1.CIRelation{
 		SourceCiId: ci.GetId(), TargetCiId: "ci-target", RelationType: "depends_on", TenantId: "t1",
-	}}); err != nil {
+	}})
+	if err != nil {
 		t.Fatalf("CreateCIRelation: %v", err)
+	}
+	if rel.GetId() == 0 {
+		t.Fatal("CreateCIRelation 响应未回出 store 分配的自增 ID")
 	}
 	rels, err := srv.GetCIRelations(ctx, &devicev1.GetCIRelationsRequest{CiId: ci.GetId()})
 	if err != nil {
@@ -247,13 +252,14 @@ func TestDiscoveryHandlersMapping(t *testing.T) {
 	env := newTestEnv(t)
 	srv, ctx := env.srv, context.Background()
 
-	// 空 CIDR 在创建 job 前被拒（不会启动后台扫描 goroutine）。
-	// 注意：白名单越界/非法 CIDR 的拒绝错误来自
-	// `fmt.Errorf("%w: %v", ErrJobInvalid, ...)`，而适配层用 `err ==` 做身份比较，
-	// 命中不了包装后的哨兵值 ⇒ 实际映射成 Internal。该映射缺陷已上报留言板，
-	// 此处不为 Internal 背书，也不触发会起扫描 goroutine 的调用。
+	// 空 CIDR / 白名单越界都在创建 job 前被拒，不会启动后台扫描 goroutine。
+	// 白名单拒绝错误经 fmt.Errorf("%w") 包装，适配层必须用 errors.Is 才映射成 InvalidArgument。
 	_, err := srv.StartDiscovery(ctx, &devicev1.StartDiscoveryRequest{})
 	requireCode(t, err, codes.InvalidArgument, "StartDiscovery(空 cidr)")
+
+	env.svc.SetDiscoverConfig(&service.DiscoverConfig{CIDRWhitelist: "192.0.2.0/24"})
+	_, err = srv.StartDiscovery(ctx, &devicev1.StartDiscoveryRequest{Cidr: "203.0.113.0/24", TenantId: "t1"})
+	requireCode(t, err, codes.InvalidArgument, "StartDiscovery(白名单外 CIDR)")
 
 	_, err = srv.GetDiscoveryStatus(ctx, &devicev1.GetDiscoveryStatusRequest{JobId: "missing"})
 	requireCode(t, err, codes.NotFound, "GetDiscoveryStatus(missing)")

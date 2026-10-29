@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -220,6 +221,9 @@ func (s *Server) ListCIs(ctx context.Context, req *devicev1.ListCIsRequest) (*de
 func (s *Server) CreateCIRelation(ctx context.Context, req *devicev1.CreateCIRelationRequest) (*devicev1.CIRelation, error) {
 	rel, err := s.svc.CreateCIRelation(ctx, req)
 	if err != nil {
+		if err == service.ErrCIInvalid {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return rel, nil
@@ -236,7 +240,9 @@ func (s *Server) GetCIRelations(ctx context.Context, req *devicev1.GetCIRelation
 func (s *Server) StartDiscovery(ctx context.Context, req *devicev1.StartDiscoveryRequest) (*devicev1.DiscoveryJob, error) {
 	job, err := s.svc.StartDiscovery(ctx, req)
 	if err != nil {
-		if err == service.ErrJobInvalid {
+		// 服务层对白名单越界/非法 CIDR 用 fmt.Errorf("%w", ErrJobInvalid) 包装，
+		// 身份比较必须走 errors.Is，否则包装后的哨兵值落到 Internal。
+		if errors.Is(err, service.ErrJobInvalid) {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
 		return nil, status.Error(codes.Internal, err.Error())
