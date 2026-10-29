@@ -121,6 +121,10 @@ func (m *UpgradeManager) Upgrade(ctx context.Context, spec UpgradeSpec) (*Upgrad
 	m.upgrades[upgradeID] = status
 	m.mu.Unlock()
 
+	// 快照必须在后台 goroutine 启动前取：executeUpgrade 会并发 updateStatus 写同一个
+	// 结构体，把内部指针直接交给 HTTP 层会让响应序列化与后台写入构成 data race。
+	resp := snapshotUpgradeStatus(status)
+
 	go func() {
 		deployCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Hour)
 		defer cancel()
@@ -132,7 +136,7 @@ func (m *UpgradeManager) Upgrade(ctx context.Context, spec UpgradeSpec) (*Upgrad
 		}
 	}()
 
-	return status, nil
+	return resp, nil
 }
 
 func (m *UpgradeManager) executeUpgrade(ctx context.Context, upgradeID string, spec UpgradeSpec) error {
@@ -204,8 +208,20 @@ func (m *UpgradeManager) GetStatus(upgradeID string) (*UpgradeStatus, bool) {
 	if !ok {
 		return nil, false
 	}
+	return snapshotUpgradeStatus(s), true
+}
+
+// snapshotUpgradeStatus 复制一份可安全交给并发读取方（HTTP 响应序列化/GetStatus）的状态。
+// 作业结构体由后台 goroutine 通过 updateStatus 就地修改，直接返回内部指针会构成 data race。
+func snapshotUpgradeStatus(s *UpgradeStatus) *UpgradeStatus {
 	cp := *s
-	return &cp, true
+	if s.NodeStatus != nil {
+		cp.NodeStatus = make(map[string]string, len(s.NodeStatus))
+		for k, v := range s.NodeStatus {
+			cp.NodeStatus[k] = v
+		}
+	}
+	return &cp
 }
 
 // ============================================================================
@@ -237,6 +253,9 @@ func (m *UpgradeManager) Rollback(ctx context.Context, spec RollbackSpec) (*Upgr
 	m.upgrades[rollbackID] = status
 	m.mu.Unlock()
 
+	// 同 Upgrade：先取快照再启动后台状态推进，避免响应编码与 updateStatus 竞争。
+	resp := snapshotUpgradeStatus(status)
+
 	go func() {
 		deployCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Hour)
 		defer cancel()
@@ -248,7 +267,7 @@ func (m *UpgradeManager) Rollback(ctx context.Context, spec RollbackSpec) (*Upgr
 		}
 	}()
 
-	return status, nil
+	return resp, nil
 }
 
 func (m *UpgradeManager) executeRollback(ctx context.Context, rollbackID string, spec RollbackSpec) error {
@@ -314,6 +333,9 @@ func (m *CertRotationManager) RotateCertificates(ctx context.Context, spec CertR
 	m.status[rotationID] = status
 	m.mu.Unlock()
 
+	// 同 Upgrade/Rollback：返回快照而不是内部指针。
+	resp := *status
+
 	go func() {
 		deployCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 1*time.Hour)
 		defer cancel()
@@ -325,7 +347,7 @@ func (m *CertRotationManager) RotateCertificates(ctx context.Context, spec CertR
 		}
 	}()
 
-	return status, nil
+	return &resp, nil
 }
 
 func (m *CertRotationManager) executeRotation(ctx context.Context, rotationID string, spec CertRotationSpec) error {
