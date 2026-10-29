@@ -6,6 +6,17 @@
 
 ## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
+- **对话框家族收编进 pages.css（第 6 批 CSS 去重）**：`.modal-*` 家族从 `styles/k8s.css`
+  迁入 `styles/pages.css`，10 个文件（8 视图 + ConfirmModal/PromptModal）的 scoped 副本清零。
+  收编时发现仓里并存**两套**对话框约定：A「遮罩+面板」`.modal-mask > .modal`（8 视图）与
+  B「浮层+盒子」`.modal-overlay > .modal-box`（ConfirmModal/PromptModal，二者此前互为近乎
+  逐字重复、仅 `.modal-message` 下间距 18 vs 12）；k8s.css 现只留 k8s 专属四类。
+  BEM 命名的 `.modal__*`/`.modal--*`（components/ui/Modal.vue）是第三种实现、不遮蔽全局，未纳入本批。
+  分歧固化为**正交**修饰类（不用捆绑式变体——否则「只要 padding」的页面被迫连带改 z-index，
+  这是本次实际踩到的设计错误）：`.modal-mask--inset`/`--top`、`.modal--fluid`/`--wide`/`--narrow`、
+  `.modal-head--bordered`、`.modal-message--tight`；删除时同步在模板给全部实例挂 modifier，渲染等价。
+  守卫 OWNED 集扩到 44 个 `.modal-*` 选择器。本地实测：vitest 61 文件/1306 + eslint 0 +
+  vite build + Playwright 80/80 全绿。遗留：家族 B 的终点是迁到 ui/Modal.vue 组件（需视觉回归）。
 - **共享原语单一来源收编（CSS 去重，用户担忧②的根治）**：78 个视图各自复制 `<style scoped>`
   共享原语副本的形态已清除——实测 178 处 scoped 声明遮蔽全局同名规则，同名类最多 8 种 `.card` /
   16 种 `.btnbar` / 10 种 `.field` 写法。`styles/pages.css` 现为 `.card`/`.card__title`/`.field`/

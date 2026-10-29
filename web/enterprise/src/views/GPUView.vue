@@ -451,26 +451,6 @@ onMounted(() => {
 }
 .chart-bar:hover { opacity: 1; }
 
-.modal-mask {
-  position: fixed; inset: 0; z-index: 50;
-  background: var(--modal-mask); display: flex; align-items: center; justify-content: center;
-}
-.modal {
-  width: 540px; max-width: 94vw; max-height: 88vh; overflow: auto;
-  background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
-  padding: 20px 22px;
-}
-.modal-sm { width: 420px; }
-.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.modal-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-.modal-body .field label { display: block; margin: 0 0 2px; }
-
-/* 暗色模式输入框 */
-[data-theme="dark"] .modal-body .field input,
-[data-theme="dark"] .modal-body .field select,
-[data-theme="dark"] .modal-body .field textarea {
-  background: var(--surface-l1, #131620);
-  border-color: var(--border-primary, #2b3243);
-  color: var(--text-primary, #f9fafb);
-}
+/* .modal-mask / .modal / .modal-sm / .modal-head / .modal-body .field( label) 及其暗色覆盖
+   已改用 styles/pages.css 全局对话框家族 A（2026-10-30 收编，暗色规则随家族一并上移） */
 </style>

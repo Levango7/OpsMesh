@@ -73,61 +73,6 @@ function onEsc(e) {
 }
 </script>
 
-<style scoped>
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--modal-mask);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  padding: 16px;
-}
-.modal-box {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 12px 40px rgba(31, 37, 64, 0.22);
-  padding: 22px 24px;
-  width: 100%;
-  max-width: 420px;
-}
-.modal-title {
-  margin: 0 0 10px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-}
-.modal-message {
-  margin: 0 0 18px;
-  color: var(--text-2);
-  font-size: 13.5px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.18s ease;
-}
-.modal-enter-active .modal-box,
-.modal-leave-active .modal-box {
-  transition: transform 0.18s ease, opacity 0.18s ease;
-}
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-.modal-enter-from .modal-box,
-.modal-leave-to .modal-box {
-  transform: translateY(-8px) scale(0.98);
-  opacity: 0;
-}
-</style>
+<!-- 样式已全部收编至 styles/pages.css 的对话框家族 B（.modal-overlay/.modal-box/
+     .modal-title/.modal-message/.modal-actions 与 modal-enter/leave-*，2026-10-30）。
+     本组件不再自带 scoped 样式。 -->

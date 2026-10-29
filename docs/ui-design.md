@@ -825,7 +825,23 @@ i18n 采用自研轻量模块（`src/i18n/index.js`），不依赖 vue-i18n，�
 那会把上条规则的 `}` 带进下一条选择器，导致每个 style 块只抓到第一条规则——这个漏报陷阱开发中真实踩到过），
 `@media` 内嵌套规则同样检查；豁免清单只减不增。
 
-**仍遗留（下一批次）**：`.modal-*` 家族仍寄生在 `styles/k8s.css`，被 9 个视图的 scoped 副本遮蔽，
-其中 `.modal-mask` 存在 **z-index 50 vs 9999 的真实行为分歧**；计划与 DetailDrawer 一并收编。
-另有一批跨文件重复的派生类待处置：`.field > label`（26 文件同文）、`.row-2`（10 文件）、
-`.card h4`（2 文件）、`.field input/.select`（AuditEvents/Audits 同文）等。
+**对话框收编（2026-10-30，已完成，第 6 批）**：`.modal-*` 家族已从 `styles/k8s.css` 收编至
+`styles/pages.css`，k8s.css 的清单一度只剩 k8s 专属类。收编时发现仓里并存**两套**对话框家族：
+A「遮罩+面板」`.modal-mask > .modal > .modal-head/.modal-body`（8 个视图在用）与
+B「浮层+盒子」`.modal-overlay > .modal-box`（ConfirmModal/PromptModal 在用，二者此前互为近乎逐字重复，
+仅 `.modal-message` 下间距 18 vs 12）。两族均在 pages.css 单一来源，BEM 命名的
+`.modal__*`/`.modal--*`（components/ui/Modal.vue）是第三种实现、不参与遮蔽，未纳入本批。
+
+分歧用**正交**修饰类固化，不要用捆绑式变体（否则「只要 padding」的页面被迫连带改 z-index——
+这是本次收编中实际踩到的设计错误，已改为 `.modal-mask--inset` 与 `--top` 分离）：
+`.modal-mask--inset`（16px 内距）/ `--top`（z-index 9999）/ `.modal--fluid`（撑满+520px 上限+内距交给页头）/
+`--wide`（上限 760）/ `--narrow`（上限 420）/ `.modal-head--bordered`（带下边框页头）/
+`.modal-message--tight`（消息下间距 12px）。删除时同步在模板给全部实例挂 modifier，渲染等价。
+
+守卫 OWNED 集已扩展到 44 个 `.modal-*` 选择器，`shared-primitives.spec.js` 118 条仍全绿。
+
+**仍遗留**：① 家族 B 的最终统一目标 = 迁到 `components/ui/Modal.vue` 组件（届时 B 族删除），
+需视觉回归验证；② 跨文件重复的派生类：`.field > label`（26 文件同文）、`.row-2`（10 文件）、
+`.card h4`（2 文件）、`.field input/.select`（AuditEvents/Audits 同文）；
+③ MiddlewareDeployView 的 `.modal-deploy`（700px 专属宽度）与 PromptModal 的 `.modal-input`
+为页面/组件专属，刻意保留在 scoped。
