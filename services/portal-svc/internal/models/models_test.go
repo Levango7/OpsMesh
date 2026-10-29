@@ -71,10 +71,9 @@ func requireKeys(t *testing.T, obj map[string]any, keys ...string) {
 	}
 }
 
-// 注意：ResourceRequest.StorageGB / QuotaUsage.UsedStorageGB 的 JSON tag 目前是
-// storage_gd / used_storage_gd（与 handler 的 storage_gb、DB 列 storage_gb 不一致，
-// 疑似笔误）。当前模型不直接序列化给前端（handler 有自有 DTO），故本测试不钉这两个键，
-// 避免把笔误固化成契约；已在板面登记待 owner 处置。
+// 键名契约：*_gb。历史上这两个 tag 是 storage_gd / used_storage_gd（与 handler、DB 列
+// storage_gb 不一致的笔误），2026-10-30 已改正并在此钉死——QuotaUsage 是**直接序列化**到
+// GET /quotas/{id}/usage 的响应体（handler.go 的 writeJSON），所以键名就是对外契约。
 func TestResourceRequestJSONContract(t *testing.T) {
 	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	req := ResourceRequest{
@@ -95,7 +94,10 @@ func TestResourceRequestJSONContract(t *testing.T) {
 
 	obj := decodeObject(t, req)
 	requireKeys(t, obj, "id", "tenant_id", "requester", "title", "description",
-		"resource_type", "cpu", "memory_gb", "cost_estimate", "status", "created_at", "updated_at")
+		"resource_type", "cpu", "memory_gb", "storage_gb", "cost_estimate", "status", "created_at", "updated_at")
+	if _, ok := obj["storage_gd"]; ok {
+		t.Fatal("旧的错键 storage_gd 仍在序列化结果里（应为 storage_gb）")
+	}
 	if _, ok := obj["approver"]; ok {
 		t.Fatal("空 approver 应省略")
 	}
@@ -125,7 +127,10 @@ func TestQuotaUsageJSONContract(t *testing.T) {
 		UsedRequests:  3,
 	}
 	obj := decodeObject(t, usage)
-	requireKeys(t, obj, "tenant_id", "used_cpu", "used_memory_gb", "used_requests", "quota")
+	requireKeys(t, obj, "tenant_id", "used_cpu", "used_memory_gb", "used_storage_gb", "used_requests", "quota")
+	if _, ok := obj["used_storage_gd"]; ok {
+		t.Fatal("旧的错键 used_storage_gd 仍在序列化结果里（应为 used_storage_gb）——这是 /quotas/{id}/usage 的响应键")
+	}
 	if obj["quota"] != nil {
 		t.Fatalf("nil quota 应序列化为 null, got %v", obj["quota"])
 	}

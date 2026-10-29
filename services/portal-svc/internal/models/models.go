@@ -35,7 +35,7 @@ type ResourceRequest struct {
 	ResourceType string        `json:"resource_type"`
 	CPU          int           `json:"cpu"`
 	MemoryGB     int           `json:"memory_gb"`
-	StorageGB    int           `json:"storage_gd"`
+	StorageGB    int           `json:"storage_gb"`
 	CostEstimate float64       `json:"cost_estimate"`
 	Status       RequestStatus `json:"status"`
 	Approver     string        `json:"approver,omitempty"`
@@ -58,7 +58,7 @@ type QuotaUsage struct {
 	TenantID      string `json:"tenant_id"`
 	UsedCPU       int    `json:"used_cpu"`
 	UsedMemoryGB  int    `json:"used_memory_gb"`
-	UsedStorageGB int    `json:"used_storage_gd"`
+	UsedStorageGB int    `json:"used_storage_gb"`
 	UsedRequests  int    `json:"used_requests"`
 	Quota         *Quota `json:"quota"`
 }
