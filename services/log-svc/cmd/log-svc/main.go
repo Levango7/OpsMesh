@@ -80,8 +80,8 @@ func main() {
 	// Create service
 	svc := service.NewService(store)
 
-	// Create gRPC server
-	grpcServer := server.NewGRPCServer(svc)
+	// Create gRPC server（必须走校验包装器，否则 tenant_id 必填契约不生效）
+	grpcServer := server.NewValidatingGRPCServer(svc)
 
 	// Start gRPC listener
 	lis, err := net.Listen("tcp", cfg.Server.Address)

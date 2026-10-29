@@ -145,10 +145,10 @@ func TestJSONCodecRoundTrip(t *testing.T) {
 	}
 }
 
-// 端到端：真实 gRPC 栈 + JSON codec 的注册/服务链路必须可用（main 就用这条路径）。
+// 端到端：真实 gRPC 栈 + JSON codec + 校验包装器（main 就用这条路径）。
 func TestGRPCServerEndToEndWithJSONCodec(t *testing.T) {
 	lis := bufconn.Listen(1 << 20)
-	gs := NewGRPCServer(service.NewService(logstore.NewMemory(10)))
+	gs := NewValidatingGRPCServer(service.NewService(logstore.NewMemory(10)))
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 
@@ -171,10 +171,9 @@ func TestGRPCServerEndToEndWithJSONCodec(t *testing.T) {
 	if _, err := client.SearchLogs(ctx, &logv1.SearchLogsRequest{TenantId: "t1"}); err != nil {
 		t.Fatalf("SearchLogs: %v", err)
 	}
-}
 
-// 注意：main.go:81-84 把 service.Service 直接交给 NewGRPCServer，没有经过
-// NewServer 的校验包装器（仓内 NewServer 零调用）。因此上述 E2E 只验证真实
-// 生产接线（原始 service + JSON codec + gRPC 栈）能工作；tenant_id 校验是
-// 包装器契约，见 TestTenantIDValidationMapsToInvalidArgument，已在板面登记
-// 「校验层未接线」待 owner 处置，测试不把缺失校验写成正确行为。
+	// 校验包装器必须真的在这条生产链路上：缺 tenant_id 的请求经 gRPC 返回 InvalidArgument。
+	if _, err := client.SearchLogs(ctx, &logv1.SearchLogsRequest{}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("SearchLogs(空 tenant) over gRPC = %v, want InvalidArgument", err)
+	}
+}

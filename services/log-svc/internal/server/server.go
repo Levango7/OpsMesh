@@ -101,6 +101,12 @@ func NewGRPCServer(svc logv1.LogServiceServer, opts ...grpc.ServerOption) *GRPCS
 	return &GRPCServer{server: grpcServer}
 }
 
+// NewValidatingGRPCServer 装配生产入口：先套 NewServer 的 tenant_id 校验包装器，
+// 再挂到 gRPC 栈上。直接把原始 service 交给 NewGRPCServer 会绕过校验。
+func NewValidatingGRPCServer(svc logv1.LogServiceServer, opts ...grpc.ServerOption) *GRPCServer {
+	return NewGRPCServer(NewServer(svc), opts...)
+}
+
 // Serve starts serving on the given listener.
 func (s *GRPCServer) Serve(lis net.Listener) error {
 	return s.server.Serve(lis)
