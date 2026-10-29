@@ -380,7 +380,7 @@ func (p *HuaweiProvider) DiscoverInstances(ctx context.Context, creds types.Cred
 					for _, a := range arr {
 						if am, ok := a.(map[string]interface{}); ok {
 							if ip := getString(am, "addr"); ip != "" {
-								if t, _ := am["OS-EXT-IPS:type"].(string); t == "floating" {
+								if t, ok := am["OS-EXT-IPS:type"].(string); ok && t == "floating" {
 									if r.PublicIP == "" {
 										r.PublicIP = ip
 									}
