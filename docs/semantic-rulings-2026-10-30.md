@@ -291,3 +291,20 @@ curl -s localhost:8080/api/v1/portal/quotas/default/usage \
 
 - 本单为只读取证材料，**未修改任何代码、配置或文档**（本文件除外），**未提交时也不代表已投板**。
 - 四条均不属本线长期 CLAIM 的范围：`internal/k8slifecycle` 及其挂载点涉及 `internal/controlplane`（kilo 领地边界）；`services/device-svc`、`services/alert-svc`、`services/portal-svc` 当前无人长期 CLAIM。任何改动都需 owner 先裁定归属线。
+
+---
+
+## 9. 现状复核回写（2026-10-30，qoder 线；只加本节，不改上文任何结论）
+
+按「过时卡点要整条重测」逐条 grep/read 现值，四条的状态与本单成文时已不同：
+
+| # | 疑点 | 现在的实测状态 | 证据 |
+|---|---|---|---|
+| ① | k8s 升级 / 回滚 / 证书轮换占位 | **仍在**：`upgradeControlPlane` / `upgradeRemainingCP` / `upgradeWorkers` / `verifyCluster` 四个子步骤各只有 `logx.Info` + `return nil`；`executeRollback` / `executeRotation` 只推 `updateStatus` | `internal/k8slifecycle/handler.go:171-191`、`:274-284`、`:353-366` |
+| ② | device-svc 软删可被复活 | **已修**：`UpdateDevice` 的 UPDATE 带 `AND retired = false`，注释写明「避免更新载荷里的 retired=false 把它复活」⇒ 本单建议动作的 C 项过期，只剩 A（扩 proto）/B（复用 status）待裁 | `services/device-svc/internal/store/mysql.go` |
+| ③ | alert-svc 文档低估 HTTP 写面 | **已修**（A 项：文档纠正）：方法矩阵改为 policies/schedules 接受 GET+POST(201)、active/current 仅 GET，并补「两条 POST 无认证、出厂只绑 127.0.0.1」的口径 | `97f13da`（改 `docs/operations.md`） |
+| ④ | portal-svc JSON tag 笔误 | **已修**：`storage_gd`/`used_storage_gd` → `*_gb`，并把它当成**对外契约**钉住（`QuotaUsage` 由 `handler.go:591` 的 `writeJSON` 直接序列化到 `GET /quotas/{id}/usage`），反向断言旧键不再出现 | `820598b`；窄变异：改回旧键 ⇒ 两个键集合用例双双判红 |
+
+补一条本单未取证的**新事实**（直接影响 ① 的严重度判断）：**假成功是用户可见的**——`web/enterprise/src/views/K8sLifecycleView.vue:175` 真的在调 `upgradeK8sCluster(...)`（api 绑定在 `web/enterprise/src/api/k8s.js:258`），点了就拿到 202 + 一路推进到 `Completed 100%` 的内存状态。本单 §0.1 的「UI 有按钮且无任何提示」由此从推断变成有调用点的事实。
+
+给 ① 的成本判据（供 owner 裁 A/C 时参考，本线不动手）：C 不是从零造 SSH——同包里 `PlanUpgrade`（`sshPool.Get` + `ssh.Exec` 跑 `kubeadm upgrade plan`）、`EtcdManager.Backup/Restore`、`NodeScaler.AddNodes/RemoveNodes` 都是**已在的真执行件**；缺的是把这些串成升级/回滚/轮换序列 + 护栏（drain、超时、失败即停）+ 真集群验证窗口。所以差异主要在「要不要现在承担改动生产集群的风险」，而不是「有没有底座」。

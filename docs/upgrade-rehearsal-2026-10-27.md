@@ -136,6 +136,16 @@
 | 4 | 演练脚本进 CI（需 MySQL service + 上一版二进制工件） | `.github/workflows/` | 待 lead 开口 |
 | 5 | 存量卷活体升级演练（容器 + `GET /version`）另做一次 | 交付/验证 | P2 |
 
+### 7.1 落地状态（2026-10-30 复核；只记实测到的，不记「应该已经好了」）
+
+| # | 建议 | 现状 | 证据 |
+|---|---|---|---|
+| 1 | 消除升级/新装列漂移 | **已修**：新装/升级两条路径的定义不一致由 `030` 收敛（先回填 NULL→0 再 `MODIFY` 到 `TINYINT NOT NULL DEFAULT 0`），并把 `sql_legacy.go` 的补列定义对齐 `028` | `199fc11`；守卫 `TestMigration030NormalizesApprovalRequired_MySQL` 在 CI 实测 PASS（run 40939154017 的 integration job），两处窄变异各判红 |
+| 2 | 迁移连接设 MDL 等待上限 + 报错点名 | **已修**（`9bc25aa`：迁移连接 `SET SESSION lock_wait_timeout`，默认 15s，1205 报「MDL 等待超时」+ 处置指引）；本条的**接线守卫**补齐——原用例自己在连接上手工执行同一条 SET，删掉生产路径那行时七个包 0 FAIL | `9bc25aa` + `6a9f9be`；CI 实测 `TestMigrationLockWaitWiredIntoRunMigrations_MySQL` PASS 5.43s |
+| 3 | runbook 补前置检查 + 演练命令 | **已做**：§1.5（在跑事务前置检查）、§1.6（`030` 的代价与升级后校验） | `eae2875` + `a952f99` |
+| 4 | 演练脚本进 CI | **未做**：要动 `.github/workflows/`（禁区），用户 2026-10-30 明确「CI 脚本暂不处理」 | — |
+| 5 | 存量卷活体升级演练 | **未做**（本机容器卷形态，另排） | — |
+
 ## 8. 复现命令
 
 ```bash
