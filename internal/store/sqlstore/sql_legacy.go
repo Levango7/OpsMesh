@@ -19,7 +19,10 @@ import (
 //	的老库升级到最新结构。
 func (s *SQLStore) initSchemaExtra(ctx context.Context) {
 	// 任务审批：tasks 表增加审批字段列（向后兼容，老库无列时补列）。
-	s.alterColumnIfMissing(ctx, "tasks", "approval_required", "BOOLEAN DEFAULT 0")
+	// 定义必须与 028 一致（TINYINT NOT NULL DEFAULT 0）：这里曾是 `BOOLEAN DEFAULT 0`，
+	// 老库由此得到可空列，而 028 的 ADD COLUMN 见列已存在会被幂等放行、改不了定义，
+	// 于是「升级库 ≠ 新装库」（030 已把存量库收敛回规范定义，此处的形状也不能再漂）。
+	s.alterColumnIfMissing(ctx, "tasks", "approval_required", "TINYINT NOT NULL DEFAULT 0")
 	s.alterColumnIfMissing(ctx, "tasks", "approved_by", "VARCHAR(64)")
 	s.alterColumnIfMissing(ctx, "tasks", "approved_at", "DATETIME")
 	// alert_rules 表 tenant_id 列兼容补丁（表本身由 003_legacy_tables.sql 创建）。
