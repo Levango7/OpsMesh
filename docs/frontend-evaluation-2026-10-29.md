@@ -53,7 +53,15 @@
 | `src/styles/__tests__/shared-primitives.spec.js` | 118 条（含 3 条守卫自检，防解析退化） |
 | CI run 40832484922 | **Frontend (Vue3 Enterprise) 腿 success** |
 
-> CI `build-test` 腿红在 `internal/controlplane/tenant.go:161` gofmt，系 `b733a72` 引入，**与前端无关**；因此 services/security/image/E2E 等下游腿被 skip。`security` 腿另有的红为 Trivy 文件系统扫描命中 go-jose `CVE-2026-116587`（存量间接依赖，漏洞库更新暴露）。两条均已板面通报 owner，前端线不代改。
+> **CI 状态（截至本快照同日，已复核 origin/main 后续提交）**：本批 `7cfef2f` 的 run 40832484922 中
+> `build-test` 曾红在 `internal/controlplane/tenant.go:161` gofmt（系 `b733a72` 引入，与前端无关），
+> 当时 services/security/image/E2E 等下游腿被 skip。**该红点已由 `74d0e79` 修复**（workbuddy 经用户授权代改，
+> 只补一行注释空白；其 run 40880424048 已 success 54m27s）。
+> 此后 origin/main 新到三笔云厂商实现（`ce1e8ee` aws / `ab0c6f5` azure / `c10c360` huawei）令
+> `build-test` 的 **golangci-lint** 步再度转红（具体报点本快照未展开），下游腿继续 skip——
+> **这不是前端线的问题**，且 `Frontend (Vue3 Enterprise)` 腿在最新 run 40884936274 仍为 **success**。
+> `security` 腿此前的红为 Trivy 文件系统扫描命中 go-jose `CVE-2026-116587`（存量间接依赖，
+> 漏洞库更新后暴露），亦与前端无关。后端红点一律板面通报 owner，前端线不代改。
 
 ## 协作与领地状态
 
