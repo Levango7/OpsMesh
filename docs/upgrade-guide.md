@@ -59,6 +59,29 @@ bash deploy/scripts/upgrade-rehearsal.sh --rows 200000
 
 实测记录与未覆盖项见 `docs/upgrade-rehearsal-2026-10-27.md`。
 
+## 1.6 `030`：把 `approval_required` 的列定义收敛（一次在线重建）
+
+两条建库路径曾给出两种定义：新装走 `028` 得到 `TINYINT NOT NULL DEFAULT 0`，
+老库由历史 `initSchemaExtra` 先补 `BOOLEAN DEFAULT 0`（= 可空 `tinyint(1)`），
+此后 `028` 的 `ADD COLUMN` 见列已存在被幂等放行、改不了既有定义 ⇒ **升级库 ≠ 新装库**
+（2026-10-27 演练 §4 的「升级库 ≡ 新装库」判据抓出）。`030` 负责收敛：先把历史
+`NULL` 回填为 `0`（审批只有两态，`NULL` 无业务含义），再 `MODIFY` 到规范定义。
+
+代价（本机 MySQL 8.4.11 / 32 核 NVMe / 20 万行合成表实测，客户 VM 只会更慢）：
+
+| 库的状态 | 实测耗时 | 说明 |
+|---|---|---|
+| 已是规范定义（绝大多数新装库） | **37ms** | MySQL 判同定义即空操作，不重建 |
+| 确实要改（`tinyint(1) NULL` → `tinyint NOT NULL`） | **5.5–7.1s** | 整表 INPLACE 重建，`LOCK=NONE`（重建期间读写不阻塞） |
+
+即使发生重建也不必停写；配合迁移连接的 15s MDL 上限（`9bc25aa`），若恰有长事务持表，
+迁移会快速失败而不是把 `tasks` 的写入挂住（处置见 §1.5）。升级后校验（应为 `tinyint` / `NO` / `0`）：
+
+```sql
+SELECT column_type, is_nullable, column_default FROM information_schema.columns
+ WHERE table_schema=database() AND table_name='tasks' AND column_name='approval_required';
+```
+
 ## 2. 标准升级流程
 
 ```bash
