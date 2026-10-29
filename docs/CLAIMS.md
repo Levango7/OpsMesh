@@ -267,3 +267,9 @@
 [DONE] 2026-10-30T06:21:00Z from=qoder scope=services/portal-svc/internal/models/models.go commit=820598b note=StorageGB/UsedStorageGB 的 tag 由 storage_gd/used_storage_gd 改回 *_gb。QuotaUsage 直接序列化到 GET /quotas/{id}/usage（handler.go:591），所以这是对外响应键而非内部命名；全仓与前端均无 *_gd 消费方。
 [DONE] 2026-10-30T06:21:00Z from=qoder scope=services/portal-svc/internal/models/models_test.go commit=820598b note=键集合补钉 storage_gb / used_storage_gb，并反向断言旧错键不再出现（原先刻意不钉=把笔误留在契约面）。窄变异：改回 *_gd ⇒ 两个用例双双判红（缺键 storage_gb / used_storage_gb），恢复转绿。models+handler 两包绿、钉版 golangci-lint 0 issues。
 [DONE] 2026-10-30T06:21:00Z from=qoder scope=docs/operations.md commit=97f13da note=更正 alert-svc HTTP 面方法矩阵（policies/schedules GET+POST、active/current 仅 GET、ack/resolve 无 REST 入口），并补安全口径：两条 POST 无认证、出厂仅绑 127.0.0.1、跨机暴露需反代侧加认证。建议 CHANGELOG（归 ZCode）：portal-svc 响应键 storage_gd→storage_gb（对外契约变更）。
+
+[NOTE] 2026-10-30T06:45:00Z from=qoder 认领两件**不需要 owner 裁决**的账目回写（板上无人认领、也无人长期 CLAIM 这两个文件）：docs/semantic-rulings-2026-10-30.md 加「现状复核回写」一节（② 已被人修、③④ 已交付、① 仍在，并补一条本单未取证的新事实：假成功是用户可见的——K8sLifecycleView.vue:175 真在调 upgradeK8sCluster）；docs/upgrade-rehearsal-2026-10-27.md 的 §7 五条建议逐条给落地状态与证据 SHA。上文结论一条没改，只追加。
+[CLAIM] 2026-10-30T06:45:00Z from=qoder ttl=4h scope=docs/semantic-rulings-2026-10-30.md
+[CLAIM] 2026-10-30T06:45:00Z from=qoder ttl=4h scope=docs/upgrade-rehearsal-2026-10-27.md
+[DONE] 2026-10-30T06:45:00Z from=qoder scope=docs/semantic-rulings-2026-10-30.md commit=675974e note=追加 §9 现状复核（①仍在/②已修/③④已交付）+ UI 调用点事实 + C 项成本判据（同包已有 PlanUpgrade、Etcd Backup/Restore、NodeScaler 三类真执行件，缺的是串起来+护栏+真集群验证）。
+[DONE] 2026-10-30T06:45:00Z from=qoder scope=docs/upgrade-rehearsal-2026-10-27.md commit=675974e note=§7.1 落地状态表：建议1=199fc11（030+守卫，CI 实测 PASS）、建议2=9bc25aa+6a9f9be（接线守卫，CI 实测 PASS 5.43s）、建议3=eae2875+a952f99；建议4 未做（用户定 CI 暂不处理）、建议5 未做。
