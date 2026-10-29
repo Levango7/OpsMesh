@@ -1193,8 +1193,14 @@ Kubernetes 路径不重复造轮子：生产集群一般已有 kube-prometheus-s
   两者不会互相代劳。第 2 条的 URL 与第 1 条**填成同一个地址是可以的**（IM 群机器人一般按
   文本渲染，不校验形状），但要清楚你会同时收到两类内容、去重逻辑各不相同。
 - **PagerDuty 这条腿的入口是 gRPC，且无身份鉴权**（2026-10-03 实测后补齐）。`ack`/`resolve`
-  在服务侧**没有 REST 路由**（HTTP 面只有 escalation/oncall 四个 GET），也没有 grpc-gateway 与
-  reflection；因此 `PAGERDUTY_ENABLED=true` 唯一的触发方式是调用 alert-svc 的 gRPC
+  在服务侧**没有 REST 路由**，也没有 grpc-gateway 与
+  reflection；HTTP 面只挂了 escalation/oncall 四条路由——`escalation/policies` 与
+  `oncall/schedules` 接受 **GET 与 POST**（POST 201 创建），`escalation/active` 与
+  `oncall/current` 只接受 GET（2026-10-30 按 `escalation_http.go` 的方法矩阵更正，此前本行
+  写成「四个 GET」）。这两条 POST **没有认证**：alert-svc 的 HTTP 链只有 CORS/限流/安全头/
+  压缩/trace，认证在控制面是逐 handler 自己实现的，本包没有 ⇒ 能连到该端口即可匿名创建
+  策略/排班；出厂 compose 只把它发布到 `127.0.0.1`，跨机暴露前必须自己在反代侧加认证。
+  因此 `PAGERDUTY_ENABLED=true` 唯一的触发方式是调用 alert-svc 的 gRPC
   `AcknowledgeAlert` / `ResolveAlert`。出厂 compose 现在把该端口发布到
   `127.0.0.1:${ALERT_SVC_GRPC_PORT:-50053}`（此前只在容器网络内可达，全仓也没有任何组件
   dial 它 ⇒ 对 Docker 部署形态而言是个"配了也没人调用得到"的死开关）。
