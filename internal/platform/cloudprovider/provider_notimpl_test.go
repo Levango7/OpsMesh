@@ -22,10 +22,10 @@ func TestErrNotImplemented_IsSameSentinel(t *testing.T) {
 // 别名被换成独立定义时，跨包赋值与比较会悄悄失效。
 func TestTypeAliases(t *testing.T) {
 	consts := map[ProviderType]types.ProviderType{
-		ProviderTypeAliyun:  types.ProviderTypeAliyun,
-		ProviderTypeAWS:     types.ProviderTypeAWS,
-		ProviderTypeAzure:   types.ProviderTypeAzure,
-		ProviderTypeTencent: types.ProviderTypeTencent,
+		ProviderTypeAliyun:     types.ProviderTypeAliyun,
+		ProviderTypeAWS:        types.ProviderTypeAWS,
+		ProviderTypeAzure:      types.ProviderTypeAzure,
+		ProviderTypeTencent:    types.ProviderTypeTencent,
 		ProviderTypeHuawei:     types.ProviderTypeHuawei,
 		ProviderTypeVolcengine: types.ProviderTypeVolcengine,
 	}

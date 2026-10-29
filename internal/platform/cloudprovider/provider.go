@@ -27,10 +27,10 @@ type (
 )
 
 const (
-	ProviderTypeAliyun  = types.ProviderTypeAliyun
-	ProviderTypeAWS     = types.ProviderTypeAWS
-	ProviderTypeAzure   = types.ProviderTypeAzure
-	ProviderTypeTencent = types.ProviderTypeTencent
+	ProviderTypeAliyun     = types.ProviderTypeAliyun
+	ProviderTypeAWS        = types.ProviderTypeAWS
+	ProviderTypeAzure      = types.ProviderTypeAzure
+	ProviderTypeTencent    = types.ProviderTypeTencent
 	ProviderTypeHuawei     = types.ProviderTypeHuawei
 	ProviderTypeVolcengine = types.ProviderTypeVolcengine
 )

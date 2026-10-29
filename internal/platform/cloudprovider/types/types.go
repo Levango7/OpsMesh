@@ -9,10 +9,10 @@ import (
 type ProviderType string
 
 const (
-	ProviderTypeAliyun  ProviderType = "aliyun"
-	ProviderTypeAWS     ProviderType = "aws"
-	ProviderTypeAzure   ProviderType = "azure"
-	ProviderTypeTencent ProviderType = "tencent"
+	ProviderTypeAliyun     ProviderType = "aliyun"
+	ProviderTypeAWS        ProviderType = "aws"
+	ProviderTypeAzure      ProviderType = "azure"
+	ProviderTypeTencent    ProviderType = "tencent"
 	ProviderTypeHuawei     ProviderType = "huawei"
 	ProviderTypeVolcengine ProviderType = "volcengine"
 )
