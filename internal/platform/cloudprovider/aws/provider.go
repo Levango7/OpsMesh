@@ -7,7 +7,7 @@
 // - DiscoverSubnets：调用 EC2 DescribeSubnets
 // - DiscoverInstances：调用 EC2 DescribeInstances
 // - DiscoverClusters：调用 EKS DescribeClusters/ListClusters + DescribeCluster
-// - CreateResource/DeleteResource/SyncTags：返回 ErrNotImplemented
+// - CreateResource/DeleteResource/SyncTags：基于 EC2 RunInstances/TerminateInstances/CreateTags 实现
 package aws
 
 import (
@@ -765,13 +765,193 @@ func (p *AWSProvider) DiscoverClusters(ctx context.Context, creds types.Credenti
 }
 
 func (p *AWSProvider) CreateResource(ctx context.Context, creds types.Credentials, req types.CreateResourceRequest) (types.Resource, error) {
-	return types.Resource{}, types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return types.Resource{}, ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return types.Resource{}, fmt.Errorf("aws: only AKSK auth supported for create")
+	}
+	if req.ResourceType != "instance" {
+		return types.Resource{}, fmt.Errorf("aws: unsupported resource type %q, only instance supported", req.ResourceType)
+	}
+	if req.Region == "" {
+		req.Region = creds.Region
+	}
+	if req.Region == "" {
+		req.Region = "us-east-1"
+	}
+	if req.Properties == nil {
+		req.Properties = make(map[string]string)
+	}
+
+	// 必填参数检查
+	imageID := req.Properties["ImageId"]
+	if imageID == "" {
+		return types.Resource{}, fmt.Errorf("aws: ImageId is required in properties")
+	}
+	instanceType := req.Properties["InstanceType"]
+	if instanceType == "" {
+		instanceType = "t3.micro" // 默认规格
+	}
+
+	client := newAWSClient(creds)
+	region := req.Region
+
+	// 构建 RunInstances 参数
+	params := map[string]string{
+		"ImageId":        imageID,
+		"InstanceType":   instanceType,
+		"MinCount":       "1",
+		"MaxCount":       "1",
+	}
+
+	// 可选参数
+	if v, ok := req.Properties["KeyName"]; ok && v != "" {
+		params["KeyName"] = v
+	}
+	if v, ok := req.Properties["SubnetId"]; ok && v != "" {
+		params["SubnetId"] = v
+	}
+	if v, ok := req.Properties["SecurityGroupId"]; ok && v != "" {
+		params["SecurityGroupId.1"] = v
+	}
+	if v, ok := req.Properties["VpcId"]; ok && v != "" {
+		params["VpcId"] = v
+	}
+
+	// 标签
+	if len(req.Tags) > 0 {
+		i := 1
+		for k, v := range req.Tags {
+			params[fmt.Sprintf("TagSpecification.1.ResourceType")] = "instance"
+			params[fmt.Sprintf("TagSpecification.1.Tag.%d.Key", i)] = k
+			params[fmt.Sprintf("TagSpecification.1.Tag.%d.Value", i)] = v
+			i++
+		}
+	}
+
+	// 调用 RunInstances
+	result, err := client.callEC2(ctx, region, "RunInstances", params)
+	if err != nil {
+		logx.Warn(ctx, "aws CreateResource failed", "error", err, "region", region)
+		return types.Resource{}, fmt.Errorf("aws: create instance: %w", err)
+	}
+
+	// 解析返回的 InstanceId
+	var instanceID string
+	instArr := collectInstances(result)
+	if len(instArr) > 0 {
+		if vm, ok := instArr[0].(map[string]interface{}); ok {
+			instanceID = getString(vm, "InstanceId", "instanceId", "id", "Id")
+		}
+	}
+	if instanceID == "" {
+		// 尝试从其他路径解析
+		if r, ok := result["RunInstancesResponse"].(map[string]interface{}); ok {
+			if ir, ok := r["RunInstancesResult"].(map[string]interface{}); ok {
+				if is, ok := ir["InstancesSet"].(map[string]interface{}); ok {
+					for _, ik := range []string{"item", "Item", "member"} {
+						if s, ok := is[ik].([]interface{}); ok && len(s) > 0 {
+							if vm, ok := s[0].(map[string]interface{}); ok {
+								instanceID = getString(vm, "InstanceId", "instanceId", "id", "Id")
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if instanceID == "" {
+		return types.Resource{}, fmt.Errorf("aws: no instance returned")
+	}
+
+	logx.Info(ctx, "aws instance created", "instance_id", instanceID, "region", region)
+
+	return types.Resource{
+		Provider:     types.ProviderTypeAWS,
+		Region:       region,
+		ResourceType: "instance",
+		ResourceID:   instanceID,
+		ID:           instanceID,
+		ResourceName: req.Name,
+		Status:       "pending",
+		Tags:         req.Tags,
+	}, nil
 }
 
 func (p *AWSProvider) DeleteResource(ctx context.Context, creds types.Credentials, resourceID string) error {
-	return types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("aws: only AKSK auth supported for delete")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("aws: resourceID is required")
+	}
+	if creds.Region == "" {
+		creds.Region = "us-east-1"
+	}
+
+	client := newAWSClient(creds)
+	params := map[string]string{
+		"InstanceId.1": resourceID,
+	}
+	_, err := client.callEC2(ctx, creds.Region, "TerminateInstances", params)
+	if err != nil {
+		logx.Warn(ctx, "aws DeleteResource failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("aws: terminate instance: %w", err)
+	}
+
+	logx.Info(ctx, "aws instance terminated", "instance_id", resourceID)
+	return nil
 }
 
 func (p *AWSProvider) SyncTags(ctx context.Context, creds types.Credentials, resourceID string, tags map[string]string) error {
-	return types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("aws: only AKSK auth supported for sync tags")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("aws: resourceID is required")
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	if creds.Region == "" {
+		creds.Region = "us-east-1"
+	}
+
+	client := newAWSClient(creds)
+	i := 1
+	params := map[string]string{}
+	for k, v := range tags {
+		params[fmt.Sprintf("Tag.%d.Key", i)] = k
+		params[fmt.Sprintf("Tag.%d.Value", i)] = v
+		i++
+	}
+	params["ResourceId.1"] = resourceID
+
+	_, err := client.callEC2(ctx, creds.Region, "CreateTags", params)
+	if err != nil {
+		logx.Warn(ctx, "aws SyncTags failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("aws: sync tags: %w", err)
+	}
+
+	logx.Info(ctx, "aws tags synced", "instance_id", resourceID, "tags", tags)
+	return nil
 }
