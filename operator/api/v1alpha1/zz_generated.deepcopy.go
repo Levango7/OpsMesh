@@ -284,7 +284,7 @@ func (in *HelmReleaseSpec) DeepCopyInto(dst *HelmReleaseSpec) {
 		in, out := &in.Values, &dst.Values
 		*out = make(map[string]interface{}, len(*in))
 		for k, v := range *in {
-			(*out)[k] = v
+			(*out)[k] = runtime.DeepCopyJSONValue(v)
 		}
 	}
 	if in.ValuesFileRef != nil {

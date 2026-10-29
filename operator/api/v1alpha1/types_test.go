@@ -229,27 +229,29 @@ func TestDeepCopyIsolation(t *testing.T) {
 		t.Fatal("LastSyncTime 指针未深拷贝")
 	}
 
+	// Values 的取值来自 JSON 反序列化，数值只会是 float64（native int 不是合法
+	// JSON 值，Runtime.DeepCopyJSONValue 对其会 panic —— 与 controller-gen 生成物一致）。
 	release := &HelmRelease{}
 	release.Spec.Values = map[string]interface{}{
-		"replicas": 1,
+		"replicas": float64(1),
 		"nested":   map[string]interface{}{"k": "v"},
 	}
 	release.Spec.ValuesFileRef = &corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "values"},
 	}
 	releaseCopy := release.DeepCopy()
-	releaseCopy.Spec.Values["replicas"] = 3
+	releaseCopy.Spec.Values["replicas"] = float64(3)
+	releaseCopy.Spec.Values["nested"].(map[string]interface{})["k"] = "changed"
 	releaseCopy.Spec.ValuesFileRef.Name = "other"
-	if release.Spec.Values["replicas"] != 1 {
+	if release.Spec.Values["replicas"] != float64(1) {
 		t.Fatal("Values 顶层未深拷贝")
+	}
+	if release.Spec.Values["nested"].(map[string]interface{})["k"] != "v" {
+		t.Fatal("Values 嵌套 map 未深拷贝（会与 informer 缓存共享底层数据）")
 	}
 	if release.Spec.ValuesFileRef.Name != "values" {
 		t.Fatal("ValuesFileRef 指针未深拷贝")
 	}
-	// 注意：zz_generated.deepcopy.go:281-289 对 Values 只做逐键浅拷贝
-	// （(*out)[k] = v），嵌套 map/slice 与原对象共享底层数据。此处刻意不为其背书，
-	// 不把"嵌套隔离"写成契约 —— 该行为已上报留言板，交 CRD owner 决定是否改为
-	// runtime.DeepCopyJSONValue。
 
 	list := &OpsMeshInstanceList{Items: []OpsMeshInstance{*instance}}
 	listCopy := list.DeepCopy()
