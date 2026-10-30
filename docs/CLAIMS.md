@@ -291,3 +291,20 @@
 [CLAIM] 2026-10-30T17:05:00Z from=qoder ttl=6h scope=docs/semantic-rulings-2026-10-30.md
 [CLAIM] 2026-10-30T17:05:00Z from=qoder ttl=6h scope=CHANGELOG.md
 [NOTE] 2026-10-30T17:05:00Z from=qoder to=all owner 裁决：① 选 A+C 立项。A=升级/回滚/证书轮换三条假成功入口改为显式 501（不再返回 202 后把状态推进到 Completed），并收口前端入口；C=真实现立项书（docs/design/）。etcd 备份/恢复、节点扩缩容已是真 SSH 执行，本轮不动。产物走 feature 分支 + PR，由 owner 推 PR、不由我合。
+[DONE] 2026-10-30T18:25:00Z from=qoder scope=internal/k8slifecycle/ commit=a554697 branch=feat/k8s-lifecycle-a501 note=升级/回滚/证书轮换三条假成功入口改显式 501（code=ERR_NOT_IMPLEMENTED，不登记作业），删除 4 个只打日志的升级子步骤 + 两个纯内存 execute* + 证书状态机；etcd 备份/恢复与节点扩缩容未动。测试 TestUnimplementedActionsReturn501；窄变异三条（501→202 / code 改名 / 临时登记作业）各自判红。CI run 41096359012 全 12 腿 success（build-test + Frontend + proto/services/Race/integration/security/E2E 等）；本机 go test / go build ./... / gofmt / golangci-lint ./... 0 issues。
+[DONE] 2026-10-30T18:25:00Z from=qoder scope=web/enterprise/src/views/K8sLifecycleView.vue commit=a554697 branch=feat/k8s-lifecycle-a501 note=升级/轮换按钮 disabled + 页面说明；移除 doUpgrade/doCertRotate 与两个不可能被填充的状态展示；plan/etcd/node-scale 入口不变。CI Frontend 腿（Lint/Build/Test/embed/E2E mock）绿。
+[DONE] 2026-10-30T18:25:00Z from=qoder scope=web/enterprise/src/api/k8s.js commit=a554697 branch=feat/k8s-lifecycle-a501 note=契约注释改为 501，并删除已无消费者的 upgradeK8sCluster/rotateK8sCerts 封装（UI 收口后无调用方）。
+[DONE] 2026-10-30T18:25:00Z from=qoder scope=web/enterprise/src/i18n/locales/zh/ops.json commit=a554697 branch=feat/k8s-lifecycle-a501 note=新增 upgrade_unimplemented / cert_unimplemented 并改写 desc（zh 侧）。
+[DONE] 2026-10-30T18:25:00Z from=qoder scope=web/enterprise/src/i18n/locales/en/ops.json commit=a554697 branch=feat/k8s-lifecycle-a501 note=同上英文侧；zh/en 同步。i18n 裸键用例与 k8s store 用例 45/45 绿。
+[DONE] 2026-10-30T18:25:00Z from=qoder scope=docs/design/k8s-lifecycle-execution-charter.md commit=a554697,b920910 branch=feat/k8s-lifecycle-a501 note=C 项立项书：现状证据表、三个真风险（joinCmd 请求体直传执行 / etcd 恢复无确认无校验 / 作业不持久化）、M1 升级 / M2 回滚 / M3 轮换的分期与验收、lifecycle_jobs 模型、护栏、8–12 人日。
+[DONE] 2026-10-30T18:25:00Z from=qoder scope=docs/semantic-rulings-2026-10-30.md commit=7ba101c branch=feat/k8s-lifecycle-a501 note=§10 裁决落地回写（A 已交付 a554697、C 已立项）。
+[DONE] 2026-10-30T18:25:00Z from=qoder scope=CHANGELOG.md commit=7ba101c branch=feat/k8s-lifecycle-a501 note=新增 Unreleased 一节记录 ① A 项 501 收口与 C 项立项。
+[NOTE] 2026-10-30T18:25:00Z from=qoder to=kilo branch=feat/k8s-lifecycle-a501 commit=1724c46 note=main 红的唯一根因（92ebf14 的 aliyun/provider.go:642 gofmt）已在本分支以独立提交修掉，否则本 PR 的 build-test 无法判定。若你另有修复，合并时取同内容即可，无语义冲突。
+[RELEASE] 2026-10-30T18:25:00Z from=qoder scope=internal/k8slifecycle/
+[RELEASE] 2026-10-30T18:25:00Z from=qoder scope=web/enterprise/src/views/K8sLifecycleView.vue
+[RELEASE] 2026-10-30T18:25:00Z from=qoder scope=web/enterprise/src/api/k8s.js
+[RELEASE] 2026-10-30T18:25:00Z from=qoder scope=web/enterprise/src/i18n/locales/zh/ops.json
+[RELEASE] 2026-10-30T18:25:00Z from=qoder scope=web/enterprise/src/i18n/locales/en/ops.json
+[RELEASE] 2026-10-30T18:25:00Z from=qoder scope=docs/design/k8s-lifecycle-execution-charter.md
+[RELEASE] 2026-10-30T18:25:00Z from=qoder scope=docs/semantic-rulings-2026-10-30.md
+[RELEASE] 2026-10-30T18:25:00Z from=qoder scope=CHANGELOG.md
