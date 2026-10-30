@@ -449,7 +449,6 @@ onMounted(() => {
   flex: 1; min-width: 6px; background: var(--accent); border-radius: 2px 2px 0 0;
   transition: height .3s; opacity: .8;
 }
-.chart-bar:hover { opacity: 1; }
 
 /* .modal-mask / .modal / .modal-sm / .modal-head / .modal-body .field( label) 及其暗色覆盖
    已改用 styles/pages.css 全局对话框家族 A（2026-10-30 收编，暗色规则随家族一并上移） */

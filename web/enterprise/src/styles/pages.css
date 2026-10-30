@@ -606,3 +606,77 @@
     transition: none !important;
   }
 }
+
+/* ===========================================================================
+ * 跨文件重复的派生类去重（第 7 批，2026-10-30）
+ * ---------------------------------------------------------------------------
+ * 收编判据是双重客观校验，不是按类名猜：
+ *   ① 该选择器在 ≥3 个文件里的 scoped 正文逐字节相同（归一化 md5 同组）；
+ *   ② 全局化后不会有任何「模板用了该类、但没有同选择器 scoped 副本」的文件
+ *      突然获得样式（逐文件测过，泄漏为 0——否则会改变那些页面现在的观感）。
+ * 因此本批抽取是构造上零视觉变化的。仍按原 scoped 的正文原样搬来，不改写Token。
+ *
+ * 有意排除的（有分歧或会波及未覆盖用法，留待单独批次判断）：
+ *   .status-pill 基类、.entity-form、.chk、.tag、.tab、.kv 族、
+ *   .checkbox-group、.data-table tr:hover、.field input/.select 等。
+ * =========================================================================== */
+
+/* ===== 登录/注册/首登改密三页共用的认证页骨架 ===== */
+.auth-page {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  overflow: hidden;
+}
+.auth-form { display: flex; flex-direction: column; gap: 14px; }
+.auth-tools {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+.bg-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: .35;
+}
+.submit-btn .spin { animation: spin 1s linear infinite; }
+
+/* ===== 统计卡顶部色条（按语义四色） ===== */
+.stat.indigo { border-top-color: var(--indigo); }
+.stat.teal { border-top-color: var(--teal); }
+.stat.amber { border-top-color: var(--amber); }
+.stat.rose { border-top-color: var(--rose); }
+
+/* ===== 状态丸（ok/off/bad 三态） =====
+ * 注意：.status-pill 基类本身仍有分歧（不同页内距/字号不一），不在本批；
+ * 这里只收三态颜色——它们在 12/11/5 个文件里逐字节相同。 */
+.status-pill.ok { background: var(--accent-soft); color: var(--accent); }
+.status-pill.off { background: var(--surface-3); color: var(--text-3); }
+.status-pill.bad { background: var(--fail-bg); color: var(--fail); }
+
+/* ===== 标签（失败态）、信息徽标、工具按钮、页签悬停、图表柱悬停 ===== */
+.tag.st-failed { background: var(--fail-bg); color: var(--fail); }
+.badge.info { background: var(--info-bg); color: var(--info); }
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tool-btn:hover { background: var(--bg-soft); color: var(--text); }
+.tab:hover { color: var(--text); }
+.chart-bar:hover { opacity: 1; }

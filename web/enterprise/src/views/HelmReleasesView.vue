@@ -303,7 +303,7 @@ onMounted(() => {
   font-size: 12px; background: var(--accent-soft); color: var(--accent);
 }
 .tag.st-deployed { background: var(--ok-bg); color: var(--ok); }
-.tag.st-failed { background: var(--fail-bg); color: var(--fail); }
+
 .tag.st-pending { background: var(--warn-bg); color: var(--warn); }
 
 /* Dark mode */

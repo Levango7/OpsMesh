@@ -181,10 +181,7 @@ onMounted(() => { if (!store.list.length) store.fetchAlerts() })
   border-radius: var(--radius); padding: 14px 16px;
   border-top: 3px solid var(--accent); box-shadow: var(--shadow);
 }
-.stat.rose { border-top-color: var(--rose); }
-.stat.amber { border-top-color: var(--amber); }
-.stat.indigo { border-top-color: var(--indigo); }
-.stat.teal { border-top-color: var(--teal); }
+
 .stat-v { font-size: 25px; font-weight: 700; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat-l { font-size: 12px; color: var(--text-3); margin-top: 4px; }
 

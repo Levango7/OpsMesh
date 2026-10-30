@@ -295,7 +295,6 @@ onMounted(() => {
   padding: 0 9px; border-radius: 999px;
   font-size: 11.5px; font-weight: 600;
 }
-.badge.info { background: var(--info-bg); color: var(--info); }
 
 .code-block {
   background: var(--surface-3); color: var(--text); padding: 10px;
