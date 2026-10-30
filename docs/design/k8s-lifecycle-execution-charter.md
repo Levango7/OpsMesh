@@ -22,7 +22,7 @@ A 项（本次）只做诚实化：三条入口一律 501 + `code=ERR_NOT_IMPLEM
 | `POST /upgrade` | 501（能力不存在） | handler.go:473、490 |
 | `POST /rollback` | 501 | handler.go:541、553 |
 | `POST /cert-rotate` | 501 | handler.go:558、570 |
-| `GET /upgrade/status` | 真路由，但作业表在内存里、且 A 后没有任何写入方（恒 404） | handler.go:502 起 |
+| `GET /upgrade/status` | 真路由，但作业表在内存里、且 A 后没有任何写入方（恒 404） | handler.go:524 |
 | `POST /node-scale` | **真执行**：SSH `join` / `drain` + `delete node` | handler.go:202、231 |
 | `POST /etcd-backup` | **真执行**：`etcdctl snapshot save` + `stat` | handler.go:293 |
 | `POST /etcd-restore` | **真执行**：移走 manifest → 清 etcd 数据 → `snapshot restore` → 还原 manifest | handler.go:339 |
