@@ -230,6 +230,9 @@ func (s *SQLStore) UpdateCloudResource(ctx context.Context, id string, updates m
 	args = append(args, time.Now().UTC())
 	args = append(args, id)
 
+	// #nosec G201 -- setParts 是封闭白名单（仅本函数内硬编码的 status/tags/
+	// public_ip/private_ip/updated_at=? 五种列赋值），不含任何用户输入拼成的
+	// 列名或 SQL 片段；所有值均经 args 参数化绑定。
 	query := fmt.Sprintf("UPDATE cloud_resources SET %s WHERE id=?", strings.Join(setParts, ", "))
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		storefail.Record("[store] UpdateCloudResource 更新失败 (id=%s): %v", id, err)
