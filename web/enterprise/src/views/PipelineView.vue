@@ -255,7 +255,7 @@ onMounted(fetchAll)
   font-size: 12px; background: var(--accent-soft); color: var(--accent);
 }
 .tag.st-succeeded { background: var(--ok-bg); color: var(--ok); }
-.tag.st-failed { background: var(--fail-bg); color: var(--fail); }
+
 .tag.st-running { background: var(--info-bg); color: var(--info); }
 .tag.st-pending { background: var(--surface-3); color: var(--text-3); }
 .tpl-form { display: flex; flex-direction: column; gap: 12px; }

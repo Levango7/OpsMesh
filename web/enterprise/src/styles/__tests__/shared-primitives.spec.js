@@ -89,7 +89,27 @@ const OWNED = new Set([
   '.modal-enter-active .modal-box',
   '.modal-leave-active .modal-box',
   '.modal-enter-from .modal-box',
-  '.modal-leave-to .modal-box'
+  '.modal-leave-to .modal-box',
+  // 第 7 批收编的跨文件重复派生类（判据见 pages.css 同名节：正文逐字节同文 +
+  // 零泄漏；有分歧或会波及未覆盖用法的刻意不收，故这里只列这 18 个）
+  '.auth-page',
+  '.auth-form',
+  '.auth-tools',
+  '.submit-btn .spin',
+  '.stat.indigo',
+  '.stat.teal',
+  '.stat.amber',
+  '.stat.rose',
+  '.status-pill.ok',
+  '.status-pill.off',
+  '.status-pill.bad',
+  '.tag.st-failed',
+  '.badge.info',
+  '.tool-btn',
+  '.tool-btn:hover',
+  '.tab:hover',
+  '.chart-bar:hover',
+  '.bg-blob'
 ])
 
 /** 已知例外：file → reasons。只减不增，空表即全清。 */

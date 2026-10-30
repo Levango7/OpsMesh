@@ -269,14 +269,12 @@ onMounted(() => {
   font-size: 13px; font-weight: 500;
 }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-.tab:hover { color: var(--text); }
 
 .status-pill {
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
-.status-pill.ok { background: var(--accent-soft); color: var(--accent); }
-.status-pill.off { background: var(--surface-3); color: var(--text-3); }
+
 .status-pill.warn { background: var(--warn-soft, #fef3c7); color: var(--warn, #b45309); }
 
 .filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 10px 0; }

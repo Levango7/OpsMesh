@@ -253,7 +253,6 @@ onMounted(() => {})
   font-size: 13px; font-weight: 500;
 }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-.tab:hover { color: var(--text); }
 
 .card h4 { margin: 14px 0 6px; font-size: 12.5px; color: var(--text-2); }
 .field .hint { font-size: 11.5px; color: var(--text-3); }
@@ -274,8 +273,6 @@ onMounted(() => {})
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
-.status-pill.ok { background: var(--accent-soft); color: var(--accent); }
-.status-pill.off { background: var(--surface-3); color: var(--text-3); }
 
 @media (max-width: 768px) { .row-2 { grid-template-columns: 1fr; } }
 </style>

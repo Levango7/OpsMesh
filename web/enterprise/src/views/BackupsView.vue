@@ -216,6 +216,6 @@ onMounted(fetchBackups)
 }
 .tag.st-completed { background: var(--ok-bg); color: var(--ok); }
 .tag.st-creating { background: var(--info-bg); color: var(--info); }
-.tag.st-failed { background: var(--fail-bg); color: var(--fail); }
+
 .backup-form { display: flex; flex-direction: column; gap: 12px; }
 </style>
