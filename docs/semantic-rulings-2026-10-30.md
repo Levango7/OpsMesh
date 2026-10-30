@@ -308,3 +308,17 @@ curl -s localhost:8080/api/v1/portal/quotas/default/usage \
 补一条本单未取证的**新事实**（直接影响 ① 的严重度判断）：**假成功是用户可见的**——`web/enterprise/src/views/K8sLifecycleView.vue:175` 真的在调 `upgradeK8sCluster(...)`（api 绑定在 `web/enterprise/src/api/k8s.js:258`），点了就拿到 202 + 一路推进到 `Completed 100%` 的内存状态。本单 §0.1 的「UI 有按钮且无任何提示」由此从推断变成有调用点的事实。
 
 给 ① 的成本判据（供 owner 裁 A/C 时参考，本线不动手）：C 不是从零造 SSH——同包里 `PlanUpgrade`（`sshPool.Get` + `ssh.Exec` 跑 `kubeadm upgrade plan`）、`EtcdManager.Backup/Restore`、`NodeScaler.AddNodes/RemoveNodes` 都是**已在的真执行件**；缺的是把这些串成升级/回滚/轮换序列 + 护栏（drain、超时、失败即停）+ 真集群验证窗口。所以差异主要在「要不要现在承担改动生产集群的风险」，而不是「有没有底座」。
+
+## 10. 裁决落地回写（2026-10-30，qoder 线；只追加，不改 §9 结论）
+
+owner 裁决：① 选 **A+C 立项**（A 立即交付，C 立项目标排期）。
+
+- **A 已交付**（`a554697`）：三条假成功入口改为显式 501（`code=ERR_NOT_IMPLEMENTED`），
+  删除 4 个只打日志的升级子步骤与两个纯内存 `execute*`；前端升级/证书轮换按钮置灰并给出
+  说明；`upgrade/plan`、etcd 备份/恢复、节点扩缩容入口不变（后两者本单已证是真执行）。
+  证据：`internal/k8slifecycle/handler.go:473/541/558`、`handler_test.go` 的
+  `TestUnimplementedActionsReturn501`；窄变异三条（501→202 / code 改名 / 临时登记作业）各自判红。
+- **C 已立项**：`docs/design/k8s-lifecycle-execution-charter.md` —— M1 升级、M2 回滚、
+  M3 证书轮换 + `lifecycle_jobs` 持久化 + 护栏与真集群验收，8–12 人日；同时登记了
+  现状里的三个真风险（`joinCmd` 请求体直传执行、etcd 恢复无确认无快照校验、作业状态不持久化）。
+- 遗留：`docs/tech-debt.md` 仍未登记 ①（本单 §0 指出 0 处命中）；TD 编号留给台账 owner，本线不自行占号。

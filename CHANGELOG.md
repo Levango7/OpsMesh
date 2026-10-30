@@ -4,6 +4,16 @@
 
 > 当前最新已发布版本：`v0.16.0`（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-10-30（K8s 生命周期假成功收口：升级/回滚/证书轮换显式 501 + 前端置灰，真实现立项）
+
+- **修复对外假成功（裁决单 ① A 项）**：`POST /api/v1/k8s/lifecycle/upgrade|rollback|cert-rotate`
+  此前先返回 202，再由纯内存状态机把 `phase` 推进到 `Completed`——前端据此显示"升级完成"，
+  集群侧却零动作。现统一返回 `501 {error, code:"ERR_NOT_IMPLEMENTED"}`，并删除四个只打日志的
+  升级子步骤与两个纯内存 `execute*`；前端升级/证书轮换按钮置灰并给出说明文案。
+  `upgrade/plan`（真跑 `kubeadm upgrade plan`）、etcd 备份/恢复、节点扩缩容（均为真 SSH 执行）不变。
+  真实现立项：`docs/design/k8s-lifecycle-execution-charter.md`（M1 升级 / M2 回滚 / M3 轮换 +
+  `lifecycle_jobs` 持久化，8–12 人日）。
+
 ## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
 - **对话框家族收编进 pages.css（第 6 批 CSS 去重）**：`.modal-*` 家族从 `styles/k8s.css`
