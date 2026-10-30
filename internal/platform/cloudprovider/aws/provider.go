@@ -803,10 +803,10 @@ func (p *AWSProvider) CreateResource(ctx context.Context, creds types.Credential
 
 	// 构建 RunInstances 参数
 	params := map[string]string{
-		"ImageId":        imageID,
-		"InstanceType":   instanceType,
-		"MinCount":       "1",
-		"MaxCount":       "1",
+		"ImageId":      imageID,
+		"InstanceType": instanceType,
+		"MinCount":     "1",
+		"MaxCount":     "1",
 	}
 
 	// 可选参数
@@ -827,7 +827,7 @@ func (p *AWSProvider) CreateResource(ctx context.Context, creds types.Credential
 	if len(req.Tags) > 0 {
 		i := 1
 		for k, v := range req.Tags {
-			params[fmt.Sprintf("TagSpecification.1.ResourceType")] = "instance"
+			params["TagSpecification.1.ResourceType"] = "instance"
 			params[fmt.Sprintf("TagSpecification.1.Tag.%d.Key", i)] = k
 			params[fmt.Sprintf("TagSpecification.1.Tag.%d.Value", i)] = v
 			i++
