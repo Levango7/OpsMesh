@@ -72,7 +72,7 @@ func (s *Server) handleNetworkVendorSwitch(w http.ResponseWriter, r *http.Reques
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
-		Vendor   string `json:"vendor"`  // cisco/huawei/juniper/h3c/arista
+		Vendor   string `json:"vendor"` // cisco/huawei/juniper/h3c/arista
 		Action   string `json:"action"` // 可选：version/config/vlan/interface/all
 	}
 	if err := decodeJSONBody(w, r, &req); err != nil {

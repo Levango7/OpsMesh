@@ -598,30 +598,6 @@ func (s *Server) handleDBInstanceMSSQL(w http.ResponseWriter, r *http.Request) {
 	s.handleDBInstance(w, r, "mssql")
 }
 
-// handleDBInstanceRouting 统一分派 /api/v1/db/{type}/instance 子路径。
-func (s *Server) handleDBInstanceRouting(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/db/")
-	segments := strings.Split(strings.TrimSuffix(path, "/"), "/")
-	if len(segments) < 2 || segments[1] != "instance" {
-		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-	switch segments[0] {
-	case "postgresql":
-		s.handleDBInstancePostgreSQL(w, r)
-	case "oracle":
-		s.handleDBInstanceOracle(w, r)
-	case "tidb":
-		s.handleDBInstanceTiDB(w, r)
-	case "oceanbase":
-		s.handleDBInstanceOceanBase(w, r)
-	case "mssql":
-		s.handleDBInstanceMSSQL(w, r)
-	default:
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported database type"})
-	}
-}
-
 func (s *Server) handleDBRouting(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/db/")
 	segments := strings.Split(path, "/")

@@ -354,12 +354,12 @@ func (s *Server) handleDockerRegistry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DeviceID  string `json:"deviceID"`
-		Action    string `json:"action"` // login/logout/search
-		Registry  string `json:"registry"`
-		Username  string `json:"username"`
-		Password  string `json:"password"`
-		Image     string `json:"image"`
+		DeviceID string `json:"deviceID"`
+		Action   string `json:"action"` // login/logout/search
+		Registry string `json:"registry"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Image    string `json:"image"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
