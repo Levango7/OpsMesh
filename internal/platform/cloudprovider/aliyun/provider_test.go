@@ -138,32 +138,20 @@ func TestDiscoverMethodsReturnEmptyNotError(t *testing.T) {
 	}
 }
 
-func TestCreateResourceReturnsErrNotImplemented(t *testing.T) {
+// TestMutatingMethodsRequireAKSK 钉住写操作的认证契约：
+// 仅 AKSK 凭据允许执行写操作，其他认证方式必须被拒绝。
+func TestMutatingMethodsRequireAKSK(t *testing.T) {
 	p := NewAliyunProvider()
 	ctx := context.Background()
+	creds := types.Credentials{}
 
-	_, err := p.CreateResource(ctx, types.Credentials{}, types.CreateResourceRequest{})
-	if !errors.Is(err, types.ErrNotImplemented) {
-		t.Errorf("CreateResource() expected ErrNotImplemented, got %v", err)
+	if _, err := p.CreateResource(ctx, creds, types.CreateResourceRequest{ResourceType: "instance"}); err == nil {
+		t.Errorf("CreateResource() err = nil，期望非 nil（非 AKSK 凭据应被拒绝）")
 	}
-}
-
-func TestDeleteResourceReturnsErrNotImplemented(t *testing.T) {
-	p := NewAliyunProvider()
-	ctx := context.Background()
-
-	err := p.DeleteResource(ctx, types.Credentials{}, "resource-123")
-	if !errors.Is(err, types.ErrNotImplemented) {
-		t.Errorf("DeleteResource() expected ErrNotImplemented, got %v", err)
+	if err := p.DeleteResource(ctx, creds, "i-123"); err == nil {
+		t.Errorf("DeleteResource() err = nil，期望非 nil（非 AKSK 凭据应被拒绝）")
 	}
-}
-
-func TestSyncTagsReturnsErrNotImplemented(t *testing.T) {
-	p := NewAliyunProvider()
-	ctx := context.Background()
-
-	err := p.SyncTags(ctx, types.Credentials{}, "resource-123", map[string]string{"env": "test"})
-	if !errors.Is(err, types.ErrNotImplemented) {
-		t.Errorf("SyncTags() expected ErrNotImplemented, got %v", err)
+	if err := p.SyncTags(ctx, creds, "i-123", map[string]string{"env": "test"}); err == nil {
+		t.Errorf("SyncTags() err = nil，期望非 nil（非 AKSK 凭据应被拒绝）")
 	}
 }

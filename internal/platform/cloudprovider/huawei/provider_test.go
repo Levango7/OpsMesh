@@ -110,18 +110,20 @@ func TestDiscoverMethodsReturnEmptyNotError(t *testing.T) {
 	}
 }
 
-func TestMutatingMethodsReturnErrNotImplemented(t *testing.T) {
+// TestMutatingMethodsRequireAKSK 钉住写操作的认证契约：
+// 仅 AKSK 凭据允许执行写操作，其他认证方式必须被拒绝。
+func TestMutatingMethodsRequireAKSK(t *testing.T) {
 	p := NewHuaweiProvider()
 	ctx := context.Background()
 	creds := types.Credentials{}
 
-	if _, err := p.CreateResource(ctx, creds, types.CreateResourceRequest{ResourceType: "ecs"}); !errors.Is(err, types.ErrNotImplemented) {
-		t.Errorf("CreateResource() err = %v，期望 ErrNotImplemented", err)
+	if _, err := p.CreateResource(ctx, creds, types.CreateResourceRequest{ResourceType: "ecs"}); err == nil {
+		t.Errorf("CreateResource() err = nil，期望非 nil（非 AKSK 凭据应被拒绝）")
 	}
-	if err := p.DeleteResource(ctx, creds, "server-123"); !errors.Is(err, types.ErrNotImplemented) {
-		t.Errorf("DeleteResource() err = %v，期望 ErrNotImplemented", err)
+	if err := p.DeleteResource(ctx, creds, "server-123"); err == nil {
+		t.Errorf("DeleteResource() err = nil，期望非 nil（非 AKSK 凭据应被拒绝）")
 	}
-	if err := p.SyncTags(ctx, creds, "server-123", map[string]string{"env": "test"}); !errors.Is(err, types.ErrNotImplemented) {
-		t.Errorf("SyncTags() err = %v，期望 ErrNotImplemented", err)
+	if err := p.SyncTags(ctx, creds, "server-123", map[string]string{"env": "test"}); err == nil {
+		t.Errorf("SyncTags() err = nil，期望非 nil（非 AKSK 凭据应被拒绝）")
 	}
 }

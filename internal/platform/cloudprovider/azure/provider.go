@@ -7,12 +7,13 @@
 // - DiscoverSubnets：调用 Azure Resource Manager Microsoft.Network/virtualNetworks/{vnet}/subnets
 // - DiscoverInstances：调用 Azure Resource Manager Microsoft.Compute/virtualMachines
 // - DiscoverClusters：调用 Azure Resource Manager Microsoft.ContainerService/managedClusters
-// - CreateResource/DeleteResource/SyncTags：返回 ErrNotImplemented
+// - CreateResource/DeleteResource/SyncTags：基于 Azure Resource Manager virtualMachines 实现
 //
 // 认证使用 Azure AD OAuth2 client credentials flow 获取 Bearer token。
 package azure
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -52,6 +53,9 @@ func newAzureClient(creds types.Credentials) *azureClient {
 }
 
 func (c *azureClient) getToken(ctx context.Context) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if ctx != nil {
 		select {
 		case <-ctx.Done():
@@ -109,6 +113,9 @@ func (c *azureClient) getToken(ctx context.Context) (string, error) {
 }
 
 func (c *azureClient) get(ctx context.Context, path string, query url.Values) (map[string]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if ctx != nil {
 		select {
 		case <-ctx.Done():
@@ -158,6 +165,73 @@ func (c *azureClient) get(ctx context.Context, path string, query url.Values) (m
 	return result, nil
 }
 
+// do executes an authenticated HTTP request against Azure Resource Manager and
+// parses a JSON response body when present.
+func (c *azureClient) do(ctx context.Context, method, path string, query url.Values, body interface{}) (map[string]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+	}
+
+	token, err := c.getToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	u := azureARMBase + path
+	if query != nil {
+		u += "?" + query.Encode()
+	}
+
+	var bodyReader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("azure: marshal body: %w", err)
+		}
+		bodyReader = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, u, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("azure: create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("azure: http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("azure: read body: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("azure: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	if len(respBody) == 0 {
+		return map[string]interface{}{}, nil
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("azure: parse JSON: %w", err)
+	}
+	return result, nil
+}
+
 func azureString(m map[string]interface{}, keys ...string) string {
 	for _, k := range keys {
 		if v, ok := m[k].(string); ok && v != "" {
@@ -165,6 +239,57 @@ func azureString(m map[string]interface{}, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// azureProp returns the first non-empty value among the given property keys.
+func azureProp(props map[string]string, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := props[k]; ok && v != "" {
+			return v
+		}
+		// case-insensitive fallback
+		for pk, pv := range props {
+			if strings.EqualFold(pk, k) && pv != "" {
+				return pv
+			}
+		}
+	}
+	return ""
+}
+
+// azureParseResourceID extracts subscription, resource group and VM name from an
+// Azure resource id. Falls back to sensible defaults when given a bare name.
+func azureParseResourceID(resourceID, subscription string) (string, string, string) {
+	sub := subscription
+	rg := ""
+	name := resourceID
+	parts := strings.Split(resourceID, "/")
+	for i := 0; i < len(parts); i++ {
+		switch strings.ToLower(parts[i]) {
+		case "subscriptions":
+			if i+1 < len(parts) {
+				sub = parts[i+1]
+			}
+		case "resourcegroups":
+			if i+1 < len(parts) {
+				rg = parts[i+1]
+			}
+		case "virtualmachines":
+			if i+1 < len(parts) {
+				name = parts[i+1]
+			}
+		}
+	}
+	if rg == "" {
+		rg = "default"
+	}
+	if name == "" {
+		name = resourceID
+	}
+	if sub == "" {
+		sub = "default"
+	}
+	return sub, rg, name
 }
 
 // AzureProvider implements types.CloudProvider for Microsoft Azure.
@@ -442,13 +567,230 @@ func (p *AzureProvider) DiscoverClusters(ctx context.Context, creds types.Creden
 }
 
 func (p *AzureProvider) CreateResource(ctx context.Context, creds types.Credentials, req types.CreateResourceRequest) (types.Resource, error) {
-	return types.Resource{}, types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return types.Resource{}, ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return types.Resource{}, fmt.Errorf("azure: only AKSK auth supported for create")
+	}
+	if req.ResourceType != "" {
+		rt := strings.ToLower(strings.TrimSpace(req.ResourceType))
+		if rt != "vm" && rt != "instance" && rt != "virtualmachine" && rt != "virtual_machine" {
+			return types.Resource{}, fmt.Errorf("azure: unsupported resource type %q, only vm supported", req.ResourceType)
+		}
+	}
+	if req.Name == "" {
+		return types.Resource{}, fmt.Errorf("azure: name is required")
+	}
+	if req.Region == "" {
+		req.Region = creds.Region
+	}
+	if req.Properties == nil {
+		req.Properties = make(map[string]string)
+	}
+
+	props := req.Properties
+	subscription := azureProp(props, "SubscriptionId", "subscriptionId", "Subscription", "subscription", "SubscriptionID")
+	if subscription == "" {
+		subscription = creds.Region
+	}
+	if subscription == "" {
+		subscription = "default"
+	}
+	resourceGroup := azureProp(props, "ResourceGroup", "resourceGroup", "rg", "ResourceGroupName")
+	if resourceGroup == "" {
+		resourceGroup = "default"
+	}
+	location := azureProp(props, "Location", "location", "Region", "region")
+	if location == "" {
+		location = req.Region
+	}
+	if location == "" {
+		location = "eastus"
+	}
+	vmSize := azureProp(props, "VMSize", "VmSize", "vmSize", "InstanceType", "instanceType", "vm_size")
+	if vmSize == "" {
+		vmSize = "Standard_D2s_v3"
+	}
+	publisher := azureProp(props, "ImagePublisher", "Publisher", "publisher", "imagePublisher")
+	offer := azureProp(props, "ImageOffer", "Offer", "offer", "imageOffer")
+	sku := azureProp(props, "ImageSku", "Sku", "sku", "ImageSKU", "imageSku")
+	version := azureProp(props, "ImageVersion", "Version", "version", "imageVersion")
+	if publisher == "" {
+		publisher = "Canonical"
+	}
+	if offer == "" {
+		offer = "0001-com-ubuntu-server-jammy"
+	}
+	if sku == "" {
+		sku = "22_04-lts-gen2"
+	}
+	if version == "" {
+		version = "latest"
+	}
+	computerName := azureProp(props, "ComputerName", "computerName", "computer_name")
+	if computerName == "" {
+		computerName = req.Name
+	}
+	adminUsername := azureProp(props, "AdminUsername", "adminUsername", "admin_username", "Username", "username")
+	adminPassword := azureProp(props, "AdminPassword", "adminPassword", "admin_password", "Password", "password")
+	nicID := azureProp(props, "NetworkInterfaceId", "networkInterfaceId", "NicId", "nicId", "network_interface_id", "SubnetId", "subnetId")
+
+	client := newAzureClient(creds)
+
+	body := map[string]interface{}{
+		"location": location,
+		"properties": map[string]interface{}{
+			"hardwareProfile": map[string]interface{}{
+				"vmSize": vmSize,
+			},
+			"storageProfile": map[string]interface{}{
+				"imageReference": map[string]interface{}{
+					"publisher": publisher,
+					"offer":     offer,
+					"sku":       sku,
+					"version":   version,
+				},
+			},
+			"osProfile": map[string]interface{}{
+				"computerName":  computerName,
+				"adminUsername": adminUsername,
+				"adminPassword": adminPassword,
+			},
+			"networkProfile": map[string]interface{}{
+				"networkInterfaces": []map[string]interface{}{
+					{"id": nicID},
+				},
+			},
+		},
+		"tags": req.Tags,
+	}
+
+	query := url.Values{}
+	query.Set("api-version", "2023-09-01")
+	path := "/subscriptions/" + subscription + "/resourceGroups/" + resourceGroup + "/providers/Microsoft.Compute/virtualMachines/" + req.Name
+
+	result, err := client.do(ctx, "PUT", path, query, body)
+	if err != nil {
+		logx.Warn(ctx, "azure CreateResource failed", "error", err, "region", req.Region)
+		return types.Resource{}, fmt.Errorf("azure: create vm: %w", err)
+	}
+
+	resourceID := azureString(result, "id")
+	if resourceID == "" {
+		resourceID = azureARMBase + path
+	}
+	name := azureString(result, "name")
+	if name == "" {
+		name = req.Name
+	}
+	loc := azureString(result, "location")
+	if loc == "" {
+		loc = location
+	}
+	status := "creating"
+	if propsMap, ok := result["properties"].(map[string]interface{}); ok {
+		if s := azureString(propsMap, "provisioningState"); s != "" {
+			status = s
+		}
+	}
+	tags := req.Tags
+	if t, ok := result["tags"].(map[string]interface{}); ok {
+		tags = make(map[string]string)
+		for k, v := range t {
+			if s, ok := v.(string); ok {
+				tags[k] = s
+			}
+		}
+	}
+
+	logx.Info(ctx, "azure vm created", "resource_id", resourceID, "region", req.Region)
+
+	return types.Resource{
+		Provider:     types.ProviderTypeAzure,
+		Region:       loc,
+		ResourceType: "instance",
+		ResourceID:   resourceID,
+		ID:           resourceID,
+		ResourceName: name,
+		Status:       status,
+		Tags:         tags,
+	}, nil
 }
 
 func (p *AzureProvider) DeleteResource(ctx context.Context, creds types.Credentials, resourceID string) error {
-	return types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("azure: only AKSK auth supported for delete")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("azure: resourceID is required")
+	}
+
+	subscription := creds.Region
+	sub, rg, name := azureParseResourceID(resourceID, subscription)
+
+	client := newAzureClient(creds)
+	query := url.Values{}
+	query.Set("api-version", "2023-09-01")
+	path := "/subscriptions/" + sub + "/resourceGroups/" + rg + "/providers/Microsoft.Compute/virtualMachines/" + name
+
+	_, err := client.do(ctx, "DELETE", path, query, nil)
+	if err != nil {
+		logx.Warn(ctx, "azure DeleteResource failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("azure: delete vm: %w", err)
+	}
+
+	logx.Info(ctx, "azure vm deleted", "resource_id", resourceID)
+	return nil
 }
 
 func (p *AzureProvider) SyncTags(ctx context.Context, creds types.Credentials, resourceID string, tags map[string]string) error {
-	return types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("azure: only AKSK auth supported for sync tags")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("azure: resourceID is required")
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+
+	subscription := creds.Region
+	sub, rg, name := azureParseResourceID(resourceID, subscription)
+
+	client := newAzureClient(creds)
+	query := url.Values{}
+	query.Set("api-version", "2023-09-01")
+	path := "/subscriptions/" + sub + "/resourceGroups/" + rg + "/providers/Microsoft.Compute/virtualMachines/" + name
+
+	body := map[string]interface{}{
+		"tags": tags,
+	}
+
+	_, err := client.do(ctx, "PATCH", path, query, body)
+	if err != nil {
+		logx.Warn(ctx, "azure SyncTags failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("azure: sync tags: %w", err)
+	}
+
+	logx.Info(ctx, "azure tags synced", "resource_id", resourceID, "tags", tags)
+	return nil
 }

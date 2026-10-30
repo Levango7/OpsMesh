@@ -7,7 +7,9 @@
 // - DiscoverSubnets：调用 VPC DescribeSubnets
 // - DiscoverInstances：调用 ECS DescribeInstances
 // - DiscoverClusters：调用 VKE DescribeClusters
-// - CreateResource/DeleteResource/SyncTags：返回 ErrNotImplemented
+// - CreateResource：调用 ECS RunInstances 创建实例
+// - DeleteResource：调用 ECS TerminateInstances 释放实例
+// - SyncTags：调用 TagResources 为实例同步标签
 package volcengine
 
 import (
@@ -497,13 +499,176 @@ func (p *VolcengineProvider) DiscoverClusters(ctx context.Context, creds types.C
 }
 
 func (p *VolcengineProvider) CreateResource(ctx context.Context, creds types.Credentials, req types.CreateResourceRequest) (types.Resource, error) {
-	return types.Resource{}, types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return types.Resource{}, ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return types.Resource{}, fmt.Errorf("volcengine: only AKSK auth supported for create")
+	}
+	if req.ResourceType != "instance" {
+		return types.Resource{}, fmt.Errorf("volcengine: unsupported resource type %q, only instance supported", req.ResourceType)
+	}
+	if req.Region == "" {
+		req.Region = creds.Region
+	}
+	if req.Region == "" {
+		req.Region = "cn-beijing"
+	}
+	if req.Properties == nil {
+		req.Properties = make(map[string]string)
+	}
+
+	imageID := req.Properties["ImageId"]
+	if imageID == "" {
+		return types.Resource{}, fmt.Errorf("volcengine: ImageId is required in properties")
+	}
+	instanceType := req.Properties["InstanceType"]
+	if instanceType == "" {
+		instanceType = "ecs.c6.large"
+	}
+	instanceName := req.Name
+	if instanceName == "" {
+		instanceName = req.Properties["InstanceName"]
+	}
+	if instanceName == "" {
+		instanceName = imageID
+	}
+
+	client := newVolcengineClient(creds)
+	region := req.Region
+
+	body := map[string]interface{}{
+		"ImageId":      imageID,
+		"InstanceType": instanceType,
+		"InstanceName": instanceName,
+	}
+	if v := req.Properties["ZoneId"]; v != "" {
+		body["ZoneId"] = v
+	}
+	if v := req.Properties["VpcId"]; v != "" {
+		body["VpcId"] = v
+	}
+	if v := req.Properties["SubnetId"]; v != "" {
+		body["SubnetId"] = v
+	}
+	if v := req.Properties["SecurityGroupId"]; v != "" {
+		body["SecurityGroupId"] = v
+	}
+	if v := req.Properties["KeyPairName"]; v != "" {
+		body["KeyPairName"] = v
+	}
+	if len(req.Tags) > 0 {
+		tagList := make([]map[string]interface{}, 0, len(req.Tags))
+		for k, v := range req.Tags {
+			tagList = append(tagList, map[string]interface{}{"Key": k, "Value": v})
+		}
+		body["Tags"] = tagList
+	}
+
+	result, err := client.call(ctx, "ecs", "RunInstances", "2020-04-01", region, body)
+	if err != nil {
+		logx.Warn(ctx, "volcengine CreateResource failed", "error", err, "region", region)
+		return types.Resource{}, fmt.Errorf("volcengine: create instance: %w", err)
+	}
+
+	data := unwrapResult(result)
+	var instanceID string
+	if ids, ok := data["InstanceIds"].([]interface{}); ok && len(ids) > 0 {
+		if id, ok := ids[0].(string); ok {
+			instanceID = id
+		}
+	}
+	if instanceID == "" {
+		return types.Resource{}, fmt.Errorf("volcengine: no instance returned")
+	}
+
+	logx.Info(ctx, "volcengine instance created", "instance_id", instanceID, "region", region)
+
+	return types.Resource{
+		Provider:     types.ProviderTypeVolcengine,
+		Region:       region,
+		ResourceType: "instance",
+		ResourceID:   instanceID,
+		ID:           instanceID,
+		ResourceName: req.Name,
+		Status:       "pending",
+		Tags:         req.Tags,
+	}, nil
 }
 
 func (p *VolcengineProvider) DeleteResource(ctx context.Context, creds types.Credentials, resourceID string) error {
-	return types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("volcengine: only AKSK auth supported for delete")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("volcengine: resourceID is required")
+	}
+	if creds.Region == "" {
+		creds.Region = "cn-beijing"
+	}
+
+	client := newVolcengineClient(creds)
+	body := map[string]interface{}{
+		"InstanceIds": []string{resourceID},
+	}
+	_, err := client.call(ctx, "ecs", "TerminateInstances", "2020-04-01", creds.Region, body)
+	if err != nil {
+		logx.Warn(ctx, "volcengine DeleteResource failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("volcengine: terminate instance: %w", err)
+	}
+
+	logx.Info(ctx, "volcengine instance terminated", "instance_id", resourceID)
+	return nil
 }
 
 func (p *VolcengineProvider) SyncTags(ctx context.Context, creds types.Credentials, resourceID string, tags map[string]string) error {
-	return types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("volcengine: only AKSK auth supported for sync tags")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("volcengine: resourceID is required")
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	if creds.Region == "" {
+		creds.Region = "cn-beijing"
+	}
+
+	client := newVolcengineClient(creds)
+	tagList := make([]map[string]interface{}, 0, len(tags))
+	for k, v := range tags {
+		tagList = append(tagList, map[string]interface{}{"Key": k, "Value": v})
+	}
+	body := map[string]interface{}{
+		"ResourceType": "instance",
+		"ResourceIds":  []string{resourceID},
+		"Tags":         tagList,
+	}
+	_, err := client.call(ctx, "ecs", "TagResources", "2020-04-01", creds.Region, body)
+	if err != nil {
+		logx.Warn(ctx, "volcengine SyncTags failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("volcengine: sync tags: %w", err)
+	}
+
+	logx.Info(ctx, "volcengine tags synced", "instance_id", resourceID, "tags", tags)
+	return nil
 }

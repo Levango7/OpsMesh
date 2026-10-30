@@ -4,6 +4,7 @@
 package huawei
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -56,6 +57,76 @@ func (c *huaweiClient) get(ctx context.Context, host, path string) (map[string]i
 	canonicalHeaders := "host:" + host + "\n" + "x-sdk-date:" + xSdkDate + "\n"
 
 	canonicalRequest := "GET\n" + path + "\n" + "\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHash
+	stringToSign := "SDK-HMAC-SHA256\n" + xSdkDate + "\n" + sha256Hex([]byte(canonicalRequest))
+
+	signature := hex.EncodeToString(hmacSHA256([]byte(c.secretKey), []byte(stringToSign)))
+	authorization := fmt.Sprintf("SDK-HMAC-SHA256 Access=%s, SignedHeaders=%s, Signature=%s",
+		c.accessKeyID, signedHeaders, signature)
+
+	req.Header.Set("Host", host)
+	req.Header.Set("X-Sdk-Date", xSdkDate)
+	req.Header.Set("Authorization", authorization)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("huawei: http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("huawei: read body: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("huawei: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	if len(respBody) == 0 {
+		return map[string]interface{}{}, nil
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("huawei: parse JSON: %w", err)
+	}
+	return result, nil
+}
+
+// do performs a signed request with optional JSON body and parses a JSON response.
+func (c *huaweiClient) do(ctx context.Context, method, host, path string, body []byte) (map[string]interface{}, error) {
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+	}
+	if body == nil {
+		body = []byte{}
+	}
+
+	reqURL := "https://" + host + path
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("huawei: create request: %w", err)
+	}
+
+	xSdkDate := time.Now().UTC().Format("20060102T150405Z")
+	payloadHash := sha256Hex(body)
+
+	var signedHeaders string
+	var canonicalHeaders string
+	if len(body) > 0 {
+		signedHeaders = "content-type;host;x-sdk-date"
+		canonicalHeaders = "content-type:application/json\n" + "host:" + host + "\n" + "x-sdk-date:" + xSdkDate + "\n"
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		signedHeaders = "host;x-sdk-date"
+		canonicalHeaders = "host:" + host + "\n" + "x-sdk-date:" + xSdkDate + "\n"
+	}
+
+	canonicalRequest := method + "\n" + path + "\n" + "\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHash
 	stringToSign := "SDK-HMAC-SHA256\n" + xSdkDate + "\n" + sha256Hex([]byte(canonicalRequest))
 
 	signature := hex.EncodeToString(hmacSHA256([]byte(c.secretKey), []byte(stringToSign)))
@@ -482,13 +553,246 @@ func (p *HuaweiProvider) DiscoverClusters(ctx context.Context, creds types.Crede
 }
 
 func (p *HuaweiProvider) CreateResource(ctx context.Context, creds types.Credentials, req types.CreateResourceRequest) (types.Resource, error) {
-	return types.Resource{}, types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return types.Resource{}, ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return types.Resource{}, fmt.Errorf("huawei: only AKSK auth supported for create")
+	}
+	if req.ResourceType != "" && req.ResourceType != "instance" && req.ResourceType != "ecs" && req.ResourceType != "server" {
+		return types.Resource{}, fmt.Errorf("huawei: unsupported resource type %q, only instance supported", req.ResourceType)
+	}
+	if req.Region == "" {
+		req.Region = creds.Region
+	}
+	if req.Region == "" {
+		req.Region = "cn-north-4"
+	}
+	if req.Properties == nil {
+		req.Properties = make(map[string]string)
+	}
+
+	imageID := req.Properties["ImageId"]
+	if imageID == "" {
+		imageID = req.Properties["ImageID"]
+	}
+	if imageID == "" {
+		imageID = req.Properties["ImageRef"]
+	}
+	if imageID == "" {
+		return types.Resource{}, fmt.Errorf("huawei: ImageId/ImageRef is required in properties")
+	}
+	flavorID := req.Properties["FlavorId"]
+	if flavorID == "" {
+		flavorID = req.Properties["FlavorID"]
+	}
+	if flavorID == "" {
+		flavorID = req.Properties["FlavorRef"]
+	}
+	if flavorID == "" {
+		flavorID = req.Properties["InstanceType"]
+	}
+	if flavorID == "" {
+		flavorID = "s6.large.2"
+	}
+	vpcID := req.Properties["VpcId"]
+	if vpcID == "" {
+		vpcID = req.Properties["VPCId"]
+	}
+	if vpcID == "" {
+		vpcID = req.Properties["vpcid"]
+	}
+	subnetID := req.Properties["SubnetId"]
+	if subnetID == "" {
+		subnetID = req.Properties["SubnetID"]
+	}
+	if subnetID == "" {
+		subnetID = req.Properties["subnetId"]
+	}
+	secGroupID := req.Properties["SecurityGroupId"]
+	if secGroupID == "" {
+		secGroupID = req.Properties["SecurityGroupID"]
+	}
+	if secGroupID == "" {
+		secGroupID = req.Properties["SecurityGroupId"]
+	}
+	keyName := req.Properties["KeyName"]
+	if keyName == "" {
+		keyName = req.Properties["KeyPairName"]
+	}
+	if keyName == "" {
+		keyName = req.Properties["keyName"]
+	}
+
+	region := req.Region
+	client := newHuaweiClient(creds)
+
+	server := map[string]interface{}{
+		"name":      req.Name,
+		"imageRef":  imageID,
+		"flavorRef": flavorID,
+	}
+	if vpcID != "" {
+		server["vpcid"] = vpcID
+	}
+	if subnetID != "" {
+		server["nics"] = []map[string]string{{"subnetId": subnetID}}
+	}
+	if secGroupID != "" {
+		server["securityGroups"] = []map[string]string{{"id": secGroupID}}
+	}
+	if keyName != "" {
+		server["keyName"] = keyName
+	}
+	if len(req.Tags) > 0 {
+		server["tags"] = req.Tags
+	}
+
+	body := map[string]interface{}{"server": server}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return types.Resource{}, fmt.Errorf("huawei: marshal body: %w", err)
+	}
+
+	projectID := huaweiProjectID(creds, region)
+	host := "ecs." + region + ".myhuaweicloud.com"
+	path := "/v1/" + projectID + "/cloudservers"
+
+	result, err := client.do(ctx, "POST", host, path, bodyBytes)
+	if err != nil {
+		logx.Warn(ctx, "huawei CreateResource failed", "error", err, "region", region)
+		return types.Resource{}, fmt.Errorf("huawei: create server: %w", err)
+	}
+
+	var instanceID string
+	if s, ok := result["server"].(map[string]interface{}); ok {
+		instanceID = getString(s, "id", "ID", "server_id", "serverId")
+	}
+	if instanceID == "" {
+		if arr, ok := result["servers"].([]interface{}); ok && len(arr) > 0 {
+			if vm, ok := arr[0].(map[string]interface{}); ok {
+				instanceID = getString(vm, "id", "ID", "server_id", "serverId")
+			}
+		}
+	}
+	if instanceID == "" {
+		instanceID = getString(result, "job_id", "jobId")
+	}
+	if instanceID == "" {
+		return types.Resource{}, fmt.Errorf("huawei: no server returned")
+	}
+
+	logx.Info(ctx, "huawei server created", "server_id", instanceID, "region", region)
+
+	name := req.Name
+	if name == "" {
+		name = instanceID
+	}
+	return types.Resource{
+		Provider:     types.ProviderTypeHuawei,
+		Region:       region,
+		ResourceType: "instance",
+		ResourceID:   instanceID,
+		ID:           instanceID,
+		ResourceName: name,
+		Status:       "BUILD",
+		Tags:         req.Tags,
+	}, nil
 }
 
 func (p *HuaweiProvider) DeleteResource(ctx context.Context, creds types.Credentials, resourceID string) error {
-	return types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("huawei: only AKSK auth supported for delete")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("huawei: resourceID is required")
+	}
+	if creds.Region == "" {
+		creds.Region = "cn-north-4"
+	}
+
+	region := creds.Region
+	client := newHuaweiClient(creds)
+
+	body := map[string]interface{}{
+		"servers":         []map[string]string{{"id": resourceID}},
+		"delete_volume":   false,
+		"delete_publicip": false,
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("huawei: marshal body: %w", err)
+	}
+
+	projectID := huaweiProjectID(creds, region)
+	host := "ecs." + region + ".myhuaweicloud.com"
+	path := "/v1/" + projectID + "/cloudservers/delete"
+
+	_, err = client.do(ctx, "DELETE", host, path, bodyBytes)
+	if err != nil {
+		logx.Warn(ctx, "huawei DeleteResource failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("huawei: delete server: %w", err)
+	}
+
+	logx.Info(ctx, "huawei server deleted", "server_id", resourceID)
+	return nil
 }
 
 func (p *HuaweiProvider) SyncTags(ctx context.Context, creds types.Credentials, resourceID string, tags map[string]string) error {
-	return types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("huawei: only AKSK auth supported for sync tags")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("huawei: resourceID is required")
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	if creds.Region == "" {
+		creds.Region = "cn-north-4"
+	}
+
+	region := creds.Region
+	client := newHuaweiClient(creds)
+
+	tagList := make([]map[string]string, 0, len(tags))
+	for k, v := range tags {
+		tagList = append(tagList, map[string]string{"key": k, "value": v})
+	}
+	body := map[string]interface{}{"tags": tagList}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("huawei: marshal body: %w", err)
+	}
+
+	projectID := huaweiProjectID(creds, region)
+	host := "ecs." + region + ".myhuaweicloud.com"
+	path := "/v1/" + projectID + "/cloudservers/" + resourceID + "/tags"
+
+	_, err = client.do(ctx, "PUT", host, path, bodyBytes)
+	if err != nil {
+		logx.Warn(ctx, "huawei SyncTags failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("huawei: sync tags: %w", err)
+	}
+
+	logx.Info(ctx, "huawei tags synced", "server_id", resourceID, "tags", tags)
+	return nil
 }

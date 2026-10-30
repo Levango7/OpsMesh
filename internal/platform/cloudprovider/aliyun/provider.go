@@ -7,7 +7,7 @@
 // - DiscoverVPCs：调用 VPC DescribeVpcs（HTTP 调用）
 // - DiscoverSubnets：调用 VPC DescribeVSwitches（HTTP 调用）
 // - DiscoverClusters：调用 CS DescribeClusters（HTTP 调用）
-// - CreateResource/DeleteResource/SyncTags：返回 ErrNotImplemented（待后续实现）
+// - CreateResource/DeleteResource/SyncTags：基于 ECS RunInstances/DeleteInstances 与 Tag TagResources 实现
 //
 // _ "github.com/aliyun/alibaba-cloud-sdk-go" 已 blank import，保留 SDK 依赖，
 // 后续可替换为 SDK 原生调用。
@@ -483,15 +483,212 @@ func (p *AliyunProvider) DiscoverClusters(ctx context.Context, creds types.Crede
 	return resources, nil
 }
 
-// CreateResource, DeleteResource, SyncTags remain unimplemented.
+// CreateResource 调用 ECS RunInstances 创建实例。
 func (p *AliyunProvider) CreateResource(ctx context.Context, creds types.Credentials, req types.CreateResourceRequest) (types.Resource, error) {
-	return types.Resource{}, types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return types.Resource{}, ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return types.Resource{}, fmt.Errorf("aliyun: only AKSK auth supported for create")
+	}
+	if req.ResourceType != "instance" {
+		return types.Resource{}, fmt.Errorf("aliyun: unsupported resource type %q, only instance supported", req.ResourceType)
+	}
+	if req.Region == "" {
+		req.Region = creds.Region
+	}
+	if req.Region == "" {
+		req.Region = "cn-hangzhou"
+	}
+	if req.Properties == nil {
+		req.Properties = make(map[string]string)
+	}
+
+	imageID := req.Properties["ImageId"]
+	if imageID == "" {
+		imageID = req.Properties["ImageID"]
+	}
+	if imageID == "" {
+		return types.Resource{}, fmt.Errorf("aliyun: ImageId is required in properties")
+	}
+	instanceType := req.Properties["InstanceType"]
+	if instanceType == "" {
+		instanceType = "ecs.t6-c1m1.large"
+	}
+	instanceName := req.Name
+	if instanceName == "" {
+		instanceName = req.Properties["InstanceName"]
+	}
+	amount := req.Properties["Amount"]
+	if amount == "" {
+		amount = "1"
+	}
+
+	client := newAliyunClient(creds)
+	region := req.Region
+
+	params := map[string]string{
+		"RegionId":     region,
+		"ImageId":      imageID,
+		"InstanceType": instanceType,
+		"InstanceName": instanceName,
+		"Amount":       amount,
+	}
+	if v := req.Properties["ZoneId"]; v != "" {
+		params["ZoneId"] = v
+	}
+	if v := req.Properties["VSwitchId"]; v != "" {
+		params["VSwitchId"] = v
+	}
+	if v := req.Properties["SecurityGroupId"]; v != "" {
+		params["SecurityGroupId"] = v
+	}
+	keyPair := req.Properties["KeyPairName"]
+	if keyPair == "" {
+		keyPair = req.Properties["KeyName"]
+	}
+	if keyPair != "" {
+		params["KeyPairName"] = keyPair
+	}
+	if v := req.Properties["InternetMaxBandwidthOut"]; v != "" {
+		params["InternetMaxBandwidthOut"] = v
+	}
+
+	if len(req.Tags) > 0 {
+		i := 1
+		for k, v := range req.Tags {
+			params[fmt.Sprintf("Tag.%d.Key", i)] = k
+			params[fmt.Sprintf("Tag.%d.Value", i)] = v
+			i++
+		}
+	}
+
+	result, err := client.call(ctx, "https://ecs.aliyuncs.com", "RunInstances", "2014-05-26", params)
+	if err != nil {
+		logx.Warn(ctx, "aliyun CreateResource failed", "error", err, "region", region)
+		return types.Resource{}, fmt.Errorf("aliyun: create instance: %w", err)
+	}
+
+	// 解析返回的 InstanceId
+	var instanceID string
+	if sets, ok := result["InstanceIdSets"].(map[string]interface{}); ok {
+		if arr, ok := sets["InstanceIdSet"].([]interface{}); ok && len(arr) > 0 {
+			if s, ok := arr[0].(string); ok {
+				instanceID = s
+			}
+		}
+	}
+	if instanceID == "" {
+		if s, ok := result["InstanceId"].(string); ok {
+			instanceID = s
+		}
+	}
+	if instanceID == "" {
+		// 兼容其他可能的路径
+		if inner, ok := result["InstanceIdSets"].(map[string]interface{}); ok {
+			for _, ik := range []string{"InstanceIdSet", "instanceIdSet"} {
+				if arr, ok := inner[ik].([]interface{}); ok && len(arr) > 0 {
+					if s, ok := arr[0].(string); ok {
+						instanceID = s
+						break
+					}
+				}
+			}
+		}
+	}
+	if instanceID == "" {
+		return types.Resource{}, fmt.Errorf("aliyun: no instance returned")
+	}
+
+	logx.Info(ctx, "aliyun instance created", "instance_id", instanceID, "region", region)
+
+	return types.Resource{
+		Provider:     types.ProviderTypeAliyun,
+		Region:       region,
+		ResourceType: "instance",
+		ResourceID:   instanceID,
+		ID:           instanceID,
+		ResourceName: instanceName,
+		Status:       "Pending",
+		Tags:         req.Tags,
+	}, nil
 }
 
+// DeleteResource 调用 ECS DeleteInstances 删除实例。
 func (p *AliyunProvider) DeleteResource(ctx context.Context, creds types.Credentials, resourceID string) error {
-	return types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("aliyun: only AKSK auth supported for delete")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("aliyun: resourceID is required")
+	}
+	if creds.Region == "" {
+		creds.Region = "cn-hangzhou"
+	}
+
+	client := newAliyunClient(creds)
+	params := map[string]string{
+		"RegionId":      creds.Region,
+		"InstanceId.1":  resourceID,
+		"Force":         "true",
+	}
+	_, err := client.call(ctx, "https://ecs.aliyuncs.com", "DeleteInstances", "2014-05-26", params)
+	if err != nil {
+		logx.Warn(ctx, "aliyun DeleteResource failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("aliyun: delete instance: %w", err)
+	}
+
+	logx.Info(ctx, "aliyun instance deleted", "instance_id", resourceID)
+	return nil
 }
 
+// SyncTags 调用 TagResources 同步标签。
 func (p *AliyunProvider) SyncTags(ctx context.Context, creds types.Credentials, resourceID string, tags map[string]string) error {
-	return types.ErrNotImplemented
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("aliyun: only AKSK auth supported for sync tags")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("aliyun: resourceID is required")
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+
+	client := newAliyunClient(creds)
+	i := 1
+	params := map[string]string{
+		"ResourceType": "instance",
+		"ResourceId.1": resourceID,
+	}
+	for k, v := range tags {
+		params[fmt.Sprintf("Tag.%d.Key", i)] = k
+		params[fmt.Sprintf("Tag.%d.Value", i)] = v
+		i++
+	}
+	_, err := client.call(ctx, "https://tag.aliyuncs.com", "TagResources", "2018-08-28", params)
+	if err != nil {
+		logx.Warn(ctx, "aliyun SyncTags failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("aliyun: sync tags: %w", err)
+	}
+
+	logx.Info(ctx, "aliyun tags synced", "instance_id", resourceID, "tags", tags)
+	return nil
 }

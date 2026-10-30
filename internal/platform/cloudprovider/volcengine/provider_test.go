@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider/types"
 )
@@ -110,18 +111,68 @@ func TestDiscoverMethodsReturnEmptyNotError(t *testing.T) {
 	}
 }
 
-func TestMutatingMethodsReturnErrNotImplemented(t *testing.T) {
+func TestMutatingMethodsRequireAKSK(t *testing.T) {
 	p := NewVolcengineProvider()
 	ctx := context.Background()
 	creds := types.Credentials{}
 
-	if _, err := p.CreateResource(ctx, creds, types.CreateResourceRequest{ResourceType: "ecs"}); !errors.Is(err, types.ErrNotImplemented) {
-		t.Errorf("CreateResource() err = %v，期望 ErrNotImplemented", err)
+	if _, err := p.CreateResource(ctx, creds, types.CreateResourceRequest{ResourceType: "ecs"}); err == nil {
+		t.Errorf("CreateResource() err = nil，期望非 nil（非 AKSK 凭据应被拒绝）")
 	}
-	if err := p.DeleteResource(ctx, creds, "ins-123"); !errors.Is(err, types.ErrNotImplemented) {
-		t.Errorf("DeleteResource() err = %v，期望 ErrNotImplemented", err)
+	if err := p.DeleteResource(ctx, creds, "ins-123"); err == nil {
+		t.Errorf("DeleteResource() err = nil，期望非 nil（非 AKSK 凭据应被拒绝）")
 	}
-	if err := p.SyncTags(ctx, creds, "ins-123", map[string]string{"env": "test"}); !errors.Is(err, types.ErrNotImplemented) {
-		t.Errorf("SyncTags() err = %v，期望 ErrNotImplemented", err)
+	if err := p.SyncTags(ctx, creds, "ins-123", map[string]string{"env": "test"}); err == nil {
+		t.Errorf("SyncTags() err = nil，期望非 nil（非 AKSK 凭据应被拒绝）")
+	}
+}
+
+func TestCreateResource_Validation(t *testing.T) {
+	p := NewVolcengineProvider()
+	ctx := context.Background()
+	creds := types.Credentials{Type: types.AuthTypeAKSK, AccessKeyID: "ak", AccessKeySecret: "sk"}
+
+	// 资源类型不受支持
+	if _, err := p.CreateResource(ctx, creds, types.CreateResourceRequest{ResourceType: "vpc", Properties: map[string]string{"ImageId": "img-1"}}); err == nil {
+		t.Errorf("CreateResource(vpc) err = nil，期望非 nil")
+	}
+	// 缺少 ImageId
+	if _, err := p.CreateResource(ctx, creds, types.CreateResourceRequest{ResourceType: "instance"}); err == nil {
+		t.Errorf("CreateResource(缺 ImageId) err = nil，期望非 nil")
+	}
+	// 完整参数应绕过参数校验并发起真实调用（此处无法联网，期望非 nil 且不再是 ErrNotImplemented）
+	ctx2, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := p.CreateResource(ctx2, creds, types.CreateResourceRequest{
+		ResourceType: "instance",
+		Region:       "cn-beijing",
+		Properties:   map[string]string{"ImageId": "img-1", "InstanceType": "ecs.c6.large", "ZoneId": "cn-beijing-a"},
+		Name:         "test-instance",
+		Tags:         map[string]string{"env": "test"},
+	}); err == nil || errors.Is(err, types.ErrNotImplemented) {
+		t.Errorf("CreateResource(完整参数) 应尝试真实调用而非返回 ErrNotImplemented，得到 %v", err)
+	}
+}
+
+func TestDeleteResource_Validation(t *testing.T) {
+	p := NewVolcengineProvider()
+	ctx := context.Background()
+	creds := types.Credentials{Type: types.AuthTypeAKSK, AccessKeyID: "ak", AccessKeySecret: "sk"}
+
+	if err := p.DeleteResource(ctx, creds, ""); err == nil {
+		t.Errorf("DeleteResource(空 resourceID) err = nil，期望非 nil")
+	}
+}
+
+func TestSyncTags_Validation(t *testing.T) {
+	p := NewVolcengineProvider()
+	ctx := context.Background()
+	creds := types.Credentials{Type: types.AuthTypeAKSK, AccessKeyID: "ak", AccessKeySecret: "sk"}
+
+	if err := p.SyncTags(ctx, creds, "", map[string]string{"env": "test"}); err == nil {
+		t.Errorf("SyncTags(空 resourceID) err = nil，期望非 nil")
+	}
+	if err := p.SyncTags(ctx, creds, "ins-123", nil); err != nil {
+		t.Errorf("SyncTags(空标签) err = %v，期望 nil", err)
 	}
 }

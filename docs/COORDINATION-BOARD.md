@@ -116,11 +116,14 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  internal/controlplane,web/enterprise,internal/store <- kilo  (ttl=24h by kilo)
   internal/k8slifecycle,internal/controlplane/server.go <- workbuddy  (ttl=6h by workbuddy)
+  web/enterprise                                 <- zcode  (ttl=6h by zcode)
 
 TASKS:
   (无)
+
+ISSUES:
+  CLAIM 过期未闭环：internal/controlplane,web/enterprise,internal/store（认领人 kilo，ttl 24h）
 ```
 
 ---
