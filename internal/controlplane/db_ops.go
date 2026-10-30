@@ -31,6 +31,8 @@ var allowedDBTypes = map[string]bool{
 	"oracle":     true,
 	"tidb":       true,
 	"oceanbase":  true,
+	"mssql":      true,
+	"teledb":     true,
 }
 
 // 数据库部署模式白名单。
@@ -51,6 +53,10 @@ var allowedDBModes = map[string]map[string]bool{
 		"single":  true,
 		"cluster": true,
 	},
+	"mssql": {
+		"single": true,
+		"ha":     true,
+	},
 }
 
 // 数据库操作动作白名单。
@@ -61,6 +67,8 @@ var allowedDBActions = map[string]bool{
 	"restart":  true,
 	"status":   true,
 	"undeploy": true,
+	"backup":   true,
+	"restore":  true,
 }
 
 // 数据库实例操作动作白名单。
@@ -130,7 +138,7 @@ func (s *Server) handleDB(w http.ResponseWriter, r *http.Request, deviceID strin
 		Status string `json:"status"`
 	}
 	var result []dbInfo
-	for _, dbType := range []string{"postgresql", "oracle", "tidb", "oceanbase"} {
+	for _, dbType := range []string{"postgresql", "oracle", "tidb", "oceanbase", "mssql"} {
 		info := dbInfo{Type: dbType, Status: "not-installed"}
 		if metrics.Services != nil {
 			for _, svc := range metrics.Services {
@@ -214,6 +222,11 @@ func buildDBDeployScript(req dbDeployRequest) string {
 		buildTiDBDeployScript(req, &b)
 	case "oceanbase":
 		buildOceanBaseDeployScript(req, &b)
+	case "mssql":
+		buildMSSQLDeployScript(req, &b)
+	case "teledb":
+		b.WriteString("# Teledb 部署\n")
+		b.WriteString("echo 'Teledb deploy'\n")
 	}
 	fmt.Fprintf(&b, "echo '%s %s 数据库部署脚本执行完成\n", req.Type, req.Mode)
 	return b.String()
@@ -268,6 +281,24 @@ func buildOceanBaseDeployScript(req dbDeployRequest, b *strings.Builder) {
 	case "cluster":
 		b.WriteString("# 集群：需配置 OBServer 集群 + OBProxy\n")
 		b.WriteString("echo 'OceanBase 集群：需配置 OBServer 集群'\n")
+	}
+}
+
+func buildMSSQLDeployScript(req dbDeployRequest, b *strings.Builder) {
+	b.WriteString("# MS SQL Server 部署\n")
+	b.WriteString("if command -v sqlcmd >/dev/null 2>&1 || systemctl is-active --quiet mssql-server 2>/dev/null; then echo 'MS SQL Server 已安装'; else \n")
+	b.WriteString("  if command -v yum >/dev/null 2>&1; then $PKG_MGR install -y mssql-server; elif command -v apt-get >/dev/null 2>&1; then $PKG_MGR install -y mssql-server; fi\n")
+	b.WriteString("fi\n")
+	b.WriteString("# 配置 SA 密码并启动\n")
+	b.WriteString("echo '配置 SA 密码' && /opt/mssql/bin/mssql-conf set-sa-password 2>/dev/null || true\n")
+	switch req.Mode {
+	case "single":
+		b.WriteString("systemctl enable mssql-server && systemctl start mssql-server || true\n")
+		b.WriteString("echo 'MS SQL Server 单点已启动'\n")
+	case "ha":
+		b.WriteString("# HA：需配置 Always On 可用性组\n")
+		b.WriteString("systemctl enable mssql-server && systemctl start mssql-server || true\n")
+		b.WriteString("echo 'MS SQL Server HA：需配置 Always On 可用性组'\n")
 	}
 }
 
@@ -372,6 +403,28 @@ func buildDBActionScript(req dbOpsRequest) string {
 		case "status":
 			b.WriteString("obclient -h 127.0.0.1 -P 2881 -e 'select 1' || echo 'not running'\n")
 		}
+	case "mssql":
+		b.WriteString("# MS SQL Server 启停\n")
+		switch req.Action {
+		case "start":
+			b.WriteString("systemctl start mssql-server || true\n")
+		case "stop":
+			b.WriteString("systemctl stop mssql-server || true\n")
+		case "restart":
+			b.WriteString("systemctl restart mssql-server || true\n")
+		case "status":
+			b.WriteString("sqlcmd -S localhost -Q \"SELECT @@VERSION\" || systemctl status mssql-server || echo 'not running'\n")
+		case "backup":
+			b.WriteString("sqlcmd -S localhost -Q \"BACKUP DATABASE ...\" \n")
+		case "restore":
+			b.WriteString("sqlcmd -S localhost -Q \"RESTORE DATABASE ...\" \n")
+		}
+	case "teledb":
+		b.WriteString("# Teledb 启停\n")
+		switch req.Action {
+		case "status":
+			b.WriteString("tel status 2>/dev/null || echo 'not running'\n")
+		}
 	}
 	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
@@ -470,6 +523,16 @@ func buildDBInstanceScript(req dbInstanceReq) string {
 		case "list":
 			b.WriteString("obclient -h 127.0.0.1 -P 2881 -u root -e 'show databases'\n")
 		}
+	case "mssql":
+		b.WriteString("# MS SQL Server 实例管理（sqlcmd）\n")
+		switch req.Action {
+		case "create":
+			fmt.Fprintf(&b, "sqlcmd -S localhost -Q \"CREATE DATABASE %s\" || echo '创建失败: %s'\n", shellQuote(req.Name), req.Name)
+		case "drop":
+			fmt.Fprintf(&b, "sqlcmd -S localhost -Q \"DROP DATABASE %s\" || echo '删除失败: %s'\n", shellQuote(req.Name), req.Name)
+		case "list":
+			b.WriteString("sqlcmd -S localhost -Q \"SELECT name FROM sys.databases\"\n")
+		}
 	}
 	fmt.Fprintf(&b, "echo '数据库 %s %s 操作完成\n", req.Type, req.Action)
 	return b.String()
@@ -486,6 +549,7 @@ func (s *Server) registerDBRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/db/oracle/instance", s.handleDBInstanceOracle)
 	mux.HandleFunc("/api/v1/db/tidb/instance", s.handleDBInstanceTiDB)
 	mux.HandleFunc("/api/v1/db/oceanbase/instance", s.handleDBInstanceOceanBase)
+	mux.HandleFunc("/api/v1/db/mssql/instance", s.handleDBInstanceMSSQL)
 	// 泛路由：GET /api/v1/db/{deviceID} / POST /api/v1/db/{type}/{action} / POST /api/v1/db/deploy
 	mux.HandleFunc("/api/v1/db/deploy", s.handleDBDeploy)
 	mux.HandleFunc("/api/v1/db/", s.handleDBRouting)
@@ -502,6 +566,33 @@ func (s *Server) handleDBInstanceTiDB(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) handleDBInstanceOceanBase(w http.ResponseWriter, r *http.Request) {
 	s.handleDBInstance(w, r, "oceanbase")
+}
+func (s *Server) handleDBInstanceMSSQL(w http.ResponseWriter, r *http.Request) {
+	s.handleDBInstance(w, r, "mssql")
+}
+
+// handleDBInstanceRouting 统一分派 /api/v1/db/{type}/instance 子路径。
+func (s *Server) handleDBInstanceRouting(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/db/")
+	segments := strings.Split(strings.TrimSuffix(path, "/"), "/")
+	if len(segments) < 2 || segments[1] != "instance" {
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	switch segments[0] {
+	case "postgresql":
+		s.handleDBInstancePostgreSQL(w, r)
+	case "oracle":
+		s.handleDBInstanceOracle(w, r)
+	case "tidb":
+		s.handleDBInstanceTiDB(w, r)
+	case "oceanbase":
+		s.handleDBInstanceOceanBase(w, r)
+	case "mssql":
+		s.handleDBInstanceMSSQL(w, r)
+	default:
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported database type"})
+	}
 }
 
 func (s *Server) handleDBRouting(w http.ResponseWriter, r *http.Request) {

@@ -116,7 +116,14 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  (无)
+  CHANGELOG.md                                   <- qoder  (ttl=6h by qoder)
+  docs/design/k8s-lifecycle-execution-charter.md <- qoder  (ttl=6h by qoder)
+  docs/semantic-rulings-2026-10-30.md            <- qoder  (ttl=6h by qoder)
+  internal/k8slifecycle/                         <- qoder  (ttl=6h by qoder)
+  web/enterprise/src/api/k8s.js                  <- qoder  (ttl=6h by qoder)
+  web/enterprise/src/i18n/locales/en/ops.json    <- qoder  (ttl=6h by qoder)
+  web/enterprise/src/i18n/locales/zh/ops.json    <- qoder  (ttl=6h by qoder)
+  web/enterprise/src/views/K8sLifecycleView.vue  <- qoder  (ttl=6h by qoder)
 
 TASKS:
   (无)
