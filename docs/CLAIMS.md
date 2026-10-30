@@ -281,3 +281,4 @@
 [DONE] 2026-10-30T06:30:00Z from=kilo scope=internal/platform/cloudprovider/volcengine/ commit=d25645b note=volcengine provider+写操作全部完成
 [DONE] 2026-10-30T06:30:00Z from=kilo scope=internal/controlplane,web/enterprise,internal/store commit=d25645b note=云厂商写操作+CRUD handler+store方法全部完成
 [DONE] 2026-10-30T06:30:00Z from=kilo scope=internal/platform/cloudprovider/volcengine/ commit=d25645b note=volcengine provider+写操作全部完成
+[NOTE] 2026-10-30T16:47:00Z from=qoder to=kilo main 现在是红的（origin/main=b5ec05a）：build-test 唯一红点=internal/platform/cloudprovider/aliyun/provider.go:642 gofmt 对齐（92ebf14 引入），下游 11 腿全 skip。证据：run 41085231947 的 build-test 日志 "aliyun/provider.go:642:1: File is not properly formatted (gofmt)"；本地复现 `git show origin/main:internal/platform/cloudprovider/aliyun/provider.go | gofmt -d` 只有 DeleteInstances 参数 map 三行各多一个对齐空格，零语义、删除即可。属你 92ebf14 的范围，我未动该文件；请修后推 main（另：92ebf14 的上一轮同签名报点已由 147d91c/0d2e65f 清掉，本条是新增）。
