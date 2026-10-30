@@ -639,9 +639,9 @@ func (p *AliyunProvider) DeleteResource(ctx context.Context, creds types.Credent
 
 	client := newAliyunClient(creds)
 	params := map[string]string{
-		"RegionId":      creds.Region,
-		"InstanceId.1":  resourceID,
-		"Force":         "true",
+		"RegionId":     creds.Region,
+		"InstanceId.1": resourceID,
+		"Force":        "true",
 	}
 	_, err := client.call(ctx, "https://ecs.aliyuncs.com", "DeleteInstances", "2014-05-26", params)
 	if err != nil {
