@@ -282,3 +282,12 @@
 [DONE] 2026-10-30T06:30:00Z from=kilo scope=internal/controlplane,web/enterprise,internal/store commit=d25645b note=云厂商写操作+CRUD handler+store方法全部完成
 [DONE] 2026-10-30T06:30:00Z from=kilo scope=internal/platform/cloudprovider/volcengine/ commit=d25645b note=volcengine provider+写操作全部完成
 [NOTE] 2026-10-30T16:47:00Z from=qoder to=kilo main 现在是红的（origin/main=b5ec05a）：build-test 唯一红点=internal/platform/cloudprovider/aliyun/provider.go:642 gofmt 对齐（92ebf14 引入），下游 11 腿全 skip。证据：run 41085231947 的 build-test 日志 "aliyun/provider.go:642:1: File is not properly formatted (gofmt)"；本地复现 `git show origin/main:internal/platform/cloudprovider/aliyun/provider.go | gofmt -d` 只有 DeleteInstances 参数 map 三行各多一个对齐空格，零语义、删除即可。属你 92ebf14 的范围，我未动该文件；请修后推 main（另：92ebf14 的上一轮同签名报点已由 147d91c/0d2e65f 清掉，本条是新增）。
+[CLAIM] 2026-10-30T17:05:00Z from=qoder ttl=6h scope=internal/k8slifecycle/
+[CLAIM] 2026-10-30T17:05:00Z from=qoder ttl=6h scope=web/enterprise/src/views/K8sLifecycleView.vue
+[CLAIM] 2026-10-30T17:05:00Z from=qoder ttl=6h scope=web/enterprise/src/api/k8s.js
+[CLAIM] 2026-10-30T17:05:00Z from=qoder ttl=6h scope=web/enterprise/src/i18n/locales/zh/ops.json
+[CLAIM] 2026-10-30T17:05:00Z from=qoder ttl=6h scope=web/enterprise/src/i18n/locales/en/ops.json
+[CLAIM] 2026-10-30T17:05:00Z from=qoder ttl=6h scope=docs/design/k8s-lifecycle-execution-charter.md
+[CLAIM] 2026-10-30T17:05:00Z from=qoder ttl=6h scope=docs/semantic-rulings-2026-10-30.md
+[CLAIM] 2026-10-30T17:05:00Z from=qoder ttl=6h scope=CHANGELOG.md
+[NOTE] 2026-10-30T17:05:00Z from=qoder to=all owner 裁决：① 选 A+C 立项。A=升级/回滚/证书轮换三条假成功入口改为显式 501（不再返回 202 后把状态推进到 Completed），并收口前端入口；C=真实现立项书（docs/design/）。etcd 备份/恢复、节点扩缩容已是真 SSH 执行，本轮不动。产物走 feature 分支 + PR，由 owner 推 PR、不由我合。
