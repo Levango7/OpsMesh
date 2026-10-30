@@ -41,6 +41,9 @@ type TokenBudget struct {
 	UsedMonth      int       `json:"usedMonth"`
 	AlertThreshold float64   `json:"alertThreshold"` // 0.8 = 80%
 	LastReset      time.Time `json:"lastReset"`
+	// monthReset 记录 UsedMonth 的计费月起点（不对外序列化）。
+	// 缺了它 UsedMonth 只增不减，月度额度一旦用满就永久超预算。
+	monthReset time.Time
 }
 
 // BudgetManager 预算管理器
@@ -75,6 +78,7 @@ func (bm *BudgetManager) SetBudget(tenantID string, daily, monthly int, threshol
 		MonthlyLimit:   monthly,
 		AlertThreshold: threshold,
 		LastReset:      time.Now(),
+		monthReset:     time.Now(),
 	}
 }
 
@@ -92,16 +96,24 @@ func (bm *BudgetManager) RecordUsage(tenantID string, tokens int) (bool, *Budget
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
+	now := time.Now()
 	budget, ok := bm.budgets[tenantID]
 	if !ok {
-		budget = &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8, LastReset: time.Now()}
+		budget = &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8, LastReset: now, monthReset: now}
 		bm.budgets[tenantID] = budget
 	}
 
 	// 重置每日计数
-	if time.Since(budget.LastReset) > 24*time.Hour {
+	if now.Sub(budget.LastReset) > 24*time.Hour {
 		budget.UsedToday = 0
-		budget.LastReset = time.Now()
+		budget.LastReset = now
+	}
+	// 重置月度计数（自然月）：否则 UsedMonth 只增不减，月度额度一旦用满就永久超预算。
+	if budget.monthReset.IsZero() {
+		budget.monthReset = now
+	} else if now.Year() != budget.monthReset.Year() || now.Month() != budget.monthReset.Month() {
+		budget.UsedMonth = 0
+		budget.monthReset = now
 	}
 
 	budget.UsedToday += tokens
