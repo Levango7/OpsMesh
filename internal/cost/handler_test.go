@@ -129,6 +129,99 @@ func TestBudgetManagerIsOverBudgetUnknownTenant(t *testing.T) {
 	}
 }
 
+// 窗口归一必须发生在读侧：只在写入时归一的话，跨窗口后 UI 仍显示上个窗口的用量。
+func TestBudgetManagerReadPathNormalizesWindow(t *testing.T) {
+	bm := NewBudgetManager()
+	bm.SetBudget("t1", 1000, 10000, 0.8)
+	bm.mu.Lock()
+	yesterday := time.Now().AddDate(0, 0, -1)
+	loc := bm.budgets["t1"].location()
+	bm.budgets["t1"].UsedToday = 900
+	bm.budgets["t1"].LastReset = dayStart(yesterday, loc)
+	bm.mu.Unlock()
+
+	got := bm.GetBudget("t1") // 只读，不写
+	if got.UsedToday != 0 {
+		t.Fatalf("跨日后只读 GetBudget 的 UsedToday = %d, want 0（读侧未归一）", got.UsedToday)
+	}
+	if !got.LastReset.Equal(dayStart(time.Now(), loc)) {
+		t.Fatalf("LastReset 未对齐到当前自然日零点: %v", got.LastReset)
+	}
+}
+
+// 同一实例、同一 UTC 时刻、同一存储的窗口起点：UTC 租户已进入新的一天，
+// Asia/Shanghai 租户仍在前一天——窗口必须按租户时区切，不能按服务器时区。
+func TestBudgetManagerWindowFollowsTenantTimezone(t *testing.T) {
+	fixed := time.Date(2026, 1, 1, 0, 30, 0, 0, time.UTC)    // 上海已是 01-01 08:30
+	stored := time.Date(2025, 12, 31, 16, 0, 0, 0, time.UTC) // = 上海 01-01 零点
+
+	cases := []struct {
+		tz         string
+		wantUsed   int
+		wantReason string
+	}{
+		{"UTC", 10, "UTC 已进入 01-01 新日，旧日用量应清零后再累计"},
+		{"Asia/Shanghai", 910, "上海仍在 01-01 窗口内（起点即 12-31T16:00Z），用量必须保留"},
+	}
+	for _, tc := range cases {
+		bm := NewBudgetManager()
+		bm.now = func() time.Time { return fixed }
+		bm.mu.Lock()
+		bm.budgets["t1"] = &TokenBudget{
+			TenantID: "t1", DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8,
+			Timezone: tc.tz, UsedToday: 900, UsedMonth: 900, LastReset: stored, monthReset: stored,
+		}
+		bm.mu.Unlock()
+
+		if _, alert := bm.RecordUsage("t1", 10); alert != nil {
+			t.Fatalf("%s: 10/100000 不应告警: %+v", tc.tz, alert)
+		}
+		if got := bm.GetBudget("t1").UsedToday; got != tc.wantUsed {
+			t.Fatalf("%s: UsedToday = %d, want %d（%s）", tc.tz, got, tc.wantUsed, tc.wantReason)
+		}
+	}
+}
+
+// 提额/改阈值不得顺带抹掉已发生的用量，否则「改一次预算」就等价于清零一次额度。
+func TestSetBudgetPreservesUsage(t *testing.T) {
+	bm := NewBudgetManager()
+	bm.SetBudget("t1", 100, 1000, 0.8)
+	if _, alert := bm.RecordUsage("t1", 50); alert != nil {
+		t.Fatalf("50/100 未达 80%% 阈值不应告警: %+v", alert)
+	}
+
+	bm.SetBudget("t1", 200, 2000, 0.9)
+	got := bm.GetBudget("t1")
+	if got.DailyLimit != 200 || got.MonthlyLimit != 2000 || got.AlertThreshold != 0.9 {
+		t.Fatalf("额度未更新: %+v", got)
+	}
+	if got.UsedToday != 50 || got.UsedMonth != 50 {
+		t.Fatalf("改额度把用量清零了: usedToday=%d usedMonth=%d", got.UsedToday, got.UsedMonth)
+	}
+}
+
+func TestSetTimezone(t *testing.T) {
+	bm := NewBudgetManager()
+	if err := bm.SetTimezone("t1", "Asia/Shanghai"); err != nil {
+		t.Fatalf("SetTimezone: %v", err)
+	}
+
+	// 非法时区名必须既报错、也不改动已存的窗口时区。
+	if err := bm.SetTimezone("t1", "Not/AZone"); err == nil {
+		t.Fatal("非法时区名应报错")
+	}
+	if got := bm.GetBudget("t1").Timezone; got != "Asia/Shanghai" {
+		t.Fatalf("非法时区把已存时区改掉了: %q", got)
+	}
+
+	if err := bm.SetTimezone("t1", ""); err != nil {
+		t.Fatalf("空时区应归一为 UTC: %v", err)
+	}
+	if got := bm.GetBudget("t1").Timezone; got != "UTC" {
+		t.Fatalf("Timezone = %q, want UTC", got)
+	}
+}
+
 // ---------- ModelRouter ----------
 
 func TestModelRouterRoute(t *testing.T) {
@@ -295,6 +388,9 @@ func TestCostHandlerBudget(t *testing.T) {
 	if b.TenantID != "t1" || b.DailyLimit != 100000 {
 		t.Fatalf("GET budget = %+v", b)
 	}
+	if b.Timezone != "UTC" {
+		t.Fatalf("默认窗口时区 = %q, want UTC（不能按服务器本地时区默认切）", b.Timezone)
+	}
 
 	if w := do(t, h.HandleBudget, http.MethodPost, "/api/v1/cost/budget", "{bad"); w.Code != http.StatusBadRequest {
 		t.Fatalf("POST 非法 JSON = %d, want 400", w.Code)
@@ -305,6 +401,20 @@ func TestCostHandlerBudget(t *testing.T) {
 	if got := h.budget.GetBudget("t1"); got.DailyLimit != 10 || got.AlertThreshold != 0.5 {
 		t.Fatalf("POST 后预算未生效: %+v", got)
 	}
+	// 非法时区：400，且不能出现「额度已改、时区没改」的半应用。
+	if w := do(t, h.HandleBudget, http.MethodPost, "/api/v1/cost/budget", `{"tenantId":"t2","daily":10,"monthly":20,"threshold":0.5,"timezone":"Not/AZone"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("非法时区 = %d, want 400", w.Code)
+	}
+	if got := h.budget.GetBudget("t2"); got.DailyLimit != 100000 {
+		t.Fatalf("非法时区请求已把额度写进去: daily=%d", got.DailyLimit)
+	}
+	if w := do(t, h.HandleBudget, http.MethodPost, "/api/v1/cost/budget", `{"tenantId":"t2","daily":10,"monthly":20,"threshold":0.5,"timezone":"Asia/Shanghai"}`); w.Code != http.StatusOK {
+		t.Fatalf("POST 带合法时区 = %d", w.Code)
+	}
+	if got := h.budget.GetBudget("t2"); got.Timezone != "Asia/Shanghai" || got.DailyLimit != 10 {
+		t.Fatalf("时区/额度未同时生效: %+v", got)
+	}
+
 	if w := do(t, h.HandleBudget, http.MethodDelete, "/api/v1/cost/budget", ""); w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("DELETE budget = %d, want 405", w.Code)
 	}
