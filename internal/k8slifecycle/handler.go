@@ -4,6 +4,7 @@ package k8slifecycle
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -16,6 +17,20 @@ import (
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/platform/ssh"
 )
+
+// ErrNotImplemented 表示该动作的真实执行链路尚未实现。
+// HTTP 层必须把它映射为 501：此前 upgrade/rollback/cert-rotate 先返回 202，
+// 再由纯内存状态机把 phase 推进到 Completed——前端与运维看到的是"已完成"，
+// 集群侧却没有任何动作（假成功）。真实现见
+// docs/design/k8s-lifecycle-execution-charter.md（C 项立项）。
+var ErrNotImplemented = errors.New("k8s 生命周期动作尚未实现")
+
+func notImplemented(operation, hint string) error {
+	if hint == "" {
+		return fmt.Errorf("%w: %s", ErrNotImplemented, operation)
+	}
+	return fmt.Errorf("%w: %s。%s", ErrNotImplemented, operation, hint)
+}
 
 // NodeSpec 节点规格
 type NodeSpec struct {
@@ -104,92 +119,6 @@ type UpgradePlanResult struct {
 	Available      bool   `json:"available"`
 }
 
-// Upgrade 执行集群升级
-func (m *UpgradeManager) Upgrade(ctx context.Context, spec UpgradeSpec) (*UpgradeStatus, error) {
-	upgradeID := spec.ClusterID + "-upgrade-" + time.Now().Format("20060102150405")
-
-	status := &UpgradeStatus{
-		Phase:       "Planning",
-		Progress:    0,
-		CurrentStep: "升级预检",
-		NodeStatus:  make(map[string]string),
-		ToVersion:   spec.TargetVersion,
-		StartedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	m.mu.Lock()
-	m.upgrades[upgradeID] = status
-	m.mu.Unlock()
-
-	// 快照必须在后台 goroutine 启动前取：executeUpgrade 会并发 updateStatus 写同一个
-	// 结构体，把内部指针直接交给 HTTP 层会让响应序列化与后台写入构成 data race。
-	resp := snapshotUpgradeStatus(status)
-
-	go func() {
-		deployCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Hour)
-		defer cancel()
-
-		if err := m.executeUpgrade(deployCtx, upgradeID, spec); err != nil {
-			m.updateStatus(upgradeID, "Failed", 0, err.Error(), "")
-		} else {
-			m.updateStatus(upgradeID, "Completed", 100, "升级完成", "")
-		}
-	}()
-
-	return resp, nil
-}
-
-func (m *UpgradeManager) executeUpgrade(ctx context.Context, upgradeID string, spec UpgradeSpec) error {
-	// 1. 升级控制平面 (第一个 master)
-	m.updateStatus(upgradeID, "Upgrading", 10, "升级控制平面", "")
-	if err := m.upgradeControlPlane(ctx, spec, upgradeID); err != nil {
-		return fmt.Errorf("控制平面升级失败: %w", err)
-	}
-
-	// 2. 升级其余 master
-	m.updateStatus(upgradeID, "Upgrading", 40, "升级其余控制平面节点", "")
-	if err := m.upgradeRemainingCP(ctx, spec, upgradeID); err != nil {
-		return fmt.Errorf("控制平面节点升级失败: %w", err)
-	}
-
-	// 3. 升级 Worker
-	m.updateStatus(upgradeID, "Upgrading", 60, "升级 Worker 节点", "")
-	if err := m.upgradeWorkers(ctx, spec, upgradeID); err != nil {
-		return fmt.Errorf("升级 Worker 失败: %w", err)
-	}
-
-	// 4. 验证
-	m.updateStatus(upgradeID, "Upgrading", 90, "集群健康检查", "")
-	if err := m.verifyCluster(ctx, spec); err != nil {
-		return fmt.Errorf("集群验证失败: %w", err)
-	}
-
-	return nil
-}
-
-func (m *UpgradeManager) upgradeControlPlane(ctx context.Context, spec UpgradeSpec, upgradeID string) error {
-	// 获取第一个 master 节点 (需要从集群信息中获取)
-	// 简化：假设通过 SSH 连接
-	logx.Info(ctx, "升级控制平面", "version", spec.TargetVersion)
-	return nil
-}
-
-func (m *UpgradeManager) upgradeRemainingCP(ctx context.Context, spec UpgradeSpec, upgradeID string) error {
-	logx.Info(ctx, "升级其余控制平面节点", "version", spec.TargetVersion)
-	return nil
-}
-
-func (m *UpgradeManager) upgradeWorkers(ctx context.Context, spec UpgradeSpec, upgradeID string) error {
-	logx.Info(ctx, "升级 Worker 节点", "version", spec.TargetVersion)
-	return nil
-}
-
-func (m *UpgradeManager) verifyCluster(ctx context.Context, spec UpgradeSpec) error {
-	logx.Info(ctx, "验证集群", "version", spec.TargetVersion)
-	return nil
-}
-
 func (m *UpgradeManager) updateStatus(upgradeID, phase string, progress int, step, errMsg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -213,7 +142,7 @@ func (m *UpgradeManager) GetStatus(upgradeID string) (*UpgradeStatus, bool) {
 }
 
 // snapshotUpgradeStatus 复制一份可安全交给并发读取方（HTTP 响应序列化/GetStatus）的状态。
-// 作业结构体由后台 goroutine 通过 updateStatus 就地修改，直接返回内部指针会构成 data race。
+// 作业结构体可能被后台执行器就地修改，直接返回内部指针会构成 data race。
 func snapshotUpgradeStatus(s *UpgradeStatus) *UpgradeStatus {
 	cp := *s
 	if s.NodeStatus != nil {
@@ -236,54 +165,6 @@ type RollbackSpec struct {
 	Reason        string `json:"reason"`
 }
 
-// Rollback 回滚集群版本
-func (m *UpgradeManager) Rollback(ctx context.Context, spec RollbackSpec) (*UpgradeStatus, error) {
-	rollbackID := spec.ClusterID + "-rollback-" + time.Now().Format("20060102150405")
-
-	status := &UpgradeStatus{
-		Phase:       "RollingBack",
-		Progress:    0,
-		CurrentStep: "回滚预检",
-		NodeStatus:  make(map[string]string),
-		ToVersion:   spec.TargetVersion,
-		StartedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	m.mu.Lock()
-	m.upgrades[rollbackID] = status
-	m.mu.Unlock()
-
-	// 同 Upgrade：先取快照再启动后台状态推进，避免响应编码与 updateStatus 竞争。
-	resp := snapshotUpgradeStatus(status)
-
-	go func() {
-		deployCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Hour)
-		defer cancel()
-
-		if err := m.executeRollback(deployCtx, rollbackID, spec); err != nil {
-			m.updateStatus(rollbackID, "Failed", 0, err.Error(), "")
-		} else {
-			m.updateStatus(rollbackID, "Completed", 100, "回滚完成", "")
-		}
-	}()
-
-	return resp, nil
-}
-
-func (m *UpgradeManager) executeRollback(ctx context.Context, rollbackID string, spec RollbackSpec) error {
-	logx.Info(ctx, "执行版本回滚", "cluster", spec.ClusterID, "target", spec.TargetVersion, "reason", spec.Reason)
-	// 1. 停止所有非系统 Pod
-	// 2. 恢复 etcd 快照 (如果有)
-	// 3. 降级 kubeadm/kubelet/kubectl
-	// 4. 重启 kubelet
-	// 5. 验证
-	m.updateStatus(rollbackID, "RollingBack", 50, "回滚控制平面", "")
-	m.updateStatus(rollbackID, "RollingBack", 80, "回滚 Worker", "")
-	m.updateStatus(rollbackID, "RollingBack", 100, "回滚完成", "")
-	return nil
-}
-
 // ============================================================================
 // 证书轮换
 // ============================================================================
@@ -294,99 +175,8 @@ type CertRotationSpec struct {
 	Nodes     []string `json:"nodes"` // 空=全部
 }
 
-// CertRotationStatus 证书轮换状态
-type CertRotationStatus struct {
-	Phase       string    `json:"phase"`
-	Progress    int       `json:"progress"`
-	CurrentStep string    `json:"currentStep"`
-	Error       string    `json:"error,omitempty"`
-	StartedAt   time.Time `json:"startedAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-}
-
-// CertRotationManager 证书轮换管理器
-type CertRotationManager struct {
-	mu      sync.RWMutex
-	status  map[string]*CertRotationStatus
-	sshPool *ssh.Pool
-}
-
-func NewCertRotationManager() *CertRotationManager {
-	return &CertRotationManager{
-		status:  make(map[string]*CertRotationStatus),
-		sshPool: ssh.NewPool(),
-	}
-}
-
-// RotateCertificates 轮换集群证书
-func (m *CertRotationManager) RotateCertificates(ctx context.Context, spec CertRotationSpec) (*CertRotationStatus, error) {
-	rotationID := spec.ClusterID + "-cert-" + time.Now().Format("20060102150405")
-
-	status := &CertRotationStatus{
-		Phase:       "Rotating",
-		Progress:    0,
-		CurrentStep: "检查证书过期时间",
-		StartedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	m.mu.Lock()
-	m.status[rotationID] = status
-	m.mu.Unlock()
-
-	// 同 Upgrade/Rollback：返回快照而不是内部指针。
-	resp := *status
-
-	go func() {
-		deployCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 1*time.Hour)
-		defer cancel()
-
-		if err := m.executeRotation(deployCtx, rotationID, spec); err != nil {
-			m.updateStatus(rotationID, "Failed", 0, err.Error())
-		} else {
-			m.updateStatus(rotationID, "Completed", 100, "证书轮换完成")
-		}
-	}()
-
-	return &resp, nil
-}
-
-func (m *CertRotationManager) executeRotation(ctx context.Context, rotationID string, spec CertRotationSpec) error {
-	m.updateStatus(rotationID, "Rotating", 10, "检查证书过期时间")
-	// 1. 检查所有证书过期时间
-	// 2. 生成新证书
-	// 3. 更新 etcd 证书
-	// 4. 更新 kube-apiserver 证书
-	// 5. 更新 kubelet 证书
-	// 6. 重启相关组件
-	// 7. 验证
-	m.updateStatus(rotationID, "Rotating", 50, "更新证书")
-	m.updateStatus(rotationID, "Rotating", 80, "重启组件")
-	m.updateStatus(rotationID, "Rotating", 100, "验证")
-	return nil
-}
-
-func (m *CertRotationManager) updateStatus(rotationID, phase string, progress int, step string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if s, ok := m.status[rotationID]; ok {
-		s.Phase = phase
-		s.Progress = progress
-		s.CurrentStep = step
-		s.UpdatedAt = time.Now()
-	}
-}
-
-func (m *CertRotationManager) GetStatus(rotationID string) (*CertRotationStatus, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	s, ok := m.status[rotationID]
-	if !ok {
-		return nil, false
-	}
-	cp := *s
-	return &cp, true
-}
+// 证书轮换的执行链路未实现（A 项裁决为显式 501，见 HandleCertRotation）；
+// 真实现见 docs/design/k8s-lifecycle-execution-charter.md（C 项立项）。
 
 // ============================================================================
 // 节点扩缩容
@@ -630,7 +420,6 @@ func (m *EtcdManager) ListBackups(ctx context.Context, cpNode, backupDir string)
 // K8sLifecycleHandler HTTP handler
 type K8sLifecycleHandler struct {
 	upgradeMgr *UpgradeManager
-	certMgr    *CertRotationManager
 	nodeScaler *NodeScaler
 	etcdMgr    *EtcdManager
 
@@ -665,10 +454,19 @@ func (h *K8sLifecycleHandler) authorize(fn http.HandlerFunc, readPerm, writePerm
 func NewK8sLifecycleHandler() *K8sLifecycleHandler {
 	return &K8sLifecycleHandler{
 		upgradeMgr: NewUpgradeManager(),
-		certMgr:    NewCertRotationManager(),
 		nodeScaler: NewNodeScaler(),
 		etcdMgr:    NewEtcdManager(),
 	}
+}
+
+// writeNotImplemented 把"执行链路未实现"写成 501。
+// 这三条入口此前先返回 202、再由纯内存状态机把 phase 推进到 Completed——
+// 调用方看到"升级/回滚/轮换完成"，集群侧却没有任何动作。A 项裁决：能力不存在就必须明说。
+func writeNotImplemented(w http.ResponseWriter, operation, hint string) {
+	paginate.WriteJSON(w, http.StatusNotImplemented, map[string]string{
+		"error": notImplemented(operation, hint).Error(),
+		"code":  "ERR_NOT_IMPLEMENTED",
+	})
 }
 
 // HandleUpgrade 处理 POST /api/v1/k8s/lifecycle/upgrade
@@ -689,13 +487,8 @@ func (h *K8sLifecycleHandler) HandleUpgrade(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	status, err := h.upgradeMgr.Upgrade(r.Context(), spec)
-	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	paginate.WriteJSON(w, http.StatusAccepted, status)
+	writeNotImplemented(w, "集群版本升级（upgrade）",
+		"目前只有 POST /api/v1/k8s/lifecycle/upgrade/plan 会真实执行 kubeadm upgrade plan，升级动作本身尚未接线")
 }
 
 // HandleUpgradePlan 处理 POST /api/v1/k8s/lifecycle/upgrade/plan
@@ -757,13 +550,8 @@ func (h *K8sLifecycleHandler) HandleRollback(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	status, err := h.upgradeMgr.Rollback(r.Context(), spec)
-	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	paginate.WriteJSON(w, http.StatusAccepted, status)
+	writeNotImplemented(w, "集群版本回滚（rollback）",
+		"回滚依赖 etcd 快照和 kubeadm 降级链路，尚未接线")
 }
 
 // HandleCertRotation 处理 POST /api/v1/k8s/lifecycle/cert-rotate
@@ -779,13 +567,8 @@ func (h *K8sLifecycleHandler) HandleCertRotation(w http.ResponseWriter, r *http.
 		return
 	}
 
-	status, err := h.certMgr.RotateCertificates(r.Context(), spec)
-	if err != nil {
-		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	paginate.WriteJSON(w, http.StatusAccepted, status)
+	writeNotImplemented(w, "集群证书轮换（cert-rotate）",
+		"kubeadm certs renew + 组件重启链路尚未接线")
 }
 
 // HandleNodeScale 处理 POST /api/v1/k8s/lifecycle/node-scale
