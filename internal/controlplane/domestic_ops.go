@@ -228,8 +228,44 @@ func (s *Server) handleGaussDB(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
-// 国产数据库 (Kingbase/Dameng)
+// Teledb (中国电信) 管理
 // ============================================================================
+
+// handleTeledb 处理 POST /api/v1/db/teledb
+func (s *Server) handleTeledb(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req struct {
+		DeviceID string `json:"deviceID"`
+		Action   string `json:"action"` // status/deploy/backup
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+
+	var script string
+	switch req.Action {
+	case "status":
+		script = `echo "=== Teledb Status ===" && tel status 2>/dev/null || echo "Teledb not running"`
+	case "deploy":
+		script = `echo "Teledb deploy"`
+	case "backup":
+		script = `echo "Teledb backup" && teledb backup 2>/dev/null || echo "Teledb backup not available"`
+	default:
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
+		return
+	}
+
+	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "teledb_"+req.Action)
+	if !ok {
+		return
+	}
+	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
+}
 
 // handleDomesticDB 处理 POST /api/v1/db/domestic
 func (s *Server) handleDomesticDB(w http.ResponseWriter, r *http.Request) {
@@ -372,6 +408,7 @@ func (s *Server) registerDomesticRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/os/domestic/cpu", s.handleDomesticCPU)
 	mux.HandleFunc("/api/v1/os/domestic/gpu", s.handleDomesticGPU)
 	mux.HandleFunc("/api/v1/db/gaussdb", s.handleGaussDB)
+	mux.HandleFunc("/api/v1/db/teledb", s.handleTeledb)
 	mux.HandleFunc("/api/v1/db/domestic", s.handleDomesticDB)
 	mux.HandleFunc("/api/v1/middleware/domestic", s.handleDomesticMiddleware)
 }

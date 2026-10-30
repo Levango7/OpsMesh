@@ -656,8 +656,8 @@ func (s *Server) handleWindowsPerf(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
 }
 
-// handleHardwareInventory 处理 POST /api/v1/os/baremetal/inventory
-func (s *Server) handleHardwareInventory(w http.ResponseWriter, r *http.Request) {
+// handleBaremetalHardwareInventory 处理 POST /api/v1/os/baremetal/inventory
+func (s *Server) handleBaremetalHardwareInventory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -834,7 +834,7 @@ func (s *Server) registerGitUnixRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/os/windows-eventlog", s.handleWindowsEventLog)
 	mux.HandleFunc("/api/v1/os/windows-registry", s.handleWindowsRegistry)
 	mux.HandleFunc("/api/v1/os/windows-perf", s.handleWindowsPerf)
-	mux.HandleFunc("/api/v1/os/hardware-inventory", s.handleHardwareInventory)
+	mux.HandleFunc("/api/v1/os/hardware-inventory", s.handleBaremetalHardwareInventory)
 	mux.HandleFunc("/api/v1/os/disk-health", s.handleDiskHealth)
 	mux.HandleFunc("/api/v1/os/raid", s.handleRAID)
 }
