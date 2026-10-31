@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
@@ -62,7 +63,76 @@ func (s *Server) handleNetworkExt(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
 }
 
+// handleNetworkVendorSwitch 处理 POST /api/v1/network/vendor/switch：厂商特定命令脚本。
+func (s *Server) handleNetworkVendorSwitch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req struct {
+		DeviceID string `json:"deviceID"`
+		Vendor   string `json:"vendor"` // cisco/huawei/juniper/h3c/arista
+		Action   string `json:"action"` // 可选：version/config/vlan/interface/all
+	}
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if req.DeviceID == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
+		return
+	}
+	vendor := strings.ToLower(strings.TrimSpace(req.Vendor))
+	var commands []string
+	switch vendor {
+	case "cisco":
+		commands = []string{"show version", "show running-config", "show vlan", "show interface"}
+	case "huawei":
+		commands = []string{"display version", "display current-configuration", "display vlan", "display interface"}
+	case "juniper":
+		commands = []string{"show version", "show configuration", "show vlans", "show interfaces"}
+	case "h3c":
+		commands = []string{"display version", "display current-configuration", "display vlan"}
+	case "arista":
+		commands = []string{"show version", "show running-config", "show vlan", "show interfaces"}
+	default:
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported vendor: " + req.Vendor})
+		return
+	}
+
+	// 可选按 action 过滤命令。
+	if req.Action != "" && !strings.EqualFold(req.Action, "all") {
+		filtered := make([]string, 0, len(commands))
+		key := strings.ToLower(req.Action)
+		for _, c := range commands {
+			if strings.Contains(strings.ToLower(c), key) {
+				filtered = append(filtered, c)
+			}
+		}
+		if len(filtered) > 0 {
+			commands = filtered
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("set -e\n")
+	fmt.Fprintf(&b, "echo '=== Network Vendor Switch: %s ==='\n", vendor)
+	for _, c := range commands {
+		fmt.Fprintf(&b, "echo '--- %s ---'\n", c)
+		fmt.Fprintf(&b, "%s\n", c)
+	}
+	script := b.String()
+
+	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "network_vendor_switch_"+vendor)
+	if !ok {
+		return
+	}
+	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "vendor": vendor, "action": req.Action})
+}
+
 // registerNetworkExtRoutes 注册网络扩展路由
 func (s *Server) registerNetworkExtRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network/ext", s.handleNetworkExt)
+	mux.HandleFunc("/api/v1/network/vendor/switch", s.handleNetworkVendorSwitch)
 }

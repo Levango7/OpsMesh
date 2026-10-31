@@ -263,9 +263,7 @@ onMounted(fetchTickets)
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
-.status-pill.ok { background: var(--accent-soft); color: var(--accent); }
-.status-pill.off { background: var(--surface-3); color: var(--text-3); }
-.status-pill.bad { background: var(--fail-bg); color: var(--fail); }
+
 .status-pill.warn { background: var(--warn-bg); color: var(--warn); }
 .status-pill.info { background: var(--info-bg); color: var(--info); }
 .ticket-form { display: flex; flex-direction: column; gap: 12px; }

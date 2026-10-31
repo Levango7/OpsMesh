@@ -28,5 +28,5 @@ const cls = computed(() => MAP[props.status] || 'info')
 .badge.ok { background: var(--ok-bg); color: var(--ok); }
 .badge.fail { background: var(--fail-bg); color: var(--fail); }
 .badge.warn { background: var(--warn-bg); color: var(--warn); }
-.badge.info { background: var(--info-bg); color: var(--info); }
+
 </style>

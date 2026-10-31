@@ -78,6 +78,19 @@ func TestMySQLStoreIntegration(t *testing.T) {
 		t.Error("ListDevices 未返回刚写入的设备")
 	}
 
+	// 2b) 同值更新（同一秒内 updated_at 不变 ⇒ RowsAffected=0）不得被判为不存在。
+	// 载荷用本地字面量而非 Device() 回读值：回读值会让 gosec 的包级污点分析
+	// 把 UpdateDevice 内的日志判成 G706（findings 落在 mysql.go，而不是测试文件）。
+	same := &models.Device{
+		ID: id, TenantID: "itest-tenant", Name: dev.Name, IP: dev.IP, MAC: dev.MAC,
+		OS: dev.OS, Arch: dev.Arch, Status: dev.Status, AgentID: dev.AgentID,
+		Tags: []string{"itest"}, Labels: map[string]string{"env": "itest"}, Group: dev.Group,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if _, ok := s.UpdateDevice(same); !ok {
+		t.Error("同值更新被判为设备不存在（RowsAffected=0 的歧义未区分）")
+	}
+
 	// 3) 软删（retired=true）后应从活跃清单消失，但按 id 仍可查。
 	if !s.DeleteDevice(id) {
 		t.Fatal("DeleteDevice 返回 false")
@@ -89,6 +102,14 @@ func TestMySQLStoreIntegration(t *testing.T) {
 	}
 	if after := s.Device(id); after == nil || !after.Retired {
 		t.Errorf("退役后按 id 查询应 retired=true, got=%+v", after)
+	}
+
+	// 4) 已退役设备不得被 UpdateDevice 复活（SQL 层 `AND retired = false` 拒绝更新）。
+	if _, ok := s.UpdateDevice(&models.Device{ID: id, TenantID: "itest-tenant", Name: "revived"}); ok {
+		t.Error("UpdateDevice(已退役) 返回成功：退役设备被复活")
+	}
+	if after := s.Device(id); after == nil || !after.Retired || after.Name == "revived" {
+		t.Errorf("退役设备被复活/覆盖: %+v", after)
 	}
 
 	cleanupDevice(t, s.db, id)

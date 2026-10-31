@@ -841,7 +841,23 @@ B「浮层+盒子」`.modal-overlay > .modal-box`（ConfirmModal/PromptModal 在
 守卫 OWNED 集已扩展到 44 个 `.modal-*` 选择器，`shared-primitives.spec.js` 118 条仍全绿。
 
 **仍遗留**：① 家族 B 的最终统一目标 = 迁到 `components/ui/Modal.vue` 组件（届时 B 族删除），
-需视觉回归验证；② 跨文件重复的派生类：`.field > label`（26 文件同文）、`.row-2`（10 文件）、
-`.card h4`（2 文件）、`.field input/.select`（AuditEvents/Audits 同文）；
-③ MiddlewareDeployView 的 `.modal-deploy`（700px 专属宽度）与 PromptModal 的 `.modal-input`
-为页面/组件专属，刻意保留在 scoped。
+需视觉回归验证；② MiddlewareDeployView 的 `.modal-deploy`（700px 专属宽度）与
+PromptModal 的 `.modal-input` 为页面/组件专属，刻意保留在 scoped。
+
+**派生类零泄漏去重（2026-10-30，已完成，第 7 批）**：`.modal-*` 收完后，实测全站还有
+**72 个选择器在 ≥3 个文件里重复声明**。本批收编判据是**双重客观校验**，不是按类名猜：
+① 该选择器在 ≥3 个文件里的 scoped 正文**逐字节相同**（归一化 md5 同组）；
+② 全局化后不会有任何「模板用了该类、但没有同选择器 scoped 副本」的文件突然获得样式
+（逐文件测泄漏，为 0 才收）。按此筛出 **18 个选择器 / 29 个文件 / 82 处声明**搬入 pages.css
+（认证页骨架、统计卡四色、状态丸三态、`.badge.info`/`.tag.st-failed`/`.tool-btn`/`.tab:hover`/
+`.chart-bar:hover`/`.bg-blob`/`.submit-btn .spin`），守卫 OWNED 集同步扩充。
+
+**为什么必须做第②项校验**：`.status-pill`、`.entity-form`、`.chk`、`.tag`、`.tab`、`.kv` 族、
+`.checkbox-group`、`.data-table tr:hover` 这些类名很通用，**有其他文件在模板里用了却没有
+scoped 副本**（即当前没有样式）。若只按「正文相同」就全局化，那些页面会突然获得样式——
+那不是去重，是悄悄改观感。故本批**刻意排除**上述 54 个选择器，留待单独判断（要么补副本、
+要么产品上确认「未覆盖用法本就该有这个样式」）。
+
+**仍遗留**：`.row-2`（11 文件，2 种正文）、`.tag`（11 文件，3 种）、`.field input`（10 文件，6 种）、
+`.entity-form`（8 文件同文但 4 个未覆盖用法）、`.status-pill` 基类（11 文件同文但 3 个未覆盖）、
+`.code-block`（8 文件 8 种）、`.metrics-row`、`.checkbox-item` 等——均有分歧或会波及未覆盖用法。

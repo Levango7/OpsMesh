@@ -202,10 +202,7 @@ onMounted(() => {
   border-radius: var(--radius); padding: 12px 14px;
   border-top: 3px solid var(--accent);
 }
-.stat.rose { border-top-color: var(--rose); }
-.stat.amber { border-top-color: var(--amber); }
-.stat.indigo { border-top-color: var(--indigo); }
-.stat.teal { border-top-color: var(--teal); }
+
 .stat-v { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat-l { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
 

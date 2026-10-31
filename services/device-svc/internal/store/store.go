@@ -175,7 +175,14 @@ func (m *MemoryStore) UpdateDevice(d *models.Device) (*models.Device, bool) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.devices[d.ID]; !ok {
+	existing, ok := m.devices[d.ID]
+	if !ok {
+		return nil, false
+	}
+	// 更新载荷不携带 retired（proto/JSON 均无该字段），整对象覆盖会把已软删
+	// 的设备写回 retired=false 重新出现在列表里。已退役记录一律拒绝更新，
+	// 由调用方映射 NotFound；与 MySQL 侧 `AND retired = false` 语义一致。
+	if existing.Retired {
 		return nil, false
 	}
 	d.UpdatedAt = time.Now()

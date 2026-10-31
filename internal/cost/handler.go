@@ -41,6 +41,14 @@ type TokenBudget struct {
 	UsedMonth      int       `json:"usedMonth"`
 	AlertThreshold float64   `json:"alertThreshold"` // 0.8 = 80%
 	LastReset      time.Time `json:"lastReset"`
+	// Timezone 是配额窗口的切分时区（IANA 名，空=UTC）。日/月窗口按该时区的
+	// 自然日/自然月零点切；按服务器时区切会让异地租户每月凭空损失数小时额度。
+	Timezone string `json:"timezone"`
+	// monthReset 记录 UsedMonth 的窗口起点（不对外序列化）。
+	monthReset time.Time
+	// alerted 记录本窗口已发过的告警键（`类型:阈值`）。没有它，越限后每一次写入
+	// 都会再追加一条同样的告警，把列表刷成噪音；窗口切换时按对应类型清空。
+	alerted map[string]bool
 }
 
 // BudgetManager 预算管理器
@@ -48,6 +56,8 @@ type BudgetManager struct {
 	mu      sync.RWMutex
 	budgets map[string]*TokenBudget
 	alerts  []BudgetAlert
+	// now 是时间注入缝：窗口边界用例不该等真实时钟跨过零点。
+	now func() time.Time
 }
 
 type BudgetAlert struct {
@@ -63,87 +73,168 @@ func NewBudgetManager() *BudgetManager {
 	return &BudgetManager{
 		budgets: make(map[string]*TokenBudget),
 		alerts:  make([]BudgetAlert, 0),
+		now:     time.Now,
 	}
+}
+
+// location 解析窗口切分时区；非法名（只可能来自手搓结构，SetTimezone 已校验）退回 UTC。
+func (b *TokenBudget) location() *time.Location {
+	if b.Timezone == "" {
+		return time.UTC
+	}
+	if loc, err := time.LoadLocation(b.Timezone); err == nil {
+		return loc
+	}
+	return time.UTC
+}
+
+func dayStart(t time.Time, loc *time.Location) time.Time {
+	y, m, d := t.In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, loc)
+}
+
+func monthStart(t time.Time, loc *time.Location) time.Time {
+	y, m, _ := t.In(loc).Date()
+	return time.Date(y, m, 1, 0, 0, 0, 0, loc)
+}
+
+// normalizeLocked 把用量对齐到当前窗口（调用方须持写锁）。
+// 读写两侧都要调：只在写入时归一的话，跨窗口后读到的仍是上个窗口的用量，
+// 要等下一次写入才「追平」——对刚用完额度的租户等于凭空多显示一段历史消耗。
+func (b *TokenBudget) normalizeLocked(now time.Time) {
+	loc := b.location()
+	if day := dayStart(now, loc); b.LastReset.IsZero() || day.After(b.LastReset) {
+		b.UsedToday = 0
+		b.LastReset = day
+		b.clearAlerted("daily:")
+	}
+	if month := monthStart(now, loc); b.monthReset.IsZero() {
+		b.monthReset = month
+	} else if month.After(b.monthReset) {
+		b.UsedMonth = 0
+		b.monthReset = month
+		b.clearAlerted("monthly:")
+	}
+}
+
+// clearAlerted 丢弃该类型在本窗口的「已告警」标记，让新窗口能重新告警一次。
+func (b *TokenBudget) clearAlerted(prefix string) {
+	for key := range b.alerted {
+		if strings.HasPrefix(key, prefix) {
+			delete(b.alerted, key)
+		}
+	}
+}
+
+// overLimitLocked 判断是否真正打满额度（硬上限线，不是告警线）。
+func (b *TokenBudget) overLimitLocked() bool {
+	if b.DailyLimit > 0 && b.UsedToday >= b.DailyLimit {
+		return true
+	}
+	return b.MonthlyLimit > 0 && b.UsedMonth >= b.MonthlyLimit
 }
 
 func (bm *BudgetManager) SetBudget(tenantID string, daily, monthly int, threshold float64) {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
-	bm.budgets[tenantID] = &TokenBudget{
-		TenantID:       tenantID,
-		DailyLimit:     daily,
-		MonthlyLimit:   monthly,
-		AlertThreshold: threshold,
-		LastReset:      time.Now(),
+	budget, ok := bm.budgets[tenantID]
+	if !ok {
+		budget = &TokenBudget{TenantID: tenantID}
+		bm.budgets[tenantID] = budget
 	}
+	// 改额度不清用量：已发生的消耗是事实，否则「提额」顺带抹掉历史，
+	// 变成可反复清零的套利项。
+	budget.DailyLimit = daily
+	budget.MonthlyLimit = monthly
+	budget.AlertThreshold = threshold
+	budget.normalizeLocked(bm.now())
+}
+
+// SetTimezone 设置租户配额窗口的切分时区（空串归一为 UTC）；非法时区名拒绝且不落库。
+func (bm *BudgetManager) SetTimezone(tenantID, tz string) error {
+	if tz == "" {
+		tz = "UTC"
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return fmt.Errorf("无效时区 %q: %w", tz, err)
+	}
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	budget, ok := bm.budgets[tenantID]
+	if !ok {
+		budget = &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8}
+		bm.budgets[tenantID] = budget
+	}
+	budget.Timezone = loc.String()
+	budget.normalizeLocked(bm.now())
+	return nil
 }
 
 func (bm *BudgetManager) GetBudget(tenantID string) *TokenBudget {
-	bm.mu.RLock()
-	defer bm.mu.RUnlock()
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
 	if b, ok := bm.budgets[tenantID]; ok {
+		b.normalizeLocked(bm.now())
 		cp := *b
 		return &cp
 	}
-	return &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8}
+	return &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8, Timezone: "UTC"}
 }
 
-func (bm *BudgetManager) RecordUsage(tenantID string, tokens int) (bool, *BudgetAlert) {
+// RecordUsage 累计用量并返回（是否还能继续, 本窗口新越过的告警）。
+// 按软限口径：越过告警阈值只发通知，只有真正打满额度才让 ok=false。
+func (bm *BudgetManager) RecordUsage(tenantID string, tokens int) (bool, []BudgetAlert) {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
 	budget, ok := bm.budgets[tenantID]
 	if !ok {
-		budget = &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8, LastReset: time.Now()}
+		budget = &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8}
 		bm.budgets[tenantID] = budget
 	}
-
-	// 重置每日计数
-	if time.Since(budget.LastReset) > 24*time.Hour {
-		budget.UsedToday = 0
-		budget.LastReset = time.Now()
-	}
+	now := bm.now()
+	budget.normalizeLocked(now)
 
 	budget.UsedToday += tokens
 	budget.UsedMonth += tokens
 
-	// 检查预算
-	alert := bm.checkAlert(budget)
-	if alert != nil {
-		bm.alerts = append(bm.alerts, *alert)
-		return false, alert
+	alerts := budget.checkAlertLocked(now)
+	if len(alerts) > 0 {
+		bm.alerts = append(bm.alerts, alerts...)
 	}
-	return true, nil
+	return !budget.overLimitLocked(), alerts
 }
 
-func (bm *BudgetManager) checkAlert(budget *TokenBudget) *BudgetAlert {
-	if budget.DailyLimit > 0 {
-		ratio := float64(budget.UsedToday) / float64(budget.DailyLimit)
-		if ratio >= budget.AlertThreshold {
-			return &BudgetAlert{
-				TenantID:  budget.TenantID,
-				Type:      "daily",
-				Threshold: budget.AlertThreshold,
-				Used:      budget.UsedToday,
-				Limit:     budget.DailyLimit,
-				Timestamp: time.Now(),
-			}
+// checkAlertLocked 返回本次写入**新越过**的阈值告警：日与月各自独立判定
+// （旧实现日额度先 return，日+月同时超限时月度告警永不出现），且同一窗口内
+// 同一「类型:阈值」只发一次。调用方须持写锁。
+func (b *TokenBudget) checkAlertLocked(now time.Time) []BudgetAlert {
+	var out []BudgetAlert
+	collect := func(alertType string, used, limit int) {
+		if limit <= 0 || float64(used)/float64(limit) < b.AlertThreshold {
+			return
 		}
-	}
-	if budget.MonthlyLimit > 0 {
-		ratio := float64(budget.UsedMonth) / float64(budget.MonthlyLimit)
-		if ratio >= budget.AlertThreshold {
-			return &BudgetAlert{
-				TenantID:  budget.TenantID,
-				Type:      "monthly",
-				Threshold: budget.AlertThreshold,
-				Used:      budget.UsedMonth,
-				Limit:     budget.MonthlyLimit,
-				Timestamp: time.Now(),
-			}
+		key := fmt.Sprintf("%s:%g", alertType, b.AlertThreshold)
+		if b.alerted[key] {
+			return
 		}
+		if b.alerted == nil {
+			b.alerted = make(map[string]bool)
+		}
+		b.alerted[key] = true
+		out = append(out, BudgetAlert{
+			TenantID:  b.TenantID,
+			Type:      alertType,
+			Threshold: b.AlertThreshold,
+			Used:      used,
+			Limit:     limit,
+			Timestamp: now,
+		})
 	}
-	return nil
+	collect("daily", b.UsedToday, b.DailyLimit)
+	collect("monthly", b.UsedMonth, b.MonthlyLimit)
+	return out
 }
 
 func (bm *BudgetManager) GetAlerts(tenantID string) []BudgetAlert {
@@ -159,12 +250,13 @@ func (bm *BudgetManager) GetAlerts(tenantID string) []BudgetAlert {
 }
 
 func (bm *BudgetManager) IsOverBudget(tenantID string) bool {
-	bm.mu.RLock()
-	defer bm.mu.RUnlock()
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
 	budget, ok := bm.budgets[tenantID]
 	if !ok {
 		return false
 	}
+	budget.normalizeLocked(bm.now())
 	if budget.DailyLimit > 0 && budget.UsedToday >= budget.DailyLimit {
 		return true
 	}
@@ -494,10 +586,18 @@ func (h *CostHandler) HandleBudget(w http.ResponseWriter, r *http.Request) {
 			Daily     int     `json:"daily"`
 			Monthly   int     `json:"monthly"`
 			Threshold float64 `json:"threshold"`
+			Timezone  string  `json:"timezone"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 			return
+		}
+		// 时区非法要在改额度之前拒绝，避免出现「额度已改、窗口仍按旧时区切」的半应用。
+		if req.Timezone != "" {
+			if err := h.budget.SetTimezone(req.TenantID, req.Timezone); err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
 		}
 		h.budget.SetBudget(req.TenantID, req.Daily, req.Monthly, req.Threshold)
 		paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})

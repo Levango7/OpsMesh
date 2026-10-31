@@ -16,6 +16,18 @@
 
 ## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
+- **跨文件重复派生类零泄漏去重（第 7 批 CSS 去重）**：`.modal-*` 收完后实测全站仍有
+  **72 个选择器在 ≥3 个文件里重复声明**。本批收编判据是双重客观校验而非按类名猜：
+  ① 选择器在 ≥3 个文件里的 scoped 正文**逐字节相同**（归一化 md5 同组）；② 全局化后不会有任何
+  「模板用了该类、但没有同选择器 scoped 副本」的文件突然获得样式（逐文件测泄漏，为 0 才收）。
+  按此筛出 **18 个选择器 / 29 个文件 / 82 处声明**搬入 `styles/pages.css`（认证页骨架
+  .auth-page/.auth-form/.auth-tools/.bg-blob/.submit-btn .spin；统计卡四色 .stat.indigo/teal/amber/rose；
+  状态丸三态 .status-pill.ok/off/bad；.tag.st-failed、.badge.info、.tool-btn(:hover)、
+  .tab:hover、.chart-bar:hover），守卫 OWNED 集同步扩充到 62 个选择器、118 条全绿。
+  **第②项校验是必需的**：`.status-pill`、`.entity-form`、`.chk`、`.tag`、`.tab`、`.kv` 族等类名通用，
+  有其他文件在模板里用了却没有 scoped 副本（当前无样式）；只按「正文相同」就全局化会让那些页面
+  突然获得样式——那不是去重而是悄悄改观感，故这 54 个选择器**刻意排除**，留待单独判断。
+  本地实测：vitest 61 文件/1306 用例、eslint 0、vite build、Playwright 80/80 全绿。
 - **对话框家族收编进 pages.css（第 6 批 CSS 去重）**：`.modal-*` 家族从 `styles/k8s.css`
   迁入 `styles/pages.css`，10 个文件（8 视图 + ConfirmModal/PromptModal）的 scoped 副本清零。
   收编时发现仓里并存**两套**对话框约定：A「遮罩+面板」`.modal-mask > .modal`（8 视图）与

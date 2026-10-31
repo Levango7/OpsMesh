@@ -264,6 +264,6 @@ onMounted(() => {
   flex: 1; min-width: 6px; border-radius: 2px 2px 0 0;
   transition: height .3s; opacity: .8;
 }
-.chart-bar:hover { opacity: 1; }
+
 .bar-cost { background: var(--accent); }
 </style>

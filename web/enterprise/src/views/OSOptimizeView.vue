@@ -322,7 +322,7 @@ onUnmounted(() => {
 .detail-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .field-hint { font-size: 11.5px; color: var(--text-3); margin-right: 6px; }
 .badge { display: inline-flex; align-items: center; height: 20px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; margin-right: 4px; }
-.badge.info { background: var(--info-bg); color: var(--info); }
+
 .code-block {
   background: var(--surface-3); color: var(--text); padding: 12px;
   border-radius: var(--radius-sm); overflow: auto; max-height: 320px;

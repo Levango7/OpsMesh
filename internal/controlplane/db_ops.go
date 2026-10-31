@@ -253,8 +253,35 @@ func buildOracleDeployScript(req dbDeployRequest, b *strings.Builder) {
 		b.WriteString("dbstart $ORACLE_HOME || systemctl start oracle || true\n")
 		b.WriteString("echo 'Oracle 单实例已启动'\n")
 	case "rac":
-		b.WriteString("# RAC：需配置 Clusterware / Grid Infrastructure\n")
-		b.WriteString("echo 'Oracle RAC：需配置 Grid Infrastructure'\n")
+		b.WriteString("# Oracle RAC 部署：Grid Infrastructure + ASM + RAC 数据库实例\n")
+		b.WriteString("# 1. Grid Infrastructure 检查与安装\n")
+		b.WriteString("if command -v crsctl >/dev/null 2>&1; then echo 'Grid Infrastructure 已安装'; else echo '请先上传 Grid Infrastructure 安装介质并运行 runInstaller (clusterware)' && exit 1; fi\n")
+		b.WriteString("crsctl check crs 2>&1 || (echo 'CRS 未运行，尝试启动'; crsctl start crs 2>&1 || true)\n")
+		b.WriteString("# 2. 投票磁盘配置\n")
+		b.WriteString("crsctl query css votedisk 2>&1 || true\n")
+		b.WriteString("if [ -n \"$VOTING_DISK\" ]; then crsctl add css votedisk \"$VOTING_DISK\" 2>/dev/null || crsctl replace votedisk \"$VOTING_DISK\" 2>/dev/null || echo '投票磁盘配置失败'; fi\n")
+		b.WriteString("# 3. ASM 磁盘组配置\n")
+		b.WriteString("if command -v asmcmd >/dev/null 2>&1; then\n")
+		b.WriteString("  asmcmd ls 2>/dev/null || true\n")
+		b.WriteString("  if [ -n \"$ASM_DISKGROUP\" ]; then echo \"ASM 磁盘组: $ASM_DISKGROUP\"; asmcmd mkdg \"$ASM_DISKGROUP\" 2>/dev/null || echo '磁盘组已存在或创建失败'; fi\n")
+		b.WriteString("else echo 'ASM 不可用'; fi\n")
+		b.WriteString("# 4. SCAN VIP / VIP 配置\n")
+		b.WriteString("srvctl config scan 2>/dev/null || true\n")
+		b.WriteString("if [ -n \"$SCAN_NAME\" ]; then srvctl add scan -n \"$SCAN_NAME\" 2>/dev/null || echo 'SCAN 已配置'; fi\n")
+		b.WriteString("if [ -n \"$VIP_NAME\" ]; then srvctl add vip -n \"$VIP_NAME\" -k \"$VIP_NETMASK\" -A \"$VIP_IP\" 2>/dev/null || echo 'VIP 已配置'; fi\n")
+		b.WriteString("# 5. RAC 数据库实例创建\n")
+		b.WriteString("if [ -n \"$DB_NAME\" ]; then\n")
+		b.WriteString("  dbca -silent -createDatabase -templateName General_Purpose.dbc -gdbname \"$DB_NAME\" -sid \"$DB_NAME\" -createAsContainerDatabase false -numberOfPDBs 0 -databaseType RAC -nodelist \"$NODE_LIST\" -storageType ASM -diskGroupName \"$ASM_DISKGROUP\" -characterSet AL32UTF8 -sysPassword \"$SYS_PWD\" -systemPassword \"$SYS_PWD\" 2>&1 | tail -20 || echo 'DBCA 执行失败或数据库已存在'\n")
+		b.WriteString("fi\n")
+		b.WriteString("# 6. 节点添加/删除\n")
+		b.WriteString("if [ -n \"$ADD_NODE\" ]; then addnode.sh -silent \"CLUSTER_NEW_NODES={$ADD_NODE}\" 2>&1 | tail -20 || echo '节点添加失败'; fi\n")
+		b.WriteString("if [ -n \"$DEL_NODE\" ]; then crsctl delete node -n \"$DEL_NODE\" 2>/dev/null || srvctl remove nodeapps -n \"$DEL_NODE\" -f 2>/dev/null || echo '节点删除失败'; fi\n")
+		b.WriteString("# 7. RAC 健康检查\n")
+		b.WriteString("echo '=== RAC 健康检查 ==='\n")
+		b.WriteString("crsctl check crs 2>&1 || true\n")
+		b.WriteString("srvctl status database -d \"$DB_NAME\" 2>/dev/null || true\n")
+		b.WriteString("olsnodes -n 2>/dev/null || true\n")
+		b.WriteString("echo 'Oracle RAC 部署脚本执行完成'\n")
 	}
 }
 
@@ -569,30 +596,6 @@ func (s *Server) handleDBInstanceOceanBase(w http.ResponseWriter, r *http.Reques
 }
 func (s *Server) handleDBInstanceMSSQL(w http.ResponseWriter, r *http.Request) {
 	s.handleDBInstance(w, r, "mssql")
-}
-
-// handleDBInstanceRouting 统一分派 /api/v1/db/{type}/instance 子路径。
-func (s *Server) handleDBInstanceRouting(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/db/")
-	segments := strings.Split(strings.TrimSuffix(path, "/"), "/")
-	if len(segments) < 2 || segments[1] != "instance" {
-		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
-	}
-	switch segments[0] {
-	case "postgresql":
-		s.handleDBInstancePostgreSQL(w, r)
-	case "oracle":
-		s.handleDBInstanceOracle(w, r)
-	case "tidb":
-		s.handleDBInstanceTiDB(w, r)
-	case "oceanbase":
-		s.handleDBInstanceOceanBase(w, r)
-	case "mssql":
-		s.handleDBInstanceMSSQL(w, r)
-	default:
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported database type"})
-	}
 }
 
 func (s *Server) handleDBRouting(w http.ResponseWriter, r *http.Request) {

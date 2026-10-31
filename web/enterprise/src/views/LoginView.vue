@@ -125,19 +125,10 @@ function toggleLang() {
 </script>
 
 <style scoped>
-.auth-page {
-  position: fixed; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--bg);
-  overflow: hidden;
-}
 
 /* 装饰背景：两个柔光圆斑 */
 .auth-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
-.bg-blob {
-  position: absolute; border-radius: 50%;
-  filter: blur(80px); opacity: .35;
-}
+
 .blob-1 {
   width: 420px; height: 420px;
   background: var(--indigo);
@@ -171,7 +162,6 @@ function toggleLang() {
 .brand h1 { font-size: 18px; color: var(--text); }
 .brand .sub { font-size: 12.5px; color: var(--text-3); margin: 4px 0 0; }
 
-.auth-form { display: flex; flex-direction: column; gap: 14px; }
 .field input { width: 100%; }
 
 .err-msg {
@@ -194,7 +184,7 @@ function toggleLang() {
   width: 100%; height: 40px; font-size: 14px; font-weight: 600;
   margin-top: 4px;
 }
-.submit-btn .spin { animation: spin 1s linear infinite; }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .auth-switch {
@@ -203,18 +193,4 @@ function toggleLang() {
 }
 .auth-switch a { color: var(--accent); }
 
-.auth-tools {
-  display: flex; justify-content: center; gap: 8px;
-  margin-top: 16px; padding-top: 16px;
-  border-top: 1px dashed var(--border);
-}
-.tool-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  height: 30px; padding: 0 10px;
-  background: var(--surface-3); border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-2); font-size: 12px;
-  cursor: pointer;
-}
-.tool-btn:hover { background: var(--bg-soft); color: var(--text); }
 </style>

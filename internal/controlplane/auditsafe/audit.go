@@ -5,7 +5,10 @@
 // 藏在父包里就成了跨包障碍。抽出后父包留同名薄包装，30 处调用点零改动。
 package auditsafe
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // Detail 对写入审计/事件 Detail 的用户输入做脱敏与规范化：
 //   - 移除换行符（\n→空格、\r→删除），防日志注入/解析错位；
@@ -16,7 +19,13 @@ func Detail(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", "")
 	if len(s) > 200 {
-		s = s[:200] + "..."
+		// 按字节硬切会切断多字节 UTF-8（审计 Detail 里的中文命令/原因很常见），
+		// 落库或序列化时得到非法字符；在字符边界回退后再补省略号。
+		cut := 200
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + "..."
 	}
 	return s
 }
