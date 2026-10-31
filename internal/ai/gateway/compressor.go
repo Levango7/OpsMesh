@@ -4,6 +4,7 @@ package aigateway
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // ContextCompressor 上下文压缩器
@@ -74,10 +75,7 @@ func (c *ContextCompressor) summarize(msgs []Message) string {
 		fmt.Fprintf(&sb, "[%s] %s\n", m.Role, truncateStr(m.Content, 100))
 	}
 	summary := sb.String()
-	if len(summary) > 500 {
-		summary = summary[:500] + "..."
-	}
-	return summary
+	return truncateStr(summary, 500)
 }
 
 func estimateTokens(messages []Message) int {
@@ -93,9 +91,15 @@ func estimateMessageTokens(m Message) int {
 	return len(m.Content)/4 + 4 // +4 for role overhead
 }
 
+// truncateStr 按字节上限截断，但在 UTF-8 字符边界回退：中文对话被切在半字符上，
+// 送进模型的上下文与落盘日志都会带非法字符。
 func truncateStr(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	cut := maxLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }

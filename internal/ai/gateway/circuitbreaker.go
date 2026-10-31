@@ -2,6 +2,8 @@ package aigateway
 
 import (
 	"fmt"
+	"hash/fnv"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -62,6 +64,8 @@ type RateLimiter struct {
 	lastTime time.Time
 }
 
+// NewRateLimiter rpm<=0 表示不限流：ProviderConfig.RateLimit 是可选项，
+// 未配置时若按 0 处理会让该提供商的每一次请求都被拒（fail-closed 的误伤）。
 func NewRateLimiter(rpm int) *RateLimiter {
 	return &RateLimiter{
 		rpm:      rpm,
@@ -71,6 +75,9 @@ func NewRateLimiter(rpm int) *RateLimiter {
 }
 
 func (rl *RateLimiter) Wait(ctx interface{}) error {
+	if rl.rpm <= 0 {
+		return nil
+	}
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -198,13 +205,18 @@ func (sc *SemanticCache) Set(req CompletionRequest, resp *CompletionResponse) {
 	sc.cache[key] = resp
 }
 
+// hashRequest 生成语义缓存键。
+// 旧实现把各条 Content 的首字符做 h=h*31+c 连乘、再拼消息条数：实测
+// ["a","bc"] 与 ["ab","c"] 等 14 种切分全部撞成同一键（1 条与 2 条消息的
+// 总字符数相同也撞），缓存会把别的请求的答案当作命中返回；同时消息角色、
+// temperature、maxTokens、tools 都不进键，改了参数仍命中旧结果。
+// 这里按「角色+分隔符」逐项写入并混入采样参数。
 func hashRequest(req CompletionRequest) string {
-	// 简化哈希：模型 + 消息内容
-	h := 0
+	h := fnv.New64a()
+	fmt.Fprintf(h, "model=%s|maxTokens=%d|temperature=%g|topP=%g|stream=%v|tools=%d\n",
+		req.Model, req.MaxTokens, req.Temperature, req.TopP, req.Stream, len(req.Tools))
 	for _, m := range req.Messages {
-		for _, c := range m.Content {
-			h = h*31 + int(c)
-		}
+		fmt.Fprintf(h, "%s\x00%s\x01", m.Role, m.Content)
 	}
-	return fmt.Sprintf("%s-%d-%d", req.Model, h, len(req.Messages))
+	return strconv.FormatUint(h.Sum64(), 16)
 }
