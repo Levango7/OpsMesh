@@ -46,6 +46,9 @@ type TokenBudget struct {
 	Timezone string `json:"timezone"`
 	// monthReset 记录 UsedMonth 的窗口起点（不对外序列化）。
 	monthReset time.Time
+	// alerted 记录本窗口已发过的告警键（`类型:阈值`）。没有它，越限后每一次写入
+	// 都会再追加一条同样的告警，把列表刷成噪音；窗口切换时按对应类型清空。
+	alerted map[string]bool
 }
 
 // BudgetManager 预算管理器
@@ -103,13 +106,32 @@ func (b *TokenBudget) normalizeLocked(now time.Time) {
 	if day := dayStart(now, loc); b.LastReset.IsZero() || day.After(b.LastReset) {
 		b.UsedToday = 0
 		b.LastReset = day
+		b.clearAlerted("daily:")
 	}
 	if month := monthStart(now, loc); b.monthReset.IsZero() {
 		b.monthReset = month
 	} else if month.After(b.monthReset) {
 		b.UsedMonth = 0
 		b.monthReset = month
+		b.clearAlerted("monthly:")
 	}
+}
+
+// clearAlerted 丢弃该类型在本窗口的「已告警」标记，让新窗口能重新告警一次。
+func (b *TokenBudget) clearAlerted(prefix string) {
+	for key := range b.alerted {
+		if strings.HasPrefix(key, prefix) {
+			delete(b.alerted, key)
+		}
+	}
+}
+
+// overLimitLocked 判断是否真正打满额度（硬上限线，不是告警线）。
+func (b *TokenBudget) overLimitLocked() bool {
+	if b.DailyLimit > 0 && b.UsedToday >= b.DailyLimit {
+		return true
+	}
+	return b.MonthlyLimit > 0 && b.UsedMonth >= b.MonthlyLimit
 }
 
 func (bm *BudgetManager) SetBudget(tenantID string, daily, monthly int, threshold float64) {
@@ -160,7 +182,9 @@ func (bm *BudgetManager) GetBudget(tenantID string) *TokenBudget {
 	return &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8, Timezone: "UTC"}
 }
 
-func (bm *BudgetManager) RecordUsage(tenantID string, tokens int) (bool, *BudgetAlert) {
+// RecordUsage 累计用量并返回（是否还能继续, 本窗口新越过的告警）。
+// 按软限口径：越过告警阈值只发通知，只有真正打满额度才让 ok=false。
+func (bm *BudgetManager) RecordUsage(tenantID string, tokens int) (bool, []BudgetAlert) {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
@@ -169,48 +193,48 @@ func (bm *BudgetManager) RecordUsage(tenantID string, tokens int) (bool, *Budget
 		budget = &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8}
 		bm.budgets[tenantID] = budget
 	}
-	budget.normalizeLocked(bm.now())
+	now := bm.now()
+	budget.normalizeLocked(now)
 
 	budget.UsedToday += tokens
 	budget.UsedMonth += tokens
 
-	// 检查预算
-	alert := bm.checkAlert(budget)
-	if alert != nil {
-		bm.alerts = append(bm.alerts, *alert)
-		return false, alert
+	alerts := budget.checkAlertLocked(now)
+	if len(alerts) > 0 {
+		bm.alerts = append(bm.alerts, alerts...)
 	}
-	return true, nil
+	return !budget.overLimitLocked(), alerts
 }
 
-func (bm *BudgetManager) checkAlert(budget *TokenBudget) *BudgetAlert {
-	if budget.DailyLimit > 0 {
-		ratio := float64(budget.UsedToday) / float64(budget.DailyLimit)
-		if ratio >= budget.AlertThreshold {
-			return &BudgetAlert{
-				TenantID:  budget.TenantID,
-				Type:      "daily",
-				Threshold: budget.AlertThreshold,
-				Used:      budget.UsedToday,
-				Limit:     budget.DailyLimit,
-				Timestamp: time.Now(),
-			}
+// checkAlertLocked 返回本次写入**新越过**的阈值告警：日与月各自独立判定
+// （旧实现日额度先 return，日+月同时超限时月度告警永不出现），且同一窗口内
+// 同一「类型:阈值」只发一次。调用方须持写锁。
+func (b *TokenBudget) checkAlertLocked(now time.Time) []BudgetAlert {
+	var out []BudgetAlert
+	collect := func(alertType string, used, limit int) {
+		if limit <= 0 || float64(used)/float64(limit) < b.AlertThreshold {
+			return
 		}
-	}
-	if budget.MonthlyLimit > 0 {
-		ratio := float64(budget.UsedMonth) / float64(budget.MonthlyLimit)
-		if ratio >= budget.AlertThreshold {
-			return &BudgetAlert{
-				TenantID:  budget.TenantID,
-				Type:      "monthly",
-				Threshold: budget.AlertThreshold,
-				Used:      budget.UsedMonth,
-				Limit:     budget.MonthlyLimit,
-				Timestamp: time.Now(),
-			}
+		key := fmt.Sprintf("%s:%g", alertType, b.AlertThreshold)
+		if b.alerted[key] {
+			return
 		}
+		if b.alerted == nil {
+			b.alerted = make(map[string]bool)
+		}
+		b.alerted[key] = true
+		out = append(out, BudgetAlert{
+			TenantID:  b.TenantID,
+			Type:      alertType,
+			Threshold: b.AlertThreshold,
+			Used:      used,
+			Limit:     limit,
+			Timestamp: now,
+		})
 	}
-	return nil
+	collect("daily", b.UsedToday, b.DailyLimit)
+	collect("monthly", b.UsedMonth, b.MonthlyLimit)
+	return out
 }
 
 func (bm *BudgetManager) GetAlerts(tenantID string) []BudgetAlert {

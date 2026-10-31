@@ -34,39 +34,40 @@ func TestBudgetManagerRecordUsageAndAlerts(t *testing.T) {
 	bm := NewBudgetManager()
 	bm.SetBudget("t1", 100, 1000, 0.8)
 
-	// 80% 阈值：累计 79 不告警，到 80 告警（日维度）。
-	if ok, alert := bm.RecordUsage("t1", 79); !ok || alert != nil {
-		t.Fatalf("79/100 不应告警: ok=%v alert=%+v", ok, alert)
+	// 79/100 未达阈值。
+	if ok, alerts := bm.RecordUsage("t1", 79); !ok || len(alerts) != 0 {
+		t.Fatalf("79/100 不应告警: ok=%v alerts=%+v", ok, alerts)
 	}
-	ok, alert := bm.RecordUsage("t1", 1)
-	if ok || alert == nil || alert.Type != "daily" || alert.Used != 80 || alert.Limit != 100 {
-		t.Fatalf("80/100 应告警 daily: ok=%v alert=%+v", ok, alert)
+	// 80/100 越过阈值 ⇒ 一条 daily 告警；软限口径下不拦（ok 仍为 true）。
+	ok, alerts := bm.RecordUsage("t1", 1)
+	if !ok || len(alerts) != 1 || alerts[0].Type != "daily" || alerts[0].Used != 80 || alerts[0].Limit != 100 {
+		t.Fatalf("80/100 应告警 daily 且不拦: ok=%v alerts=%+v", ok, alerts)
 	}
-	// 阈值告警 ≠ 超预算：80/100 仍在额度内。
 	if bm.IsOverBudget("t1") {
 		t.Fatal("80/100 只应告警，IsOverBudget 应为 false")
 	}
-	if _, alert := bm.RecordUsage("t1", 20); alert == nil || alert.Type != "daily" {
-		t.Fatalf("100/100 应继续告警: %+v", alert)
+	// 100/100 打满额度 ⇒ ok=false；同一窗口同一档不再重复告警。
+	ok, alerts = bm.RecordUsage("t1", 20)
+	if ok || len(alerts) != 0 {
+		t.Fatalf("100/100 应拦且不再重复告警: ok=%v alerts=%+v", ok, alerts)
 	}
 	if !bm.IsOverBudget("t1") {
 		t.Fatal("日用量达上限，IsOverBudget 应为 true")
 	}
 
-	alerts := bm.GetAlerts("t1")
-	if len(alerts) != 2 || alerts[0].TenantID != "t1" {
-		t.Fatalf("GetAlerts(t1) = %+v", alerts)
+	if got := bm.GetAlerts("t1"); len(got) != 1 || got[0].TenantID != "t1" {
+		t.Fatalf("同窗口同档只应留一条告警: %+v", got)
 	}
 	if n := len(bm.GetAlerts("t2")); n != 0 {
 		t.Fatalf("GetAlerts(t2) = %d 条, want 0", n)
 	}
-	if n := len(bm.GetAlerts("")); n != 2 {
-		t.Fatalf("GetAlerts(全部) = %d 条, want 2", n)
+	if n := len(bm.GetAlerts("")); n != 1 {
+		t.Fatalf("GetAlerts(全部) = %d 条, want 1", n)
 	}
 
-	// 未知租户：RecordUsage 自建默认预算，不告警。
-	if ok, alert := bm.RecordUsage("t-new", 10); !ok || alert != nil {
-		t.Fatalf("未知租户首次记录 = (%v,%+v), want (true,nil)", ok, alert)
+	// 未知租户：RecordUsage 自建默认预算，不告警且可继续。
+	if ok, alerts := bm.RecordUsage("t-new", 10); !ok || len(alerts) != 0 {
+		t.Fatalf("未知租户首次记录 = (%v,%+v), want (true,无告警)", ok, alerts)
 	}
 	if got := bm.GetBudget("t-new").UsedToday; got != 10 {
 		t.Fatalf("未知租户首次记录后 UsedToday = %d, want 10", got)
@@ -77,9 +78,48 @@ func TestBudgetManagerMonthlyAlert(t *testing.T) {
 	bm := NewBudgetManager()
 	// 日额度设得极大，确保只可能触发月维度。
 	bm.SetBudget("t1", 1000000, 100, 0.8)
-	ok, alert := bm.RecordUsage("t1", 80)
-	if ok || alert == nil || alert.Type != "monthly" || alert.Used != 80 || alert.Limit != 100 {
-		t.Fatalf("80/100 月用量应告警 monthly: ok=%v alert=%+v", ok, alert)
+	ok, alerts := bm.RecordUsage("t1", 80)
+	if !ok || len(alerts) != 1 || alerts[0].Type != "monthly" || alerts[0].Used != 80 || alerts[0].Limit != 100 {
+		t.Fatalf("80/100 月用量应告警 monthly 且不拦: ok=%v alerts=%+v", ok, alerts)
+	}
+}
+
+// 日与月必须各自独立成条：旧实现日额度先 return，日+月同时超限时月度告警永不出现。
+func TestBudgetManagerAlertsDailyAndMonthlyIndependent(t *testing.T) {
+	bm := NewBudgetManager()
+	bm.SetBudget("t1", 100, 100, 0.8)
+
+	_, alerts := bm.RecordUsage("t1", 90)
+	if len(alerts) != 2 {
+		t.Fatalf("日+月同时越阈应各出一条告警: %+v", alerts)
+	}
+	seen := map[string]bool{}
+	for _, a := range alerts {
+		seen[a.Type] = true
+	}
+	if !seen["daily"] || !seen["monthly"] {
+		t.Fatalf("缺少维度: %+v", alerts)
+	}
+}
+
+// 告警去重只作用于当前窗口：跨日后同一档要能再次提醒。
+func TestBudgetManagerAlertRepeatsAfterWindowRoll(t *testing.T) {
+	bm := NewBudgetManager()
+	bm.SetBudget("t1", 100, 100000, 0.8)
+	if _, alerts := bm.RecordUsage("t1", 90); len(alerts) != 1 {
+		t.Fatalf("首次越阈应有 1 条告警: %+v", alerts)
+	}
+	if _, alerts := bm.RecordUsage("t1", 5); len(alerts) != 0 {
+		t.Fatalf("同窗口重复越阈不应再告警: %+v", alerts)
+	}
+
+	bm.mu.Lock()
+	b := bm.budgets["t1"]
+	b.LastReset = dayStart(time.Now().AddDate(0, 0, -1), b.location())
+	bm.mu.Unlock()
+
+	if _, alerts := bm.RecordUsage("t1", 90); len(alerts) != 1 || alerts[0].Type != "daily" {
+		t.Fatalf("新窗口应能重新告警: %+v", alerts)
 	}
 }
 
@@ -92,8 +132,8 @@ func TestBudgetManagerDailyReset(t *testing.T) {
 	bm.budgets["t1"].LastReset = time.Now().Add(-25 * time.Hour)
 	bm.mu.Unlock()
 
-	if _, alert := bm.RecordUsage("t1", 50); alert != nil {
-		t.Fatalf("跨日重置后 50/1000 不应告警: %+v", alert)
+	if _, alerts := bm.RecordUsage("t1", 50); len(alerts) != 0 {
+		t.Fatalf("跨日重置后 50/1000 不应告警: %+v", alerts)
 	}
 	if got := bm.GetBudget("t1").UsedToday; got != 50 {
 		t.Fatalf("跨日重置后 UsedToday = %d, want 50（旧值 900 必须清零）", got)
@@ -115,8 +155,8 @@ func TestBudgetManagerMonthlyReset(t *testing.T) {
 	bm.budgets["t1"].monthReset = time.Date(now.Year(), now.Month()-1, 1, 0, 0, 0, 0, now.Location())
 	bm.mu.Unlock()
 
-	if _, alert := bm.RecordUsage("t1", 50); alert != nil {
-		t.Fatalf("跨月后 50/10000 不应告警: %+v", alert)
+	if _, alerts := bm.RecordUsage("t1", 50); len(alerts) != 0 {
+		t.Fatalf("跨月后 50/10000 不应告警: %+v", alerts)
 	}
 	if got := bm.GetBudget("t1").UsedMonth; got != 50 {
 		t.Fatalf("跨月后 UsedMonth = %d, want 50（上月 900 必须清零）", got)
@@ -173,8 +213,8 @@ func TestBudgetManagerWindowFollowsTenantTimezone(t *testing.T) {
 		}
 		bm.mu.Unlock()
 
-		if _, alert := bm.RecordUsage("t1", 10); alert != nil {
-			t.Fatalf("%s: 10/100000 不应告警: %+v", tc.tz, alert)
+		if _, alerts := bm.RecordUsage("t1", 10); len(alerts) != 0 {
+			t.Fatalf("%s: 10/100000 不应告警: %+v", tc.tz, alerts)
 		}
 		if got := bm.GetBudget("t1").UsedToday; got != tc.wantUsed {
 			t.Fatalf("%s: UsedToday = %d, want %d（%s）", tc.tz, got, tc.wantUsed, tc.wantReason)
@@ -186,8 +226,8 @@ func TestBudgetManagerWindowFollowsTenantTimezone(t *testing.T) {
 func TestSetBudgetPreservesUsage(t *testing.T) {
 	bm := NewBudgetManager()
 	bm.SetBudget("t1", 100, 1000, 0.8)
-	if _, alert := bm.RecordUsage("t1", 50); alert != nil {
-		t.Fatalf("50/100 未达 80%% 阈值不应告警: %+v", alert)
+	if _, alerts := bm.RecordUsage("t1", 50); len(alerts) != 0 {
+		t.Fatalf("50/100 未达 80%% 阈值不应告警: %+v", alerts)
 	}
 
 	bm.SetBudget("t1", 200, 2000, 0.9)
