@@ -39,7 +39,16 @@ func (c *ContextCompressor) Compress(messages []Message) []Message {
 
 	// 估算系统消息 token
 	systemTokens := estimateTokens(systemMsgs)
-	remaining := c.maxTokens - systemTokens - 500 // 预留输出空间
+	// 输出预留按预算比例取并夹住 500 上限：此前硬编码 500，预算小于 500+系统消息时
+	// remaining 直接变负，一条对话都留不下（连用户最新那句都被摘要吞掉）。
+	reserve := c.maxTokens / 4
+	if reserve > 500 {
+		reserve = 500
+	}
+	remaining := c.maxTokens - systemTokens - reserve
+	if remaining < 0 {
+		remaining = 0
+	}
 
 	// 保留最近的对话 (从后向前)
 	var kept []Message
@@ -47,7 +56,8 @@ func (c *ContextCompressor) Compress(messages []Message) []Message {
 	tokens := 0
 	for i := len(chatMsgs) - 1; i >= 0; i-- {
 		msgTokens := estimateMessageTokens(chatMsgs[i])
-		if tokens+msgTokens <= remaining {
+		if tokens+msgTokens <= remaining || len(kept) == 0 {
+			// 最近一条无条件保留：丢了它，模型就答不上当前这一问。
 			kept = append([]Message{chatMsgs[i]}, kept...)
 			tokens += msgTokens
 		} else {

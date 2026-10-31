@@ -4,6 +4,7 @@ package aigateway
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -194,32 +195,55 @@ func (g *Gateway) Embed(ctx context.Context, provider string, text string) ([]fl
 	return p.Embed(ctx, text)
 }
 
-// route 根据模型名或任务类型选择提供商
+// route 选择提供商：声明了该模型的提供商 → 路由规则（按 Priority）→ 单提供商部署兜底。
+//
+// 旧实现三处都会随进程漂移：① 直接在 `for name := range g.configs` 里取第一个命中，
+// 多个提供商声明同一模型时 map 顺序随机 ⇒ 同一请求可能打到不同厂商（不同厂商的
+// 输出/计价/合规边界都不一样）；② 路由规则不看 Priority（字段声明了但从不参与判定）；
+// ③ 兜底把请求里的模型名原样发给任意一个「可用」提供商，即使它并没有声明支持该模型
+// （上游只会回 model not found，错误还发生在远端）。
 func (g *Gateway) route(model string) (string, string, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	// 直接匹配模型名
+	var declared []string
 	for name, cfg := range g.configs {
 		for _, m := range cfg.Models {
 			if m == model {
-				return name, m, nil
+				declared = append(declared, name)
+				break
 			}
 		}
 	}
+	if len(declared) > 0 {
+		sort.Strings(declared)
+		return declared[0], model, nil
+	}
 
-	// 路由规则匹配
-	for _, route := range g.routes {
-		if route.Model == model {
-			return route.Provider, route.Model, nil
+	best := -1
+	var bestProvider string
+	for i, r := range g.routes {
+		if r.Model != model {
+			continue
+		}
+		if _, ok := g.providers[r.Provider]; !ok {
+			continue // 规则指向未注册的提供商：跳过，不让请求打到空气上
+		}
+		if best == -1 || r.Priority > g.routes[best].Priority ||
+			(r.Priority == g.routes[best].Priority && r.Provider < bestProvider) {
+			best, bestProvider = i, r.Provider
 		}
 	}
-
-	// 默认：第一个可用提供商
-	for name := range g.providers {
-		return name, model, nil
+	if best != -1 {
+		return bestProvider, g.routes[best].Model, nil
 	}
 
+	// 单提供商部署沿用请求里的模型名（该提供商就是全部事实来源）。
+	if len(g.providers) == 1 {
+		for name := range g.providers {
+			return name, model, nil
+		}
+	}
 	return "", "", fmt.Errorf("no provider available for model %s", model)
 }
 

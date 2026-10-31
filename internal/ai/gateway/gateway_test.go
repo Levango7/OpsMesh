@@ -374,3 +374,114 @@ func TestSummarizeCapsLength(t *testing.T) {
 		t.Fatal("摘要截断产生非法 UTF-8")
 	}
 }
+
+// --- route 确定性 ---
+
+// 多个提供商声明同一模型时，旧实现直接 `for name := range g.configs` 取第一个命中，
+// map 迭代顺序随机 ⇒ 同一请求会打到不同厂商（输出/计价/合规边界都不同）。
+func TestRouteIsDeterministicAcrossProviders(t *testing.T) {
+	g := NewGateway()
+	g.RegisterProvider(ProviderConfig{Name: "zz-provider", Models: []string{"shared"}}, &fakeProvider{name: "zz"})
+	g.RegisterProvider(ProviderConfig{Name: "aa-provider", Models: []string{"shared"}}, &fakeProvider{name: "aa"})
+
+	for i := 0; i < 200; i++ {
+		provider, model, err := g.route("shared")
+		if err != nil {
+			t.Fatalf("route: %v", err)
+		}
+		if provider != "aa-provider" || model != "shared" {
+			t.Fatalf("第 %d 次 route = (%s,%s)，要求稳定命中按名排序的第一个声明方", i, provider, model)
+		}
+	}
+}
+
+// ModelRoute.Priority 此前声明了但从不参与判定。
+func TestRouteHonoursRulePriority(t *testing.T) {
+	g := NewGateway()
+	g.RegisterProvider(ProviderConfig{Name: "p1", Models: []string{"m1"}}, &fakeProvider{name: "p1"})
+	g.RegisterProvider(ProviderConfig{Name: "p2", Models: []string{"m2"}}, &fakeProvider{name: "p2"})
+	g.SetRoutes([]ModelRoute{
+		{TaskType: "chat", Provider: "p2", Model: "rare", Priority: 1},
+		{TaskType: "chat", Provider: "p1", Model: "rare", Priority: 5},
+	})
+
+	for i := 0; i < 50; i++ {
+		if provider, _, err := g.route("rare"); err != nil || provider != "p1" {
+			t.Fatalf("应取 Priority 最高的 p1, got (%s,%v)", provider, err)
+		}
+	}
+}
+
+// 规则指向未注册的提供商时必须跳过，不能让请求打到空气上。
+func TestRouteSkipsUnregisteredRule(t *testing.T) {
+	g := NewGateway()
+	g.RegisterProvider(ProviderConfig{Name: "real", Models: []string{"m1"}}, &fakeProvider{name: "real"})
+	g.SetRoutes([]ModelRoute{
+		{Provider: "ghost", Model: "rare", Priority: 99},
+		{Provider: "real", Model: "rare", Priority: 1},
+	})
+	if provider, _, err := g.route("rare"); err != nil || provider != "real" {
+		t.Fatalf("got (%s,%v), want real", provider, err)
+	}
+}
+
+// 兜底：单提供商部署沿用请求模型名；多提供商且都没声明该模型时明确报错，
+// 不再随机挑一个把不支持的模型名发给远端。
+func TestRouteFallbackRules(t *testing.T) {
+	single := NewGateway()
+	single.RegisterProvider(ProviderConfig{Name: "only", Models: []string{"m1"}}, &fakeProvider{name: "only"})
+	if provider, model, err := single.route("undeclared"); err != nil || provider != "only" || model != "undeclared" {
+		t.Fatalf("单提供商兜底 = (%s,%s,%v)", provider, model, err)
+	}
+
+	multi := NewGateway()
+	multi.RegisterProvider(ProviderConfig{Name: "a", Models: []string{"m1"}}, &fakeProvider{name: "a"})
+	multi.RegisterProvider(ProviderConfig{Name: "b", Models: []string{"m2"}}, &fakeProvider{name: "b"})
+	if _, _, err := multi.route("nobody-declares-this"); err == nil {
+		t.Fatal("多提供商且无人声明该模型时应报错，而不是随机挑一个")
+	}
+}
+
+// 预留输出空间要按预算比例，而不是固定 500：固定 500 在 400 token 预算下
+// remaining 变负，整段对话只剩一条摘要。
+func TestCompressSmallBudgetKeepsMoreThanOneTurn(t *testing.T) {
+	c := NewContextCompressor(400)
+	msgs := []Message{{Role: RoleSystem, Content: "sys"}}
+	for i := 0; i < 10; i++ {
+		msgs = append(msgs, Message{Role: RoleUser, Content: strings.Repeat("x", 400)})
+	}
+
+	got := c.Compress(msgs)
+	keptTurns := 0
+	for _, m := range got {
+		if m.Role != RoleSystem && !strings.HasPrefix(m.Content, "早期对话摘要: ") {
+			keptTurns++
+		}
+	}
+	if keptTurns < 2 {
+		t.Fatalf("400 预算下应至少保留最近两轮对话, got %d（结果 %+v）", keptTurns, got)
+	}
+}
+
+// 系统消息本身吃满预算时（remaining=0），最近一条仍必须原样保留：
+// 丢了用户刚问的那句，模型就无从回答。
+func TestCompressKeepsLatestTurnWhenBudgetExhausted(t *testing.T) {
+	c := NewContextCompressor(100)
+	last := "这是用户刚问的最后一句"
+	msgs := []Message{{Role: RoleSystem, Content: strings.Repeat("s", 400)}}
+	for i := 0; i < 4; i++ {
+		msgs = append(msgs, Message{Role: RoleUser, Content: strings.Repeat("x", 400)})
+	}
+	msgs = append(msgs, Message{Role: RoleUser, Content: last})
+
+	got := c.Compress(msgs)
+	found := false
+	for _, m := range got {
+		if m.Content == last {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("预算被系统消息吃满时最近一条被吞掉了: %+v", got)
+	}
+}
