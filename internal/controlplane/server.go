@@ -557,6 +557,20 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// 由此前完全无闸变为按 ai:read/ai:write 把关；execute 还会驱动 execute_command
 	// （远程 shell）这类工具，匿名可触发等于把远程执行入口挂在公网上。
 	s.agentHandler.Authorize = s.subsystemAuthorize
+	// 同款 G1 缺口：AI 网关的 chat/embed/RAG/prompts 共 11 条注册（8 个 handler）。
+	// 修复前匿名即可烧模型额度、往共享向量库里投文档、并增删提示词模板。
+	s.aiGatewayHandler.Authorize = s.subsystemAuthorize
+	// 同款 G1 缺口：知识库 8 条（sync/ingest/删文档是写共享文档库，search/docs/stats/
+	// sync-configs 是读文档正文）与成本控制 8 条（预算/路由规则/报表）。
+	// cost 族还有第二层：tenantId 此前由查询串与请求体自报，未启用鉴权时才沿用（见
+	// cost.scopedTenant）——否则任何拿到 cost:read 的人改个参数就能读别家预算、替别家改额度。
+	s.knowledgeHandler.Authorize = s.subsystemAuthorize
+	s.costHandler.Authorize = s.subsystemAuthorize
+	// aiops 六条此前**完全匿名**：包内早就备好了 SetAuthorize，但全仓没有任何调用点
+	// （grep 'SetAuthorize' 只命中定义处），authz==nil 时 authorize() 原样放行。
+	// 其中 POST /aiops/execute 会把修复方案直接下发成 agent 任务，等于公网远程执行入口。
+	// 权限点 aiops:read/aiops:write 同批进目录，否则接了线就变成对全部角色恒 403。
+	s.aiopsHandler.SetAuthorize(s.subsystemAuthorize)
 	// 告警通道密钥外置：根据 cfg.SecretProvider 构造 SecretProvider 并注入到 alertNotifier。
 	// cfg.SecretProvider 为空时 FromConfig 返回 (nil, nil)，不启用密钥外置（向后兼容）。
 	// 构造失败时：生产模式 fail-fast（避免运行期渠道鉴权失败），非生产模式打 Warning 继续。
