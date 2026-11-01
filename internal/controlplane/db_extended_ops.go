@@ -265,6 +265,8 @@ func (s *Server) handleDBInfluxDB(w http.ResponseWriter, r *http.Request) {
 			q = "buckets()"
 		}
 		script = fmt.Sprintf(`influx query %s --org %s`, shellQuote(q), shellQuote(org))
+	case "bucket":
+		script = fmt.Sprintf(`influx bucket create --name %s --org %s && echo "InfluxDB bucket created"`, shellQuote(bucket), shellQuote(org))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
