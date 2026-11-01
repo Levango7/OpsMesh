@@ -186,27 +186,45 @@ func TestUpgradeStatusLifecycle(t *testing.T) {
 	}
 }
 
-func TestRollbackAndCertRotationAccepted(t *testing.T) {
+// A 项裁决：升级/回滚/证书轮换的执行链路未实现，必须显式 501。
+// 回归背景：此前这三条入口先返回 202，再由纯内存状态机把 phase 推进到
+// Completed——调用方看到的是"升级完成"，集群侧却没有任何动作（假成功）。
+func TestUnimplementedActionsReturn501(t *testing.T) {
 	h := newTestHandler()
 
-	// 这两条 execute* 只推进内存状态（不触达 SSH），因此可以走成功路径。
-	rec := doRequest(t, h.HandleRollback, http.MethodPost, "/x",
-		`{"clusterId":"c1","targetVersion":"1.28.0","reason":"regression"}`)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("HandleRollback = %d, want 202（body=%s）", rec.Code, rec.Body.String())
+	cases := []struct {
+		name string
+		fn   http.HandlerFunc
+		body string
+	}{
+		{"upgrade", h.HandleUpgrade, `{"clusterId":"c1","targetVersion":"1.30.0"}`},
+		{"rollback", h.HandleRollback, `{"clusterId":"c1","targetVersion":"1.28.0","reason":"regression"}`},
+		{"cert-rotate", h.HandleCertRotation, `{"clusterId":"c1"}`},
 	}
-	body := decodeJSON(t, rec)
-	if body["phase"] != "RollingBack" || body["toVersion"] != "1.28.0" {
-		t.Fatalf("回滚响应 = %v", body)
+	for _, c := range cases {
+		rec := doRequest(t, c.fn, http.MethodPost, "/x", c.body)
+		if rec.Code != http.StatusNotImplemented {
+			t.Fatalf("%s = %d, want 501（假成功回归）", c.name, rec.Code)
+		}
+		body := decodeJSON(t, rec)
+		if body["code"] != "ERR_NOT_IMPLEMENTED" {
+			t.Fatalf("%s: code = %v, want ERR_NOT_IMPLEMENTED", c.name, body["code"])
+		}
+		msg, _ := body["error"].(string)
+		if !strings.Contains(msg, "尚未实现") {
+			t.Fatalf("%s: error 应说明未实现，得到 %q", c.name, msg)
+		}
+		if body["phase"] != nil || body["progress"] != nil {
+			t.Fatalf("%s: 501 响应不得带假进度字段: %v", c.name, body)
+		}
 	}
 
-	rec = doRequest(t, h.HandleCertRotation, http.MethodPost, "/x", `{"clusterId":"c1"}`)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("HandleCertRotation = %d, want 202（body=%s）", rec.Code, rec.Body.String())
-	}
-	body = decodeJSON(t, rec)
-	if body["phase"] != "Rotating" {
-		t.Fatalf("证书轮换响应 = %v", body)
+	// 不得留下任何作业记录：否则 /upgrade/status 还能查到一条 Completed，等于制造假证据。
+	h.upgradeMgr.mu.RLock()
+	upgrades := len(h.upgradeMgr.upgrades)
+	h.upgradeMgr.mu.RUnlock()
+	if upgrades != 0 {
+		t.Fatalf("未实现动作登记了 %d 个作业", upgrades)
 	}
 }
 
@@ -331,7 +349,7 @@ func TestRoutesPassThroughWithoutAuthorize(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/k8s/lifecycle/upgrade",
 		strings.NewReader(`{"clusterId":"c1","targetVersion":"1.30.0"}`)))
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("未注入 Authorize 时 upgrade = %d, want 202", rec.Code)
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("未注入 Authorize 时 upgrade = %d, want 501（未实现语义与鉴权无关）", rec.Code)
 	}
 }

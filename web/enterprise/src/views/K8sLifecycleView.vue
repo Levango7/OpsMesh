@@ -29,15 +29,11 @@
       </div>
       <div class="btnbar">
         <Button variant="primary" size="sm" @click="planUpgrade" :disabled="planning">{{ $t('k8sLifecycle.plan_btn') }}</Button>
-        <Button variant="primary" size="sm" @click="doUpgrade" :disabled="upgrading">{{ $t('k8sLifecycle.upgrade_btn') }}</Button>
+        <Button variant="primary" size="sm" disabled :title="$t('k8sLifecycle.upgrade_unimplemented')">{{ $t('k8sLifecycle.upgrade_btn') }}</Button>
       </div>
+      <div class="hint">{{ $t('k8sLifecycle.upgrade_unimplemented') }}</div>
       <div v-if="upgradePlan" class="result-box">
         <pre class="code-block">{{ upgradePlan.planOutput }}</pre>
-      </div>
-      <div v-if="upgradeStatus" class="status-box">
-        <div class="status-row"><span>{{ $t('k8sLifecycle.phase') }}:</span> {{ upgradeStatus.phase }}</div>
-        <div class="status-row"><span>{{ $t('k8sLifecycle.progress') }}:</span> {{ upgradeStatus.progress }}%</div>
-        <div class="status-row"><span>{{ $t('k8sLifecycle.step') }}:</span> {{ upgradeStatus.currentStep }}</div>
       </div>
     </div>
 
@@ -79,12 +75,9 @@
         </div>
       </div>
       <div class="btnbar">
-        <Button variant="primary" size="sm" @click="doCertRotate" :disabled="rotating">{{ $t('k8sLifecycle.cert_rotate_btn') }}</Button>
+        <Button variant="primary" size="sm" disabled :title="$t('k8sLifecycle.cert_unimplemented')">{{ $t('k8sLifecycle.cert_rotate_btn') }}</Button>
       </div>
-      <div v-if="certStatus" class="status-box">
-        <div class="status-row"><span>{{ $t('k8sLifecycle.phase') }}:</span> {{ certStatus.phase }}</div>
-        <div class="status-row"><span>{{ $t('k8sLifecycle.progress') }}:</span> {{ certStatus.progress }}%</div>
-      </div>
+      <div class="hint">{{ $t('k8sLifecycle.cert_unimplemented') }}</div>
     </div>
 
     <div class="card">
@@ -125,8 +118,6 @@ import { ref } from 'vue'
 import { t } from '@/i18n'
 import {
   planK8sUpgrade,
-  upgradeK8sCluster,
-  rotateK8sCerts,
   scaleK8sNodes,
   backupK8sEtcd,
   listK8sEtcdBackups
@@ -137,9 +128,7 @@ import { Button } from '@/components/ui'
 const loadErr = ref('')
 
 const planning = ref(false)
-const upgrading = ref(false)
 const backing = ref(false)
-const rotating = ref(false)
 const scaling = ref(false)
 
 const upgradeForm = ref({ clusterId: '', targetVersion: '1.30.0', cpNode: '', user: 'root', sshKey: '' })
@@ -148,10 +137,8 @@ const certForm = ref({ clusterId: '' })
 const scaleForm = ref({ action: 'add', nodes: '', cpNode: '', joinCmd: '' })
 
 const upgradePlan = ref(null)
-const upgradeStatus = ref(null)
 const backupResult = ref(null)
 const backupList = ref([])
-const certStatus = ref(null)
 const scaleResult = ref(null)
 
 async function planUpgrade() {
@@ -167,18 +154,6 @@ async function planUpgrade() {
     upgradePlan.value = r.j
   } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
   finally { planning.value = false }
-}
-
-async function doUpgrade() {
-  upgrading.value = true
-  try {
-    const r = await upgradeK8sCluster({
-      clusterId: upgradeForm.value.clusterId,
-      targetVersion: upgradeForm.value.targetVersion
-    })
-    upgradeStatus.value = r.j
-  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
-  finally { upgrading.value = false }
 }
 
 async function doBackup() {
@@ -202,15 +177,6 @@ async function listBackups() {
     })
     backupList.value = j.backups || []
   } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
-}
-
-async function doCertRotate() {
-  rotating.value = true
-  try {
-    const r = await rotateK8sCerts({ clusterId: certForm.value.clusterId })
-    certStatus.value = r.j
-  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
-  finally { rotating.value = false }
 }
 
 async function doNodeScale() {

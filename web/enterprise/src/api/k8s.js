@@ -248,15 +248,16 @@ export const getK8sClusterDeployStatus = (deployID) =>
 
 // ---------- K8s 生命周期（契约：internal/k8slifecycle/handler.go） ----------
 //   POST /api/v1/k8s/lifecycle/upgrade/plan  {clusterId,targetVersion,host,user,sshKey} → 200 {currentVersion,targetVersion,planOutput,available}
-//   POST /api/v1/k8s/lifecycle/upgrade       {clusterId,targetVersion}                  → 202 UpgradeStatus {phase,progress,currentStep,…}
-//   POST /api/v1/k8s/lifecycle/cert-rotate   {clusterId}                                → 202 CertRotationStatus {phase,progress,currentStep,…}
+//   POST /api/v1/k8s/lifecycle/upgrade       {clusterId,targetVersion}                  → 501 {error,code:"ERR_NOT_IMPLEMENTED"}
+//   POST /api/v1/k8s/lifecycle/rollback      {clusterId,targetVersion,reason}           → 501 同上
+//   POST /api/v1/k8s/lifecycle/cert-rotate   {clusterId}                                → 501 同上
 //   POST /api/v1/k8s/lifecycle/node-scale    {clusterId,action(add|remove),nodes,joinCmd?,cpNode?} → 200 {added:[…]|removed:[…]}
 //   POST /api/v1/k8s/lifecycle/etcd-backup   {clusterId,cpNode,backupDir}               → 200 {backupPath,size,timestamp}
 //   GET  /api/v1/k8s/lifecycle/etcd-backups  ?cpNode&backupDir                          → 200 {backups:[…]}
+// 升级/回滚/证书轮换的执行链路尚未实现（A 项裁决为显式 501，C 项立项中），
+// 因此这里不提供封装：UI 已禁用入口，避免"点了就说升级完成"的假成功。
 // silent=true：调用方（K8sLifecycleView）自行经页面错误横幅展示，避免全局 toast 双提示。
 export const planK8sUpgrade = (spec) => postJSON('/k8s/lifecycle/upgrade/plan', spec, true)
-export const upgradeK8sCluster = (spec) => postJSON('/k8s/lifecycle/upgrade', spec, true)
-export const rotateK8sCerts = (spec) => postJSON('/k8s/lifecycle/cert-rotate', spec, true)
 export const scaleK8sNodes = (spec) => postJSON('/k8s/lifecycle/node-scale', spec, true)
 export const backupK8sEtcd = (spec) => postJSON('/k8s/lifecycle/etcd-backup', spec, true)
 export const listK8sEtcdBackups = (params) => getJSON('/k8s/lifecycle/etcd-backups', params, true)
