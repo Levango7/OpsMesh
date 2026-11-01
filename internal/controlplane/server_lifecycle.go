@@ -235,6 +235,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/middleware-instances/", s.handleMiddlewareInstanceRouting) // 子路径：{id}/uninstall
 	// 数据库运维：PostgreSQL/Oracle/TiDB/OceanBase（固定路径优先，再泛路由 /api/v1/db/）。
 	s.registerDBRoutes(mux)
+	s.registerDBExtendedRoutes(mux)
 	// 负载均衡运维：HaProxy/LVS/keepalived（固定路径优先，再泛路由 /api/v1/lb/）。
 	s.registerLBRoutes(mux)
 	// 对象存储运维：Amazon S3 / Aliyun OSS / MinIO（固定路径优先，再泛路由 /api/v1/storage/）。
@@ -270,6 +271,7 @@ func (s *Server) Start() error {
 	s.registerOSExtRoutes(mux)
 	s.registerDomesticRoutes(mux)
 	s.registerApacheRoutes(mux)
+	s.registerApacheExtRoutes(mux)
 	s.registerOSTuningRoutes(mux)
 	s.registerGitUnixRoutes(mux) // 安全运维：漏洞扫描/基线修复/组件更新/回滚（固定路径优先，再泛路由 /api/v1/security/）。
 	s.registerSecurityRoutes(mux)
@@ -277,9 +279,12 @@ func (s *Server) Start() error {
 	s.registerCICDRoutes(mux)
 	s.registerContainerRoutes(mux)
 	s.registerHardwareRoutes(mux)
+	s.registerHardwareExtRoutes(mux)
 	s.registerDockerRoutes(mux)
 	s.registerDBBackupRoutes(mux)
 	s.registerNetworkExtRoutes(mux)
+	s.registerNetworkVendorExtRoutes(mux)
+	s.registerNetSecExtRoutes(mux)
 	s.registerIdentityRoutes(mux)
 	s.registerAutomationRoutes(mux)
 	s.registerCapacityRoutes(mux)
