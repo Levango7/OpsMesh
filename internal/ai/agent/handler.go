@@ -10,6 +10,7 @@ import (
 	gateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
 	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // AgentHandler Agent HTTP handler
@@ -93,6 +94,9 @@ func (h *AgentHandler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 		SessionID: req.SessionID,
 		Metadata:  make(map[string]interface{}),
 	}
+	// 工具侧权限（ExecuteCommandTool 等高危工具据此判 task:write）：
+	// 从已验签角色派生权限集合，绝不由请求体提供。
+	agentCtx.Metadata["permissions"] = permissionsForRoles(actx.Roles)
 
 	var result interface{}
 	var err error
@@ -209,6 +213,24 @@ func (h *AgentHandler) HandleDecompose(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"subTasks": tasks,
 	})
+}
+
+// permissionsForRoles 把已验签角色名映射成权限点集合（单一来源 store/model.RolePermissions）。
+// 空角色/未知角色得到空集合 ⇒ 高危工具一律拒绝（fail-closed）。
+func permissionsForRoles(roles []string) []string {
+	table := model.RolePermissions()
+	out := make([]string, 0, len(table["viewer"]))
+	seen := make(map[string]bool)
+	for _, role := range roles {
+		for _, perm := range table[role] {
+			if !seen[perm] {
+				seen[perm] = true
+				out = append(out, perm)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // memoryTenant 决定读/删会话时用哪个租户：已验签上下文优先；仅在未启用鉴权

@@ -184,9 +184,38 @@ func (t *ExecuteCommandTool) Parameters() map[string]interface{} {
 		"required": []string{"device_id", "command"},
 	}
 }
+
+// CheckPermission 高危工具（远程 shell）按 RBAC 的 task:write 把关，与 controlplane
+// 下发任务同权。此前它恒返回 true 并自陈「简化：实际应检查 permissions」——那是个
+// 空壳：任何能驱动 Agent 的身份都拿到了远程执行能力。现在 **缺字段即拒**（fail-closed），
+// 权限集合由 handler 从已验签角色派生（见 permissionsForRoles）。
 func (t *ExecuteCommandTool) CheckPermission(agentCtx AgentContext) bool {
-	// 需要 task:write 权限
-	return true // 简化：实际应检查 agentCtx.Metadata["permissions"]
+	return hasPermission(agentCtx, "task:write")
+}
+
+// hasPermission 读 AgentContext.Metadata["permissions"]。
+// 接受 []string 与 []interface{}（经 JSON 反序列化后的形态）两种载体；
+// 键缺失、类型不认识、空集合一律视为无权限——宁可拒一个漏传字段的调用，
+// 不放过一个默认放行的远程执行。
+func hasPermission(agentCtx AgentContext, perm string) bool {
+	raw, ok := agentCtx.Metadata["permissions"]
+	if !ok {
+		return false
+	}
+	switch v := raw.(type) {
+	case []string:
+		return containsString(v, perm)
+	case []interface{}:
+		list := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				list = append(list, s)
+			}
+		}
+		return containsString(list, perm)
+	default:
+		return false
+	}
 }
 func (t *ExecuteCommandTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
 	return nil, notWired(t.Name())

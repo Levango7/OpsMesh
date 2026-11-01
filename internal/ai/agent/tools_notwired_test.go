@@ -106,3 +106,58 @@ func TestNotWiredOf(t *testing.T) {
 		t.Fatal("未知结果类型应返回 nil")
 	}
 }
+
+// 高危工具（远程 shell）的权限闸此前恒 true。现在缺字段即拒。
+func TestExecuteCommandToolPermissionFailClosed(t *testing.T) {
+	tool := &ExecuteCommandTool{}
+	cases := []struct {
+		name     string
+		metadata map[string]interface{}
+		want     bool
+	}{
+		{"缺 permissions 字段", nil, false},
+		{"空集合", map[string]interface{}{"permissions": []string{}}, false},
+		{"有 task:write", map[string]interface{}{"permissions": []string{"task:write"}}, true},
+		{"只有只读点", map[string]interface{}{"permissions": []string{"task:read", "device:read"}}, false},
+		{"JSON 反序列化形态", map[string]interface{}{"permissions": []interface{}{"task:write"}}, true},
+		{"类型不认识", map[string]interface{}{"permissions": "task:write"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := AgentContext{TenantID: "t1", UserID: "u1", Metadata: tc.metadata}
+			if got := tool.CheckPermission(ctx); got != tc.want {
+				t.Fatalf("CheckPermission(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPermissionsForRoles(t *testing.T) {
+	if got := permissionsForRoles(nil); len(got) != 0 {
+		t.Fatalf("空角色应得空权限集: %v", got)
+	}
+	if got := permissionsForRoles([]string{"不存在的角色"}); len(got) != 0 {
+		t.Fatalf("未知角色应得空权限集: %v", got)
+	}
+	viewer := permissionsForRoles([]string{"viewer"})
+	if hasPermission(AgentContext{Metadata: map[string]interface{}{"permissions": viewer}}, "task:write") {
+		t.Fatal("viewer 不应持有 task:write")
+	}
+	if !hasPermission(AgentContext{Metadata: map[string]interface{}{"permissions": viewer}}, "task:read") {
+		t.Fatal("viewer 应持有 task:read（派生自 *:read）")
+	}
+	admin := permissionsForRoles([]string{"admin"})
+	if !hasPermission(AgentContext{Metadata: map[string]interface{}{"permissions": admin}}, "task:write") {
+		t.Fatal("admin 应持有 task:write")
+	}
+	// 多角色并集且稳定排序（供断言与日志可复现）。
+	multi := permissionsForRoles([]string{"viewer", "operator"})
+	if !hasPermission(AgentContext{Metadata: map[string]interface{}{"permissions": multi}}, "task:write") {
+		t.Fatal("operator 角色应带入 task:write")
+	}
+	for i := 1; i < len(multi); i++ {
+		if multi[i-1] > multi[i] {
+			t.Fatalf("权限集合未排序，多角色并集将不可复现: %v", multi)
+		}
+	}
+}
