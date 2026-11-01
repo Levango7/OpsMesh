@@ -270,14 +270,8 @@ onMounted(() => {
 }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-.status-pill {
-  display: inline-flex; align-items: center;
-  padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
-}
-
 .filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 10px 0; }
 .filter-bar .field { display: flex; flex-direction: column; gap: 5px; }
 .filter-bar .field > label { margin: 0; font-size: 12px; color: var(--text-2); }
 
-.entity-form { display: flex; flex-direction: column; gap: 12px; }
 </style>

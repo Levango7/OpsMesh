@@ -276,5 +276,5 @@ onMounted(() => {
   font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
   font-family: var(--font-mono);
 }
-.logs-block { max-height: 480px; min-height: 200px; }
+
 </style>

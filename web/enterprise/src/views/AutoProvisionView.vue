@@ -120,21 +120,12 @@ onMounted(() => {})
 </script>
 
 <style scoped>
-.card h4 { margin: 16px 0 8px; font-size: 13px; }
 
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 4px; }
 .stat {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px 14px;
   border-top: 3px solid var(--accent);
-}
-
-.stat-v { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
-.stat-l { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
-
-.status-pill {
-  display: inline-flex; align-items: center;
-  padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
 
 @media (max-width: 768px) {

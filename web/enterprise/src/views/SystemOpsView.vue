@@ -68,7 +68,7 @@
       <div v-show="tab === 'firewall'" class="card card--flat">
         <div class="flowbar">
           <h3 class="card__title">{{ $t('system_ops.firewall_title') }}</h3>
-          <span class="tag">{{ $t('system_ops.backend') }}: {{ firewallBackend || '—' }}</span>
+          <span class="tag--plain">{{ $t('system_ops.backend') }}: {{ firewallBackend || '—' }}</span>
           <Button variant="ghost" size="sm" @click="onQueryFirewallRules">
             {{ $t('system_ops.query_rules') }}
           </Button>
@@ -498,16 +498,6 @@ onMounted(() => {
   color: var(--color-ink-muted, #d0d6e0);
 }
 
-.tag {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1, 4px);
-  padding: 2px 8px;
-  border-radius: var(--radius-pill-sm, 64px);
-  font-size: var(--font-size-xs, 11px);
-  font-weight: 500;
-}
-
 .tag--ok {
   background: color-mix(in srgb, var(--color-success, #27a644) 15%, transparent);
   color: var(--color-success, #27a644);
@@ -551,4 +541,12 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 /* .btnbar / [data-theme=light] .poll-err 的局部覆盖已随原语收编移除 */
+
+/* 本页标签：无底色 token 式（与全局 .tag 胶囊刻意不同，第 9 批起不再遮蔽全局） */
+.tag--plain {
+  display: inline-flex; align-items: center;
+  gap: var(--space-1, 4px); padding: 2px 8px;
+  border-radius: var(--radius-pill-sm, 64px);
+  font-size: var(--font-size-xs, 11px); font-weight: 500;
+}
 </style>

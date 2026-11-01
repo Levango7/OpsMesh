@@ -16,6 +16,21 @@
 
 ## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
+- **剩余族范式定稿（第 9 批 CSS 去重）**：第 7/8 批排除的选择器逐族裁定并实现（12 项）。
+  三档判据：零泄漏直接收（.kv 族/.checkbox-group/.metrics-row+--two/--four 修饰类/.stat-v/.stat-l/
+  .err-msg/.data-table+tr:hover）；未覆盖用法=修正（.status-pill 基类——6 个文件此前渲染无形状文字、
+  .entity-form——4 个、.tag 胶囊——9 个如 InfraConsole 的 `HTTP: 200` 状态签、.metric-value——2 个）；
+  搬址零变化（.code-block/.logs-block 自 k8s.css 逐字迁入，k8s.css 只剩 k8s 专属两类）。
+  .card h4 四副本删除后回落 tokens.css 元素级 h4（不新增全局规则）；SystemOpsView 的无底 token 式
+  标签改名 .tag--plain、TraceView 描边式改名 .tag--outline（设计差异显式化，不再遮蔽全局）。
+  守卫 OWNED 扩到 82 个选择器；EXEMPT 首次启用 2 条（K8sLifecycleView 的 .code-block——qoder 认领中
+  不代改；DataTable.vue 的 .data-table——组件自有 separate 边框设计），棘轮只减不增。
+  **范式文档裁定暂不实现项**：.field input/.field textarea → 新代码用 ui/Input 组件、遗留待逐域迁移；
+  .tabs/.tabbar/.tab → 页签用 ui/Tabs、裸页签待迁移（InfraConsole 胶囊式是有意设计）；.filter-bar →
+  旧名待迁 .flowbar；.stat 基类等页簇特定项待域审查。教训入册：脚本删规则禁用 str.find（.kv 先命中
+  .kv-grid、.tag 先命中 .tag-label 的前缀碰撞会静默跳过），必须用「选择器后紧跟 {」的正则；
+  多选择器规则含 owned 选择器时只能拆分不能整条删（RegisterView 的 .err-msg, .ok-msg 只删前者）。
+  本地实测：守卫 118 全绿、eslint 0、vitest 61 文件/1306、vite build、Playwright 80/80 全绿。
 - **跨文件重复派生类零泄漏去重（第 7 批 CSS 去重）**：`.modal-*` 收完后实测全站仍有
   **72 个选择器在 ≥3 个文件里重复声明**。本批收编判据是双重客观校验而非按类名猜：
   ① 选择器在 ≥3 个文件里的 scoped 正文**逐字节相同**（归一化 md5 同组）；② 全局化后不会有任何

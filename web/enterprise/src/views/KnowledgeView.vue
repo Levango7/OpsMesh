@@ -6,7 +6,7 @@
     :error="store.error || loadErr"
   >
     <!-- 统计 -->
-    <div class="metrics-row" v-if="store.stats">
+    <div class="metrics-row metrics-row--two" v-if="store.stats">
       <MetricsCard :title="$t('knowledge.total_docs')" icon="cmdb">
         <div class="metric-value">{{ store.stats.totalDocs || 0 }}</div>
       </MetricsCard>
@@ -161,7 +161,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.metrics-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 18px; }
+
 .search-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
 .search-input { flex: 1; padding: 7px 9px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 13px; background: var(--color-surface-1, #ffffff); }
 .filter-select { padding: 6px 8px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 12px; background: var(--color-surface-1, #ffffff); }
@@ -174,5 +174,5 @@ onMounted(() => {
 .source-tag { font-size: 11px; padding: 2px 6px; background: var(--color-surface-2, #f7f9fc); border-radius: 4px; }
 .status-on { color: var(--color-success, #059669); }
 .status-off { color: var(--color-error, #ef4444); }
-.metric-value { font-size: 24px; font-weight: 700; }
+
 </style>

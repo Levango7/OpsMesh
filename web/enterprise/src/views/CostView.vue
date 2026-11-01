@@ -6,7 +6,7 @@
     :error="store.error || loadErr"
   >
     <!-- 预算概览 -->
-    <div class="metrics-row" v-if="store.budget">
+    <div class="metrics-row metrics-row--four" v-if="store.budget">
       <MetricsCard :title="$t('cost.daily_used')" icon="cmdb">
         <div class="metric-value">{{ store.budget.usedToday || 0 }}</div>
         <div class="metric-sub">/ {{ store.budget.dailyLimit || 0 }}</div>
@@ -204,9 +204,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.metrics-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+
 .field input { padding: 7px 9px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); font-size: 13px; background: var(--color-surface-1, #ffffff); }
-.metric-value { font-size: 24px; font-weight: 700; }
+
 .metric-sub { font-size: 11px; color: var(--color-ink-muted, #6b7280); }
 .report-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
 .summary-item { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--color-surface-2, #f7f9fc); border-radius: var(--radius-sm, 6px); }

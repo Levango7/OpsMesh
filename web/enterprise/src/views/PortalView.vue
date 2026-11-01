@@ -253,9 +253,6 @@ onMounted(() => {
 .row .col:nth-child(1) { flex: 40; }
 .row .col:nth-child(2) { flex: 60; }
 
-.metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.metric-value { font-size: 28px; font-weight: 700; color: var(--text); }
-
 .chart-area { padding: 12px 0; }
 .mock-chart {
   display: flex; align-items: flex-end; gap: 3px; height: 120px; padding: 0 4px;

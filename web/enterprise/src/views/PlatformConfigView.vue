@@ -189,11 +189,8 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.card h4 { margin: 16px 0 8px; font-size: 13px; }
+
 .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-.kv { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); }
-.kv .k { font-size: 11.5px; color: var(--text-3); }
-.kv .v { font-size: 13px; color: var(--text); word-break: break-all; }
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
 .stat {
@@ -201,9 +198,6 @@ onMounted(() => {
   border-radius: var(--radius); padding: 12px 14px;
   border-top: 3px solid var(--accent);
 }
-
-.stat-v { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
-.stat-l { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
 
 @media (max-width: 768px) {
   .stats { grid-template-columns: repeat(2, 1fr); }

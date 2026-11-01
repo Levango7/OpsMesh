@@ -323,12 +323,6 @@ onUnmounted(() => {
 .field-hint { font-size: 11.5px; color: var(--text-3); margin-right: 6px; }
 .badge { display: inline-flex; align-items: center; height: 20px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; margin-right: 4px; }
 
-.code-block {
-  background: var(--surface-3); color: var(--text); padding: 12px;
-  border-radius: var(--radius-sm); overflow: auto; max-height: 320px;
-  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
-  font-family: var(--font-mono);
-}
 .params-section { margin-top: 12px; }
 
 /* .modal-mask / .modal / .modal-head / .modal-body .field( label) / .modal-body .req

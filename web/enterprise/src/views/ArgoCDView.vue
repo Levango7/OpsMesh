@@ -252,10 +252,7 @@ onMounted(fetchApps)
 </script>
 
 <style scoped>
-.tag {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 12px; background: var(--accent-soft); color: var(--accent);
-}
+
 .tag.st-synced { background: var(--ok-bg); color: var(--ok); }
 .tag.st-outofsync { background: var(--warn-bg); color: var(--warn); }
 .tag.hst-healthy { background: var(--ok-bg); color: var(--ok); }

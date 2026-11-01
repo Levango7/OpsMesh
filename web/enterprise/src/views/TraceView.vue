@@ -115,7 +115,7 @@
         <span class="muted">{{ $t('trace.trace_id_label') }}: {{ selectedTrace.traceID }}</span>
       </div>
 
-      <div class="metrics-row">
+      <div class="metrics-row metrics-row--two">
         <MetricsCard :title="$t('trace.total_duration')" icon="clock">
           <div class="metric-value">{{ selectedTrace.totalDurationMs }} ms</div>
         </MetricsCard>
@@ -137,7 +137,7 @@
           </div>
           <div v-if="span.tags && Object.keys(span.tags).length" class="span-tags">
             <span class="tag-label">{{ $t('trace.tags') }}:</span>
-            <span v-for="(v, k) in span.tags" :key="k" class="tag">{{ k }}={{ v }}</span>
+            <span v-for="(v, k) in span.tags" :key="k" class="tag--outline">{{ k }}={{ v }}</span>
           </div>
           <div v-if="span.children.length > 0" class="span-children">
             <div v-for="(child, j) in span.children" :key="j" class="span-node child">
@@ -148,7 +148,7 @@
               </div>
               <div v-if="child.tags && Object.keys(child.tags).length" class="span-tags">
                 <span class="tag-label">{{ $t('trace.tags') }}:</span>
-                <span v-for="(v, k) in child.tags" :key="k" class="tag">{{ k }}={{ v }}</span>
+                <span v-for="(v, k) in child.tags" :key="k" class="tag--outline">{{ k }}={{ v }}</span>
               </div>
             </div>
           </div>
@@ -325,10 +325,10 @@ watch(
   padding: 16px;
   margin-top: 14px;
 }
-.data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+
 .data-table th, .data-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
 .data-table th { background: var(--muted); color: var(--text-2); font-size: 12px; }
-.data-table tr:hover { background: var(--muted-soft); }
+
 .trace-id { font-size: 11px; font-family: monospace; color: var(--text-2); }
 .spans-tree { margin-top: 12px; }
 .span-node {
@@ -350,6 +350,11 @@ watch(
 .span-time { font-size: 11px; color: var(--text-2); font-family: monospace; }
 .span-tags { margin-top: 4px; }
 .tag-label { font-size: 11px; color: var(--text-2); font-weight: 600; margin-right: 6px; }
-.tag { font-size: 11px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-2); margin-right: 4px; }
-.metrics-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 14px; }
+
+/* 本页标签：紧凑描边式（与全局 .tag 胶囊刻意不同，第 9 批起不再遮蔽全局） */
+.tag--outline {
+  font-size: 11px; padding: 1px 5px;
+  border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-2); margin-right: 4px;
+}
 </style>

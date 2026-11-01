@@ -115,11 +115,38 @@ const OWNED = new Set([
   '.row-2',
   '.status-pill.warn',
   '.section-title',
-  '.checkbox-item'
+  '.checkbox-item',
+  // 第 9 批收编的剩余族范式（判据与分档见 pages.css 同名节 + ui-design.md「剩余族范式」；
+  // 未覆盖用法属于「修正」档的三族是 .status-pill 基类/.entity-form/.tag）
+  '.status-pill',
+  '.entity-form',
+  '.kv',
+  '.kv .k',
+  '.kv .v',
+  '.checkbox-group',
+  '.metric-value',
+  '.metrics-row',
+  '.metrics-row--two',
+  '.metrics-row--four',
+  '.stat-v',
+  '.stat-l',
+  '.err-msg',
+  '.data-table',
+  '.data-table tr:hover',
+  '.tag',
+  '.code-block',
+  '.logs-block'
 ])
 
-/** 已知例外：file → reasons。只减不增，空表即全清。 */
-const EXEMPT = new Map()
+/** 已知例外：file → reasons。只减不增，当前两条都有明确归属约束。 */
+const EXEMPT = new Map([
+  // qoder 认领中（CLAIM 2026-10-30T17:05Z ttl=6h），本线不代改其文件内样式；
+  // 其 .code-block scoped 副本待其合入后由 owner 收敛，届时删除本条。
+  ['views/K8sLifecycleView.vue', ['.code-block']],
+  // DataTable 组件的 .data-table 用 separate 边框 + 圆角裁切，是组件自有设计；
+  // scoped 特异性胜全局 collapse 版，组件渲染不受影响。组件改 BEM 或退役时删除本条。
+  ['components/DataTable.vue', ['.data-table']]
+])
 
 function walk(dir) {
   const out = []

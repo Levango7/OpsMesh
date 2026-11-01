@@ -290,6 +290,6 @@ onMounted(() => {
   font-size: 11px; font-weight: 700; font-family: var(--mono, monospace);
 }
 .route-form { display: flex; flex-direction: column; gap: 12px; }
-.checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
+
 /* .hint 已改用 styles/pages.css 全局原语 */
 </style>

@@ -169,6 +169,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.entity-form { display: flex; flex-direction: column; gap: 12px; }
+
 .field .hint { font-size: 11.5px; color: var(--text-3); }
 </style>

@@ -295,13 +295,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.entity-form { display: flex; flex-direction: column; gap: 12px; }
+
 .field .hint { font-size: 11.5px; color: var(--text-3); }
 
-.tag {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 12px; background: var(--accent-soft); color: var(--accent);
-}
 .tag.st-deployed { background: var(--ok-bg); color: var(--ok); }
 
 .tag.st-pending { background: var(--warn-bg); color: var(--warn); }

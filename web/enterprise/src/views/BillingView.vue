@@ -528,7 +528,7 @@ onMounted(() => {
   border-color: var(--accent);
   font-weight: 600;
 }
-.entity-form { display: flex; flex-direction: column; gap: 12px; }
+
 .usage-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
 .usage-card {
   min-width: 150px; padding: 16px 20px;

@@ -210,10 +210,7 @@ onMounted(fetchBackups)
 </script>
 
 <style scoped>
-.tag {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 12px; background: var(--accent-soft); color: var(--accent);
-}
+
 .tag.st-completed { background: var(--ok-bg); color: var(--ok); }
 .tag.st-creating { background: var(--info-bg); color: var(--info); }
 

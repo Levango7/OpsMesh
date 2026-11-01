@@ -861,3 +861,48 @@ scoped 副本**（即当前没有样式）。若只按「正文相同」就全�
 **仍遗留**：`.row-2`（11 文件，2 种正文）、`.tag`（11 文件，3 种）、`.field input`（10 文件，6 种）、
 `.entity-form`（8 文件同文但 4 个未覆盖用法）、`.status-pill` 基类（11 文件同文但 3 个未覆盖）、
 `.code-block`（8 文件 8 种）、`.metrics-row`、`.checkbox-item` 等——均有分歧或会波及未覆盖用法。
+
+
+**剩余族范式定稿（2026-11-01，第 9 批）**：第 7/8 批排除的选择器在本批**逐族裁定**并落实现。
+判据三档：①零泄漏直接收；②未覆盖用法=修正（这些页面当前渲染的是无形状文字/无布局的元素，
+补上样式是修 bug 级而非改观感）；③有泄漏或与组件纠缠 = 排除并写明迁移路径。
+
+**本批实现（12 项，canonical 已入 pages.css「剩余族范式定稿」节）**：
+- 直接收（零泄漏）：`.kv`/`.kv .k`/`.kv .v`（5 文件同文）、`.checkbox-group`（3）、
+  `.stat-v`（22px，AlertsView 25→22、CanaryView 20→22）、`.stat-l`（11.5px，AlertsView 12→11.5）、
+  `.err-msg`（RegisterView 两种变体收敛；其 `.err-msg, .ok-msg` 多选择器拆分，`.ok-msg` 保留原样）、
+  `.data-table` + `.data-table tr:hover`（3 文件同文；DataTable 组件的 separate 边框是自有设计、
+  scoped 特异性胜全局，组件在守卫 EXEMPT 有据）、`.metrics-row`（canonical=auto-fit minmax(200px,1fr)；
+  固定列数是合法版式 → 修饰类 `.metrics-row--two`/`--four`，AIOpsView/CostView/KnowledgeView/TraceView
+  模板挂修饰类、渲染与原 scoped 等价——TraceView mb 14→18 除外）。
+- 未覆盖=修正：`.status-pill` 基类（11 文件同文；6 个未覆盖文件此前渲染无形状文字——
+  CMDBCollect 的 ok/off 丸只有颜色没有 padding/圆角，看着是坏的）、`.entity-form`（8 同文；
+  4 个未覆盖文件获得表单纵排）、`.tag` 胶囊范式（9 同文；9 个未覆盖文件获得样式——
+  InfraConsole 的 `HTTP: 200` 状态签等此前是裸文字）、`.metric-value`（28px canonical；
+  AIOpsView/TraceView 未覆盖获得样式，CostView/KnowledgeView 24→28）。
+- 搬址零变化：`.code-block`/`.logs-block` 自 k8s.css 逐字迁入 pages.css（k8s.css 本就全局提供，
+  未覆盖文件今天就在用它）。k8s.css 至此只剩 k8s 专属两类（`.k8s-subnav*`/`.res-tab*`）。
+- 删除不加全局：`.card h4` 四个 scoped 副本删除后回落 tokens.css 元素级 h4——
+  范式「卡内标题层级走元素默认」，不新增全局规则。
+- 有意设计的保留：SystemOpsView 的无底 token 式标签改名 `.tag--plain`、TraceView 的紧凑描边式
+  改名 `.tag--outline`（模板同步改名，原样式以新类名保留在各自 scoped）——设计差异显式化，
+  不再以遮蔽全局的方式存在。
+
+**守卫 EXEMPT 首次启用（2 条，棘轮语义不变、条目只减不增）**：
+`views/K8sLifecycleView.vue` 的 `.code-block`（qoder 认领中，不代改，待其收敛后删条）；
+`components/DataTable.vue` 的 `.data-table`（组件自有 separate 边框设计，scoped 胜全局）。
+
+**裁定暂不实现（写明迁移路径，不做无基线盲收敛）**：
+- `.field input`（6 种）/`.field textarea`（4 种）：**新代码一律用 `ui/Input` 组件**（32/40/48px 三档），
+  遗留裸 input 的页内样式待逐域迁移组件时消亡——6 种变体盲收敛是无视觉基线的大改；
+- `.tabs`/`.tabbar`/`.tab`/`.tab.active`：页签用 `ui/Tabs` 组件；裸页签泄漏 9 处且与组件纠缠
+  （`.tab` 同时被组件模板与 9 个视图以不同形态使用），InfraConsoleView 的胶囊式页签是有意设计——
+  待逐页迁组件时消亡；
+- `.filter-bar`（3 种）：`.flowbar` 已是筛选栏 canonical，`.filter-bar` 是旧名遗留，待逐页迁移；
+- `.stat` 基类（泄漏 4 处、未覆盖文件内层结构未知）、`.stat-card`/`.stat-label`（3 文件 3 种）、
+  `.brand` 族、`.chart-area`/`.mock-chart`/`.chart-bar`、`.section-title` 已收部分之外——页簇特定，待域审查。
+
+**教训（写入 spec 注释）**：脚本化删规则不能用 `str.find(选择器)`——`.kv` 会先命中 `.kv-grid`、
+`.tag` 会先命中 `.tag-label`（前缀碰撞导致静默跳过，本轮 7 处残留全源于此）；必须用
+「选择器后紧跟 `{`」的正则（`(?<![.\w-])sel\s*\{`）。多选择器规则含 owned 选择器时只能拆分
+（如 RegisterView 的 `.err-msg, .ok-msg` 只删 `.err-msg` 部分保留 `.ok-msg`），不能整条删。

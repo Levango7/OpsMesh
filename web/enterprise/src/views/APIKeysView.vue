@@ -273,5 +273,5 @@ onMounted(() => {
   font-size: 11px; font-weight: 600; font-family: var(--mono, monospace);
 }
 .key-form { display: flex; flex-direction: column; gap: 12px; }
-.checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
+
 </style>

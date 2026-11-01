@@ -765,9 +765,6 @@ onMounted(() => {
 .res-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .res-tab { font-size: 12px; }
 
-.code-block { background: var(--color-surface-2, #f7f9fc); padding: 12px; border-radius: var(--radius-sm, 6px); overflow: auto; font-size: 12px; font-family: var(--font-family-mono); white-space: pre-wrap; word-break: break-all; max-height: 480px; }
-.logs-block { min-height: 200px; }
-
 /* 对话框已全部改用 styles/pages.css 全局家族 A（2026-10-30 收编）：
    .modal-mask--inset（原 16px 内距，本页 z-index 保持全局 50）/
    .modal--fluid + .modal--wide/--narrow（原 100%+520px，lg/sm 抬上限到 760/420）/

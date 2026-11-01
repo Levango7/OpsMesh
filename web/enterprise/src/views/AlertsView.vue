@@ -182,9 +182,6 @@ onMounted(() => { if (!store.list.length) store.fetchAlerts() })
   border-top: 3px solid var(--accent); box-shadow: var(--shadow);
 }
 
-.stat-v { font-size: 25px; font-weight: 700; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
-.stat-l { font-size: 12px; color: var(--text-3); margin-top: 4px; }
-
 .alert {
   background: var(--fail-soft); border: 1px solid var(--fail-bg);
   padding: 10px 13px; border-radius: var(--radius-sm);

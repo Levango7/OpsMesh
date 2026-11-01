@@ -178,13 +178,6 @@ function toggleLang() {
 
 .field input { width: 100%; }
 
-.err-msg {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12.5px; color: var(--fail);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  padding: 7px 10px; border-radius: var(--radius-sm);
-}
-
 .success-msg {
   display: flex; align-items: center; gap: 6px;
   font-size: 12.5px; color: var(--success, #10b981);

@@ -425,5 +425,5 @@ onMounted(() => {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   vertical-align: bottom; font-size: 12.5px;
 }
-.entity-form { display: flex; flex-direction: column; gap: 12px; }
+
 </style>

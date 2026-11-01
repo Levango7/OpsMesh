@@ -296,13 +296,6 @@ onMounted(() => {
   font-size: 11.5px; font-weight: 600;
 }
 
-.code-block {
-  background: var(--surface-3); color: var(--text); padding: 10px;
-  border-radius: var(--radius-sm); overflow: auto;
-  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
-  font-family: var(--font-mono);
-}
-
 .help-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.7; }
 .help-list code { font-size: 12px; }
 /* .msg / .msg.ok / .msg.err 已改用 styles/pages.css 全局原语 */

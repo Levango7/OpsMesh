@@ -470,12 +470,5 @@ onMounted(() => { store.fetchRules() })
 }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-.status-pill {
-  display: inline-flex; align-items: center;
-  padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
-}
-
-.entity-form { display: flex; flex-direction: column; gap: 12px; }
-
 @media (max-width: 600px) { .row-2 { grid-template-columns: 1fr; } }
 </style>

@@ -127,5 +127,5 @@ onMounted(() => {
 <style scoped>
 .field-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .field-inline select { padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.code-block { background: var(--surface-3); color: var(--text); padding: 10px; border-radius: var(--radius-sm); overflow: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; font-family: var(--font-mono); max-height: 400px; }
+
 </style>

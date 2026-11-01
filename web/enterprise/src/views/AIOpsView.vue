@@ -1,7 +1,7 @@
 <template>
   <PageShell :title="$t('aiops.title')" :desc="$t('aiops.desc')" testid="aiops" :error="status.error">
     <!-- 引擎状态卡片 -->
-    <div class="metrics-row">
+    <div class="metrics-row metrics-row--four">
       <MetricsCard :title="$t('aiops.status_enabled')" icon="info" accent="--indigo">
         <div class="metric-value">{{ status.enabled ? $t('common.yes') : $t('common.no') }}</div>
         <div class="metric-sub">{{ status.provider }} · {{ status.model }}</div>
@@ -393,7 +393,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.metrics-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+
 .tabs { display: flex; gap: 8px; margin-bottom: 14px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
 .tabs button {
   background: none; border: none; border-bottom: 2px solid transparent;
@@ -415,9 +415,9 @@ onMounted(() => {
 .warn { color: var(--fail); }
 ul { margin: 6px 0; padding-left: 20px; }
 code { background: var(--muted); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 12px; }
-.data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+
 .data-table th, .data-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
 .data-table th { background: var(--muted); color: var(--text-2); font-size: 12px; }
-.data-table tr:hover { background: var(--muted-soft); }
+
 @media (max-width: 768px) { .metrics-row { grid-template-columns: repeat(2, 1fr); } }
 </style>

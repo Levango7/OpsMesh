@@ -294,9 +294,6 @@ onMounted(() => {})
 .filter-input.narrow { min-width: 90px; max-width: 110px; }
 
 .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-.kv { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); }
-.kv .k { font-size: 11.5px; color: var(--text-3); }
-.kv .v { font-size: 13px; color: var(--text); word-break: break-all; }
 
 .value-cell { display: inline-block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

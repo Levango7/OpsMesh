@@ -254,23 +254,14 @@ onMounted(() => {})
 }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-.card h4 { margin: 14px 0 6px; font-size: 12.5px; color: var(--text-2); }
 .field .hint { font-size: 11.5px; color: var(--text-3); }
 
 .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
-.kv { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); }
-.kv .k { font-size: 11.5px; color: var(--text-3); }
-.kv .v { font-size: 13px; color: var(--text); word-break: break-all; }
 
 .output-pre {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
   padding: 10px 12px; font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-all;
   max-height: 320px; overflow: auto; margin: 0;
-}
-
-.status-pill {
-  display: inline-flex; align-items: center;
-  padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
 
 @media (max-width: 768px) { .row-2 { grid-template-columns: 1fr; } }

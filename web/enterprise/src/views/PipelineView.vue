@@ -250,10 +250,7 @@ onMounted(fetchAll)
 <style scoped>
 /* .row-actions / .field / .field > label / .btnbar 已改用 styles/pages.css 全局原语 */
 .section-title { margin: 22px 0 4px; font-size: 15px; }
-.tag {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 12px; background: var(--accent-soft); color: var(--accent);
-}
+
 .tag.st-succeeded { background: var(--ok-bg); color: var(--ok); }
 
 .tag.st-running { background: var(--info-bg); color: var(--info); }

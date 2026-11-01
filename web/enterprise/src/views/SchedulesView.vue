@@ -211,10 +211,6 @@ onMounted(fetchSchedules)
 </script>
 
 <style scoped>
-.status-pill {
-  display: inline-flex; align-items: center;
-  padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
-}
 
 .schedule-form { display: flex; flex-direction: column; gap: 12px; }
 </style>

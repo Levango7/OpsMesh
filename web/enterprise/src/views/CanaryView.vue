@@ -336,7 +336,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.card h4 { margin: 0 0 8px; font-size: 13px; }
+
 .flowbar h3 { margin: 0; }
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
@@ -345,9 +345,6 @@ onMounted(async () => {
   border-radius: var(--radius); padding: 12px 14px;
   border-top: 3px solid var(--accent);
 }
-
-.stat-v { font-size: 20px; font-weight: 700; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; word-break: break-all; }
-.stat-l { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
 
 .traffic-bar {
   display: flex; height: 24px; border-radius: var(--radius-sm); overflow: hidden;

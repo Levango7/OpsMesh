@@ -162,12 +162,6 @@ onMounted(() => {
 }
 .response-time { font-size: 11.5px; color: var(--text-3); flex: 1; }
 
-.code-block {
-  background: var(--surface); color: var(--text); padding: 12px;
-  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
-  font-family: var(--font-mono); margin: 0; max-height: 320px; overflow: auto;
-}
-
 .history-list { max-height: 480px; overflow: auto; }
 .history-item {
   padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; transition: .12s;

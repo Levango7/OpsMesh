@@ -424,8 +424,6 @@ onMounted(() => {
 }
 .src-warn { background: var(--warn-soft); border: 1px solid var(--warn-bg); color: var(--warn); font-weight: 500; }
 .src-ok { background: var(--ok-soft); border: 1px solid var(--ok-bg); color: var(--ok); }
-.metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.metric-value { font-size: 28px; font-weight: 700; color: var(--text); }
 
 .util-bar {
   position: relative; height: 20px; background: var(--surface-3);

@@ -265,10 +265,6 @@ onMounted(fetchWebhooks)
 <style scoped>
 /* .row-actions / .field / .field > label / .btnbar 已改用 styles/pages.css 全局原语 */
 .url-cell { font-size: 12px; }
-.status-pill {
-  display: inline-flex; align-items: center;
-  padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
-}
 
 .webhook-form { display: flex; flex-direction: column; gap: 12px; }
 /* .field / .field > label 已改用 styles/pages.css 全局原语 */

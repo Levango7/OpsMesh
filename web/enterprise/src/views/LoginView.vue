@@ -164,13 +164,6 @@ function toggleLang() {
 
 .field input { width: 100%; }
 
-.err-msg {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12.5px; color: var(--fail);
-  background: var(--fail-soft); border: 1px solid var(--fail-bg);
-  padding: 7px 10px; border-radius: var(--radius-sm);
-}
-
 /* 原因提示：中性色，与错误提示（红）区分——会话失效不是用户操作错误 */
 .notice-msg {
   display: flex; align-items: center; gap: 6px;

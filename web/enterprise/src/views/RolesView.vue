@@ -218,5 +218,5 @@ onMounted(() => {
   font-size: 12px; font-weight: 600; color: var(--text-3);
   margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em;
 }
-.checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
+
 </style>

@@ -233,10 +233,6 @@ onMounted(fetchSLOs)
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
   background: var(--accent-soft); color: var(--accent);
 }
-.status-pill {
-  display: inline-flex; align-items: center;
-  padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
-}
 
 .slo-form { display: flex; flex-direction: column; gap: 12px; }
 </style>

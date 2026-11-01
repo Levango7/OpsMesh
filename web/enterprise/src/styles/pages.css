@@ -723,3 +723,121 @@
   background: var(--surface-2);
   cursor: pointer;
 }
+
+/* ===========================================================================
+ * 剩余族范式定稿（第 9 批，2026-11-01）
+ * ---------------------------------------------------------------------------
+ * 三档判据（正文同文 + 泄漏分档 + 观感变化幅度），完整裁定见 docs/ui-design.md
+ * 「剩余族范式」节。本节只收实现项；文档另有「暂不实现」清单。
+ * =========================================================================== */
+
+/* --- 状态丸基类（11 文件同文；6 个未覆盖文件此前渲染无形状文字，补上是修正） --- */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* --- 表单纵排（8 文件同文；4 个未覆盖文件获得一致表单布局） --- */
+.entity-form { display: flex; flex-direction: column; gap: 12px; }
+
+/* --- 键值对（5 文件同文；2 个未覆盖文件获得样式） --- */
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+.kv .k { font-size: 11.5px; color: var(--text-3); }
+.kv .v { font-size: 13px; color: var(--text); word-break: break-all; }
+
+/* --- 复选框组（3 文件同文；UsersView 未覆盖获得布局） --- */
+.checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* --- 指标数值（canonical 28px；CostView/KnowledgeView 24→28，AIOpsView/TraceView 未覆盖获得样式） --- */
+.metric-value { font-size: 28px; font-weight: 700; color: var(--text); }
+
+/* --- 指标行：canonical 自适应；固定列数用修饰类（AIOpsView/CostView --four、
+ *     KnowledgeView/TraceView --two，渲染与原 scoped 逐字节等价、TraceView mb 14→18） --- */
+.metrics-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.metrics-row--four {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.metrics-row--two {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+/* --- 标签：胶囊为 canonical（9 文件同文 + 9 个未覆盖文件获得样式）。
+ *     SystemOpsView 的无底 token 式改用页专属 .tag--plain、TraceView 的描边式
+ *     改用页专属 .tag--outline（模板已同步改名），两种设计保留、不再遮蔽全局。 --- */
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* --- 指标行内数值标签（stat 族：4/5 与 3/5 文件同文；AlertsView/CanaryView 收敛） ---
+ *     .stat 基类刻意不收：泄漏 4 处且未覆盖文件的内层结构未知，待域审查。 */
+.stat-v {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.stat-l { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
+
+/* --- 错误提示（2/3 文件同文；RegisterView 两种变体收敛） --- */
+.err-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--fail);
+  background: var(--fail-soft);
+  border: 1px solid var(--fail-bg);
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+}
+
+/* --- 原生数据表（矩阵/时间轴场景，3 文件同文；DataTable 组件的 separate 边框
+ *     是自有设计、scoped 胜全局不受影响——组件本身在守卫 EXEMPT 有据） --- */
+.data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+.data-table tr:hover { background: var(--muted-soft); }
+
+/* --- 卡内四级标题：不设全局规则。四个 scoped 副本删除后回落 tokens.css 的
+ *     元素级 h4（13px / text-2 / margin 12px 0 6px）——范式「卡内标题层级走元素默认」 --- */
+
+/* --- 代码块：自 k8s.css 逐字迁入（k8s.css 本就全局提供它，未覆盖文件今天就在用，
+ *     搬址零变化）。日志容器见 .logs-block（随迁）。 --- */
+.code-block {
+  background: var(--color-surface-2, #f7f9fc);
+  color: var(--color-ink, #f7f8f8);
+  padding: var(--space-3, 12px);
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-sm, 6px);
+  overflow: auto;
+  font-size: var(--font-size-xs, 12px);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--font-mono, monospace);
+}
+.logs-block { max-height: 480px; min-height: 200px; }

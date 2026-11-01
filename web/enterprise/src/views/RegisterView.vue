@@ -183,12 +183,11 @@ function toggleLang() {
 
 .field input { width: 100%; }
 
-.err-msg, .ok-msg {
+.ok-msg {
   display: flex; align-items: flex-start; gap: 6px;
   font-size: 12.5px; line-height: 1.5;
   padding: 7px 10px; border-radius: var(--radius-sm);
 }
-.err-msg { color: var(--fail); background: var(--fail-soft); border: 1px solid var(--fail-bg); }
 .ok-msg { color: var(--ok); background: var(--ok-soft); border: 1px solid var(--ok-bg); }
 .ok-msg .icon { flex-shrink: 0; margin-top: 2px; } /* 长文案（如待审批提示）多行时图标钉在首行 */
 

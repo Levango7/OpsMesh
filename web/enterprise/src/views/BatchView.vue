@@ -267,9 +267,6 @@ onMounted(async () => {
   border-top: 3px solid var(--accent);
 }
 
-.stat-v { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
-.stat-l { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
-
 .status-badge { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
 .status-pending { background: var(--accent-soft); color: var(--accent); }
 .status-running { background: var(--accent-soft); color: var(--accent); }

@@ -211,9 +211,6 @@ onMounted(() => {
 .row .col:nth-child(1) { flex: 45; }
 .row .col:nth-child(2) { flex: 55; }
 
-.metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.metric-value { font-size: 28px; font-weight: 700; color: var(--text); }
-
 .timeline { max-height: 360px; overflow: auto; }
 .timeline-item { display: flex; gap: 12px; padding: 8px 0; position: relative; }
 .timeline-item:not(:last-child)::before {
@@ -235,12 +232,6 @@ onMounted(() => {
 .timeline-text { font-size: 13px; color: var(--text-2); }
 .timeline-author { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
 
-.code-block {
-  background: var(--surface-3); color: var(--text); padding: 12px;
-  border-radius: var(--radius-sm); overflow: auto;
-  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
-  font-family: var(--font-mono);
-}
 .postmortem-content { max-height: 300px; }
 
 /* .modal-mask / .modal / .modal-head / .modal-body .field( label) 已改用

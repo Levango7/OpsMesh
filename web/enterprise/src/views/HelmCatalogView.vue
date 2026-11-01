@@ -197,8 +197,4 @@ onMounted(loadCatalog)
 /* .field / .field > label 已改用 styles/pages.css 全局原语 */
 .keywords { display: flex; flex-wrap: wrap; gap: 4px; }
 
-.tag {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 12px; background: var(--accent-soft); color: var(--accent);
-}
 </style>

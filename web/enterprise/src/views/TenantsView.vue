@@ -244,10 +244,7 @@ onMounted(fetchTenants)
 
 <style scoped>
 .dn { margin-left: 8px; color: var(--text-3); font-size: 12px; }
-.tag {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 12px; background: var(--accent-soft); color: var(--accent);
-}
+
 .tag.st-active { background: var(--ok-bg); color: var(--ok); }
 .tag.st-suspended { background: var(--warn-bg); color: var(--warn); }
 .tag.st-disabled { background: var(--fail-bg); color: var(--fail); }

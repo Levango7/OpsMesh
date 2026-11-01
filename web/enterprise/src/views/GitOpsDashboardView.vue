@@ -304,12 +304,7 @@ onMounted(() => {
   font-family: monospace;
   text-align: right;
 }
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 10px;
-  font-size: 13px;
-}
+
 .data-table th,
 .data-table td {
   border: 1px solid var(--border);
@@ -321,9 +316,7 @@ onMounted(() => {
   color: var(--text-2);
   font-size: 12px;
 }
-.data-table tr:hover {
-  background: var(--muted-soft);
-}
+
 .quick-links {
   padding: 12px;
 }

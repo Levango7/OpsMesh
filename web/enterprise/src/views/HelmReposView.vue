@@ -194,12 +194,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.entity-form { display: flex; flex-direction: column; gap: 12px; }
 
-.tag {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 12px; background: var(--accent-soft); color: var(--accent);
-}
 .url { font-size: 12px; }
 
 /* Dark mode */
