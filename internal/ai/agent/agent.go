@@ -115,7 +115,7 @@ func (a *BaseAgent) Run(ctx context.Context, input string, agentCtx AgentContext
 	systemPrompt := a.buildSystemPrompt(agentCtx)
 
 	// 获取历史记忆
-	history := a.memory.GetShortTerm(agentCtx.SessionID)
+	history := a.memory.GetShortTerm(agentCtx.TenantID, agentCtx.SessionID)
 	messages := []gateway.Message{
 		{Role: gateway.RoleSystem, Content: systemPrompt},
 	}
@@ -182,7 +182,7 @@ func (a *BaseAgent) Run(ctx context.Context, input string, agentCtx AgentContext
 	}
 
 	// 保存到记忆
-	a.memory.AddShortTerm(agentCtx.SessionID, input, result.Output)
+	a.memory.AddShortTerm(agentCtx.TenantID, agentCtx.SessionID, input, result.Output)
 
 	result.Duration = time.Since(start)
 	return result, nil

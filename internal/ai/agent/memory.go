@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // MemoryEntry 记忆条目
@@ -20,11 +21,18 @@ type MemoryEntry struct {
 // MemoryManager 记忆管理器
 type MemoryManager struct {
 	mu            sync.RWMutex
-	shortTerm     map[string][]MemoryEntry // sessionID -> entries
+	shortTerm     map[string][]MemoryEntry // 租户作用域的会话键 -> entries
 	longTerm      map[string][]MemoryEntry // userID -> entries
 	teamKnowledge map[string][]MemoryEntry // teamID -> entries
 	maxShort      int
 	maxLong       int
+}
+
+// sessionKey 给 sessionId 加上租户前缀。
+// sessionId 由客户端自报，只用它做键 ⇒ 猜到一个号就能读到、甚至删掉别的租户的
+// 会话记忆（含告警上下文、设备信息这类敏感内容）。租户前缀由**已验签**的上下文提供。
+func sessionKey(tenantID, sessionID string) string {
+	return tenantID + "\x00" + sessionID
 }
 
 func NewMemoryManager() *MemoryManager {
@@ -37,12 +45,12 @@ func NewMemoryManager() *MemoryManager {
 	}
 }
 
-// GetShortTerm 获取短期记忆 (滑动窗口)
-func (m *MemoryManager) GetShortTerm(sessionID string) []MemoryEntry {
+// GetShortTerm 获取短期记忆 (滑动窗口)，按租户作用域取。
+func (m *MemoryManager) GetShortTerm(tenantID, sessionID string) []MemoryEntry {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	entries := m.shortTerm[sessionID]
+	entries := m.shortTerm[sessionKey(tenantID, sessionID)]
 	if len(entries) > m.maxShort {
 		entries = entries[len(entries)-m.maxShort:]
 	}
@@ -52,21 +60,22 @@ func (m *MemoryManager) GetShortTerm(sessionID string) []MemoryEntry {
 }
 
 // AddShortTerm 添加短期记忆
-func (m *MemoryManager) AddShortTerm(sessionID, input, output string) {
+func (m *MemoryManager) AddShortTerm(tenantID, sessionID, input, output string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	key := sessionKey(tenantID, sessionID)
 	entry := MemoryEntry{
 		SessionID: sessionID,
 		Input:     input,
 		Output:    output,
 		Timestamp: time.Now(),
 	}
-	m.shortTerm[sessionID] = append(m.shortTerm[sessionID], entry)
+	m.shortTerm[key] = append(m.shortTerm[key], entry)
 
 	// 滑动窗口：超过 maxShort 时移除最早的
-	if len(m.shortTerm[sessionID]) > m.maxShort*2 {
-		m.shortTerm[sessionID] = m.shortTerm[sessionID][m.maxShort:]
+	if len(m.shortTerm[key]) > m.maxShort*2 {
+		m.shortTerm[key] = m.shortTerm[key][m.maxShort:]
 	}
 }
 
@@ -114,16 +123,16 @@ func (m *MemoryManager) AddTeamKnowledge(teamID string, entry MemoryEntry) {
 	m.teamKnowledge[teamID] = append(m.teamKnowledge[teamID], entry)
 }
 
-// ClearSession 清除会话记忆
-func (m *MemoryManager) ClearSession(sessionID string) {
+// ClearSession 清除会话记忆（租户作用域内）
+func (m *MemoryManager) ClearSession(tenantID, sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.shortTerm, sessionID)
+	delete(m.shortTerm, sessionKey(tenantID, sessionID))
 }
 
 // SummarizeSession 生成会话摘要 (用于长期记忆)
-func (m *MemoryManager) SummarizeSession(sessionID string) string {
-	entries := m.GetShortTerm(sessionID)
+func (m *MemoryManager) SummarizeSession(tenantID, sessionID string) string {
+	entries := m.GetShortTerm(tenantID, sessionID)
 	if len(entries) == 0 {
 		return ""
 	}
@@ -136,9 +145,15 @@ func (m *MemoryManager) SummarizeSession(sessionID string) string {
 	return sb.String()
 }
 
+// truncate 按字节上限截断并在 UTF-8 字符边界回退：会话摘要里几乎都是中文，
+// 硬切会把多字节字符切成非法序列（写进 LLM 上下文或日志后表现为乱码/替换符）。
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	cut := maxLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }

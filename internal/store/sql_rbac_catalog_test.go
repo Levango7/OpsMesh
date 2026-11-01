@@ -27,6 +27,7 @@ import (
 // requireProd/requirePermission 字符串字面量 vs 目录比对的结果，15 项），
 // 2026-10-22 追加 cloud 族（前端路由 requirePerm: 'cloud:read' + 云账号 handler 闸）。
 var handlerRequiredPerms = []string{
+	"ai:read", "ai:write", // 2026-11-01 ai/agent 六条路由接鉴权时新增
 	"alert:write",
 	"approval:read", "approval:write", "approval:approve",
 	"cloud:read", "cloud:write",
@@ -88,6 +89,19 @@ func TestRolePermissions_DerivationEffects(t *testing.T) {
 
 	// operatorReadOnlyGroups（gpu/runbook/incident/k8s）：operator 必须拿到 read，
 	// 且不得拿到 write —— 前端路由门 requirePerm 只要求 *:read；write 下放属产品语义，未决前不下放。
+	// ai 组进 operatorReadOnlyGroups：operator 至少能看/问（classify/decompose/memory），
+	// 但拿不到 ai:write —— 执行 Agent 会驱动 execute_command（远程 shell）。
+	for _, p := range []string{"ai:read"} {
+		if !operator[p] {
+			t.Errorf("operator 应随 operatorReadOnlyGroups 获得 %q", p)
+		}
+		if viewer := perms["viewer"]; !containsPerm(viewer, "ai:read") {
+			t.Errorf("viewer 应随 *:read 派生获得 ai:read, got %v", viewer)
+		}
+	}
+	if operator["ai:write"] {
+		t.Error("operator 不应获得 ai:write（Agent 可驱动远程 shell，写权限待工具侧校验收口）")
+	}
 	for _, p := range []string{"gpu:read", "runbook:read", "incident:read", "k8s:read"} {
 		if !operator[p] {
 			t.Errorf("operator 应随 operatorReadOnlyGroups 获得只读权限 %q（否则低于 viewer，角色层级倒挂）", p)
@@ -103,4 +117,13 @@ func TestRolePermissions_DerivationEffects(t *testing.T) {
 			t.Errorf("operator 不应获得 %q（最小权限：审批/敏感域仅 admin）", p)
 		}
 	}
+}
+
+func containsPerm(perms []string, want string) bool {
+	for _, p := range perms {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }

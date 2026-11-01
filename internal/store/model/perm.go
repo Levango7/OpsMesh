@@ -164,6 +164,16 @@ var PermSpecs = []PermSpec{
 	// admin 角色自动获得（由 RolePermissions 派生集合），升级部署下次启动自动生效。
 	{"system", "system:read", "系统级读权限（系统状态/配置查询等）"},
 	{"system", "system:write", "系统级写权限（中间件部署/数据库操作等高危运维）"},
+	// AI 域补种（2026-11-01，用户指派「修 A：ai/agent 路由接鉴权」）：
+	// /api/v1/ai/agent/* 六条路由此前由 RegisterAgentRoutes 裸注册，包内既无
+	// requireProd 类校验、也不在控制面的 G1 注入清单里 ⇒ 未登录即可驱动 Agent；
+	// 且 HandleExecute 把请求体里的 userId/tenantId 原样塞进 AgentContext。
+	// ai:read 进 operatorReadOnlyGroups（否则 operator 连读都没有，低于 viewer——
+	// 与 gpu/runbook/incident/k8s 同一类层级倒挂）；ai:write **不**下放 operator：
+	// Agent 编排可驱动 execute_command（远程 shell），其工具侧权限校验（CheckPermission
+	// 恒 true 的空壳）尚未收口，写权限先按最小权限只给 admin。
+	{"ai", "ai:read", "查看 AI Agent、意图分类与会话记忆"},
+	{"ai", "ai:write", "执行 AI Agent 编排/清理会话记忆"},
 }
 
 // RolePermissions 返回预置角色名→权限集合映射，与 seedRBAC 的角色定义保持一致。
@@ -198,6 +208,9 @@ func RolePermissions() map[string][]string {
 	// 也只把 k8s:read 给了 viewer，与本注释自述矛盾，一并按只读补齐。
 	operatorReadOnlyGroups := map[string]bool{
 		"gpu": true, "runbook": true, "incident": true, "k8s": true,
+		// ai 只给 read：Agent 编排能驱动 execute_command（远程 shell），
+		// 在其工具侧权限校验收口前，write 不下放（见 PermSpecs 的 ai 族注释）。
+		"ai": true,
 	}
 	// operatorGroupActions 是 operator 在 operatorGroups 各组内拿到的动作集。
 	// 2026-10-14 §3.12（用户裁定：RBAC 矩阵细化，不上基于归属的场景授权）：
