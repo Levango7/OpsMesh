@@ -297,6 +297,9 @@ func (s *Server) Start() error {
 	s.registerOnCallRoutes(mux)
 	s.registerDBReplicationRoutes(mux)
 	s.registerServiceDiscoveryRoutes(mux)
+	// 补充型数据库/中间件：Weaviate(向量)/etcd(KV)/Hazelcast+Ehcache(缓存)/
+	// Meilisearch+Typesense(搜索)/Apache Camel(集成)。
+	s.registerMiscExtRoutes(mux)
 	s.registerK8sGatewayAPIRoutes(mux)
 	s.registerMicroserviceRoutes(mux)
 	s.registerRedisCacheScenarioRoutes(mux)
