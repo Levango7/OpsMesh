@@ -4,6 +4,112 @@
 
 ---
 
+## v0.17.0 — 2026-11-01 K8s 生命周期假成功收口（对外改口 501）+ 云厂商真实调用 + 运维域广度扩展 + 前端覆盖/布局收官 + 迁移锁上限
+
+本版是 v0.16.0（tag `267a104`，2026-10-26）之后 main 上的 **202 个提交**归版。主线三件事：
+把「对外宣称成功而实际零动作」的面向用户改口（K8s 生命周期升级/回滚/证书轮换 → 显式 501、
+前端入口置灰）；把运维面从「只有查询」推进到「云厂商资源有真实写操作、21 域有执行模板」；
+把前端「后端有 API / 页面无入口」的覆盖缺口闭合，并收编跨页重复样式。
+
+> **本版编号已落进版本源，但标签尚未切**：`internal/version.Version`、`Chart.yaml version/appVersion`、
+> `values-production.yaml` 全部 14 个镜像 tag、`production-segment.yaml`、5 份 K8s 样例、
+> `deploy-opsmesh.sh`、compose/deploy.sh 示例值、compose 渲染夹具已全部 = `0.17.0`，由
+> `deploy/scripts/validate-deploy-assets.sh` 第 1 节与第 20 节（版本字面量全等 + 下限计数）对账。
+> **`release.yml` 的「标签 == appVersion」硬门禁意味着发布物只能由 owner 点头后切 `v0.17.0` 生成。**
+
+### 破坏性 / 行为变更（升级前必读）
+
+- **K8s 生命周期三条动作从「假 202」改为显式 501**（`a554697`，裁决单 ①A 项）：
+  `POST /api/v1/k8s/lifecycle/upgrade|rollback|cert-rotate` 此前先回 202，再由纯内存状态机把
+  `phase` 一路推进到 `Completed 100%`，集群侧什么都没发生（企业前端 `K8sLifecycleView` 真的在调它）。
+  现在统一返回 `501 {"error":…, "code":"ERR_NOT_IMPLEMENTED"}`，响应体不再有 `phase`/`progress`，
+  **也不再登记任何作业记录**。依赖 202 + 轮询 `/upgrade/status` 的自建集成必须改判。
+  同包内 `upgrade/plan`（真跑 `kubeadm upgrade plan`）、etcd 备份/恢复、节点扩缩容三条真执行不变。
+  真实现另立项目：`docs/design/k8s-lifecycle-execution-charter.md`（M1 升级 / M2 回滚 / M3 轮换 +
+  `lifecycle_jobs` 持久化，8–12 人日）。
+- **成本配额的返回契约与拦截语义变了**（`0d290fd`/`7f9ab3e`）：`RecordUsage` 由 `*BudgetAlert` 改为
+  `[]BudgetAlert`；日/月告警各自独立成条且同窗口同档只发一次；`ok=false` 改绑**硬上限**
+  （越过告警阈值只通知，打满额度才拦）。`TokenBudget` 新增 `Timezone`（IANA 名，默认 UTC，
+  非法时区名 400 且不落库），窗口按租户时区的**自然日/自然月**切（此前「日」是滚动 24h）。
+  全仓除测试外无生产调用方，故对外无静默破坏。
+- **前端有 15 个文件的元素首次获得样式**（CSS 收编第 7/8/9 批，`24a56a5`/`370e214`/`0a216d7`）：
+  `.status-pill` 基类、`.entity-form`、`.tag` 胶囊、`.metric-value` 等此前在部分页面渲染成
+  「无形状的文字」，收编后按范式获得胶囊/纵排/字号。这是范式收敛的预期效果，逐项清单见
+  `docs/ui-design.md`「剩余族范式定稿」节。两处刻意保留的设计改了类名以显式化：
+  SystemOpsView 的无底 token 式标签 → `.tag--plain`、TraceView 的描边式 → `.tag--outline`。
+
+### 能力增量
+
+- **云厂商资源写操作落地为真实 HTTP 调用**（`ce1e8ee` aws SigV4 / `ab0c6f5` azure OAuth2+ARM /
+  `c10c360` huawei SDK-HMAC-SHA256 / `3588925` tencent TC3-HMAC-SHA256 / `0f0cf67` volcengine /
+  `92ebf14`+`9c17a33` aliyun 补齐）：`CreateResource` / `DeleteResource` / `SyncTags` 六家实现，
+  取代此前只有查询的 stub。
+- **运维域广度扩展**（`5c6f3af`/`c0234bc`/`3a5cc4c`/`828ce92`）：K8s 扩展资源 15 类
+  （NetworkPolicy / IngressClass / StorageClass / PDB / ServiceAccount 等）、`os_ext_ops.go`
+  OS 运维（用户/磁盘/挂载/网络/SSH 互信/定时任务/日志轮转/开机项）、Docker compose/网络/卷/
+  调试/私有registry、Oracle 全生命周期（含 RAC 脚本）、网络厂商交换机、Apache httpd / Tomcat /
+  Jetty / OpenResty / Nginx、硬件 BMC 与机柜、国产信创与向量/图/OLAP/时序/MQ/缓存/ELK 目录。
+- **前端覆盖与布局**（`3562ec4`/`3381af2`/`f229ccb`/`5a6e157`）：181 条「后端有 API / 前端无入口」
+  缺口闭合；38 条「有页面无入口」的路由全部进侧栏（侧栏改由路由表单一定义）；PageShell 骨架
+  迁移 78 页（豁免 82 → 3）；全站裸 `<button>` 收编为 `Button` 组件；i18n 键差 45 → 0 并新增
+  双语键覆盖守卫 `src/i18n/naked-keys.test.js`（98 视图/组件 × zh/en 全量核验）。
+
+### 缺陷修复（客户可感知的部分）
+
+- **已退役设备可被复活**（`625efd7`）：`UpdateDevice` 的 UPDATE 追加 `AND retired = false`，
+  并修掉「同值更新被误判 NotFound」；真库 2/2 复现。
+- **K8s 生命周期 9 条路由此前匿名可达**（`a3e5f87`+`f88477d`）：接入 `k8s:read` / `k8s:write` 鉴权，
+  匿名请求现返回 401（回归用例 `internal/controlplane/k8s_lifecycle_auth_wiring_test.go`）。
+- **升级状态接口的 data race**（`d698004`）：`GetStatus` 返回快照副本，消除响应序列化与后台推进
+  并发读写同一结构体。
+- **portal-svc 配额响应的 JSON 键笔误**（`820598b`）：`GET /quotas/{id}/usage` 的
+  `storage_gd`/`used_storage_gd` → `*_gb`，并按对外契约钉住（反向断言旧键不再出现）。
+- **迁移 DDL 不再无限期挂住目标表写入**（`9bc25aaf`，升级演练建议二）：`runMigrations` 设 MDL
+  等待上限 15s，漏网长事务会给出明确报错而不是静默挂一小时；接线由变异用例守（`6a9f9be`）。
+- **升级库与新装库结构不等价**（`199fc11`）：迁移 030 收敛 `approval_required` 列定义。
+- **AI 网关三处真缺陷**（`5b829a7`/`9a4d833`）：未配置限流被按「零令牌」处理 ⇒ 该提供商每次请求
+  都被拒；语义缓存键把 `["a","bc"]` 与 `["ab","c"]` 撞成同一键 ⇒ 会把**另一个请求的答案**当命中返回；
+  提供商选择在无匹配路由时按 map 随机顺序挑厂商。另：多字节 UTF-8 截断改按字符边界回退。
+- **月度额度用满后永久超预算**（`86ae276`）：`RecordUsage` 只重置每日计数，`UsedMonth` 只增不减 ⇒
+  补自然月重置；改额度不再顺带抹掉已发生用量。
+- 其余：Ascend GPU 指标解析「成功才赋值」并修掉小数截断（`0814a60`）、log-svc 生产入口接上
+  tenant_id 校验（`4aa067c`）、operator `reconcileDelete` 摘序缺陷 + HelmRelease.Values 深拷贝
+  （`dc6a481`/`09cd856`）、device-svc 回出 store 分配的关系自增 ID（`bc7f20e2`）、CMDB 进程探测
+  超时兜底（`a644647`）。
+
+### 供应链与门禁
+
+- **go-jose/v4 4.1.4 → 4.1.6**（`410b8b2`）解掉发布链 Trivy 阻断；依赖许可证清单重生成
+  （`105a57c`），并补上交付物缺的两条供应链证据：npm 义务清单 + 镜像 OS 包清单（`edee8bb`）。
+- **零测试包批量补齐**（约 20 笔 `test(...)` 提交）：7 服务 `pkg/config`、五服务领域模型与
+  gRPC 适配层、`platform/ssh`（进程内 SSH 服务端覆盖连接池）、`approval` 状态机 6 组、
+  `knowledge`、`internal/version`、`controlplane/enterpriseui`、`gpu-svc/cache`、`config-svc/models`、
+  `log-svc/internal/store`、`cloudprovider/types` 与工厂 stub。多处用例以**变异反证**钉住契约，
+  并如实登记「删掉显式校验也不会转红」的那类（embed.FS 自身拒绝穿越路径，属纵深防御）。
+- **CHANGELOG 归版判据（门禁 §16 / `changelog-fold-gate.py`）**：本版把 4 个 `[Unreleased]` 块
+  （2026-10-25 / 10-27×2 / 10-30）归入 `[0.17.0]`，并按「块一旦归版必须删行」的纪律删除
+  `deploy/scripts/changelog-fold-exempt.tsv` 里那条 2026-10-25 的豁免登记 ⇒ 现网复算
+  `released_max=2026-10-30 unreleased=0 exempt=0 offenders=0 stale=0`。
+
+### 能力降级清单（如实标注；按能力表验收时跳过或先确认前置）
+
+- **K8s 升级 / 回滚 / 证书轮换 = 501 未实现**（本版刻意改口，不是回归）。真要执行集群改动，
+  目前可用的是 `upgrade/plan`（只读计划）与 etcd 备份/恢复、节点扩缩容三条。
+- **上述三条真执行仍有三项已知风险未消**（立项书 §风险）：节点扩容的 `joinCmd` 由请求体直传
+  SSH 执行、etcd 恢复无二次确认与快照校验、生命周期作业只存内存（重启即丢，不可审计）。
+- **成本配额仍是只读展示**：`RecordUsage` / `IsOverBudget` 在生产代码里零调用方（grep 只命中
+  `internal/cost` 与其测试），计数器仍在内存、重启归零。计量挂点在 `internal/ai/gateway.Complete`
+  出口、执法挂点在请求入口，属 P1。前端与 `docs/api-reference.md` 不得把它描述成已生效的额度控制。
+- **21 运维域是广度覆盖，深度不齐**：「一键部署」「安全加固」类端点多为 shell 模板下发，
+  各域判据以 handler 注释与 `ops_validation_test.go` 为准；上生产前在演练环境按域过一遍 smoke。
+- **auth 域切流机制就绪但未执行**；gpu/portal 双轨未下线；device 域 netsec/federation 未下沉
+  为新服务（TD-60 阶段 2 遗留面）。
+- **前端部分页面的元素本版首次获得样式**（见上「破坏性」第 3 条）：观感会变，属预期；
+  刻意排除的 54 个选择器（`.card h4`、`.field input` 等）仍未收编，待逐域迁移到 `ui/Input`、
+  `ui/Tabs` 组件。
+
+---
+
 ## v0.16.0 — 2026-10-26 运维能力扩展 P0-P7 + AIOps/监控/GitOps/联邦/链路上线 + 发布链复用件（TD-95）+ 协作板 v2
 
 本版把 v0.15.0 之后已在 main 上积累八天的**两批大变更为一版**：一批是客户可见的能力增量

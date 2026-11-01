@@ -4,7 +4,7 @@
 
 > 当前最新已发布版本：`v0.16.0`（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-10-30（K8s 生命周期假成功收口：升级/回滚/证书轮换显式 501 + 前端置灰，真实现立项）
+## [0.17.0] — 2026-10-30（K8s 生命周期假成功收口：升级/回滚/证书轮换显式 501 + 前端置灰，真实现立项）
 
 - **修复对外假成功（裁决单 ① A 项）**：`POST /api/v1/k8s/lifecycle/upgrade|rollback|cert-rotate`
   此前先返回 202，再由纯内存状态机把 `phase` 推进到 `Completed`——前端据此显示"升级完成"，
@@ -14,7 +14,7 @@
   真实现立项：`docs/design/k8s-lifecycle-execution-charter.md`（M1 升级 / M2 回滚 / M3 轮换 +
   `lifecycle_jobs` 持久化，8–12 人日）。
 
-## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
+## [0.17.0] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
 - **剩余族范式定稿（第 9 批 CSS 去重）**：第 7/8 批排除的选择器逐族裁定并实现（12 项）。
   三档判据：零泄漏直接收（.kv 族/.checkbox-group/.metrics-row+--two/--four 修饰类/.stat-v/.stat-l/
@@ -125,7 +125,7 @@
   eslint 0；`npm run build` 通过；页面骨架门禁与侧栏守卫全绿（EXEMPT 只剩 3 条永久豁免）；
   Playwright mock e2e 80 例本地全绿。
 
-## [Unreleased] — 2026-10-27（迁移 DDL 的 MDL 锁等待上限：升级演练建议二落地，migrate 不再无限期挂住目标表写入）
+## [0.17.0] — 2026-10-27（迁移 DDL 的 MDL 锁等待上限：升级演练建议二落地，migrate 不再无限期挂住目标表写入）
 
 - **背景**：存量库升级演练（v0.16.0→main 六条迁移）实证：客户升级窗口里旧版本容器的长事务
   持有表 MDL ⇒ 迁移 ALTER 排队，**排在 ALTER 后面的业务写入一起等**；MySQL 默认
@@ -140,6 +140,32 @@
   全包 DSN 门控 + 钉版 lint 0 + build 过。
 - **运维口径**：升级前仍按 `docs/upgrade-guide.md` 预约维护窗口；本修复保证即使窗口内有
   漏网长事务，migrate 也会在 15s 内给出明确报错而不是静默挂住一小时。
+
+## [0.17.0] — 2026-10-25（K8s 扩展资源与 OS/中间件/硬件运维补全）
+
+### Added
+- **K8s 扩展资源**: 15 个新资源类型 (NetworkPolicy/IngressClass/StorageClass/PDB/ServiceAccount/EndpointSlice/ResourceQuota/LimitRange/PriorityClass/RuntimeClass/Lease/Event/MutatingWebhook/ValidatingWebhook/CSR)，后端 `k8s_resources_ext.go` + 前端 35 个资源 tab
+- **OS 运维**: `os_ext_ops.go` (用户/磁盘/挂载/网络/SSH/定时任务/日志轮转/开机启动)、`os_platform_ops.go` (硬件盘点/磁盘健康/RAID)、`os_tuning_ops.go` (内核调优/应用调优/存储调优/证书/资源/系统备份)
+- **Git 版本控制**: `git_unix_ops.go` (clone/pull/push/commit/branch/tag/log/diff/checkout/status)
+- **国产/信创**: `domestic_ops.go` (统信UOS/麒麟/openEuler 检测、鲲鹏/昇腾/寒武纪/摩尔线程检测、GaussDB/Kingbase/Dameng、TongWeb/BES/InforSuite)
+- **消息队列扩展**: RocketMQ/Pulsar/ActiveMQ/RabbitMQ 完整运维 (HA/扩缩容/升级/备份/调优/安全/可观测性)
+- **缓存**: Redis (Cluster/Sentinel/持久化/调优/监控/安全/备份) + Memcached + Ignite
+- **ELK**: Elasticsearch/Logstash/Kibana/Filebeat/OpenSearch 25 个 handler
+- **向量/图数据库**: Milvus/Qdrant/pgvector + Neo4j/NebulaGraph 扩缩容/升级/备份/用户/索引/Schema
+- **OLAP**: ClickHouse/Doris (FE/BE)/Trino 集群/监控/备份/升级/物化视图
+- **分布式文件系统**: Ceph/GlusterFS/HDFS/SeaweedFS + FastDFS
+- **数据管道**: Airflow/Spark/Flink/dbt/Debezium + Hive/Iceberg/Delta + StarRocks/Doris/ClickHouse
+- **脚本编译**: 15 种脚本语言 + 6 种编译语言 + 9 种构建工具 (Maven/Gradle/npm/Cargo/Make/CMake/Go/Python)
+- **Docker Compose**: 11 个多集群部署文件 (Kafka/GPU/ELK/MySQL/PostgreSQL/MongoDB/Redis/Memcached/AWS/Cloud/CI)
+
+### Changed
+- `middleware_ops.go` 拆分为 6 个域文件 (kafka/zookeeper/redis/rabbitmq/activemq)
+- InfraConsoleView 改进: 域搜索、破坏性操作确认、任务自动轮询、焦点样式、CSS 变量修复
+- 前端 ESLint 修复: 29 个 no-empty 错误 + 24 个 no-unused-vars 警告清零
+
+### Fixed
+- 修复 `registerOSExtRoutes` 重复注册
+- 修复 K8s pod listing 增加 containers/probes/affinity/tolerations 字段
 
 ## [0.16.0] — 2026-10-26（v0.15.0 之后全部改动归版：发布链复用件 TD-95 + 切流演练两批修复 + 21 域运维能力扩展 P0-P7 + AIOps/监控/GitOps/联邦/链路上线 + 协作板 v2）
 
@@ -246,32 +272,6 @@
   全部块随本版发货）。
 
 ## [0.16.0] — 2026-10-16（TD-95 收口：镜像发布抽成复用件 _publish-image.yml 并在 main 验绿；方向① 经评估主动不做）
-## [Unreleased] — 2026-10-25（K8s 扩展资源与 OS/中间件/硬件运维补全）
-
-### Added
-- **K8s 扩展资源**: 15 个新资源类型 (NetworkPolicy/IngressClass/StorageClass/PDB/ServiceAccount/EndpointSlice/ResourceQuota/LimitRange/PriorityClass/RuntimeClass/Lease/Event/MutatingWebhook/ValidatingWebhook/CSR)，后端 `k8s_resources_ext.go` + 前端 35 个资源 tab
-- **OS 运维**: `os_ext_ops.go` (用户/磁盘/挂载/网络/SSH/定时任务/日志轮转/开机启动)、`os_platform_ops.go` (硬件盘点/磁盘健康/RAID)、`os_tuning_ops.go` (内核调优/应用调优/存储调优/证书/资源/系统备份)
-- **Git 版本控制**: `git_unix_ops.go` (clone/pull/push/commit/branch/tag/log/diff/checkout/status)
-- **国产/信创**: `domestic_ops.go` (统信UOS/麒麟/openEuler 检测、鲲鹏/昇腾/寒武纪/摩尔线程检测、GaussDB/Kingbase/Dameng、TongWeb/BES/InforSuite)
-- **消息队列扩展**: RocketMQ/Pulsar/ActiveMQ/RabbitMQ 完整运维 (HA/扩缩容/升级/备份/调优/安全/可观测性)
-- **缓存**: Redis (Cluster/Sentinel/持久化/调优/监控/安全/备份) + Memcached + Ignite
-- **ELK**: Elasticsearch/Logstash/Kibana/Filebeat/OpenSearch 25 个 handler
-- **向量/图数据库**: Milvus/Qdrant/pgvector + Neo4j/NebulaGraph 扩缩容/升级/备份/用户/索引/Schema
-- **OLAP**: ClickHouse/Doris (FE/BE)/Trino 集群/监控/备份/升级/物化视图
-- **分布式文件系统**: Ceph/GlusterFS/HDFS/SeaweedFS + FastDFS
-- **数据管道**: Airflow/Spark/Flink/dbt/Debezium + Hive/Iceberg/Delta + StarRocks/Doris/ClickHouse
-- **脚本编译**: 15 种脚本语言 + 6 种编译语言 + 9 种构建工具 (Maven/Gradle/npm/Cargo/Make/CMake/Go/Python)
-- **Docker Compose**: 11 个多集群部署文件 (Kafka/GPU/ELK/MySQL/PostgreSQL/MongoDB/Redis/Memcached/AWS/Cloud/CI)
-
-### Changed
-- `middleware_ops.go` 拆分为 6 个域文件 (kafka/zookeeper/redis/rabbitmq/activemq)
-- InfraConsoleView 改进: 域搜索、破坏性操作确认、任务自动轮询、焦点样式、CSS 变量修复
-- 前端 ESLint 修复: 29 个 no-empty 错误 + 24 个 no-unused-vars 警告清零
-
-### Fixed
-- 修复 `registerOSExtRoutes` 重复注册
-- 修复 K8s pod listing 增加 containers/probes/affinity/tolerations 字段
-
 ## [0.16.0] — 2026-10-14（切流演练阻断级两缺陷修复：对侧会话身份回落 + 主动改密转发还原 body；演练台回退路径补齐）
 
 - **背景**：模拟用户团队批次 0 演练（三人设 + 协调者逐条复核，报告与证据见
