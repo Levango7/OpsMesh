@@ -299,6 +299,7 @@ func (s *Server) Start() error {
 	s.registerABACRoutes(mux)
 	s.registerRAIDExtRoutes(mux)
 	s.registerDBPerfRoutes(mux)
+	s.registerOracleRoutes(mux)
 	s.registerGatewayMgmtRoutes(mux)
 	// 虚拟化衔接：KVM/vSphere/OpenStack/Proxmox（固定路径优先，再泛路由 /api/v1/virt/）。
 	s.registerVirtRoutes(mux)
