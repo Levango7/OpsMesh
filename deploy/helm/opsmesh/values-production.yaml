@@ -328,3 +328,16 @@ observability:
   # 生产启用 PrometheusRule 内置告警
   prometheusRule:
     enabled: true
+  # 网络策略：**显式表态为 false**，而不是沉默继承 values.yaml 的关。
+  # 为什么不在这一版直接翻 true（两条必须先证清的路径，2026-11-02 实测留痕）：
+  #   ① 抓取来源：模板对 metrics 端口只放行「同命名空间任意 Pod」（podSelector: {}），
+  #      而生产常见形态是 kube-prometheus-stack 落在独立命名空间 ⇒ 翻 true 会静默拦掉抓取，
+  #      观测面失明比多放行一档更难发现。要么放宽到 namespaceSelector，要么在本集群确认抓取来源。
+  #   ② 服务间互调矩阵未逐条实测（哪些 svc 直接调哪些 svc、备份 CronJob 的访问路径），
+  #      NetworkPolicy 是默认拒绝语义，漏一条就是现网 502。
+  # 结论：加固能力已落地（模板覆盖 controlplane/agent/微服务，默认 values 下渲染 0 条 ⇒ 存量零变化），
+  #      翻默认值属现网变更，需在真实 CNI 上跑一轮连通性回归后由 owner 拍。
+  #      门禁 internal/gates/network_policy_coverage_gate_test.go 要求本键**必须存在且有理由注释**，
+  #      防止"没人看过所以默认关"再次发生。
+  networkPolicy:
+    enabled: false

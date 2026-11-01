@@ -82,4 +82,95 @@ spec:
           protocol: TCP
         - port: 9090
           protocol: TCP
+---
+# 微服务入站/出站（只对 enabled=true 的服务渲染；values 里 12 个默认全 false ⇒ 存量部署零变化）。
+# 放行依据逐条对得上代码，不是照抄惯例：
+#   - 控制面 → 服务：svcproxy 代理转发（internal/controlplane/service_proxy.go 先剥离客户端
+#     X-Tenant-ID/X-User-Id/X-User-Roles/Cookie，再以已校验身份重注入），走该服务 HTTP/gRPC 端口。
+#   - agent → device_svc：agent 自举（install.sh 与 provision register）直连 device-svc，
+#     见 internal/controlplane/svcproxy/proxy.go 的 DeviceExtras 注释；不放行则首次纳管在网络层被吞。
+#   - 出站：DNS + 控制面 + 同 name 标签下的 MySQL(3306)/Redis(6379)。
+#   - metrics=true 的服务：放行**同命名空间任意 Pod** 访问其 HTTP 端口。本 chart 不部署 Prometheus
+#     （监控多由外部栈提供），若写死"只允许带某标签的 pod"，在没打该标签的安装里会静默拦掉抓取——
+#     观测面失明比多放行一档更难发现，故这里刻意宽一档并写明原因。
+# 启用前必读的未验证清单：服务间互调、外部 GitOps/CI 直连、备份 CronJob 的访问路径均未逐条实测；
+# CNI 不实现 NetworkPolicy 时（flannel / kind 默认）这些限制整体是空操作。
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
+{{- $svcName := $name | replace "_" "-" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-%s" (include "opsmesh.fullname" $) $svcName }}
+  labels:
+    {{- include "opsmesh.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $svcName }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opsmesh.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $svcName }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opsmesh
+              app.kubernetes.io/component: controlplane
+      ports:
+        - port: {{ $svc.httpPort }}
+          protocol: TCP
+        {{- if gt (int $svc.grpcPort) 0 }}
+        - port: {{ $svc.grpcPort }}
+          protocol: TCP
+        {{- end }}
+    {{- if eq $name "device_svc" }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opsmesh
+              app.kubernetes.io/component: agent
+      ports:
+        - port: {{ $svc.httpPort }}
+          protocol: TCP
+    {{- end }}
+    {{- if $svc.metrics }}
+    - from:
+        - podSelector: {}
+      ports:
+        - port: {{ $svc.httpPort }}
+          protocol: TCP
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opsmesh
+              app.kubernetes.io/component: controlplane
+      ports:
+        - port: 8080
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opsmesh
+      ports:
+        - port: 3306
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+{{- end }}
+{{- end }}
 {{- end }}
