@@ -4,6 +4,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -53,6 +54,10 @@ type AgentResult struct {
 	TokenUsage int                    `json:"tokenUsage"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	Error      string                 `json:"error,omitempty"`
+	// NotWired 记录本次运行里被调用、但尚未接入后端的工具名（去重）。
+	// 非空时 HTTP 侧返回 501：LLM 拿到了「工具未接线」的观测并照样给出
+	// 一个看起来成功的 Final Answer，若仍回 200 就等于替假结果背书。
+	NotWired []string `json:"notWired,omitempty"`
 }
 
 // ReActStep ReAct 单步
@@ -169,6 +174,9 @@ func (a *BaseAgent) Run(ctx context.Context, input string, agentCtx AgentContext
 		observation, toolRecord, err := a.executeTool(ctx, action, actionInput, agentCtx)
 		if err != nil {
 			observation = fmt.Sprintf("工具执行失败: %v", err)
+			if errors.Is(err, ErrToolNotWired) && !containsString(result.NotWired, action) {
+				result.NotWired = append(result.NotWired, action)
+			}
 		}
 		if toolRecord != nil {
 			result.ToolCalls = append(result.ToolCalls, *toolRecord)

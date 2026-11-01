@@ -3,10 +3,46 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 
 	gateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
 )
+
+// ErrToolNotWired 表示工具尚未接入真实后端。
+//
+// 默认工具集此前一律返回硬编码样例（hostname web-01、ip 192.168.1.10、
+// task_id task-12345、metric 75.3、CVE-2024-XXXX），调用方拿到 200 与
+// 「看起来像真的」的数据，LLM 还会把它当观测结果继续推理并写进结论——
+// 比直接失败更危险。现在显式报未接线：HTTP 侧映射 501，/tools 标 implemented:false。
+var ErrToolNotWired = errors.New("工具尚未接入后端")
+
+// NotWiredTool 由未接线的工具实现，供 /tools 输出 implemented 判据
+// （前端据此置灰，而不是摆出一列「能点但全是假数据」的工具）。
+type NotWiredTool interface {
+	Tool
+	NotWired() bool
+}
+
+// IsToolWired 报告工具是否已接入后端；未实现 NotWiredTool 的按已接入处理。
+func IsToolWired(t Tool) bool {
+	nw, ok := t.(NotWiredTool)
+	return !ok || !nw.NotWired()
+}
+
+// notWired 统一包装哨兵，保留「哪个工具没接」的可观测性。
+func notWired(name string) error {
+	return fmt.Errorf("%s: %w", name, ErrToolNotWired)
+}
+
+// NotWired 报告六个内置工具均未接入后端（契约保留，供 LLM 选择与前端置灰）。
+func (t *QueryDeviceTool) NotWired() bool     { return true }
+func (t *QueryMetricsTool) NotWired() bool    { return true }
+func (t *ExecuteCommandTool) NotWired() bool  { return true }
+func (t *SearchKnowledgeTool) NotWired() bool { return true }
+func (t *WebSearchTool) NotWired() bool       { return true }
+func (t *CreateTicketTool) NotWired() bool    { return true }
 
 // Tool 工具接口
 type Tool interface {
@@ -15,16 +51,6 @@ type Tool interface {
 	Parameters() map[string]interface{}
 	CheckPermission(agentCtx AgentContext) bool
 	Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error)
-}
-
-// stringArg 从工具入参取字符串；缺键或类型不符时回退零值（与 `v, _ := input[k].(string)` 同义，
-// 显式判 ok 是为了过 errcheck 的 check-type-assertions 门禁）。
-func stringArg(input map[string]interface{}, key string) string {
-	v, ok := input[key].(string)
-	if !ok {
-		return ""
-	}
-	return v
 }
 
 // ToolRegistry 工具注册表
@@ -100,17 +126,7 @@ func (t *QueryDeviceTool) Parameters() map[string]interface{} {
 }
 func (t *QueryDeviceTool) CheckPermission(agentCtx AgentContext) bool { return true }
 func (t *QueryDeviceTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	deviceID := stringArg(input, "device_id")
-	// 实际调用 device-svc API
-	return map[string]interface{}{
-		"device_id": deviceID,
-		"hostname":  "web-01",
-		"ip":        "192.168.1.10",
-		"status":    "online",
-		"cpu":       "45%",
-		"memory":    "62%",
-		"disk":      "78%",
-	}, nil
+	return nil, notWired(t.Name())
 }
 
 // QueryMetricsTool 查询监控指标
@@ -142,15 +158,7 @@ func (t *QueryMetricsTool) Parameters() map[string]interface{} {
 }
 func (t *QueryMetricsTool) CheckPermission(agentCtx AgentContext) bool { return true }
 func (t *QueryMetricsTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	target := stringArg(input, "target")
-	metric := stringArg(input, "metric")
-	return map[string]interface{}{
-		"target": target,
-		"metric": metric,
-		"value":  "75.3",
-		"unit":   "%",
-		"trend":  "increasing",
-	}, nil
+	return nil, notWired(t.Name())
 }
 
 // ExecuteCommandTool 执行远程命令 (需要审批)
@@ -181,16 +189,7 @@ func (t *ExecuteCommandTool) CheckPermission(agentCtx AgentContext) bool {
 	return true // 简化：实际应检查 agentCtx.Metadata["permissions"]
 }
 func (t *ExecuteCommandTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	deviceID := stringArg(input, "device_id")
-	command := stringArg(input, "command")
-	// 实际调用 task-svc 创建任务
-	return map[string]interface{}{
-		"task_id":   "task-12345",
-		"device_id": deviceID,
-		"command":   command,
-		"status":    "pending_approval",
-		"message":   "命令已提交，等待审批",
-	}, nil
+	return nil, notWired(t.Name())
 }
 
 // SearchKnowledgeTool 搜索知识库
@@ -218,14 +217,7 @@ func (t *SearchKnowledgeTool) Parameters() map[string]interface{} {
 }
 func (t *SearchKnowledgeTool) CheckPermission(agentCtx AgentContext) bool { return true }
 func (t *SearchKnowledgeTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	query := stringArg(input, "query")
-	return map[string]interface{}{
-		"results": []map[string]interface{}{
-			{"title": "Nginx 502 排查 Runbook", "content": "1. 检查 upstream 配置... 2. 检查后端服务状态..."},
-			{"title": "CPU 高负载处理指南", "content": "1. top 查看进程... 2. 检查 cron 任务..."},
-		},
-		"query": query,
-	}, nil
+	return nil, notWired(t.Name())
 }
 
 // WebSearchTool 联网搜索
@@ -249,13 +241,7 @@ func (t *WebSearchTool) Parameters() map[string]interface{} {
 }
 func (t *WebSearchTool) CheckPermission(agentCtx AgentContext) bool { return true }
 func (t *WebSearchTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	query := stringArg(input, "query")
-	return map[string]interface{}{
-		"results": []map[string]interface{}{
-			{"title": "CVE-2024-XXXX: Nginx 漏洞公告", "snippet": "影响版本 1.24.x..."},
-		},
-		"query": query,
-	}, nil
+	return nil, notWired(t.Name())
 }
 
 // CreateTicketTool 创建工单
@@ -287,12 +273,7 @@ func (t *CreateTicketTool) Parameters() map[string]interface{} {
 }
 func (t *CreateTicketTool) CheckPermission(agentCtx AgentContext) bool { return true }
 func (t *CreateTicketTool) Execute(ctx context.Context, input map[string]interface{}, agentCtx AgentContext) (interface{}, error) {
-	title := stringArg(input, "title")
-	return map[string]interface{}{
-		"ticket_id": "TKT-2024-001",
-		"title":     title,
-		"status":    "open",
-	}, nil
+	return nil, notWired(t.Name())
 }
 
 // DefaultToolRegistry 创建默认工具注册表
@@ -305,4 +286,14 @@ func DefaultToolRegistry() *ToolRegistry {
 	tr.Register(&WebSearchTool{})
 	tr.Register(&CreateTicketTool{})
 	return tr
+}
+
+// containsString 是小集合的去重辅助（工具名列表本就几项）。
+func containsString(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }

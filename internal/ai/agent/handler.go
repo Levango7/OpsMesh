@@ -4,6 +4,7 @@ package agent
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 
 	gateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
@@ -106,7 +107,44 @@ func (h *AgentHandler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 运行中调用过未接线的工具 ⇒ 501：结果里那些「设备/指标/工单」都不是真数据，
+	// 回 200 会让调用方（和 Agent 的下游结论）把假象当事实。
+	if unwired := notWiredOf(result); len(unwired) > 0 {
+		paginate.WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
+			"error":    "请求涉及的工具尚未接入后端，结果中的业务数据不可信",
+			"notWired": unwired,
+			"result":   result,
+		})
+		return
+	}
+
 	paginate.WriteJSON(w, http.StatusOK, result)
+}
+
+// notWiredOf 从执行结果里取出未接线工具清单（单 Agent 与 DAG 两条路径共用）。
+func notWiredOf(result interface{}) []string {
+	switch res := result.(type) {
+	case *AgentResult:
+		if res == nil {
+			return nil
+		}
+		return res.NotWired
+	case *DAGResult:
+		if res == nil {
+			return nil
+		}
+		var out []string
+		for _, sub := range res.Results {
+			for _, name := range sub.NotWired {
+				if !containsString(out, name) {
+					out = append(out, name)
+				}
+			}
+		}
+		sort.Strings(out)
+		return out
+	}
+	return nil
 }
 
 // HandleClassify 处理 POST /api/v1/ai/agent/classify
@@ -241,11 +279,19 @@ func (h *AgentHandler) HandleTools(w http.ResponseWriter, r *http.Request) {
 	tools := DefaultToolRegistry().List()
 	toolList := make([]map[string]interface{}, 0, len(tools))
 	for _, t := range tools {
-		toolList = append(toolList, map[string]interface{}{
+		implemented := IsToolWired(t)
+		entry := map[string]interface{}{
 			"name":        t.Name(),
 			"description": t.Description(),
 			"parameters":  t.Parameters(),
-		})
+			// implemented=false ⇒ 该工具只会报 ErrToolNotWired，前端据此置灰，
+			// 不要摆成「可用能力清单」。
+			"implemented": implemented,
+		}
+		if !implemented {
+			entry["notImplementedReason"] = ErrToolNotWired.Error()
+		}
+		toolList = append(toolList, entry)
 	}
 
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
