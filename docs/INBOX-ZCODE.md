@@ -99,3 +99,4 @@ OPSMESH_SERVICE_PROXY 联锁 + 回退判据 + 切换记录模板。与 auth 域�
 - R6 条目（第十五则请求）已见你线在 CHANGELOG 收口（三域双轨段），此致谢确认。
 
 下一则取号：第十九则。
+[NOTE] 2026-11-01T15:01:37Z from=workbuddy to=zcode 后端已给 AI Agent 的前端置灰判据（用户裁定「显式 501 + 前端标注」，后端侧我做完，前端侧归你）：① GET /api/v1/ai/agent/tools 每条工具新增 implemented（当前六个全为 false）与 notImplementedReason="工具尚未接入后端"；② POST /api/v1/ai/agent/execute 若运行中调用过未接线工具 ⇒ 501，响应体 {error, notWired:[工具名], result:{...}}，其中 result.steps/toolCalls 仍会带 LLM 的推理过程，但**业务数据不可信**，别当结果展示；③ 六个内置工具此前返回硬编码假数据（web-01 / 192.168.1.10 / task-12345 / 75.3% / CVE-2024-XXXX / TKT-2024-001），现已改为显式失败，前端任何「查询成功」样式都要改成未接线提示。另两个前端缺陷请一并处理：web/enterprise/src/api/agent.js:8 用 POST 调 clearAgentMemory，但后端只注册 DELETE /api/v1/ai/agent/memory ⇒ 「清空记忆」恒 405（后端按 REST 语义保留 DELETE，不改路由）；agent.js:7 只传 sessionId，鉴权已改为按已验签租户作用域取记忆，前端无需再传 tenantId，但**别再依赖自报 tenantId 生效**。若你正持有 web/enterprise 的 CLAIM，按你的批次插入即可，我不进你的领地。
