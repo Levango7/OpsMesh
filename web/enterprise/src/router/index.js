@@ -138,13 +138,16 @@ const routes = [
   // 后端 handler 在 internal/aiops/handler.go，mux 在 internal/controlplane/server_lifecycle.go 注册，
   // API 契约见 src/api/aiops.js 注释头。
   { path: '/aiops', name: 'aiops', component: () => import('@/views/AIOpsView.vue'), meta: { title: 'nav.aiops', group: 'AI 算力', icon: 'alerts', requirePerm: 'aiops:read' } },
-  { path: '/ai-chat', name: 'ai-chat', component: () => import('@/views/AIChatView.vue'), meta: { title: 'nav.aiChat', group: 'AI 算力', icon: 'flow', requirePerm: 'aiops:read' } },
-  { path: '/agent', name: 'agent', component: () => import('@/views/AgentView.vue'), meta: { title: 'nav.agent', group: 'AI 算力', icon: 'flow', requirePerm: 'aiops:read' } },
-  { path: '/knowledge', name: 'knowledge', component: () => import('@/views/KnowledgeView.vue'), meta: { title: 'nav.knowledge', group: 'AI 算力', icon: 'flow', requirePerm: 'aiops:read' } },
-  { path: '/cost', name: 'cost', component: () => import('@/views/CostView.vue'), meta: { title: 'nav.cost', group: 'AI 算力', icon: 'flow', requirePerm: 'aiops:read' } },
+  { path: '/ai-chat', name: 'ai-chat', component: () => import('@/views/AIChatView.vue'), meta: { title: 'nav.aiChat', group: 'AI 算力', icon: 'flow', requirePerm: 'ai:read' } },
+  { path: '/agent', name: 'agent', component: () => import('@/views/AgentView.vue'), meta: { title: 'nav.agent', group: 'AI 算力', icon: 'flow', requirePerm: 'ai:read' } },
+  { path: '/knowledge', name: 'knowledge', component: () => import('@/views/KnowledgeView.vue'), meta: { title: 'nav.knowledge', group: 'AI 算力', icon: 'flow', requirePerm: 'knowledge:read' } },
+  { path: '/cost', name: 'cost', component: () => import('@/views/CostView.vue'), meta: { title: 'nav.cost', group: 'AI 算力', icon: 'flow', requirePerm: 'cost:read' } },
 
   // 可观测性：链路追踪（Jaeger / OTLP collector 查询）
-  { path: '/trace', name: 'trace', component: () => import('@/views/TraceView.vue'), meta: { title: 'nav.trace', group: '可观测性', icon: 'alerts', requirePerm: 'observability:read' } },
+  // 不设 requirePerm：observability:read 不在 RBAC 目录（admin 权限集由 PermSpecs 派生 ⇒ 挂它对含 admin
+  // 的全部角色都进不去，是死路由）；且 /api/services、/api/traces 的后端 handler 无权限守卫
+  // （controlplane/trace.go 为 graceful 空结果 stub）。前端门若保留就是虚构的门。
+  { path: '/trace', name: 'trace', component: () => import('@/views/TraceView.vue'), meta: { title: 'nav.trace', group: '可观测性', icon: 'alerts' } },
 
   // 自助服务门户
   { path: '/portal', name: 'portal', component: () => import('@/views/PortalView.vue'), meta: { title: 'nav.portal', group: '平台', icon: 'users', requirePerm: 'portal:read' } },
@@ -164,7 +167,9 @@ const routes = [
   { path: '/flux', name: 'flux', component: () => import('@/views/FluxView.vue'), meta: { title: 'nav.flux', group: '交付中心', icon: 'flow', requirePerm: 'flux:read' } },
 
   // GitOps 整体仪表盘（交付中心：与 ArgoCD/Flux 同域，2026-10-27 从可观测性归位）
-  { path: '/gitops/dashboard', name: 'gitops-dashboard', component: () => import('@/views/GitOpsDashboardView.vue'), meta: { title: 'nav.gitops', group: '交付中心', icon: 'branch', requirePerm: 'observability:read' } },
+  // 复合只读页（argocd + flux 两个受守卫的源）。原挂的 observability:read 不存在 ⇒ 死路由。
+  // 改正为 argocd:read，与兄弟页 /argocd 同门（flux-only 角色可走独立 /flux 页）。
+  { path: '/gitops/dashboard', name: 'gitops-dashboard', component: () => import('@/views/GitOpsDashboardView.vue'), meta: { title: 'nav.gitops', group: '交付中心', icon: 'branch', requirePerm: 'argocd:read' } },
 
   // 合规管理（系统管理）
   { path: '/compliance', name: 'compliance', component: () => import('@/views/ComplianceView.vue'), meta: { title: 'nav.compliance', group: '系统管理', icon: 'permissions', requirePerm: 'compliance:read' } },

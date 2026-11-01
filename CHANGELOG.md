@@ -50,6 +50,21 @@
 
 ## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
+- **前端路由门词汇与后端 RBAC 目录对齐 + 新增一致性守卫（真缺陷，workbuddy 通报后全量核对）**：
+  按「router 全部 40 个 requirePerm × 后端 PermSpecs 112 项目录」+「各页 api 模块 × 后端 handler 的
+  authorize 字面量」两个维度核对，修正 6 处：`/ai-chat`、`/agent` 挂 `aiops:read` 而后端
+  `/api/v1/ai/*` 按 `ai:read` 把关（gateway/handler.go:53、agent/handler.go）→ 改 `ai:read`；
+  `/knowledge` → `knowledge:read`、`/cost` → `cost:read`（后端同域 handler 已按此把关，原挂 aiops 会在
+  自定义角色/按域下放时变成「页面进得去、API 全 403」）；`/trace`、`/gitops/dashboard` 挂
+  `observability:read`——**该权限点不在目录里，admin 权限集由目录派生 ⇒ 对含 admin 的全部角色都是死路由**，
+  且 `/api/services|/api/traces` 后端无守卫（graceful stub）⇒ /trace 去掉虚构的门；/gitops/dashboard 是
+  argocd+flux 复合视图，改挂 `argocd:read` 与兄弟页 /argocd 同门。新增守卫
+  `src/router/__tests__/router-perms.test.js`（3 条，含目录解析自检）：断言每个 requirePerm 都在后端
+  PermSpecs 里，与后端 sql_rbac_catalog_test.go 的 handlerRequiredPerms 守护互为补面——杜绝
+  「前端发明权限点 ⇒ 死路由」复发。**移交 backend owner 两项**：argocd 族未进 operatorReadOnlyGroups
+  （operator 打不开 /argocd 与仪表盘，是否下放属产品语义）；observability 域是否立真权限族（若要，
+  /trace 与 /gitops 应按新族收口而非去门）。本地实测：vitest 61→62 文件/1309（+3 新守卫）、eslint 0、
+  vite build、Playwright 80/80 全绿。
 - **剩余族范式定稿（第 9 批 CSS 去重）**：第 7/8 批排除的选择器逐族裁定并实现（12 项）。
   三档判据：零泄漏直接收（.kv 族/.checkbox-group/.metrics-row+--two/--four 修饰类/.stat-v/.stat-l/
   .err-msg/.data-table+tr:hover）；未覆盖用法=修正（.status-pill 基类——6 个文件此前渲染无形状文字、

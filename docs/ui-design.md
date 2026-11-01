@@ -802,6 +802,15 @@ i18n 采用自研轻量模块（`src/i18n/index.js`），不依赖 vue-i18n，�
    白名单里（目前 4 条：device-detail / batch-exec / batch-detail / canary-detail）——防「藏页面」后门。
 8. **翻译映射必须同步**：新路由必须登记 `src/i18n/index.js` 的 `ROUTE_DOMAIN_MAP`（漏登记 = 页面裸键），
    守卫 ⑦ 强制；侧栏标签键须 zh/en 双语可解析（守卫 ④）。
+9. **`requirePerm` 必须存在于后端 RBAC 目录**（2026-11-02 新增，守卫 ⑧ `router-perms.test.js` 强制）：
+   router meta 的 `requirePerm` 是前端发明的门，可满足性完全取决于 `internal/store/model/perm.go` 的
+   `PermSpecs`——admin 的权限集由该目录派生，**目录里没有的权限点 ⇒ 该路由对含 admin 在内的全部角色
+   都是死路由**（前端不报错，只表现为点了没反应/静默重定向）。真实案例：`observability:read`
+   （/trace 与 /gitops/dashboard 长期死路由，2026-11-02 修）、`cloud:read`（2026-10-22）、`flux:read`
+   （2026-11-02）。该守卫与后端 `sql_rbac_catalog_test.go` 的 handlerRequiredPerms 守护互为补面。
+   同时**门词汇要与后端同域 handler 一致**：前端挂 A:read 而后端按 B:read 把关时，内置角色可能因权限
+   并集不露馅，但自定义角色/按域下放会变成「页面进得去、API 全 403」——2026-11-02 按此修正 `/ai-chat`、
+   `/agent`（→ `ai:read`）、`/knowledge`（→ `knowledge:read`）、`/cost`（→ `cost:read`）。
 
 **共享原语收编（2026-10-28，已完成）**：此前共享原语寄生在 `styles/k8s.css`（K8s 命名当全站事实标准，
 靠 main.js 的 import 顺序压过 `assets/tokens.css` 的同名规则取胜），同时 78 个视图各自复制一份
