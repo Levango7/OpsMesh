@@ -116,20 +116,17 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  CHANGELOG.md                                   <- qoder  (ttl=6h by qoder)
-  docs/design/k8s-lifecycle-execution-charter.md <- qoder  (ttl=6h by qoder)
-  docs/semantic-rulings-2026-10-30.md            <- qoder  (ttl=6h by qoder)
-  internal/k8slifecycle/                         <- qoder  (ttl=6h by qoder)
-  web/enterprise/src/api/k8s.js                  <- qoder  (ttl=6h by qoder)
-  web/enterprise/src/i18n/locales/en/ops.json    <- qoder  (ttl=6h by qoder)
-  web/enterprise/src/i18n/locales/zh/ops.json    <- qoder  (ttl=6h by qoder)
-  web/enterprise/src/views/K8sLifecycleView.vue  <- qoder  (ttl=6h by qoder)
+  (无)
 
 TASKS:
   (无)
 
 ISSUES:
+  CLAIM 过期未闭环：internal/cost,services/gpu-svc/internal/cache,services/config-svc/internal/models,internal/controlplane/enterpriseui（认领人 workbuddy，ttl 4h）
   CLAIM 过期未闭环：internal/k8slifecycle,internal/controlplane/server.go（认领人 workbuddy，ttl 6h）
+  CLAIM 过期未闭环：internal/platform/cloudprovider/aliyun,internal/controlplane/tenantguard,internal/controlplane/auditsafe,services/log-svc/internal/store（认领人 workbuddy，ttl 4h）
+  CLAIM 过期未闭环：web/enterprise/src/views/AlertRulesView.vue,web/enterprise/src/views/AlertsView.vue,web/enterprise/src/views/ApprovalRequestsView.vue,web/enterprise/src/views/AutoProvisionView.vue,web/enterprise/src/views/AutomationView.vue,web/enterprise/src/views/AutoscalerView.vue,web/enterprise/src/views/BackupsView.vue,web/enterprise/src/views/BatchView.vue,web/enterprise/src/views/CanaryView.vue,web/enterprise/src/views/ChangePasswordView.vue,web/enterprise/src/views/GPUView.vue,web/enterprise/src/views/HelmReleasesView.vue,web/enterprise/src/views/LoginView.vue,web/enterprise/src/views/MiddlewareDeployView.vue,web/enterprise/src/views/NetworkDevicesView.vue,web/enterprise/src/views/NetworkDiagnoseView.vue,web/enterprise/src/views/OSOptimizeView.vue,web/enterprise/src/views/PipelineView.vue,web/enterprise/src/views/PlatformConfigView.vue,web/enterprise/src/views/PortalView.vue,web/enterprise/src/views/RegisterView.vue,web/enterprise/src/views/SLOsView.vue,web/enterprise/src/views/SchedulesView.vue,web/enterprise/src/views/ScriptsView.vue,web/enterprise/src/views/TicketsView.vue,web/enterprise/src/views/TrafficPoliciesView.vue,web/enterprise/src/views/WebhooksView.vue,web/enterprise/src/views/secrets/SecretsView.vue,web/enterprise/src/components/StatusBadge.vue,web/enterprise/src/styles/pages.css（认领人 zcode，ttl 6h）
+  CLAIM 过期未闭环：web/enterprise/src/views/AlertRulesView.vue,web/enterprise/src/views/AutoProvisionView.vue,web/enterprise/src/views/BatchView.vue,web/enterprise/src/views/CMDBAttrTemplatesView.vue,web/enterprise/src/views/CMDBCollectView.vue,web/enterprise/src/views/CanaryView.vue,web/enterprise/src/views/ConfigHotpushView.vue,web/enterprise/src/views/FederationView.vue,web/enterprise/src/views/NetworkDevicesView.vue,web/enterprise/src/views/NetworkDiagnoseView.vue,web/enterprise/src/views/PlatformConfigView.vue,web/enterprise/src/views/ApprovalRequestsView.vue,web/enterprise/src/views/CMDBChangesView.vue,web/enterprise/src/views/FederationDeploysView.vue,web/enterprise/src/views/AutomationView.vue,web/enterprise/src/views/SchedulesView.vue,web/enterprise/src/views/ScriptsView.vue,web/enterprise/src/views/TicketsView.vue,web/enterprise/src/views/ComplianceView.vue,web/enterprise/src/views/HAView.vue,web/enterprise/src/views/APIKeysView.vue,web/enterprise/src/views/GatewayRoutesView.vue,web/enterprise/src/views/RolesView.vue,web/enterprise/src/views/UsersView.vue,web/enterprise/src/views/NotifyChannelsView.vue,web/enterprise/src/views/WebhooksView.vue,web/enterprise/src/styles/pages.css（认领人 zcode，ttl 6h）
 ```
 
 ---
