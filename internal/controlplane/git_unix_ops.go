@@ -735,8 +735,8 @@ func (s *Server) handleDiskHealth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleRAID 处理 POST /api/v1/os/raid
-func (s *Server) handleRAID(w http.ResponseWriter, r *http.Request) {
+// handleOSRAID 处理 POST /api/v1/os/raid
+func (s *Server) handleOSRAID(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -836,5 +836,5 @@ func (s *Server) registerGitUnixRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/os/windows-perf", s.handleWindowsPerf)
 	mux.HandleFunc("/api/v1/os/hardware-inventory", s.handleBaremetalHardwareInventory)
 	mux.HandleFunc("/api/v1/os/disk-health", s.handleDiskHealth)
-	mux.HandleFunc("/api/v1/os/raid", s.handleRAID)
+	mux.HandleFunc("/api/v1/os/raid", s.handleOSRAID)
 }

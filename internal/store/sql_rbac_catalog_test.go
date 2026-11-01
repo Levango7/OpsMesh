@@ -25,12 +25,25 @@ import (
 
 // handlerRequiredPerms 2026-09-29 一次性盘点的缺口清单（controlplane 全部
 // requireProd/requirePermission 字符串字面量 vs 目录比对的结果，15 项），
-// 2026-10-22 追加 cloud 族（前端路由 requirePerm: 'cloud:read' + 云账号 handler 闸）。
+// 2026-10-22 追加 cloud 族（前端路由 requirePerm: 'cloud:read' + 云账号 handler 闸），
+// 2026-11-01 追加 ai 族，2026-11-02 追加 aiops/knowledge/cost 三族。
+//
+// 本清单是**手工**的，所以它只会覆盖「有人记得往里加」的那些权限点——2026-11-02 的
+// aiops 族就是这么漏的：internal/aiops/handler.go 用的是自己的 authorize(fn, read, write)
+// 包装（不是 requireProd 字面量），一次盘点因此看不见它，目录里也就一直没有 aiops:*，
+// 结果 6 条端点对含 admin 在内的全部角色恒 403。同批补的
+// TestRolePermissions_CoversAuthorizeCallSites 改成从源码里扫 authorize/requireProd
+// 调用点，把这类盲区变成机器守护；本清单继续保留（它还能断言「确实引用过」的语义）。
 var handlerRequiredPerms = []string{
+	"ai:read", "ai:write", // 2026-11-01 ai/agent 六条路由接鉴权时新增
+	"aiops:read", "aiops:write", // 2026-11-02 aiops 六条路由（此前 SetAuthorize 从未被调用）
 	"alert:write",
 	"approval:read", "approval:write", "approval:approve",
 	"cloud:read", "cloud:write",
+	"cost:read", "cost:write", // 2026-11-02 cost 八条路由接鉴权
+	"flux:read", "flux:write", // 2026-11-02 由源码守护扫出：flux.go 5 个 handler 引用，目录里没有 ⇒ /api/v1/flux/apps* 恒 403
 	"helm:read", "helm:write",
+	"knowledge:read", "knowledge:write", // 2026-11-02 knowledge 八条路由接鉴权
 	"middleware:write",
 	"os:write",
 	"quota:read", "quota:write",
@@ -88,6 +101,19 @@ func TestRolePermissions_DerivationEffects(t *testing.T) {
 
 	// operatorReadOnlyGroups（gpu/runbook/incident/k8s）：operator 必须拿到 read，
 	// 且不得拿到 write —— 前端路由门 requirePerm 只要求 *:read；write 下放属产品语义，未决前不下放。
+	// ai 组进 operatorReadOnlyGroups：operator 至少能看/问（classify/decompose/memory），
+	// 但拿不到 ai:write —— 执行 Agent 会驱动 execute_command（远程 shell）。
+	for _, p := range []string{"ai:read"} {
+		if !operator[p] {
+			t.Errorf("operator 应随 operatorReadOnlyGroups 获得 %q", p)
+		}
+		if viewer := perms["viewer"]; !containsPerm(viewer, "ai:read") {
+			t.Errorf("viewer 应随 *:read 派生获得 ai:read, got %v", viewer)
+		}
+	}
+	if operator["ai:write"] {
+		t.Error("operator 不应获得 ai:write（Agent 可驱动远程 shell，写权限待工具侧校验收口）")
+	}
 	for _, p := range []string{"gpu:read", "runbook:read", "incident:read", "k8s:read"} {
 		if !operator[p] {
 			t.Errorf("operator 应随 operatorReadOnlyGroups 获得只读权限 %q（否则低于 viewer，角色层级倒挂）", p)
@@ -98,9 +124,42 @@ func TestRolePermissions_DerivationEffects(t *testing.T) {
 			t.Errorf("operator 不应获得 %q（operatorReadOnlyGroups 只授 read，write 下放未决）", p)
 		}
 	}
+
+	// 2026-11-02 新收口的四族（aiops/knowledge/cost/flux）：read 给 operator（否则低于
+	// viewer，重现层级倒挂），write 只给 admin——四族的写动作分别是
+	// 自动下发修复任务 / 改共享文档库 / 改别家看得见的额度与路由 / 改 GitOps 应用。
+	// flux 尤其要注意：前端 /flux 的路由门就是 requirePerm 'flux:read'
+	// （web/enterprise/src/router/index.js:164），目录缺失时该页对全部角色不可达。
+	for _, p := range []string{"aiops:read", "knowledge:read", "cost:read", "flux:read"} {
+		if !operator[p] {
+			t.Errorf("operator 应随 operatorReadOnlyGroups 获得只读权限 %q（否则低于 viewer，角色层级倒挂）", p)
+		}
+		if !viewer[p] {
+			t.Errorf("viewer 应随 *:read 派生获得 %q", p)
+		}
+	}
+	for _, p := range []string{"aiops:write", "knowledge:write", "cost:write", "flux:write"} {
+		if operator[p] {
+			t.Errorf("operator 不应获得 %q（write 下放属产品语义，未决前按最小权限只授 admin）", p)
+		}
+	}
+	for _, p := range []string{"aiops:read", "aiops:write", "knowledge:write", "cost:write", "flux:read", "flux:write"} {
+		if !containsPerm(perms["admin"], p) {
+			t.Errorf("admin 应持有 %q（admin=全量目录），否则对应端点对唯一管理员也恒 403", p)
+		}
+	}
 	for _, p := range []string{"approval:approve", "task:approve", "schedule:write", "quota:write", "secrets:write", "helm:write"} {
 		if operator[p] {
 			t.Errorf("operator 不应获得 %q（最小权限：审批/敏感域仅 admin）", p)
 		}
 	}
+}
+
+func containsPerm(perms []string, want string) bool {
+	for _, p := range perms {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }

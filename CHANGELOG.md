@@ -4,6 +4,50 @@
 
 > 当前最新已发布版本：`v0.16.0`（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-11-02（部署面加固：微服务 NetworkPolicy 模板落地 + 门禁要求生产 values 对加固开关「显式表态并写理由」）
+
+- **起因（裁决单 #4 事实 2.5 实测）**：`values.yaml` 的 `observability.networkPolicy.enabled` 默认 `false`，`values-production.yaml` **根本没有这个键** ⇒ 生产安装沉默继承"关"；而模板只覆盖 controlplane 与 agent 两种 pod，**12 个微服务 pod 一条策略都没有**，模板头部却自陈「默认拒绝所有入站」。配合服务面租户闸的 fail-open（省略 `?tenantID=` 即跳过归属校验），注释承诺的边界与实发产物不一致。
+- **新增微服务 NetworkPolicy（`deploy/helm/opsmesh/templates/network-policy.yaml`）**：按 `range .Values.services` 逐个 enabled 服务渲染，Ingress 只放行①控制面（svcproxy 转发，走该服务 `httpPort`/`grpcPort`）②agent → `device_svc`（自举 install.sh 与 provision register 直连，见 svcproxy 的 DeviceExtras 注释）③同命名空间 Pod 访问 metrics 端口；Egress 放行 DNS + 控制面 + 同 name 标签下 MySQL(3306)/Redis(6379)。**values 默认全服务 enabled=false ⇒ 存量安装零变化**（实测 `helm template` 默认渲染 NetworkPolicy 条数 = 0；开开关 + 开 device/task 两个服务 ⇒ 渲染 4 条策略：controlplane/agent/device-svc/task-svc；`helm lint` 0 失败）。
+- **metrics 放行刻意做成「同命名空间任意 Pod」并写明原因**：本 chart 不部署 Prometheus，若把来源写死成某个标签，在没打该标签的安装里会**静默拦掉抓取**——观测面失明比多放行一档更难发现。
+- **`values-production.yaml` 显式加 `networkPolicy.enabled: false` + 11 行理由注释**（不是补个值就走）：把"没人看过所以关"变成"账上有关着的决定与翻 true 的前置条件"。**没有直接把生产默认翻成 true**，两条必须先证清的路径写在注释里：① 抓取来源若是独立命名空间的 kube-prometheus-stack，当前放行范围会拦掉抓取；② 服务间互调矩阵与备份 CronJob 路径未逐条实测，NetworkPolicy 是默认拒绝语义，漏一条就是现网 502。翻默认值属现网变更，需在真实 CNI 上跑连通性回归后由 owner 拍（**如果你要求现在就翻，说一声，我按上表补放行再翻**）。
+- **新增门禁 `internal/gates/network_policy_coverage_gate_test.go`**：① 模板必须仍挂在 `networkPolicy.enabled` 守卫下（否则 values 的默认值注释就是假的）；② 覆盖面必须含 controlplane / agent / 按 `.Values.services` 渲染的微服务块 / Ingress+Egress 双向 / device-svc 的 agent 自举放行 / MySQL 出站；③ `values-production.yaml` **必须显式有该键**，且上方要有**针对本键**的理由注释（关键词收口——变异实测过"只要附近任意注释"会被上一块 prometheusRule 的注释顶掉而假绿）；④ 组件识别数下限做扫描面自证。未覆盖组件如实写明（mysql/redis pod 自身仍无策略，只作为放行目标出现）。
+- **变异反证 4 例**（各自点名转红后已还原）：删掉模板里的微服务 range ⇒ 点名"微服务 pod 策略必须按 values 的服务清单逐个渲染"缺失；删掉生产 values 的表态 ⇒ 报"沉默继承默认值，不能不表态"；只留 `enabled` 删掉理由块 ⇒ 报"缺针对本键的理由注释"；把 `values.yaml` 的键名改坏 ⇒ 报"没有 networkPolicy 键"（证明特征失效不会退化成空转判绿）。正常态实测中收紧窗口曾把 11 行理由块的首行切出窗口造成假红，已按实测把窗口放到 20 行并在注释里写下原因。
+- 验证：`go test ./internal/gates/ -count=1` 全绿、`gofmt` 0、`bash deploy/scripts/validate-deploy-assets.sh` **PASS=87 FAIL=0 SKIP=1**（与改动前同数，说明没把别的检查项弄红）。
+
+## [Unreleased] — 2026-11-02（新增门禁：鉴权能力「写了必须有人接」——零调用点的鉴权 API 直接判红）
+
+- **为什么加**：一周内两次栽在同一形状上。`internal/aiops` 的 `SetAuthorize` 定义齐备、注释齐全，但**全仓没有调用点** ⇒ 6 条 AIOps 端点（含 `POST /aiops/execute`，把修复方案下发成 agent 任务）匿名可达（029ce20/8e9626c 已接）；接完再查，`pkg/tenant.RequireTenant`（严格版：解不出租户即 403）同样零调用点，12 个有 HTTP cmd 的服务统一挂的是宽松版 `tenant.Middleware`（兜底 `default`、从不拒绝）。编译、vet、lint、单测**全都看不见缺失的调用点**，而命名与注释会让人以为防线已存在。
+- **新增 `internal/gates/authz_wiring_gate_test.go`**（放在结构性门禁的家 `internal/gates/`，随 `go test ./...` 自动跑，不动 `.github/workflows`）：扫 `internal|pkg|cmd|services|operator|plugins` 的非测试源码，找导出的鉴权能力 API（`Require*` / `Enforce*` / `*Authorize` / `SetAuthorize` / `*Middleware`），按**目录限定的完全名**统计调用点（避免 `tenant.Middleware` 与 `compress.Middleware` 互相顶掉），零调用点即判红；已知债务进 `authzWiringExempt` 台账，**每条必须写原因**。
+- **三档防「门禁自我失明」**：① 扫描面自证——定义数低于下限、或已知接线的符号（`pkg/tenant.Middleware`、`pkg/compress.Middleware`、`internal/aiops.(Handler).SetAuthorize`、`credentials.EnforceInitialCredentials`）没被算成有调用点，直接判红而不是给个绿色的空结论；② 豁免过期判红（豁免项一旦被真接线，必须回删台账）；③ 幽灵豁免判红（台账里的名字已不存在或写错）。
+- **首跑结果（实测）**：鉴权 API 定义 17 个，已接线 12 个，**5 个零调用点已入台账并写明原因**——`pkg/tenant.RequireTenant`、`pkg/tenant.(Manager).QuotaMiddleware`、`pkg/auth.AuthMiddleware`、`pkg/auth.RequirePermission`、`pkg/auth.ServiceAuthMiddleware`。其中 `pkg/auth` 那三条是**新增发现**：该包备好了整套服务间鉴权 HTTP 中间件（含一个按权限名把关的 RBAC 中间件），实际只被 `ValidateServiceToken` 一个符号用到（`pkg/tenant/auth_bridge.go:10`、`services/task-svc/internal/http/gateway.go:107`）；`RequirePermission` 与 controlplane 的 `requireProd` 是同一概念的两份定义，本身就是漂移风险，**合并还是删除要 owner 裁**（见 `docs/semantic-rulings-2026-11-01.md` 的方案 A/B）。
+- **变异反证 4 例**（各自点名转红后已还原）：新加一个零调用点的 `RequireProbeToken` ⇒ 点名该符号与定义行；把 `RequireTenant` 真接上一处 ⇒ 报「豁免台账过期」并给出调用点 file:line；台账里塞一条不存在的名字 ⇒ 报幽灵项；把分类器写坏成恒 false ⇒ 报「只扫到 0 个定义，扫描面塌了」。验证：`go vet ./internal/gates/` 通过、`go test ./internal/gates/ -count=1` 全绿、钉版 golangci-lint 0 issues、gofmt 0。
+
+## [Unreleased] — 2026-11-02（补账：2026-10-30 ~ 11-01 机动线（workbuddy）已进 main 的安全收口与 6 处真缺陷）
+
+> 本块是**补记**：下面这些提交（逐条带 sha）除 `ce7b0d8` 随本批推送落地外都已在 main 上，
+> 但当时本线只写了协调板 DONE 行、没写 CHANGELOG，于是发版线归版时拿不到账
+> （同批 `a6c587c` 也因同样问题被 qoder 点名）。旧块不回改，只把欠的账如实补上。
+> 逐条 sha 的 main 可达性以 `git merge-base --is-ancestor <sha> origin/main` 现查为准。
+
+- **G1 匿名路由收口第一批（k8s 生命周期 9 条 + AI Agent 6 条）**：`a3e5f87` + `f88477d` 给 `internal/k8slifecycle` 的 9 条路由接上 `subsystemAuthorize`（含 etcd-restore / node-scale 这类真副作用动作此前匿名可触发）；`44d0280` 给 `/api/v1/ai/agent/*` 六条接鉴权，并把会话记忆改成按**已验签租户**寻址（`sessionKey(tenantID, sessionID)`）——此前 `userId`/`tenantId` 直接采信请求体，猜到 sessionId 就能读走别家的 Agent 上下文。权限目录同批补 `ai:read`/`ai:write`，`ai` 进 `operatorReadOnlyGroups`（write 只给 admin）。
+- **AI Agent 的假能力显式化**：`84f65a1` 让 6 个内置工具在没接后端时返回 `ErrToolNotWired`（`AgentResult.NotWired` 透出，`/tools` 标 `implemented:false`），运行命中即 **501** 而不是把「设备/指标/工单」这些编造数据当 200 回给调用方；`ce7b0d8` 把 `ExecuteCommandTool.CheckPermission`（远程 shell 的权限闸）从**恒 true 的空壳**改为 fail-closed：权限集来自 `model.RolePermissions()` 按已验签角色派生，空角色/未知角色一律拒绝。
+- **成本配额口径（P0 三件）**：`86ae276` 补 `internal/cost` 零测试包并当场发现**月度用量永不重置**（`UsedMonth` 没有窗口起点，跨月继续累计 ⇒ 客户每月凭空被扣额度）；`0d290fd` 把日/月窗口改成按租户 IANA 时区的**自然日/自然月零点**切（此前是服务器时间加法滚窗口，异地租户每月凭空损失数小时），`POST /cost/budget` 接受可选 `timezone`，非法时区在动额度之前先 400（避免「额度已改、窗口仍按旧时区切」的半应用）；`7f9ab3e` 定**软限默认**——越阈值只告警且每窗口一次（`alerted` 记录键 `类型:阈值`，窗口切换清标记），真正打满才拒（`RecordUsage` 返回 `ok=false`），日/月两条线彼此独立，`SetBudget` 保留已发生用量。
+- **AI 网关四处真缺陷**：`5b829a7` 限流未配置（`rpm<=0`）此前等价「每分钟 0 次」把请求全拒 ⇒ 改为不限流；语义缓存键 `hashRequest` 只按消息内容累加字符、忽略 role/tools/温度 ⇒ 不同请求串味，改 fnv64a 覆盖 `model|maxTokens|temperature|topP|stream|tools` 与每条 `role\x00content\x01`；摘要截断按字节切会在 UTF-8 中间切出 U+FFFD ⇒ 改 rune 边界。`9a4d833` 提供商选择此前遍历 map 随机命中（同一请求两次可落到不同提供商）⇒ 改为声明列表字典序 + 路由规则按 `Priority` 确定性选择；`Compress` 的输出预留硬编码 500，预算小于「500+系统消息」时 `remaining` 直接变负、连用户最新那一句都被摘要吞掉 ⇒ 按比例取预留并夹住、且**无条件保留最近一轮**。
+- **已退役设备不得被改活（`625efd7`）**：`services/device-svc` 的 `UpdateDevice` 此前能把 `retired=true` 的行写回活跃（软删后复活，CMDB 里凭空多出一台已下架设备）。内存 store 直接拒绝；MySQL 的 UPDATE 加 `AND retired = false`，并在 `RowsAffected==0` 时回查 `retired` 以区分「幂等无变化更新」（TIMESTAMP 只到秒）与「不存在/已退役」。
+- **审计文本截断的字符边界（`71c9117`）**：`internal/controlplane/auditsafe` 按字节截断会在 UTF-8 中间切，落库的审计详情带 U+FFFD（审计是不可篡改证据，坏字符等于自证不可信）⇒ 回退到字符边界截断，并补 `auditsafe`/`tenantguard` 两包单测（含 charset、跨租户不回显、开放模式三条契约）。
+- **零测试包四处**：`ee587db`（`services/gpu-svc/internal/cache` + `services/config-svc/internal/models`）、`f66bf6b`（`enterpriseui` 嵌入读取/内容协商/缓存策略/CTA）、`4dd0f52`（`services/log-svc` 的 `internal/store`）。
+
+## [Unreleased] — 2026-11-02（G1 匿名路由收口第二批：AI 网关 11 条 + 知识库 8 条 + 成本 8 条 + AIOps 6 条接上鉴权；权限目录补 aiops/knowledge/cost/flux 四族；新增「从源码扫权限点」的第二层守护）
+
+- **收口的四族（共 33 条注册）**：`internal/ai/gateway/handler.go`（chat/embed/rag-ingest/rag-search/usage/health/prompts×2/prompts{id}×3，按 `ai:read`/`ai:write` 分级，`/ai/rag/ingest` 与 prompts 的 POST/PUT/DELETE 走 write）、`internal/knowledge/handler.go`（sync/ingest/删文档/改同步配置走 `knowledge:write`，search/docs/stats/sync-configs 走 `knowledge:read`）、`internal/cost/handler.go`（改预算/改路由规则走 `cost:write`，其余走 `cost:read`）、`internal/aiops/handler.go`（6 条按 `aiops:read`/`aiops:write`）。接线都在 `internal/controlplane/server.go` 的 G1 注入清单里，与已合并的 cmdb/log/deploy/orch/k8slifecycle/agent 同一入口。
+- **AIOps 是双重缺口，必须同批修**：包里早就写好了 `SetAuthorize`，但**全仓没有任何调用点**（`grep 'SetAuthorize'` 只命中定义处），`authz==nil` 时 `authorize()` 原样放行 ⇒ 6 条端点完全匿名，含 `POST /api/v1/aiops/execute`（把修复方案直接下发成 agent 任务）；而目录里又没有 `aiops:*`，所以只接线不补目录会立刻变成对全部角色恒 403。变异反证：把注入改成 `SetAuthorize(nil)` ⇒ 接线用例点名 `POST /api/v1/aiops/analyze 匿名请求 = 503, want 401`（503 说明请求已经打到业务体）。
+- **`cost` 族的租户口径**：`?tenantId=` 与请求体 `tenantId` 此前直接决定读/写作用域 ⇒ 任何人不改身份、只改参数就能读别家的预算/告警/报表，POST 还能替别家改额度。现按 `scopedTenant`/`scopedTenantFromBody` 以**已验签上下文为准**，仅在未启用鉴权（回调为 nil 或开放模式返回空上下文）时沿用自报值，与 ai/agent 的 `identity()` 同一口径。代价如实记录：管理员的跨租户汇总视图因此需要一条显式的平台级权限，本批不做，已在协调板列为待 owner 定夺。
+- **权限目录补四族 8 点**（`internal/store/model/perm.go`）：`aiops:read|write`、`knowledge:read|write`、`cost:read|write`、`flux:read|write`；四族的 read 进 `operatorReadOnlyGroups`（否则 operator 低于只读派生的 viewer，重现 2026-09-30 修过的层级倒挂），write 一律只给 admin（下放属产品语义，未决前按最小权限）。
+- **flux 族是本批新扫出来的既有缺陷**：`internal/controlplane/flux.go` 的 5 个 handler 全部 `requirePermission(w, r, "flux:read"/"flux:write")`，而目录里没有 flux ⇒ `/api/v1/flux/apps*` 对含 admin 在内的全部角色恒 403，前端 `web/enterprise/src/router/index.js:164` 的 `requirePerm: 'flux:read'` 因此让 `/flux` 成为死路由（与 2026-10-22 的 cloud 族同形态）。
+- **第二层守护（新增 `internal/store/rbac_perm_source_guard_test.go`）**：手工清单 `handlerRequiredPerms` 只覆盖「有人记得往里加」的项——2026-09-29 那次盘点依据的是 `requireProd/requirePermission` 字面量，于是用了各自 `authorize(...)` 包装的 aiops/agent/knowledge/cost 各族一直不在它的视野里。新用例改为扫 `internal/` 非测试源码里 `authorize(`/`requireProd(`/`requirePermission(` 调用点上的 `group:action` 字面量，逐条断言在目录中；并加两条反空断言的对照拍（必须扫到 `ai:read`/`device:read`；手工清单每一项也要能被源码扫到）。首跑即点名 flux 两点，证明守护不是摆设。
+- **一处刻意的写法约束**：同一 URL 上 GET/POST 分属两个权限点的（prompts、cost budget/routes）改成**按动词分支就近声明**权限点，不再用「先算 perm 变量再统一 authorize」的辅助函数——后者会让字面量离开 `authorize(...)` 调用点行，源码守护就看不见（aiops 当初正是这么漏的）。
+- **测试面**：`internal/ai/gateway/handler_authz_test.go`（11 条映射 + 403 之后向量库/模板零变化 + 405 不消费鉴权含对照拍 + nil 透传）、`internal/knowledge/handler_authz_test.go`（8 条映射 + 拒绝不改动文档库与同步开关）、`internal/cost/handler_authz_test.go`（8 条映射 + 拒绝不改预算/规则 + 租户以验签上下文为准 + 开放模式仍用自报值，反向证明上一条不是「永远返回空预算」的假绿）、`internal/controlplane/g1_routes_auth_wiring_test.go`（22 条匿名请求一律 401）与 `ai_gateway_auth_wiring_test.go`（11 条）。变异反证共 4 例（ingest 权限点降级、闸改空转、prompts{id} 强制 read、`scopedTenant` 忽略 actx），各自点名对应用例后已还原复绿。
+
 ## [0.17.0] — 2026-10-30（K8s 生命周期假成功收口：升级/回滚/证书轮换显式 501 + 前端置灰，真实现立项）
 
 - **修复对外假成功（裁决单 ① A 项）**：`POST /api/v1/k8s/lifecycle/upgrade|rollback|cert-rotate`
@@ -16,6 +60,21 @@
 
 ## [0.17.0] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
+- **前端路由门词汇与后端 RBAC 目录对齐 + 新增一致性守卫（真缺陷，workbuddy 通报后全量核对）**：
+  按「router 全部 40 个 requirePerm × 后端 PermSpecs 112 项目录」+「各页 api 模块 × 后端 handler 的
+  authorize 字面量」两个维度核对，修正 6 处：`/ai-chat`、`/agent` 挂 `aiops:read` 而后端
+  `/api/v1/ai/*` 按 `ai:read` 把关（gateway/handler.go:53、agent/handler.go）→ 改 `ai:read`；
+  `/knowledge` → `knowledge:read`、`/cost` → `cost:read`（后端同域 handler 已按此把关，原挂 aiops 会在
+  自定义角色/按域下放时变成「页面进得去、API 全 403」）；`/trace`、`/gitops/dashboard` 挂
+  `observability:read`——**该权限点不在目录里，admin 权限集由目录派生 ⇒ 对含 admin 的全部角色都是死路由**，
+  且 `/api/services|/api/traces` 后端无守卫（graceful stub）⇒ /trace 去掉虚构的门；/gitops/dashboard 是
+  argocd+flux 复合视图，改挂 `argocd:read` 与兄弟页 /argocd 同门。新增守卫
+  `src/router/__tests__/router-perms.test.js`（3 条，含目录解析自检）：断言每个 requirePerm 都在后端
+  PermSpecs 里，与后端 sql_rbac_catalog_test.go 的 handlerRequiredPerms 守护互为补面——杜绝
+  「前端发明权限点 ⇒ 死路由」复发。**移交 backend owner 两项**：argocd 族未进 operatorReadOnlyGroups
+  （operator 打不开 /argocd 与仪表盘，是否下放属产品语义）；observability 域是否立真权限族（若要，
+  /trace 与 /gitops 应按新族收口而非去门）。本地实测：vitest 61→62 文件/1309（+3 新守卫）、eslint 0、
+  vite build、Playwright 80/80 全绿。
 - **剩余族范式定稿（第 9 批 CSS 去重）**：第 7/8 批排除的选择器逐族裁定并实现（12 项）。
   三档判据：零泄漏直接收（.kv 族/.checkbox-group/.metrics-row+--two/--four 修饰类/.stat-v/.stat-l/
   .err-msg/.data-table+tr:hover）；未覆盖用法=修正（.status-pill 基类——6 个文件此前渲染无形状文字、

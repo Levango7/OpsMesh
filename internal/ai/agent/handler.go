@@ -4,9 +4,13 @@ package agent
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
+	"strings"
 
 	gateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
+	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // AgentHandler Agent HTTP handler
@@ -14,8 +18,36 @@ type AgentHandler struct {
 	orchestrator *Orchestrator
 	gateway      *gateway.Gateway
 	memory       *MemoryManager
+	// Authorize 鉴权回调（由 controlplane 注入 subsystemAuthorize）：校验身份并核对
+	// 权限点，返回**已验签**的上下文。nil 时不启用鉴权（独立使用与单测的向后兼容路径）。
+	//
+	// 为什么 handlers 自己调而不是在 RegisterAgentRoutes 里包一层：这些端点要把
+	// 已验签的 tenantId/userId 写回业务上下文（见 HandleExecute），包装器拿不到
+	// 返回值就得再解析一次或塞进 request context，多一层状态。
+	Authorize func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
 }
 
+// authorize 核对权限点；ok=false 时响应已由回调写完，调用方必须立即返回。
+func (h *AgentHandler) authorize(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool) {
+	if h.Authorize == nil {
+		return authctx.Context{}, true
+	}
+	return h.Authorize(w, r, perm)
+}
+
+// identity 以已验签上下文为准覆盖请求自报身份。
+// 未启用鉴权（回调为 nil 或开放模式返回空上下文）时沿用原值，保持独立部署可用。
+func identity(actx authctx.Context, bodyTenant, bodyUser string) (string, string) {
+	if actx.TenantID != "" {
+		bodyTenant = actx.TenantID
+	}
+	if actx.UserID != "" {
+		bodyUser = actx.UserID
+	}
+	return bodyTenant, bodyUser
+}
+
+// NewAgentHandler 装配 Agent handler；identity 从请求头/已验签上下文取，不信自报字段。
 func NewAgentHandler(orch *Orchestrator, gw *gateway.Gateway, mem *MemoryManager) *AgentHandler {
 	return &AgentHandler{
 		orchestrator: orch,
@@ -28,6 +60,11 @@ func NewAgentHandler(orch *Orchestrator, gw *gateway.Gateway, mem *MemoryManager
 func (h *AgentHandler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// Agent 执行会驱动工具（含 execute_command 这类远程 shell），按写权限把关。
+	actx, ok := h.authorize(w, r, "ai:write")
+	if !ok {
 		return
 	}
 
@@ -48,12 +85,18 @@ func (h *AgentHandler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 身份以已验签上下文为准：userId/tenantId 是客户端自报字段，采信它们等于允许
+	// 调用方冒充任意租户去驱动 Agent、并读写其会话记忆。
+	tenantID, userID := identity(actx, req.TenantID, req.UserID)
 	agentCtx := AgentContext{
-		UserID:    req.UserID,
-		TenantID:  req.TenantID,
+		UserID:    userID,
+		TenantID:  tenantID,
 		SessionID: req.SessionID,
 		Metadata:  make(map[string]interface{}),
 	}
+	// 工具侧权限（ExecuteCommandTool 等高危工具据此判 task:write）：
+	// 从已验签角色派生权限集合，绝不由请求体提供。
+	agentCtx.Metadata["permissions"] = permissionsForRoles(actx.Roles)
 
 	var result interface{}
 	var err error
@@ -68,13 +111,55 @@ func (h *AgentHandler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 运行中调用过未接线的工具 ⇒ 501：结果里那些「设备/指标/工单」都不是真数据，
+	// 回 200 会让调用方（和 Agent 的下游结论）把假象当事实。
+	if unwired := notWiredOf(result); len(unwired) > 0 {
+		paginate.WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
+			"error":    "请求涉及的工具尚未接入后端，结果中的业务数据不可信",
+			"notWired": unwired,
+			"result":   result,
+		})
+		return
+	}
+
 	paginate.WriteJSON(w, http.StatusOK, result)
+}
+
+// notWiredOf 从执行结果里取出未接线工具清单（单 Agent 与 DAG 两条路径共用）。
+func notWiredOf(result interface{}) []string {
+	switch res := result.(type) {
+	case *AgentResult:
+		if res == nil {
+			return nil
+		}
+		return res.NotWired
+	case *DAGResult:
+		if res == nil {
+			return nil
+		}
+		var out []string
+		for _, sub := range res.Results {
+			for _, name := range sub.NotWired {
+				if !containsString(out, name) {
+					out = append(out, name)
+				}
+			}
+		}
+		sort.Strings(out)
+		return out
+	}
+	return nil
 }
 
 // HandleClassify 处理 POST /api/v1/ai/agent/classify
 func (h *AgentHandler) HandleClassify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// 分类只回一个意图标签，不改任何状态 ⇒ 归 ai:read（但要登录）。
+	// 它仍会真打一次 LLM（消耗租户额度），所以不能匿名开放。
+	if _, ok := h.authorize(w, r, "ai:read"); !ok {
 		return
 	}
 
@@ -105,6 +190,10 @@ func (h *AgentHandler) HandleDecompose(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// 只产出子任务计划文本、不执行 ⇒ 与 classify 同为 ai:read。
+	if _, ok := h.authorize(w, r, "ai:read"); !ok {
+		return
+	}
 
 	var req struct {
 		Input string `json:"input"`
@@ -126,10 +215,42 @@ func (h *AgentHandler) HandleDecompose(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// permissionsForRoles 把已验签角色名映射成权限点集合（单一来源 store/model.RolePermissions）。
+// 空角色/未知角色得到空集合 ⇒ 高危工具一律拒绝（fail-closed）。
+func permissionsForRoles(roles []string) []string {
+	table := model.RolePermissions()
+	out := make([]string, 0, len(table["viewer"]))
+	seen := make(map[string]bool)
+	for _, role := range roles {
+		for _, perm := range table[role] {
+			if !seen[perm] {
+				seen[perm] = true
+				out = append(out, perm)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// memoryTenant 决定读/删会话时用哪个租户：已验签上下文优先；仅在未启用鉴权
+// （回调为 nil，或开放模式返回空上下文）时才接受客户端自报的 tenantId——
+// 与 HandleExecute 的 identity 口径保持一致，否则写入与读取的作用域会错位。
+func memoryTenant(actx authctx.Context, r *http.Request) string {
+	if actx.TenantID != "" {
+		return actx.TenantID
+	}
+	return strings.TrimSpace(r.URL.Query().Get("tenantId"))
+}
+
 // HandleMemory 处理 GET /api/v1/ai/agent/memory?sessionId=xxx
 func (h *AgentHandler) HandleMemory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	actx, ok := h.authorize(w, r, "ai:read")
+	if !ok {
 		return
 	}
 
@@ -139,7 +260,7 @@ func (h *AgentHandler) HandleMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := h.memory.GetShortTerm(sessionID)
+	entries := h.memory.GetShortTerm(memoryTenant(actx, r), sessionID)
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"entries": entries,
 		"count":   len(entries),
@@ -152,6 +273,10 @@ func (h *AgentHandler) HandleClearMemory(w http.ResponseWriter, r *http.Request)
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	actx, ok := h.authorize(w, r, "ai:write")
+	if !ok {
+		return
+	}
 
 	sessionID := r.URL.Query().Get("sessionId")
 	if sessionID == "" {
@@ -159,7 +284,7 @@ func (h *AgentHandler) HandleClearMemory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	h.memory.ClearSession(sessionID)
+	h.memory.ClearSession(memoryTenant(actx, r), sessionID)
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
 }
 
@@ -169,15 +294,26 @@ func (h *AgentHandler) HandleTools(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if _, ok := h.authorize(w, r, "ai:read"); !ok {
+		return
+	}
 
 	tools := DefaultToolRegistry().List()
 	toolList := make([]map[string]interface{}, 0, len(tools))
 	for _, t := range tools {
-		toolList = append(toolList, map[string]interface{}{
+		implemented := IsToolWired(t)
+		entry := map[string]interface{}{
 			"name":        t.Name(),
 			"description": t.Description(),
 			"parameters":  t.Parameters(),
-		})
+			// implemented=false ⇒ 该工具只会报 ErrToolNotWired，前端据此置灰，
+			// 不要摆成「可用能力清单」。
+			"implemented": implemented,
+		}
+		if !implemented {
+			entry["notImplementedReason"] = ErrToolNotWired.Error()
+		}
+		toolList = append(toolList, entry)
 	}
 
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
@@ -186,7 +322,16 @@ func (h *AgentHandler) HandleTools(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// RegisterAgentRoutes 注册 Agent 路由
+// RegisterAgentRoutes 注册 Agent 路由。
+//
+// 权限映射（每个 handler 自查，见 AgentHandler.Authorize）：
+//   - ai:read  → GET /memory、GET /tools、POST /classify、POST /decompose
+//     （后两条只回标签/计划文本，不改任何状态，但会打 LLM 故不能匿名）；
+//   - ai:write → POST /execute（会驱动工具，含 execute_command 远程 shell）、
+//     DELETE /memory（销毁他人会话上下文是破坏性动作）。
+//
+// 会话记忆一律按**已验签租户**作用域存取：sessionId 由客户端自报，历史上
+// 仅凭它就能读/删任意租户的会话记忆。
 func RegisterAgentRoutes(mux *http.ServeMux, handler *AgentHandler) {
 	mux.HandleFunc("POST /api/v1/ai/agent/execute", handler.HandleExecute)
 	mux.HandleFunc("POST /api/v1/ai/agent/classify", handler.HandleClassify)

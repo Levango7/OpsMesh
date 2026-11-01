@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
@@ -562,6 +563,39 @@ type CostHandler struct {
 	router   *ModelRouter
 	tracker  *CostTracker
 	reporter *ReportGenerator
+	// Authorize 鉴权回调（由 controlplane 注入 subsystemAuthorize）：校验身份并核对权限点。
+	// nil 时不启用鉴权（独立使用与单测的向后兼容路径）。口径与 ai/agent、ai/gateway、
+	// knowledge 一致。
+	Authorize func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
+}
+
+// authorize 核对权限点；ok=false 时响应已由回调写完，调用方必须立即返回。
+func (h *CostHandler) authorize(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool) {
+	if h.Authorize == nil {
+		return authctx.Context{}, true
+	}
+	return h.Authorize(w, r, perm)
+}
+
+// scopedTenant 决定这次请求作用在哪个租户：已验签上下文优先，仅在未启用鉴权（回调为
+// nil，或开放模式返回空上下文）时才接受客户端自报的 tenantId。口径与 ai/agent 的
+// identity() 一致——否则任何拿到 cost:read 的人改一下查询参数就能枚举别家的预算、
+// 告警与报表，POST 还能替别家改额度。
+// 代价（如实记录）：管理员的跨租户汇总视图因此需要一条显式的平台级权限，本批不做，
+// 已在协调板上列为待 owner 定夺。
+func scopedTenant(actx authctx.Context, r *http.Request) string {
+	if actx.TenantID != "" {
+		return actx.TenantID
+	}
+	return r.URL.Query().Get("tenantId")
+}
+
+// scopedTenantFromBody 同上，只是自报值来自请求体（POST /cost/budget）。
+func scopedTenantFromBody(actx authctx.Context, bodyTenant string) string {
+	if actx.TenantID != "" {
+		return actx.TenantID
+	}
+	return bodyTenant
 }
 
 func NewCostHandler(bm *BudgetManager, mr *ModelRouter, ct *CostTracker) *CostHandler {
@@ -574,13 +608,24 @@ func NewCostHandler(bm *BudgetManager, mr *ModelRouter, ct *CostTracker) *CostHa
 }
 
 // HandleBudget 处理 GET/POST /api/v1/cost/budget
+//
+// 权限点按动词分支就近声明（不在「先算 perm 再统一 authorize」的辅助函数里）：
+// 那样字面量就不在 authorize(...) 调用点行上，TestRolePermissions_CoversAuthorizeCallSites
+// 这类源码守护会漏看（aiops 族当初就是这么漏的）。
 func (h *CostHandler) HandleBudget(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		tenantID := r.URL.Query().Get("tenantId")
-		budget := h.budget.GetBudget(tenantID)
+		actx, ok := h.authorize(w, r, "cost:read")
+		if !ok {
+			return
+		}
+		budget := h.budget.GetBudget(scopedTenant(actx, r))
 		paginate.WriteJSON(w, http.StatusOK, budget)
 	case http.MethodPost:
+		actx, ok := h.authorize(w, r, "cost:write")
+		if !ok {
+			return
+		}
 		var req struct {
 			TenantID  string  `json:"tenantId"`
 			Daily     int     `json:"daily"`
@@ -592,14 +637,16 @@ func (h *CostHandler) HandleBudget(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 			return
 		}
+		// 额度改在谁身上以已验签上下文为准（自报 tenantId 只在未启用鉴权时生效）。
+		tenantID := scopedTenantFromBody(actx, req.TenantID)
 		// 时区非法要在改额度之前拒绝，避免出现「额度已改、窗口仍按旧时区切」的半应用。
 		if req.Timezone != "" {
-			if err := h.budget.SetTimezone(req.TenantID, req.Timezone); err != nil {
+			if err := h.budget.SetTimezone(tenantID, req.Timezone); err != nil {
 				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
 		}
-		h.budget.SetBudget(req.TenantID, req.Daily, req.Monthly, req.Threshold)
+		h.budget.SetBudget(tenantID, req.Daily, req.Monthly, req.Threshold)
 		paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 	default:
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -612,8 +659,12 @@ func (h *CostHandler) HandleBudgetAlerts(w http.ResponseWriter, r *http.Request)
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	tenantID := r.URL.Query().Get("tenantId")
-	alerts := h.budget.GetAlerts(tenantID)
+	// 告警历史含预算阈值与消耗 ⇒ cost:read，且只看本租户。
+	actx, ok := h.authorize(w, r, "cost:read")
+	if !ok {
+		return
+	}
+	alerts := h.budget.GetAlerts(scopedTenant(actx, r))
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"alerts": alerts,
 		"count":  len(alerts),
@@ -626,7 +677,12 @@ func (h *CostHandler) HandleCostReport(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	tenantID := r.URL.Query().Get("tenantId")
+	// 报表是按租户聚合的消耗明细 ⇒ cost:read，且只看本租户。
+	actx, ok := h.authorize(w, r, "cost:read")
+	if !ok {
+		return
+	}
+	tenantID := scopedTenant(actx, r)
 	sinceStr := r.URL.Query().Get("since")
 	var since time.Time
 	if sinceStr != "" {
@@ -658,11 +714,18 @@ func (h *CostHandler) HandleCostReport(w http.ResponseWriter, r *http.Request) {
 func (h *CostHandler) HandleModelRoute(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if _, ok := h.authorize(w, r, "cost:read"); !ok {
+			return
+		}
 		rules := h.router.GetRules()
 		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"rules": rules,
 		})
 	case http.MethodPost:
+		// 路由规则决定后续每次调用用哪个模型（直接影响成本与数据去向）⇒ cost:write。
+		if _, ok := h.authorize(w, r, "cost:write"); !ok {
+			return
+		}
 		var req struct {
 			Rules []RoutingRule `json:"rules"`
 		}
@@ -684,6 +747,11 @@ func (h *CostHandler) HandleRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 只是查「这个任务类型会路由到哪个模型」，不改规则 ⇒ cost:read（但它是全局规则，不能匿名）。
+	if _, ok := h.authorize(w, r, "cost:read"); !ok {
+		return
+	}
+
 	var req struct {
 		TaskType string `json:"taskType"`
 	}
@@ -700,6 +768,11 @@ func (h *CostHandler) HandleRoute(w http.ResponseWriter, r *http.Request) {
 func (h *CostHandler) HandleGenerateReport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	// 纯渲染（把调用方给的 sections 排成 markdown），不碰任何状态 ⇒ cost:read。
+	if _, ok := h.authorize(w, r, "cost:read"); !ok {
 		return
 	}
 
@@ -730,7 +803,16 @@ func (h *CostHandler) HandleGenerateReport(w http.ResponseWriter, r *http.Reques
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"markdown": md})
 }
 
-// RegisterCostRoutes 注册成本控制路由
+// RegisterCostRoutes 注册成本控制路由。
+//
+// 权限映射（每个 handler 自查，见 CostHandler.Authorize）：
+//   - cost:read  → GET /cost/budget、GET /cost/alerts、GET /cost/report、
+//     GET /cost/routes、POST /cost/route、POST /cost/report/generate；
+//   - cost:write → POST /cost/budget（改额度/阈值/时区）、POST /cost/routes（改路由规则）。
+//
+// 修复前这 8 条全部匿名可达，且 tenantId 由查询串/请求体自报——任何人不改参数就能
+// 读别家的预算、报表与告警，POST 还能替别家改额度（G1 同族 + 身份自报双重缺口）。
+// 现在 tenantId 以已验签上下文为准（scopedTenant）。
 func RegisterCostRoutes(mux *http.ServeMux, handler *CostHandler) {
 	mux.HandleFunc("GET /api/v1/cost/budget", handler.HandleBudget)
 	mux.HandleFunc("POST /api/v1/cost/budget", handler.HandleBudget)

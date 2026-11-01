@@ -8,6 +8,7 @@ import (
 	"time"
 
 	gateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
+	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
@@ -19,6 +20,17 @@ type KnowledgeHandler struct {
 	reranker  *Reranker
 	citation  *CitationTracker
 	gw        *gateway.Gateway
+	// Authorize 鉴权回调（由 controlplane 注入 subsystemAuthorize）：校验身份并核对权限点。
+	// nil 时不启用鉴权（独立使用与单测的向后兼容路径）。口径与 ai/agent、ai/gateway 一致。
+	Authorize func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
+}
+
+// authorize 核对权限点；ok=false 时响应已由回调写完，调用方必须立即返回。
+func (h *KnowledgeHandler) authorize(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool) {
+	if h.Authorize == nil {
+		return authctx.Context{}, true
+	}
+	return h.Authorize(w, r, perm)
 }
 
 func NewKnowledgeHandler(store KnowledgeStore, gw *gateway.Gateway) *KnowledgeHandler {
@@ -40,6 +52,10 @@ func NewKnowledgeHandler(store KnowledgeStore, gw *gateway.Gateway) *KnowledgeHa
 func (h *KnowledgeHandler) HandleSync(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// 同步会从外部源拉资料并覆盖文档库 ⇒ knowledge:write。
+	if _, ok := h.authorize(w, r, "knowledge:write"); !ok {
 		return
 	}
 
@@ -77,6 +93,10 @@ func (h *KnowledgeHandler) HandleSync(w http.ResponseWriter, r *http.Request) {
 func (h *KnowledgeHandler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// 检索读的是文档库正文（rerank 还会打一次模型）⇒ knowledge:read，不能匿名。
+	if _, ok := h.authorize(w, r, "knowledge:read"); !ok {
 		return
 	}
 
@@ -129,6 +149,11 @@ func (h *KnowledgeHandler) HandleIngest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// 导入直接写文档库 ⇒ knowledge:write。
+	if _, ok := h.authorize(w, r, "knowledge:write"); !ok {
+		return
+	}
+
 	var req struct {
 		Documents []KnowledgeDoc `json:"documents"`
 	}
@@ -175,6 +200,11 @@ func (h *KnowledgeHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 列出的是文档正文（一次最多 1000 条）⇒ knowledge:read。
+	if _, ok := h.authorize(w, r, "knowledge:read"); !ok {
+		return
+	}
+
 	source := r.URL.Query().Get("source")
 	var docs []KnowledgeDoc
 	var err error
@@ -202,6 +232,11 @@ func (h *KnowledgeHandler) HandleDelete(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	// 删除是破坏性动作 ⇒ knowledge:write。
+	if _, ok := h.authorize(w, r, "knowledge:write"); !ok {
+		return
+	}
+
 	if err := h.store.Delete(r.Context(), []string{id}); err != nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -213,6 +248,11 @@ func (h *KnowledgeHandler) HandleDelete(w http.ResponseWriter, r *http.Request, 
 func (h *KnowledgeHandler) HandleStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	// 统计含各同步源的配置 ⇒ knowledge:read。
+	if _, ok := h.authorize(w, r, "knowledge:read"); !ok {
 		return
 	}
 
@@ -235,6 +275,11 @@ func (h *KnowledgeHandler) HandleSyncConfigs(w http.ResponseWriter, r *http.Requ
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// 同步配置里含外部源标识 ⇒ knowledge:read（与 stats 同一口径）。
+	if _, ok := h.authorize(w, r, "knowledge:read"); !ok {
+		return
+	}
+
 	configs := h.syncEng.GetConfigs()
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"configs": configs,
@@ -245,6 +290,11 @@ func (h *KnowledgeHandler) HandleSyncConfigs(w http.ResponseWriter, r *http.Requ
 func (h *KnowledgeHandler) HandleUpdateSyncConfig(w http.ResponseWriter, r *http.Request, source string) {
 	if r.Method != http.MethodPut {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	// 改同步开关/周期会决定后续对外部源的拉取 ⇒ knowledge:write。
+	if _, ok := h.authorize(w, r, "knowledge:write"); !ok {
 		return
 	}
 
@@ -272,7 +322,15 @@ func (h *KnowledgeHandler) HandleUpdateSyncConfig(w http.ResponseWriter, r *http
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
-// RegisterKnowledgeRoutes 注册知识库路由
+// RegisterKnowledgeRoutes 注册知识库路由。
+//
+// 权限映射（每个 handler 自查，见 KnowledgeHandler.Authorize）：
+//   - knowledge:read  → POST /knowledge/search、GET /knowledge/docs、
+//     GET /knowledge/stats、GET /knowledge/sync-configs；
+//   - knowledge:write → POST /knowledge/sync、POST /knowledge/ingest、
+//     DELETE /knowledge/docs/{id}、PUT /knowledge/sync-configs/{source}。
+//
+// 修复前这 8 条全部匿名可达（G1 同族：ai/agent、ai/gateway、k8slifecycle、aiops）。
 func RegisterKnowledgeRoutes(mux *http.ServeMux, handler *KnowledgeHandler) {
 	mux.HandleFunc("POST /api/v1/knowledge/sync", handler.HandleSync)
 	mux.HandleFunc("POST /api/v1/knowledge/search", handler.HandleSearch)
