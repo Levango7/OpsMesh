@@ -275,8 +275,6 @@ onMounted(() => {
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
 
-.status-pill.warn { background: var(--warn-soft, #fef3c7); color: var(--warn, #b45309); }
-
 .filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 10px 0; }
 .filter-bar .field { display: flex; flex-direction: column; gap: 5px; }
 .filter-bar .field > label { margin: 0; font-size: 12px; color: var(--text-2); }

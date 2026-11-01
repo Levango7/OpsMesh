@@ -680,3 +680,46 @@
 .tool-btn:hover { background: var(--bg-soft); color: var(--text); }
 .tab:hover { color: var(--text); }
 .chart-bar:hover { opacity: 1; }
+
+/* ===== 分歧型收敛（第 8 批，2026-10-30） =====
+ * 与第 7 批同版三重判据：多数派正文作 canonical + 零泄漏校验（.row-2/.section-title/
+ * .checkbox-item 泄漏=0；.status-pill.warn 的 3 个疑似泄漏文件只用了裸 status-pill
+ * 或 ok/off，无人用 warn 变体）+ 少数派观感变化限定在间距/1px 色阶/字号。
+ * 刻意排除（有泄漏或分歧过大，需产品口径）：.card h4（43 个未覆盖用法）、.tag（9 个，
+ * 且 TraceView/SystemOpsView 是两种有意设计）、.metric-value（2 个未覆盖）、
+ * .field input（6 种）、.field textarea（4 种）、.metrics-row（2/4 列是刻意布局）、
+ * .code-block（8 文件 8 种）。 */
+
+/* 两栏栅格（10/11 文件同文；PlatformConfigView 的 +8px 下边距收敛掉） */
+.row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* 状态丸 warn 态（5/9 文件同文；另 4 文件用 --warn-bg，软底色差 1px 级） */
+.status-pill.warn {
+  background: var(--warn-soft, #fef3c7);
+  color: var(--warn, #b45309);
+}
+
+/* 区块标题（2/3 文件同文） */
+.section-title {
+  margin: 22px 0 4px;
+  font-size: 15px;
+}
+
+/* 复选框芯片（4/6 文件同文；WebhooksView 的精简版收敛后补齐对齐/字号/指针） */
+.checkbox-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text);
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  cursor: pointer;
+}

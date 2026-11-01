@@ -272,7 +272,6 @@ onMounted(() => {
 
 <style scoped>
 .flowbar h3 { margin: 0; }
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .collect-result { display: flex; gap: 8px; margin-top: 10px; }
 

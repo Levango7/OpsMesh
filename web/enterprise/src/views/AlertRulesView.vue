@@ -476,7 +476,6 @@ onMounted(() => { store.fetchRules() })
 }
 
 .entity-form { display: flex; flex-direction: column; gap: 12px; }
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 @media (max-width: 600px) { .row-2 { grid-template-columns: 1fr; } }
 </style>

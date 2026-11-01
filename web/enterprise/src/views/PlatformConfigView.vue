@@ -194,7 +194,6 @@ onMounted(() => {
 .kv { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); }
 .kv .k { font-size: 11.5px; color: var(--text-3); }
 .kv .v { font-size: 13px; color: var(--text); word-break: break-all; }
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 8px; }
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
 .stat {
@@ -205,8 +204,6 @@ onMounted(() => {
 
 .stat-v { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stat-l { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
-
-.status-pill.warn { background: var(--warn-soft, #fef3c7); color: var(--warn, #b45309); }
 
 @media (max-width: 768px) {
   .stats { grid-template-columns: repeat(2, 1fr); }

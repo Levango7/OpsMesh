@@ -245,8 +245,6 @@ onMounted(async () => {
 <style scoped>
 .flowbar h3 { margin: 0; }
 
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-
 .agent-picker { display: flex; flex-direction: column; gap: 8px; }
 .agent-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .count { font-size: 12px; }

@@ -184,7 +184,6 @@ onMounted(fetchAll)
 </script>
 
 <style scoped>
-.section-title { margin: 22px 0 4px; font-size: 15px; }
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; background: var(--accent-soft); color: var(--accent);

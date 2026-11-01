@@ -201,5 +201,4 @@ onMounted(() => { loadList() })
   white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto;
 }
 
-.status-pill.warn { background: var(--warn-soft, #fef3c7); color: var(--warn, #b45309); }
 </style>

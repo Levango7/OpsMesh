@@ -274,10 +274,4 @@ onMounted(() => {
 }
 .key-form { display: flex; flex-direction: column; gap: 12px; }
 .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
-.checkbox-item {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 13px; color: var(--text); margin: 0;
-  padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--surface-2); cursor: pointer;
-}
 </style>

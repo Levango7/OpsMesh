@@ -340,7 +340,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .search-input {
   padding: 6px 8px;

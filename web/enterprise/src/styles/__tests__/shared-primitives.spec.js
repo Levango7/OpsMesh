@@ -109,7 +109,13 @@ const OWNED = new Set([
   '.tool-btn:hover',
   '.tab:hover',
   '.chart-bar:hover',
-  '.bg-blob'
+  '.bg-blob',
+  // 第 8 批收编的分歧型收敛（多数派正文作 canonical，判据见 pages.css 同名节；
+  // .card h4/.tag/.metric-value/.field input 等因有未覆盖用法或分歧过大刻意不收）
+  '.row-2',
+  '.status-pill.warn',
+  '.section-title',
+  '.checkbox-item'
 ])
 
 /** 已知例外：file → reasons。只减不增，空表即全清。 */

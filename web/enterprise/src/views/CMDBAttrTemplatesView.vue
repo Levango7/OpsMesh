@@ -207,7 +207,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .options-cell { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 768px) {

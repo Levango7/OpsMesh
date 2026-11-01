@@ -216,6 +216,5 @@ onMounted(fetchSchedules)
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
 
-.status-pill.warn { background: var(--warn-bg); color: var(--warn); }
 .schedule-form { display: flex; flex-direction: column; gap: 12px; }
 </style>

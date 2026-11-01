@@ -288,7 +288,6 @@ onMounted(() => {})
 </script>
 
 <style scoped>
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .filter-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
 .filter-input { padding: 6px 10px; min-width: 160px; }

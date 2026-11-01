@@ -121,7 +121,6 @@ onMounted(() => {})
 
 <style scoped>
 .card h4 { margin: 16px 0 8px; font-size: 13px; }
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 4px; }
 .stat {
@@ -137,8 +136,6 @@ onMounted(() => {})
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
-
-.status-pill.warn { background: var(--warn-soft, #fef3c7); color: var(--warn, #b45309); }
 
 @media (max-width: 768px) {
   .row-2 { grid-template-columns: 1fr; }

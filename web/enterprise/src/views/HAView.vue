@@ -162,7 +162,6 @@ onMounted(fetchAll)
 .ha-card-label { font-size: 12px; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
 .ha-card-value { margin-top: 6px; font-size: 15px; font-weight: 600; word-break: break-all; }
 .ha-card-sub { margin-top: 4px; font-size: 12.5px; color: var(--text-3); }
-.section-title { margin: 22px 0 4px; font-size: 15px; }
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 12px; background: var(--accent-soft); color: var(--accent);

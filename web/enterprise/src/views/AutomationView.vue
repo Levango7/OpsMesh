@@ -290,13 +290,11 @@ onMounted(refreshAll)
 </script>
 
 <style scoped>
-.section-title { margin: 20px 0 4px; font-size: 14px; }
 .status-pill {
   display: inline-flex; align-items: center;
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
 
-.status-pill.warn { background: var(--warn-bg); color: var(--warn); }
 .rule-form { display: flex; flex-direction: column; gap: 12px; }
 .field textarea, .field select { resize: vertical; }
 </style>

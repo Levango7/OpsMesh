@@ -256,7 +256,6 @@ onMounted(() => {})
 
 .card h4 { margin: 14px 0 6px; font-size: 12.5px; color: var(--text-2); }
 .field .hint { font-size: 11.5px; color: var(--text-3); }
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
 .kv { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); }

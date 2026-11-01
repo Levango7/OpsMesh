@@ -339,8 +339,6 @@ onMounted(async () => {
 .card h4 { margin: 0 0 8px; font-size: 13px; }
 .flowbar h3 { margin: 0; }
 
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
 .stat {
   background: var(--surface); border: 1px solid var(--border);

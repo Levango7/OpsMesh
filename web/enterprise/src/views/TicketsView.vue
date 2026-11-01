@@ -264,7 +264,6 @@ onMounted(fetchTickets)
   padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600;
 }
 
-.status-pill.warn { background: var(--warn-bg); color: var(--warn); }
 .status-pill.info { background: var(--info-bg); color: var(--info); }
 .ticket-form { display: flex; flex-direction: column; gap: 12px; }
 /* .row-actions / .field / .field > label / .btnbar 已改用 styles/pages.css 全局原语 */

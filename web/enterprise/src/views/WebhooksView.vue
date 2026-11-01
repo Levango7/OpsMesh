@@ -273,10 +273,5 @@ onMounted(fetchWebhooks)
 .webhook-form { display: flex; flex-direction: column; gap: 12px; }
 /* .field / .field > label 已改用 styles/pages.css 全局原语 */
 .field textarea { resize: vertical; }
-.checkbox-item {
-  display: inline-flex; padding: 4px 10px;
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--surface-2); width: fit-content;
-}
 .inline { display: inline-flex; align-items: center; gap: 5px; margin: 0; cursor: pointer; }
 </style>
