@@ -48,7 +48,7 @@
 - **一处刻意的写法约束**：同一 URL 上 GET/POST 分属两个权限点的（prompts、cost budget/routes）改成**按动词分支就近声明**权限点，不再用「先算 perm 变量再统一 authorize」的辅助函数——后者会让字面量离开 `authorize(...)` 调用点行，源码守护就看不见（aiops 当初正是这么漏的）。
 - **测试面**：`internal/ai/gateway/handler_authz_test.go`（11 条映射 + 403 之后向量库/模板零变化 + 405 不消费鉴权含对照拍 + nil 透传）、`internal/knowledge/handler_authz_test.go`（8 条映射 + 拒绝不改动文档库与同步开关）、`internal/cost/handler_authz_test.go`（8 条映射 + 拒绝不改预算/规则 + 租户以验签上下文为准 + 开放模式仍用自报值，反向证明上一条不是「永远返回空预算」的假绿）、`internal/controlplane/g1_routes_auth_wiring_test.go`（22 条匿名请求一律 401）与 `ai_gateway_auth_wiring_test.go`（11 条）。变异反证共 4 例（ingest 权限点降级、闸改空转、prompts{id} 强制 read、`scopedTenant` 忽略 actx），各自点名对应用例后已还原复绿。
 
-## [Unreleased] — 2026-10-30（K8s 生命周期假成功收口：升级/回滚/证书轮换显式 501 + 前端置灰，真实现立项）
+## [0.17.0] — 2026-10-30（K8s 生命周期假成功收口：升级/回滚/证书轮换显式 501 + 前端置灰，真实现立项）
 
 - **修复对外假成功（裁决单 ① A 项）**：`POST /api/v1/k8s/lifecycle/upgrade|rollback|cert-rotate`
   此前先返回 202，再由纯内存状态机把 `phase` 推进到 `Completed`——前端据此显示"升级完成"，
@@ -58,7 +58,7 @@
   真实现立项：`docs/design/k8s-lifecycle-execution-charter.md`（M1 升级 / M2 回滚 / M3 轮换 +
   `lifecycle_jobs` 持久化，8–12 人日）。
 
-## [Unreleased] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
+## [0.17.0] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
 - **前端路由门词汇与后端 RBAC 目录对齐 + 新增一致性守卫（真缺陷，workbuddy 通报后全量核对）**：
   按「router 全部 40 个 requirePerm × 后端 PermSpecs 112 项目录」+「各页 api 模块 × 后端 handler 的
@@ -184,7 +184,7 @@
   eslint 0；`npm run build` 通过；页面骨架门禁与侧栏守卫全绿（EXEMPT 只剩 3 条永久豁免）；
   Playwright mock e2e 80 例本地全绿。
 
-## [Unreleased] — 2026-10-27（迁移 DDL 的 MDL 锁等待上限：升级演练建议二落地，migrate 不再无限期挂住目标表写入）
+## [0.17.0] — 2026-10-27（迁移 DDL 的 MDL 锁等待上限：升级演练建议二落地，migrate 不再无限期挂住目标表写入）
 
 - **背景**：存量库升级演练（v0.16.0→main 六条迁移）实证：客户升级窗口里旧版本容器的长事务
   持有表 MDL ⇒ 迁移 ALTER 排队，**排在 ALTER 后面的业务写入一起等**；MySQL 默认
@@ -199,6 +199,32 @@
   全包 DSN 门控 + 钉版 lint 0 + build 过。
 - **运维口径**：升级前仍按 `docs/upgrade-guide.md` 预约维护窗口；本修复保证即使窗口内有
   漏网长事务，migrate 也会在 15s 内给出明确报错而不是静默挂住一小时。
+
+## [0.17.0] — 2026-10-25（K8s 扩展资源与 OS/中间件/硬件运维补全）
+
+### Added
+- **K8s 扩展资源**: 15 个新资源类型 (NetworkPolicy/IngressClass/StorageClass/PDB/ServiceAccount/EndpointSlice/ResourceQuota/LimitRange/PriorityClass/RuntimeClass/Lease/Event/MutatingWebhook/ValidatingWebhook/CSR)，后端 `k8s_resources_ext.go` + 前端 35 个资源 tab
+- **OS 运维**: `os_ext_ops.go` (用户/磁盘/挂载/网络/SSH/定时任务/日志轮转/开机启动)、`os_platform_ops.go` (硬件盘点/磁盘健康/RAID)、`os_tuning_ops.go` (内核调优/应用调优/存储调优/证书/资源/系统备份)
+- **Git 版本控制**: `git_unix_ops.go` (clone/pull/push/commit/branch/tag/log/diff/checkout/status)
+- **国产/信创**: `domestic_ops.go` (统信UOS/麒麟/openEuler 检测、鲲鹏/昇腾/寒武纪/摩尔线程检测、GaussDB/Kingbase/Dameng、TongWeb/BES/InforSuite)
+- **消息队列扩展**: RocketMQ/Pulsar/ActiveMQ/RabbitMQ 完整运维 (HA/扩缩容/升级/备份/调优/安全/可观测性)
+- **缓存**: Redis (Cluster/Sentinel/持久化/调优/监控/安全/备份) + Memcached + Ignite
+- **ELK**: Elasticsearch/Logstash/Kibana/Filebeat/OpenSearch 25 个 handler
+- **向量/图数据库**: Milvus/Qdrant/pgvector + Neo4j/NebulaGraph 扩缩容/升级/备份/用户/索引/Schema
+- **OLAP**: ClickHouse/Doris (FE/BE)/Trino 集群/监控/备份/升级/物化视图
+- **分布式文件系统**: Ceph/GlusterFS/HDFS/SeaweedFS + FastDFS
+- **数据管道**: Airflow/Spark/Flink/dbt/Debezium + Hive/Iceberg/Delta + StarRocks/Doris/ClickHouse
+- **脚本编译**: 15 种脚本语言 + 6 种编译语言 + 9 种构建工具 (Maven/Gradle/npm/Cargo/Make/CMake/Go/Python)
+- **Docker Compose**: 11 个多集群部署文件 (Kafka/GPU/ELK/MySQL/PostgreSQL/MongoDB/Redis/Memcached/AWS/Cloud/CI)
+
+### Changed
+- `middleware_ops.go` 拆分为 6 个域文件 (kafka/zookeeper/redis/rabbitmq/activemq)
+- InfraConsoleView 改进: 域搜索、破坏性操作确认、任务自动轮询、焦点样式、CSS 变量修复
+- 前端 ESLint 修复: 29 个 no-empty 错误 + 24 个 no-unused-vars 警告清零
+
+### Fixed
+- 修复 `registerOSExtRoutes` 重复注册
+- 修复 K8s pod listing 增加 containers/probes/affinity/tolerations 字段
 
 ## [0.16.0] — 2026-10-26（v0.15.0 之后全部改动归版：发布链复用件 TD-95 + 切流演练两批修复 + 21 域运维能力扩展 P0-P7 + AIOps/监控/GitOps/联邦/链路上线 + 协作板 v2）
 
@@ -305,32 +331,6 @@
   全部块随本版发货）。
 
 ## [0.16.0] — 2026-10-16（TD-95 收口：镜像发布抽成复用件 _publish-image.yml 并在 main 验绿；方向① 经评估主动不做）
-## [Unreleased] — 2026-10-25（K8s 扩展资源与 OS/中间件/硬件运维补全）
-
-### Added
-- **K8s 扩展资源**: 15 个新资源类型 (NetworkPolicy/IngressClass/StorageClass/PDB/ServiceAccount/EndpointSlice/ResourceQuota/LimitRange/PriorityClass/RuntimeClass/Lease/Event/MutatingWebhook/ValidatingWebhook/CSR)，后端 `k8s_resources_ext.go` + 前端 35 个资源 tab
-- **OS 运维**: `os_ext_ops.go` (用户/磁盘/挂载/网络/SSH/定时任务/日志轮转/开机启动)、`os_platform_ops.go` (硬件盘点/磁盘健康/RAID)、`os_tuning_ops.go` (内核调优/应用调优/存储调优/证书/资源/系统备份)
-- **Git 版本控制**: `git_unix_ops.go` (clone/pull/push/commit/branch/tag/log/diff/checkout/status)
-- **国产/信创**: `domestic_ops.go` (统信UOS/麒麟/openEuler 检测、鲲鹏/昇腾/寒武纪/摩尔线程检测、GaussDB/Kingbase/Dameng、TongWeb/BES/InforSuite)
-- **消息队列扩展**: RocketMQ/Pulsar/ActiveMQ/RabbitMQ 完整运维 (HA/扩缩容/升级/备份/调优/安全/可观测性)
-- **缓存**: Redis (Cluster/Sentinel/持久化/调优/监控/安全/备份) + Memcached + Ignite
-- **ELK**: Elasticsearch/Logstash/Kibana/Filebeat/OpenSearch 25 个 handler
-- **向量/图数据库**: Milvus/Qdrant/pgvector + Neo4j/NebulaGraph 扩缩容/升级/备份/用户/索引/Schema
-- **OLAP**: ClickHouse/Doris (FE/BE)/Trino 集群/监控/备份/升级/物化视图
-- **分布式文件系统**: Ceph/GlusterFS/HDFS/SeaweedFS + FastDFS
-- **数据管道**: Airflow/Spark/Flink/dbt/Debezium + Hive/Iceberg/Delta + StarRocks/Doris/ClickHouse
-- **脚本编译**: 15 种脚本语言 + 6 种编译语言 + 9 种构建工具 (Maven/Gradle/npm/Cargo/Make/CMake/Go/Python)
-- **Docker Compose**: 11 个多集群部署文件 (Kafka/GPU/ELK/MySQL/PostgreSQL/MongoDB/Redis/Memcached/AWS/Cloud/CI)
-
-### Changed
-- `middleware_ops.go` 拆分为 6 个域文件 (kafka/zookeeper/redis/rabbitmq/activemq)
-- InfraConsoleView 改进: 域搜索、破坏性操作确认、任务自动轮询、焦点样式、CSS 变量修复
-- 前端 ESLint 修复: 29 个 no-empty 错误 + 24 个 no-unused-vars 警告清零
-
-### Fixed
-- 修复 `registerOSExtRoutes` 重复注册
-- 修复 K8s pod listing 增加 containers/probes/affinity/tolerations 字段
-
 ## [0.16.0] — 2026-10-14（切流演练阻断级两缺陷修复：对侧会话身份回落 + 主动改密转发还原 body；演练台回退路径补齐）
 
 - **背景**：模拟用户团队批次 0 演练（三人设 + 协调者逐条复核，报告与证据见
