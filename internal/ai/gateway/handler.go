@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
@@ -15,6 +16,21 @@ type AIGatewayHandler struct {
 	retriever   *RAGRetriever
 	compressor  *ContextCompressor
 	promptStore *PromptTemplateStore
+	// Authorize 鉴权回调（由 controlplane 注入 subsystemAuthorize）：校验身份并核对
+	// 权限点。nil 时不启用鉴权（独立使用与单测的向后兼容路径）。
+	//
+	// 为什么这 9 条路由必须由 handler 自查而不是包一层：与 ai/agent 同一口径，
+	// 权限点取决于 HTTP 方法（/ai/prompts 同时挂 GET 与 POST，read/write 分属
+	// 两个权限点），包装器在注册处看不到方法分支。
+	Authorize func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
+}
+
+// authorize 核对权限点；ok=false 时响应已由回调写完，调用方必须立即返回。
+func (h *AIGatewayHandler) authorize(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool) {
+	if h.Authorize == nil {
+		return authctx.Context{}, true
+	}
+	return h.Authorize(w, r, perm)
 }
 
 func NewAIGatewayHandler(gw *Gateway, vs VectorStore, topK int) *AIGatewayHandler {
@@ -30,6 +46,11 @@ func NewAIGatewayHandler(gw *Gateway, vs VectorStore, topK int) *AIGatewayHandle
 func (h *AIGatewayHandler) HandleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// 对话不写业务状态 ⇒ ai:read；但它会真打一次 LLM 并计入用量，匿名开放等于
+	// 给公网一个免费的模型代理（烧的是本租户的额度）。
+	if _, ok := h.authorize(w, r, "ai:read"); !ok {
 		return
 	}
 
@@ -92,6 +113,10 @@ func (h *AIGatewayHandler) HandleEmbed(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// 只回向量、不落库 ⇒ ai:read（同 chat：消耗额度故不能匿名）。
+	if _, ok := h.authorize(w, r, "ai:read"); !ok {
+		return
+	}
 
 	var req struct {
 		Provider string `json:"provider"`
@@ -127,6 +152,10 @@ func (h *AIGatewayHandler) HandleEmbed(w http.ResponseWriter, r *http.Request) {
 func (h *AIGatewayHandler) HandleRAGIngest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// 落库动作：写入的文档会立刻出现在所有人的检索结果里 ⇒ ai:write。
+	if _, ok := h.authorize(w, r, "ai:write"); !ok {
 		return
 	}
 
@@ -171,6 +200,10 @@ func (h *AIGatewayHandler) HandleRAGSearch(w http.ResponseWriter, r *http.Reques
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// 检索读的是向量库内容（可能含其他动作写入的资料）⇒ 必须登录，按 ai:read。
+	if _, ok := h.authorize(w, r, "ai:read"); !ok {
+		return
+	}
 
 	var req struct {
 		Query  string                 `json:"query"`
@@ -205,6 +238,10 @@ func (h *AIGatewayHandler) HandleTokenUsage(w http.ResponseWriter, r *http.Reque
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// 用量报表是网关级累计（不区分租户），匿名可读等于把平台的模型消耗暴露到公网 ⇒ ai:read。
+	if _, ok := h.authorize(w, r, "ai:read"); !ok {
+		return
+	}
 
 	report := h.gateway.GetTokenUsage()
 	paginate.WriteJSON(w, http.StatusOK, report)
@@ -216,6 +253,11 @@ func (h *AIGatewayHandler) HandleHealth(w http.ResponseWriter, r *http.Request) 
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// 这里的 health 是各 LLM 提供商的可达性（含提供商名单），属内部拓扑 ⇒ ai:read；
+	// 它不是进程存活探针，健康检查端点另有 /api/v1/health。
+	if _, ok := h.authorize(w, r, "ai:read"); !ok {
+		return
+	}
 
 	health := h.gateway.HealthCheck(r.Context())
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
@@ -224,15 +266,26 @@ func (h *AIGatewayHandler) HandleHealth(w http.ResponseWriter, r *http.Request) 
 }
 
 // HandlePromptTemplates 处理 GET/POST /api/v1/ai/prompts
+//
+// 权限点按动词分支就近声明：刻意不写成「先算 perm 再统一 authorize」，那样字面量就
+// 不在 authorize(...) 调用点行上了，TestRolePermissions_CoversAuthorizeCallSites
+// 这类源码守护会漏看（aiops 族当初就是这么漏的）。
 func (h *AIGatewayHandler) HandlePromptTemplates(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if _, ok := h.authorize(w, r, "ai:read"); !ok {
+			return
+		}
 		category := r.URL.Query().Get("category")
 		templates := h.promptStore.List(category)
 		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"templates": templates,
 		})
 	case http.MethodPost:
+		// 新建模板写的是 Agent 侧的提示词事实源 ⇒ ai:write，且必须在 Create 之前。
+		if _, ok := h.authorize(w, r, "ai:write"); !ok {
+			return
+		}
 		var tmpl PromptTemplate
 		if err := json.NewDecoder(r.Body).Decode(&tmpl); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -253,6 +306,9 @@ func (h *AIGatewayHandler) HandlePromptTemplates(w http.ResponseWriter, r *http.
 func (h *AIGatewayHandler) HandlePromptTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	switch r.Method {
 	case http.MethodGet:
+		if _, ok := h.authorize(w, r, "ai:read"); !ok {
+			return
+		}
 		tmpl, ok := h.promptStore.Get(id)
 		if !ok {
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
@@ -260,6 +316,9 @@ func (h *AIGatewayHandler) HandlePromptTemplate(w http.ResponseWriter, r *http.R
 		}
 		paginate.WriteJSON(w, http.StatusOK, tmpl)
 	case http.MethodPut:
+		if _, ok := h.authorize(w, r, "ai:write"); !ok {
+			return
+		}
 		var req struct {
 			Content   string   `json:"content"`
 			Variables []string `json:"variables"`
@@ -275,6 +334,9 @@ func (h *AIGatewayHandler) HandlePromptTemplate(w http.ResponseWriter, r *http.R
 		}
 		paginate.WriteJSON(w, http.StatusOK, updated)
 	case http.MethodDelete:
+		if _, ok := h.authorize(w, r, "ai:write"); !ok {
+			return
+		}
 		if !h.promptStore.Delete(id) {
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 			return
@@ -285,7 +347,17 @@ func (h *AIGatewayHandler) HandlePromptTemplate(w http.ResponseWriter, r *http.R
 	}
 }
 
-// RegisterAIGatewayRoutes 注册 AI 网关路由
+// RegisterAIGatewayRoutes 注册 AI 网关路由。
+//
+// 权限映射（各 handler 自查，见 AIGatewayHandler.Authorize）：
+//   - ai:read  → POST /ai/chat、POST /ai/embed、POST /ai/rag/search、GET /ai/usage、
+//     GET /ai/health、GET /ai/prompts、GET /ai/prompts/{id}
+//     （chat/embed/search 不改状态但都会打模型或读共享向量库，不能匿名）；
+//   - ai:write → POST /ai/rag/ingest、POST /ai/prompts、PUT /ai/prompts/{id}、
+//     DELETE /ai/prompts/{id}（写共享向量库与提示词事实源）。
+//
+// 修复前这 11 条注册（8 个 handler）全部匿名可达，与 ai/agent、k8slifecycle 同族
+// （G1 全域匿名漏洞）。
 func RegisterAIGatewayRoutes(mux *http.ServeMux, handler *AIGatewayHandler) {
 	mux.HandleFunc("POST /api/v1/ai/chat", handler.HandleChat)
 	mux.HandleFunc("POST /api/v1/ai/embed", handler.HandleEmbed)
