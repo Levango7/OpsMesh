@@ -174,6 +174,31 @@ var PermSpecs = []PermSpec{
 	// 恒 true 的空壳）尚未收口，写权限先按最小权限只给 admin。
 	{"ai", "ai:read", "查看 AI Agent、意图分类与会话记忆"},
 	{"ai", "ai:write", "执行 AI Agent 编排/清理会话记忆"},
+	// AI 域同族补齐（2026-11-02，用户指派「同族裸路由全部收口」）。三族都是同一形状：
+	// handler 侧引用了权限点，目录里没有 ⇒ 任何内置角色（含 admin）都拿不到，端点对
+	// 全部角色恒 403（与 2026-09-29 的 15 项缺口同类；守护测试的手工清单当时看不见它们，
+	// 因为那三包用的是自己的 authorize 包装而不是 requireProd 字面量）。
+	//
+	// aiops 族另有第二层缺口：SetAuthorize 在生产代码里从未被调用（authz==nil 时
+	// authorize() 原样放行），所以 /api/v1/aiops/* 六条此前是**匿名可达**——
+	// 含 POST /aiops/execute（把修复方案直接下发成 agent 任务）。接线与补目录必须同批，
+	// 只做其一要么仍是匿名（不接线），要么变成对所有人 403（不补目录）。
+	{"aiops", "aiops:read", "查看 AIOps 分析结果、引擎状态与执行历史"},
+	{"aiops", "aiops:write", "触发 AIOps 根因分析/修复方案生成/自动执行"},
+	{"knowledge", "knowledge:read", "查看知识库文档、检索结果与同步配置"},
+	{"knowledge", "knowledge:write", "同步/导入/删除知识库文档与同步配置"},
+	{"cost", "cost:read", "查看成本报表、预算与模型路由"},
+	{"cost", "cost:write", "设置预算、改模型路由、生成成本报表"},
+	// flux 族（2026-11-02，由新加的源码守护 TestRolePermissions_CoversAuthorizeCallSites
+	// 扫出，非人工盘点）：internal/controlplane/flux.go 的 5 个 handler 全部
+	// requirePermission(w, r, "flux:read"/"flux:write")，但目录里没有 flux 族 ⇒
+	// /api/v1/flux/apps* 对含 admin 在内的全部角色恒 403，且前端路由
+	// web/enterprise/src/router/index.js:164 的 requirePerm: 'flux:read' 让 /flux
+	// 页面谁都进不去（与 2026-10-22 的 cloud 族同一形态的死路由）。
+	// flux:write（含 flux reconcile 真实下发）是否下放 operator 待 owner 定夺——
+	// deploy 组已在 operatorGroups 里，GitOps 同步与之同域，此处先按最小权限只授 read。
+	{"flux", "flux:read", "查看 Flux GitOps 应用与同步状态"},
+	{"flux", "flux:write", "创建/更新/删除 Flux 应用并触发同步"},
 }
 
 // RolePermissions 返回预置角色名→权限集合映射，与 seedRBAC 的角色定义保持一致。
@@ -209,8 +234,14 @@ func RolePermissions() map[string][]string {
 	operatorReadOnlyGroups := map[string]bool{
 		"gpu": true, "runbook": true, "incident": true, "k8s": true,
 		// ai 只给 read：Agent 编排能驱动 execute_command（远程 shell），
-		// 在其工具侧权限校验收口前，write 不下放（见 PermSpecs 的 ai 族注释）。
+		// write 先按最小权限只给 admin（工具侧 CheckPermission 已于 2026-11-01
+		// 改 fail-closed，权限集来自已验签角色；下放 operator 属产品语义，另行裁决）。
 		"ai": true,
+		// 2026-11-02 同族三组同样只补 read：viewer 派生全部 *:read，若这三族的 read
+		// 不给 operator 就会重现「operator 低于 viewer」的层级倒挂；而
+		// aiops:write（自动执行修复）、knowledge:write（改文档库）、cost:write（改预算/路由）
+		// 是否下放属产品语义，未决前按最小权限留给 admin。
+		"aiops": true, "knowledge": true, "cost": true, "flux": true,
 	}
 	// operatorGroupActions 是 operator 在 operatorGroups 各组内拿到的动作集。
 	// 2026-10-14 §3.12（用户裁定：RBAC 矩阵细化，不上基于归属的场景授权）：
