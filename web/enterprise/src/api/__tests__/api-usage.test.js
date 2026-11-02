@@ -34,12 +34,8 @@ const API_DIR = join(SRC, 'api')
  * **条目只减不增**：接上 UI 后必须删条（否则测试判「陈旧条目」）。
  */
 const ALLOW = new Map([
-  // ── AI 能力未接 UI（后端 8 条路由全有，internal/ai/gateway/handler.go:364-378）──
-  ['ai.js|listPrompts', 'AI 提示词模板：GET /ai/prompts 已有，前端无管理界面'],
-  ['ai.js|createPrompt', 'AI 提示词模板：POST /ai/prompts 已有，前端无管理界面'],
-  ['ai.js|getPrompt', 'AI 提示词模板：GET /ai/prompts/{id} 已有，前端无详情视图'],
-  ['ai.js|updatePrompt', 'AI 提示词模板：PUT /ai/prompts/{id} 已有，前端无编辑界面'],
-  ['ai.js|deletePrompt', 'AI 提示词模板：DELETE /ai/prompts/{id} 已有，前端无管理界面'],
+  // ── AI 能力：提示词 CRUD 已于 2026-11-02 接上 UI（AIPromptsView），RAG 入库/检索、
+  //    embed、AI 健康仍未接界面（后端 8 条路由全在 gateway/handler.go:364-378）──
   ['ai.js|ragIngest', 'RAG：POST /ai/rag/ingest 已有，前端无知识入库入口'],
   ['ai.js|ragSearch', 'RAG：POST /ai/rag/search 已有，前端无检索界面'],
   ['ai.js|embed', '向量化：POST /ai/embed 已有，属内部能力、暂不面向用户'],
@@ -51,7 +47,6 @@ const ALLOW = new Map([
   ['system-ops.js|systemServiceAction', '系统服务动作（start/stop/restart）：后端有端点，前端未接按钮'],
   ['system-ops.js|deleteFirewallRule', '防火墙规则删除：后端有端点，前端仅展示列表'],
   ['cloud-account.js|getCloudAccount', '云账号详情：后端有端点，前端列表已含所需字段'],
-  ['cloud-account.js|listCloudResources', '**云资源列表：后端有端点，前端无云资源界面（真缺口）**'],
 
   // ── 详情读取未做详情页（前端直接用列表数据）──
   ['apikeys.js|getAPIKey', '按 id 取单个 API Key：前端列表已含所需字段'],

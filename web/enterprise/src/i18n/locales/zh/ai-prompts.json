@@ -1,0 +1,24 @@
+{
+  "prompts": {
+    "title": "AI 提示词模板",
+    "desc": "管理 AI 网关的提示词模板：增删改查，供对话/补全/检索链路复用",
+    "add": "新建模板",
+    "edit": "编辑模板",
+    "empty": "暂无提示词模板",
+    "col_name": "模板名称",
+    "col_category": "分类",
+    "col_content": "内容",
+    "col_updated": "更新时间",
+    "field_name": "模板名称",
+    "field_name_placeholder": "例如：运维问答默认提示词",
+    "field_category": "分类",
+    "field_category_placeholder": "例如：ops / chat",
+    "field_content": "模板内容",
+    "content_hint": "支持 {placeholder} 占位符，渲染时按调用方参数替换",
+    "confirm_delete": "确定删除该提示词模板？",
+    "listFailed": "提示词模板加载失败",
+    "saveFailed": "保存失败",
+    "deleteFailed": "删除失败",
+    "allCategories": "全部分类"
+  }
+}

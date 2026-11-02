@@ -90,7 +90,9 @@
     "aiChat": "AI 对话",
     "agent": "AI Agent",
     "knowledge": "知识库",
-    "cost": "成本控制"
+    "aiPrompts": "提示词模板",
+    "cost": "成本控制",
+    "cloudResources": "云资源"
   },
   "sidebar": {
     "expand": "展开侧边栏",

@@ -1,0 +1,24 @@
+{
+  "prompts": {
+    "title": "AI Prompt Templates",
+    "desc": "Manage AI gateway prompt templates: create, edit and delete prompts reused by chat/completion/retrieval flows",
+    "add": "New template",
+    "edit": "Edit template",
+    "empty": "No prompt templates yet",
+    "col_name": "Name",
+    "col_category": "Category",
+    "col_content": "Content",
+    "col_updated": "Updated",
+    "field_name": "Name",
+    "field_name_placeholder": "e.g. default Ops Q&A prompt",
+    "field_category": "Category",
+    "field_category_placeholder": "e.g. ops / chat",
+    "field_content": "Content",
+    "content_hint": "Placeholders like {placeholder} are replaced with caller arguments at render time",
+    "confirm_delete": "Delete this prompt template?",
+    "listFailed": "Failed to load prompt templates",
+    "saveFailed": "Failed to save",
+    "deleteFailed": "Failed to delete",
+    "allCategories": "All categories"
+  }
+}

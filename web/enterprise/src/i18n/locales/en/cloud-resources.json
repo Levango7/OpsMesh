@@ -1,0 +1,20 @@
+{
+  "cloudResources": {
+    "title": "Cloud Resources",
+    "desc": "Resources discovered across cloud accounts — compute, network, storage — filterable by account and resource type",
+    "empty": "No cloud resources",
+    "col_name": "Name",
+    "col_type": "Type",
+    "col_account": "Account",
+    "col_region": "Region",
+    "col_provider": "Provider",
+    "col_status": "Status",
+    "col_resourceId": "Resource ID",
+    "col_created": "Created",
+    "field_account": "Cloud account",
+    "field_type": "Resource type",
+    "allAccounts": "All accounts",
+    "allTypes": "All types",
+    "listFailed": "Failed to load cloud resources"
+  }
+}

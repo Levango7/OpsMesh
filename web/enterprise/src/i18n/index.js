@@ -8,8 +8,10 @@
 //
 // 按需加载策略：
 //   - 初始同步加载 common 域（首屏 + 公共翻译：导航/按钮/错误提示/登录/概览等）
-//   - 其他功能域（ops/assets/delivery/observability/system/automation/ai/platform）
-//     通过 import.meta.glob 收集，路由切换时按需异步加载
+//   - 其他功能域（ops/assets/delivery/observability/system/automation/ai/platform
+//     /ai-prompts/cloud-resources）通过 import.meta.glob 收集，路由切换时按需异步加载
+//     —— ai-prompts / cloud-resources 是 2026-11-02 为「AI 提示词管理」「云资源列表」
+//     两个新页面新增的独立域，刻意不复用 ops.json（该文件被他线认领，避免撞车）
 //   - t() API 不变，向后兼容；未加载的键回退到 fallbackLang 或返回 key 本身
 //
 // 回退机制：当前语言缺少某键时，回退到 fallbackLang（默认 'zh'）查找，
@@ -32,7 +34,9 @@ export const DOMAINS = [
   'system',
   'automation',
   'ai',
-  'platform'
+  'platform',
+  'ai-prompts',
+  'cloud-resources'
 ]
 
 // 路由名 → 功能域映射（供 router afterEach 钩子按需加载对应域翻译）
@@ -108,6 +112,9 @@ export const ROUTE_DOMAIN_MAP = {
 
   // 云账号管理（平台）
   'cloud-accounts': 'platform',
+  // 2026-11-02 新增两页（补「后端有、前端无界面」缺口）：各自独立域文件，避免动他线认领的 ops.json
+  'ai-prompts': 'ai-prompts',
+  'cloud-resources': 'cloud-resources',
 
   // ====================================================================
   // P1 五子域路由 → 功能域映射

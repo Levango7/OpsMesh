@@ -132,6 +132,18 @@
   （operator 打不开 /argocd 与仪表盘，是否下放属产品语义）；observability 域是否立真权限族（若要，
   /trace 与 /gitops 应按新族收口而非去门）。本地实测：vitest 61→62 文件/1309（+3 新守卫）、eslint 0、
   vite build、Playwright 80/80 全绿。
+- **补两处「后端有、前端无界面」能力缺口 + api-usage 守卫双向棘轮首次实战**（2026-11-02）：
+  新增 **AI 提示词模板管理页**（/ai/prompts，PageShell + DataTable + DetailDrawer + ConfirmModal，
+  新建/编辑/删除全通）与 **云资源列表页**（/cloud/resources，按账号与资源类型过滤）。此前后端
+  5 条提示词 CRUD（gateway/handler.go:368-378）与 GET /api/v1/cloud-resources 全在、api 层
+  已接，但无任何界面消费方——本轮补齐后 `listCloudResources` 与 5 个 prompt 导出**全部离开死 API 面**。
+  **api-usage 守卫本次真正拦住了我**：新页面接上 6 个导出后，ALLOW 里对应条目判定「陈旧」直接判红，
+  按「账本只减不增」删掉 6 条（59→53）——这正是双向棘轮的设计意图。
+  实现细节：字段名按后端 json tag 逐字对齐（CloudResource 无 name 字段，资源名是 resourceName；
+  账号名用 cloudAccountId 本地映射）；筛选栏用 canonical 的 .flowbar 而非分歧名 .filter-bar；
+  i18n 用**全新域文件** ai-prompts / cloud-resources（不动他线认领的 ops.json）。
+  新增 11 条单测（store 9 + view 9 拆分两文件）；视图测试里 DataTable 用 stub 透传插槽以触发行内按钮。
+  本地实测：vitest 66→68 文件 / 1335 用例全绿、eslint 0、vite build 通过。
 - **剩余族范式定稿（第 9 批 CSS 去重）**：第 7/8 批排除的选择器逐族裁定并实现（12 项）。
   三档判据：零泄漏直接收（.kv 族/.checkbox-group/.metrics-row+--two/--four 修饰类/.stat-v/.stat-l/
   .err-msg/.data-table+tr:hover）；未覆盖用法=修正（.status-pill 基类——6 个文件此前渲染无形状文字、

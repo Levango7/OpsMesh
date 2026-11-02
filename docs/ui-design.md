@@ -802,6 +802,13 @@ i18n 采用自研轻量模块（`src/i18n/index.js`），不依赖 vue-i18n，�
    白名单里（目前 4 条：device-detail / batch-exec / batch-detail / canary-detail）——防「藏页面」后门。
 8. **翻译映射必须同步**：新路由必须登记 `src/i18n/index.js` 的 `ROUTE_DOMAIN_MAP`（漏登记 = 页面裸键），
    守卫 ⑦ 强制；侧栏标签键须 zh/en 双语可解析（守卫 ④）。
+10. **新页面 i18n 用独立域文件，不复用他线在改的域**（2026-11-02）：路由切换按
+    ROUTE_DOMAIN_MAP 懒加载 locales/<lang>/<domain>.json，新页面若要复用 ops.json 这类
+    被其他 agent 认领/频繁编辑的域文件就会撞车。正确做法：建独立域文件 + 在 DOMAINS 与
+    ROUTE_DOMAIN_MAP 登记，新文件自动被 naked-keys 守卫覆盖双语一致性。
+    另：**筛选栏一律用 .flowbar**（pages.css canonical）；`.filter-bar` 是历史分歧名、
+    pages.css 未收，用了就没样式。
+
 9. **`requirePerm` 必须存在于后端 RBAC 目录**（2026-11-02 新增，守卫 ⑧ `router-perms.test.js` 强制）：
    router meta 的 `requirePerm` 是前端发明的门，可满足性完全取决于 `internal/store/model/perm.go` 的
    `PermSpecs`——admin 的权限集由该目录派生，**目录里没有的权限点 ⇒ 该路由对含 admin 在内的全部角色

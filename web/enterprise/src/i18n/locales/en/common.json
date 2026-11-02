@@ -90,7 +90,9 @@
     "aiChat": "AI Chat",
     "agent": "AI Agent",
     "knowledge": "Knowledge Base",
-    "cost": "Cost Control"
+    "aiPrompts": "Prompt Templates",
+    "cost": "Cost Control",
+    "cloudResources": "Cloud Resources"
   },
   "sidebar": {
     "expand": "Expand sidebar",

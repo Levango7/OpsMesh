@@ -141,7 +141,11 @@ const routes = [
   { path: '/ai-chat', name: 'ai-chat', component: () => import('@/views/AIChatView.vue'), meta: { title: 'nav.aiChat', group: 'AI 算力', icon: 'flow', requirePerm: 'ai:read' } },
   { path: '/agent', name: 'agent', component: () => import('@/views/AgentView.vue'), meta: { title: 'nav.agent', group: 'AI 算力', icon: 'flow', requirePerm: 'ai:read' } },
   { path: '/knowledge', name: 'knowledge', component: () => import('@/views/KnowledgeView.vue'), meta: { title: 'nav.knowledge', group: 'AI 算力', icon: 'flow', requirePerm: 'knowledge:read' } },
+  // AI 提示词模板管理（2026-11-02 补「后端有、前端无界面」缺口：后端 5 条 CRUD 全在 api 层已接）
+  { path: '/ai/prompts', name: 'ai-prompts', component: () => import('@/views/AIPromptsView.vue'), meta: { title: 'nav.aiPrompts', group: 'AI 算力', icon: 'flow', requirePerm: 'ai:read' } },
   { path: '/cost', name: 'cost', component: () => import('@/views/CostView.vue'), meta: { title: 'nav.cost', group: 'AI 算力', icon: 'flow', requirePerm: 'cost:read' } },
+  // 云资源列表（2026-11-02 补缺口：后端 GET /api/v1/cloud-resources 已有，此前无界面）
+  { path: '/cloud/resources', name: 'cloud-resources', component: () => import('@/views/CloudResourcesView.vue'), meta: { title: 'nav.cloudResources', group: 'AI 算力', icon: 'flow', requirePerm: 'cloud:read' } },
 
   // 可观测性：链路追踪（Jaeger / OTLP collector 查询）
   // 不设 requirePerm：observability:read 不在 RBAC 目录（admin 权限集由 PermSpecs 派生 ⇒ 挂它对含 admin

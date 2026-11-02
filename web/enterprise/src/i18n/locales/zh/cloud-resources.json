@@ -1,0 +1,20 @@
+{
+  "cloudResources": {
+    "title": "云资源",
+    "desc": "汇总各云账号纳管的云资源：ECS/虚拟机、网络、存储等，可按账号与资源类型过滤",
+    "empty": "暂无云资源",
+    "col_name": "资源名称",
+    "col_type": "资源类型",
+    "col_account": "所属账号",
+    "col_region": "地域",
+    "col_provider": "云厂商",
+    "col_status": "状态",
+    "col_resourceId": "资源 ID",
+    "col_created": "创建时间",
+    "field_account": "云账号",
+    "field_type": "资源类型",
+    "allAccounts": "全部账号",
+    "allTypes": "全部类型",
+    "listFailed": "云资源加载失败"
+  }
+}
