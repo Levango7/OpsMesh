@@ -34,7 +34,9 @@ export const getDiscoveredDevices = (tenantID) =>
 
 // ============ 自动纳管 API ============
 
-// 自动纳管：POST /device-svc/provision/auto
+// 自动纳管：POST /api/v1/provision/auto（控制面本地 handler，server_lifecycle.go:79）。
+// 原实现发 /device-svc/provision/auto——device-svc 代理前缀只有 agents/cmdb/devices/discovery，
+// 无 provision ⇒ 404（自动纳管按钮此前完全不可用）。
 export const autoProvision = (tenantID, cidrs) =>
-  postJSON('/device-svc/provision/auto', { tenantID, cidrs })
+  postJSON('/provision/auto', { tenantID, cidrs })
 
