@@ -36,6 +36,7 @@ const API_DIR = join(SRC, 'api')
 const ALLOW = new Map([
   // ── AI 能力：提示词 CRUD 已于 2026-11-02 接上 UI（AIPromptsView），RAG 入库/检索、
   //    embed、AI 健康仍未接界面（后端 8 条路由全在 gateway/handler.go:364-378）──
+  ['ai.js|getPrompt', 'AI 提示词详情（GET /ai/prompts/{id}）：列表已含全字段、编辑直接用行数据，故无单独详情视图'],
   ['ai.js|ragIngest', 'RAG：POST /ai/rag/ingest 已有，前端无知识入库入口'],
   ['ai.js|ragSearch', 'RAG：POST /ai/rag/search 已有，前端无检索界面'],
   ['ai.js|embed', '向量化：POST /ai/embed 已有，属内部能力、暂不面向用户'],
