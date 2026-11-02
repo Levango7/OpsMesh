@@ -116,6 +116,7 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
+  CHANGELOG.md,docs/upgrade-rehearsal-2026-10-27.md <- qoder  (ttl=3h by qoder)
   web/enterprise/src/router/index.js,web/enterprise/src/router/__tests__/router-perms.test.js <- zcode  (ttl=4h by zcode)
 
 TASKS:
