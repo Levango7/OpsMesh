@@ -4,7 +4,30 @@
 
 > 当前最新已发布版本：`v0.16.0`（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-11-02（切版前置复跑：存量库升级演练覆盖到迁移 030，水位 23 → 30）
+## [0.17.0] — 2026-11-02（补账：归版时点扫出的未登账提交，按提交与代码事实代拟）
+
+> 本块是**代拟**：owner 定了「冻结点一次归版」的口径（2026-11-02），下列提交在归版时点已在 main 上、
+> 但没有任何 CHANGELOG 条目。内容按 `git show` 的文件面与提交信息写，**深度口径以各 handler 注释与
+> 测试为准**；归属方（kilo / zcode）若要更正，请按本仓纪律**新开更正块**，已发布的块不回改。
+
+- **运维域扩展三批（`a6c587c` / `632d29b` / 跟随的 lint 清理 `49021cf`，归属 kilo）**：新增
+  `internal/controlplane/{apache_ext_ops,db_extended_ops,hardware_ext_ops,netsec_ext_ops,network_vendor_ext_ops,db_misc_ext_ops}.go`，
+  **41 条 `POST /api/v1/...` 路由**——Apache 七件套（Hadoop / Hive / HBase / Solr / Druid / NiFi / Impala）、
+  数据库扩展 10 条（Cassandra / ClickHouse / CockroachDB / CouchDB / InfluxDB / MariaDB / MinIO / Neo4j / MS SQL / Teledb）、
+  硬件 6 条（BIOS / 固件 / KVM / PDU / RAID / 温度）、netsec 6 条（IPS / IDS / SIEM / 蜜罐 / 流量 / VPN / 零信任）、
+  网络厂商 5 条（F5 / PaloAlto / Fortinet / Citrix / pfSense）、缓存与搜索 7 条（Weaviate / etcd / Hazelcast /
+  Ehcache / Meilisearch / Typesense / Apache Camel）。**形态是生成动作脚本 + `dispatchKafkaTask` 下发 agent 任务**，
+  返回 `202 {taskID}`，不在 HTTP 调用内同步判定成败 ⇒ **本版没有这些域的真机 smoke 证据，已进降级清单**。
+- **前端端点契约修正（`60ddb748`，归属 zcode）**：修正 6 处前端调用与后端方法/路径错配
+  （`web/enterprise/src/api/{agent,ai,device,knowledge}.js`），并新增
+  `src/api/__tests__/endpoint-contract.test.js`（131 行）把「前端声明的 method+path 必须能在后端路由表里解析」
+  变成可回归的用例——此前这类错配只有用户点到那一页才看得见，且症状常被当成「后端 404 的 bug」。
+- **RBAC 打通的补测（`50d1bfe6`）**：补「权限目录 → role 行 → 端点」的 seeded-role e2e（flux 专项回归，196 行），
+  把「目录里加了权限点、但角色行没派生出来 ⇒ 端点恒 403」这类断链变成判据（本版 `flux:*` 正是这么被抓到的）。
+- 同期两笔纯文档（不计能力）：`8c8b6789` 裁决单 #4（服务面租户闸 fail-open 与内网暴露的只读取证）、
+  `7912a644` 登记 TD-97（AI/成本域收口后剩下四件「没接完」的事，已进降级清单）。
+
+## [0.17.0] — 2026-11-02（切版前置复跑：存量库升级演练覆盖到迁移 030，水位 23 → 30）
 
 - **为什么再跑**：`docs/upgrade-rehearsal-2026-10-27.md:25` 的结论停在 `SUMMARY legacy=23 upgraded=29`，只覆盖 `5c6f3af` 带入的 024–029；而 **030**（`199fc11` 收敛 `approval_required` 列定义）正是那次演练 §4「升级库 ≡ 新装库」判据抓出来的产物，整链却没复跑过——即「用演练结论给 v0.17.0 放行」这件事本身缺一条腿。
 - **复跑口径**：逐字照该报告 §8 的配方（一次性 `mysql:8` 容器 = **8.4.11**、只绑 `127.0.0.1:13306`、容器名 `opsmesh-rehearse-mysql-qoder`、`--rows 200000`、跑完即停，不碰正在运行的 `opsmesh-*` 栈）。两个二进制现构：待发布 = 当前 main 树（`opsmesh 0.17.0 (commit=dev date=unknown)`），存量 = tag `v0.16.0` 的临时 worktree（`opsmesh 0.16.0`）。
@@ -12,7 +35,7 @@
 - **判据自证**：演练主流程第 199 行的 `selftest` 门（18 个红/绿样本 + 1 项 SQL 可解析性自证）在本次真跑中通过，结论不是拿空转门换来的；单独再跑一次 `--selftest` = **通过=19 失败=0**（`事务龄期查询在当前 MySQL 上可解析（取到 -1）`）。**顺手记一个复现坑**：第一次 standalone 跑判红过（`取到 '空'`），根因不是 SQL 列名问题，而是 `mysqladmin ping` 在 docker-entrypoint 的**初始化临时服务**阶段就会成功 —— ping 通了不等于 TCP + 口令可用，此时 `sql_nopw` 的 `2>/dev/null` 会把认证错误吞成空串。这次撞坑反而验证了该判据的取向是对的：**读不到就判红而不是当"没有长事务"判绿**。复现请 ping 成功后再静置 ~45s。
 - **仍然没覆盖**（沿用该报告 §6 的边界，别把结论用过头）：024/026/027 背后的**功能可用性**未验；未在真生产 CNI/HA 与 20 万行以上量级上跑；MDL 那条是在「无 ≥1s 在跑事务」前提下过的，有长事务时仍靠 15s 上限报错而不是绕过。
 
-## [Unreleased] — 2026-11-02（部署面加固：微服务 NetworkPolicy 模板落地 + 真实 CNI 回归 + 门禁要求生产 values 对加固开关「显式表态并写理由」）
+## [0.17.0] — 2026-11-02（部署面加固：微服务 NetworkPolicy 模板落地 + 真实 CNI 回归 + 门禁要求生产 values 对加固开关「显式表态并写理由」）
 
 - **起因（裁决单 #4 事实 2.5 实测）**：`values.yaml` 的 `observability.networkPolicy.enabled` 默认 `false`，`values-production.yaml` **根本没有这个键** ⇒ 生产安装沉默继承"关"；而模板只覆盖 controlplane 与 agent 两种 pod，**12 个微服务 pod 一条策略都没有**，模板头部却自陈「默认拒绝所有入站」。配合服务面租户闸的 fail-open（省略 `?tenantID=` 即跳过归属校验），注释承诺的边界与实发产物不一致。
 - **新增微服务 NetworkPolicy（`deploy/helm/opsmesh/templates/network-policy.yaml`）**：按 `range .Values.services` 逐个 enabled 服务渲染，Ingress 只放行①控制面（svcproxy 转发，走该服务 `httpPort`/`grpcPort`）②agent → `device_svc`（自举 install.sh 与 provision register 直连，见 svcproxy 的 DeviceExtras 注释，仅 HTTP）；metrics 放行面改为**必须显式配置** `observability.networkPolicy.metricsFrom`（默认空=不放行任何来源）；Egress 放行 DNS + 控制面 + 同 name 标签下 MySQL(3306)/Redis(6379)。**values 默认全服务 enabled=false ⇒ 存量安装零变化**（实测默认渲染 NetworkPolicy 条数 = 0；开开关 + 开 device/task ⇒ 4 条策略；`helm lint` 0 失败）。
@@ -24,7 +47,7 @@
 - **变异反证 6 例**（各自点名转红后已还原）：空白 podSelector / 控制面 egress 丢 gRPC / agent 放行脱离 `device_svc.enabled` / agent 块顺带放 gRPC / metrics 脱离 metricsFrom / 生产翻 true 但无 ipBlock。
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint`（networkPolicy=true + device/task）0 失败；`git diff --check` 无空白错误。
 
-## [Unreleased] — 2026-11-02（新增门禁：鉴权能力「写了必须有人接」——零调用点的鉴权 API 直接判红）
+## [0.17.0] — 2026-11-02（新增门禁：鉴权能力「写了必须有人接」——零调用点的鉴权 API 直接判红）
 
 - **为什么加**：一周内两次栽在同一形状上。`internal/aiops` 的 `SetAuthorize` 定义齐备、注释齐全，但**全仓没有调用点** ⇒ 6 条 AIOps 端点（含 `POST /aiops/execute`，把修复方案下发成 agent 任务）匿名可达（029ce20/8e9626c 已接）；接完再查，`pkg/tenant.RequireTenant`（严格版：解不出租户即 403）同样零调用点，12 个有 HTTP cmd 的服务统一挂的是宽松版 `tenant.Middleware`（兜底 `default`、从不拒绝）。编译、vet、lint、单测**全都看不见缺失的调用点**，而命名与注释会让人以为防线已存在。
 - **新增 `internal/gates/authz_wiring_gate_test.go`**（放在结构性门禁的家 `internal/gates/`，随 `go test ./...` 自动跑，不动 `.github/workflows`）：扫 `internal|pkg|cmd|services|operator|plugins` 的非测试源码，找导出的鉴权能力 API（`Require*` / `Enforce*` / `*Authorize` / `SetAuthorize` / `*Middleware`），按**目录限定的完全名**统计调用点（避免 `tenant.Middleware` 与 `compress.Middleware` 互相顶掉），零调用点即判红；已知债务进 `authzWiringExempt` 台账，**每条必须写原因**。
@@ -32,7 +55,7 @@
 - **首跑结果（实测）**：鉴权 API 定义 17 个，已接线 12 个，**5 个零调用点已入台账并写明原因**——`pkg/tenant.RequireTenant`、`pkg/tenant.(Manager).QuotaMiddleware`、`pkg/auth.AuthMiddleware`、`pkg/auth.RequirePermission`、`pkg/auth.ServiceAuthMiddleware`。其中 `pkg/auth` 那三条是**新增发现**：该包备好了整套服务间鉴权 HTTP 中间件（含一个按权限名把关的 RBAC 中间件），实际只被 `ValidateServiceToken` 一个符号用到（`pkg/tenant/auth_bridge.go:10`、`services/task-svc/internal/http/gateway.go:107`）；`RequirePermission` 与 controlplane 的 `requireProd` 是同一概念的两份定义，本身就是漂移风险，**合并还是删除要 owner 裁**（见 `docs/semantic-rulings-2026-11-01.md` 的方案 A/B）。
 - **变异反证 4 例**（各自点名转红后已还原）：新加一个零调用点的 `RequireProbeToken` ⇒ 点名该符号与定义行；把 `RequireTenant` 真接上一处 ⇒ 报「豁免台账过期」并给出调用点 file:line；台账里塞一条不存在的名字 ⇒ 报幽灵项；把分类器写坏成恒 false ⇒ 报「只扫到 0 个定义，扫描面塌了」。验证：`go vet ./internal/gates/` 通过、`go test ./internal/gates/ -count=1` 全绿、钉版 golangci-lint 0 issues、gofmt 0。
 
-## [Unreleased] — 2026-11-02（补账：2026-10-30 ~ 11-01 机动线（workbuddy）已进 main 的安全收口与 6 处真缺陷）
+## [0.17.0] — 2026-11-02（补账：2026-10-30 ~ 11-01 机动线（workbuddy）已进 main 的安全收口与 6 处真缺陷）
 
 > 本块是**补记**：下面这些提交（逐条带 sha）除 `ce7b0d8` 随本批推送落地外都已在 main 上，
 > 但当时本线只写了协调板 DONE 行、没写 CHANGELOG，于是发版线归版时拿不到账
@@ -47,7 +70,7 @@
 - **审计文本截断的字符边界（`71c9117`）**：`internal/controlplane/auditsafe` 按字节截断会在 UTF-8 中间切，落库的审计详情带 U+FFFD（审计是不可篡改证据，坏字符等于自证不可信）⇒ 回退到字符边界截断，并补 `auditsafe`/`tenantguard` 两包单测（含 charset、跨租户不回显、开放模式三条契约）。
 - **零测试包四处**：`ee587db`（`services/gpu-svc/internal/cache` + `services/config-svc/internal/models`）、`f66bf6b`（`enterpriseui` 嵌入读取/内容协商/缓存策略/CTA）、`4dd0f52`（`services/log-svc` 的 `internal/store`）。
 
-## [Unreleased] — 2026-11-02（G1 匿名路由收口第二批：AI 网关 11 条 + 知识库 8 条 + 成本 8 条 + AIOps 6 条接上鉴权；权限目录补 aiops/knowledge/cost/flux 四族；新增「从源码扫权限点」的第二层守护）
+## [0.17.0] — 2026-11-02（G1 匿名路由收口第二批：AI 网关 11 条 + 知识库 8 条 + 成本 8 条 + AIOps 6 条接上鉴权；权限目录补 aiops/knowledge/cost/flux 四族；新增「从源码扫权限点」的第二层守护）
 
 - **收口的四族（共 33 条注册）**：`internal/ai/gateway/handler.go`（chat/embed/rag-ingest/rag-search/usage/health/prompts×2/prompts{id}×3，按 `ai:read`/`ai:write` 分级，`/ai/rag/ingest` 与 prompts 的 POST/PUT/DELETE 走 write）、`internal/knowledge/handler.go`（sync/ingest/删文档/改同步配置走 `knowledge:write`，search/docs/stats/sync-configs 走 `knowledge:read`）、`internal/cost/handler.go`（改预算/改路由规则走 `cost:write`，其余走 `cost:read`）、`internal/aiops/handler.go`（6 条按 `aiops:read`/`aiops:write`）。接线都在 `internal/controlplane/server.go` 的 G1 注入清单里，与已合并的 cmdb/log/deploy/orch/k8slifecycle/agent 同一入口。
 - **AIOps 是双重缺口，必须同批修**：包里早就写好了 `SetAuthorize`，但**全仓没有任何调用点**（`grep 'SetAuthorize'` 只命中定义处），`authz==nil` 时 `authorize()` 原样放行 ⇒ 6 条端点完全匿名，含 `POST /api/v1/aiops/execute`（把修复方案直接下发成 agent 任务）；而目录里又没有 `aiops:*`，所以只接线不补目录会立刻变成对全部角色恒 403。变异反证：把注入改成 `SetAuthorize(nil)` ⇒ 接线用例点名 `POST /api/v1/aiops/analyze 匿名请求 = 503, want 401`（503 说明请求已经打到业务体）。

@@ -4,18 +4,18 @@
 
 ---
 
-## v0.17.0 — 2026-11-01 K8s 生命周期假成功收口（对外改口 501）+ 云厂商真实调用 + 运维域广度扩展 + 前端覆盖/布局收官 + 迁移锁上限
+## v0.17.0 — 2026-11-02 K8s 生命周期假成功收口（对外改口 501）+ 云厂商真实调用 + 运维域广度扩展 + 前端覆盖/布局收官 + 迁移锁上限 + 鉴权接线收口
 
-本版是 v0.16.0（tag `267a104`，2026-10-26）之后 main 上的 **202 个提交**归版。主线三件事：
+本版是 v0.16.0（tag `267a104`，2026-10-26）之后 main 上的 **250 个提交**（截至冻结点 `31b8394`）归版。主线三件事：
 把「对外宣称成功而实际零动作」的面向用户改口（K8s 生命周期升级/回滚/证书轮换 → 显式 501、
 前端入口置灰）；把运维面从「只有查询」推进到「云厂商资源有真实写操作、21 域有执行模板」；
 把前端「后端有 API / 页面无入口」的覆盖缺口闭合，并收编跨页重复样式。
 
-> **本版编号已落进版本源，但标签尚未切**：`internal/version.Version`、`Chart.yaml version/appVersion`、
-> `values-production.yaml` 全部 14 个镜像 tag、`production-segment.yaml`、5 份 K8s 样例、
-> `deploy-opsmesh.sh`、compose/deploy.sh 示例值、compose 渲染夹具已全部 = `0.17.0`，由
-> `deploy/scripts/validate-deploy-assets.sh` 第 1 节与第 20 节（版本字面量全等 + 下限计数）对账。
-> **`release.yml` 的「标签 == appVersion」硬门禁意味着发布物只能由 owner 点头后切 `v0.17.0` 生成。**
+> **发布物由本提交切 `v0.17.0` 生成**：`internal/version.Version`、`Chart.yaml version/appVersion`、
+> `values-production.yaml` 全部镜像 tag（14 处）、`production-segment.yaml`、5 份 K8s 样例、
+> `deploy-opsmesh.sh`、`compose`/`deploy.sh` 示例值、compose 渲染夹具已全部 = `0.17.0`，由
+> `deploy/scripts/validate-deploy-assets.sh` 第 1 节与第 20 节（版本字面量全等 + 下限计数）对账；
+> `release.yml` 的「标签 == appVersion」硬门禁保证 `v0.17.0` 只能压在与 `appVersion` 一致的提交上。
 
 ### 破坏性 / 行为变更（升级前必读）
 
@@ -91,6 +91,25 @@
   `deploy/scripts/changelog-fold-exempt.tsv` 里那条 2026-10-25 的豁免登记 ⇒ 现网复算
   `released_max=2026-10-30 unreleased=0 exempt=0 offenders=0 stale=0`。
 
+### 归版时点补入（2026-11-02 冻结点；版本号定齐之后才落 main 的那批）
+
+- **微服务 NetworkPolicy 落地 + 「加固开关必须显式表态」门禁**（`63d5619`/`37bcb9f`/`fd06ab7`，
+  随后 `ea3a529`/`2b3524d`/`7adfd86` 补齐 svcproxy 与自举出向、metrics 改为显式 `metricsFrom`，
+  并补真实 CNI 回归矩阵）：按 `.Values.services` 逐服务渲染 Ingress/Egress，**默认全关 ⇒ 存量安装零变化**；
+  生产 values 必须先对 `networkPolicy.enabled` 显式表态并写理由才放行门禁（沉默继承不再算通过）。
+- **鉴权能力「写了必须有人接」门禁**（`797a5e5`/`76002bb`）：扫导出的鉴权 API 调用点，**零调用点直接判红**
+  并进豁免台账（首跑揪出 5 个；其中 `pkg/auth` 备好的整套服务间鉴权中间件实际只被一个符号用到）。
+- **G1 匿名路由收口第二/三批**（`8c3e449`/`8e9626c`/`029ce20`/`bb4a0fa`/`50d1bfe`）：AI 网关 11 条、
+  知识库 8 条、成本 8 条、AIOps 6 条接上鉴权（33 条，连同上一批 22 条）；权限目录补
+  `aiops/knowledge/cost/flux` 四族 8 点——`flux` 此前缺失使 `/flux` 对**含 admin 在内**的全部角色恒 403；
+  cost 族的 `tenantId` 改以**已验签上下文**为准（只改 `?tenantId=` 不再能读/改别家预算）；
+  另加「从源码扫权限点」的第二层守护与前端 `router-perms` 一致性守卫。
+- **运维域再扩 41 条路由**（`a6c587c`/`632d29b`）：Apache 七件套、数据库扩展 10、硬件 6、netsec 6、
+  网络厂商 5、缓存/搜索/向量/MQ 7，形态为**生成脚本 → `dispatchKafkaTask` 下发**（返回 `202 + taskID`）。
+- **前端端点契约守卫**（`60ddb74`）：修 6 处 method/path 错配，并把「前端声明的 method+path 必须能在后端
+  路由表解析」做成 `endpoint-contract` 用例。
+- **存量库升级演练复跑到迁移 030**（`9a73dc3`）：水位 **23 → 30**、`PASS=9 FAIL=0`，明细见
+  `docs/upgrade-rehearsal-2026-10-27.md` §9。
 ### 能力降级清单（如实标注；按能力表验收时跳过或先确认前置）
 
 - **K8s 升级 / 回滚 / 证书轮换 = 501 未实现**（本版刻意改口，不是回归）。真要执行集群改动，
@@ -108,6 +127,17 @@
   刻意排除的 54 个选择器（`.card h4`、`.field input` 等）仍未收编，待逐域迁移到 `ui/Input`、
   `ui/Tabs` 组件。
 
+
+- **本版新增的 41 条运维域路由只有「脚本下发」证据**：Apache 七件套 / 数据库扩展 / 硬件 / netsec / 网络厂商 /
+  缓存搜索这些域**没有真机 smoke**，`202 + taskID` 只代表任务已下发，不代表动作成功；上生产前按域在演练环境过一遍。
+- **NetworkPolicy 的三项外部前提未在本版验证完**：独立命名空间的 kube-prometheus-stack 抓取、服务间互调矩阵、
+  备份 CronJob 路径；因此生产默认仍是 `networkPolicy.enabled: false`（显式表态 + 翻 true 的前置条件已写进
+  `values-production.yaml` 注释，翻默属现网变更）。
+- **TD-97 登记的四件「没接完」**（详见 `docs/tech-debt.md`）：预算仍只读展示（`RecordUsage`/`IsOverBudget`
+  生产零调用方、计数器在内存）；AI/知识域共享存储**无租户维度**（RAG 文档与提示词模板是全局单份）；
+  `GET /api/v1/ai/usage` 是网关级累计、不分租户；管理员跨租户视图缺一条平台级权限。
+- **`a6c587c` / `632d29b` 的条目由 qoder 代拟**（归属方 kilo 未在板上补账）：深度口径以
+  `internal/controlplane/*_ext_ops.go` 的 handler 注释与测试为准；如有更正请新开块，已发布块不回改。
 ---
 
 ## v0.16.0 — 2026-10-26 运维能力扩展 P0-P7 + AIOps/监控/GitOps/联邦/链路上线 + 发布链复用件（TD-95）+ 协作板 v2
