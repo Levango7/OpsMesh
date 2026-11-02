@@ -200,3 +200,42 @@ kubectl exec -n opsmesh cp -- nc -z -w 3 <devicePodIP> 8081
 
 # 4) 第二态：加 metricsFrom 覆盖文件后重渲染、重贴、复测 prom→svc
 ```
+
+## 附二：翻生产 true 之后的复测（2026-11-02 追加，kindnet）
+
+> 附一的结论是"策略生效时控制面外部 HTTPS 被拦，故不能翻 true"。本附二是补上
+> `observability.networkPolicy.controlplaneEgressExtra` 之后的复测：生产 values 已 `enabled: true`。
+> 环境同附一（kind v1.32.2 / kindnet）；渲染命令：
+
+```bash
+helm template t deploy/helm/opsmesh -n opsmesh -s templates/network-policy.yaml \
+  -f deploy/helm/opsmesh/values-production.yaml \
+  --set services.device_svc.enabled=true --set services.task_svc.enabled=true
+```
+
+渲染 4 条策略（controlplane / agent / device-svc / task-svc）；策略正文里没有空白 `podSelector`
+（对渲染文本 `grep -c 'podSelector: {}'` 会命中 1 处，那是说明"旧写法已删"的注释行）。
+
+### 外部出向（`controlplaneEgressExtra`：`0.0.0.0/0` except RFC1918，仅 443/TCP）
+
+| 源 | 目标 | 实测 | 判读 |
+|---|---|---|---|
+| intruder（未被策略选中，基线） | api.kilo.ai:443 | OPEN | 外部可达性成立 |
+| cp（被选中且声明了出向） | api.kilo.ai:443 | OPEN | 由附一的 BLOCKED 变为连通 |
+| intruder（基线） | mysql:443（Pod IP 10.244.x） | OPEN | 监听可用、mysql 无策略 |
+| cp | mysql:443（Pod IP 10.244.x） | BLOCKED | `except 10.0.0.0/8` 生效 |
+
+### 内部矩阵（与附一一致，未回退）
+
+| 路径 | 实测 |
+|---|---|
+| cp→device:8081 / :50052、cp→task:8081 | OPEN / OPEN / OPEN |
+| agent→device:8081 | OPEN |
+| agent→device:50052 | BLOCKED |
+| cp→mysql:3306、device→cp:8080、device→mysql:3306 | OPEN / OPEN / OPEN |
+| intruder(同 ns)→device:8081、prom(monitoring ns)→device:8081 | BLOCKED / BLOCKED |
+| device→mysql:443 | BLOCKED（微服务 egress 只开 3306/6379） |
+
+**结论**：生产 values 保持 `enabled: true` 有实测支撑；安装方仍需按实际环境核对两类例外——
+私网 IP 或非 443 端点的外部依赖要自行补 `controlplaneEgressExtra` 规则；微服务 `/metrics`
+抓取要显式配置 `metricsFrom`（默认空=不放行）。
