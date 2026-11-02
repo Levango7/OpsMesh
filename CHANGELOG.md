@@ -4,6 +4,17 @@
 
 > 当前最新已发布版本：`v0.16.0`（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-11-02（生产 NetworkPolicy 翻 true：控制面外部出向做成显式配置 + kind 复测）
+
+> 归 0.17.1：v0.17.0 的冻结点（`ddec516`）上生产默认仍是 `false`（该结论在 [0.17.0] 的部署面加固块里，保持原样不改）。
+> 本块只记录冻结点之后的两件事：控制面外部出向机制、以及据此把生产默认翻 true。
+
+- **新增 `observability.networkPolicy.controlplaneEgressExtra`**（`deploy/helm/opsmesh/templates/network-policy.yaml`）：控制面外部 HTTPS（LLM 网关 `internal/ai/gateway/providers.go`、告警 webhook `internal/controlplane/webhook.go`、federation `internal/controlplane/federation.go`）改为**安装方显式声明**——值是整条 egress rule 列表，模板用 `with` 渲染、values 默认空、不自带任何 `0.0.0.0/0` 字面量。不声明就不放行。
+- **`values-production.yaml` 翻 `networkPolicy.enabled: true`**：`controlplaneEgressExtra` 只开 443/TCP 且 `except 10.0.0.0/8、172.16.0.0/12、192.168.0.0/16`（避免顺带放开私网横向）。kind(kindnet) 复测 14 条全绿：**cp→api.kilo.ai:443 由 BLOCKED 变 OPEN**（未选中 pod 基线 OPEN）；**cp→私网 443（mysql 监听 443、intruder 基线 OPEN）仍 BLOCKED**（except 生效）；内部矩阵不变（cp→device/task 8081+50052、agent→device:8081、cp/device→mysql:3306、device→cp:8080 通；agent→device:50052、intruder/prom→device:8081、device→mysql:443 拦）。矩阵见 `docs/semantic-rulings-2026-11-01.md` 附二。
+- **门禁**：新增「外部出向必须 opt-in」断言（`with` 渲染 + values 默认空 + 剥注释后模板无 `0.0.0.0/0` 字面量）；生产翻 true 的棘轮从「模板有 ipBlock」改为**双条件**——模板提供机制**且**生产 values 真声明 `ipBlock`（纯函数四用例，含两条"缺一即红"负例）。新增变异反证 4 例（机制缺失 / 模板自带公网字面量 / values 默认非空 / 生产删掉 ipBlock）。
+- 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
+- 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
+
 ## [0.17.0] — 2026-11-02（补账：归版时点扫出的未登账提交，按提交与代码事实代拟）
 
 > 本块是**代拟**：owner 定了「冻结点一次归版」的口径（2026-11-02），下列提交在归版时点已在 main 上、
@@ -42,10 +53,10 @@
 - **模板补齐两条「自己拦自己」的出向**（kind 实测发现，不是推断）：控制面 egress 原来不含微服务端口 ⇒ svcproxy 转发被自家策略拦死（cp→device-svc:8081 超时，代理整片 502）；agent egress 原来不含 device-svc ⇒ 首次纳管自举被拦。两段现按 enabled 服务清单 / `device_svc.enabled` 渲染。
 - **metrics 放行面的更正**：原写法 `from: [{podSelector: {}}]`（意图"同 ns 任意 Pod"）在 kind 实测**跨命名空间也放行**。改为 metricsFrom 显式 peer 列表：配置后 monitoring/prometheus → 服务端口连通，同 ns 未授权 pod 仍被拦。**这条推翻了本批早先提交里"刻意宽一档"的写法**，原因写在模板里。
 - **真实 CNI 回归（kind v1.32.2，kindnet 实测强制策略）**：开出 device_svc/task_svc 的 **21 条矩阵全绿**——cp→device/task 的 HTTP(8081)+gRPC(50052)、agent→device 8081、device→cp:8080、device→mysql:3306 连通；intruder(同 ns) 与 prom(monitoring ns) → device/task 均被拦；agent→device gRPC 保持被拦。第二态（metricsFrom=monitoring/prometheus）验证 prom→device/task 变通、intruder 仍拦、cp/agent 路径不变。矩阵与复现命令见 `docs/semantic-rulings-2026-11-01.md` 附一。
-- **`values-production.yaml` 翻 `networkPolicy.enabled: true`**（2026-11-02；此前显式 false）：上一轮实测发现翻 true 的硬前置是控制面自身要出向外部 HTTPS（LLM 网关 `internal/ai/gateway/providers.go`、告警 webhook `internal/controlplane/webhook.go`、federation `internal/controlplane/federation.go`）。本批先补齐机制——新增 `observability.networkPolicy.controlplaneEgressExtra`（整条 egress rule 列表；模板默认空、不自带宽松默认），生产 values 显式声明「`0.0.0.0/0` except `10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`，仅 443/TCP」。kind 复测：**cp→api.kilo.ai:443 由 BLOCKED 变 OPEN**（未选中 pod 基线 OPEN），**cp→私网 443（mysql 监听）仍 BLOCKED**（except 生效），内部放行/拦截 21 条矩阵不变。注释里仍写明安装方需按实际环境核对：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取需显式配置 `metricsFrom`。
-- **新增门禁（`internal/gates/network_policy_coverage_gate_test.go`，在原有 4 条基础上扩充 6 条）**：① 禁止空白 `podSelector`（kind 实测会跨 ns 放行）；② 控制面 egress 必须按已启用服务渲染 HTTP+gRPC 并限定到服务名标签；③ agent 自举块必须跟 `device_svc.enabled` 绑定、只放 HTTP（不含 gRPC）；④ metrics 放行必须同时受 `$svc.metrics` 与 metricsFrom 控制，且 values 默认 `metricsFrom: []`；⑤ 外部出向必须 opt-in（`with` 渲染 `controlplaneEgressExtra`、values 默认空、剥注释后模板不得出现 `0.0.0.0/0` 字面量）；⑥ 生产翻 true 的棘轮改为**双条件**：模板必须提供出向机制**且**生产 values 真的声明了 `ipBlock`（附纯函数四用例反空转，含两条“缺一即红”的负例）。原有断言继续保留（守卫存在 / 组件覆盖 / 生产显式表态+关键词理由 / 扫描面下限）。
-- **变异反证 10 例**（各自点名转红后已还原）：空白 podSelector / 控制面 egress 丢 gRPC / agent 放行脱离 `device_svc.enabled` / agent 块顺带放 gRPC / metrics 脱离 metricsFrom / 生产翻 true 但无 ipBlock / 模板无出向机制 / 模板自带 `0.0.0.0/0` 字面量 / values 默认非空 / 生产删掉 ipBlock 声明。
-- 验证：`go test ./internal/gates -count=1` 全绿；`helm lint`（默认与生产 values）0 失败；生产渲染下 kind 复测 14 条探测全绿（外部 443 通、私网 443 拦、内部矩阵不变）；`git diff --check` 无空白错误。
+- **`values-production.yaml` 仍显式 `networkPolicy.enabled: false`**：回归虽然绿，但实测暴露出翻 true 的硬前置——控制面进程自身要出向外部 HTTPS（LLM 网关 `internal/ai/gateway/providers.go`、告警 webhook `internal/controlplane/webhook.go`、federation `internal/controlplane/federation.go`），而本策略 egress 只放行 DNS/MySQL/Redis/自家服务；kind 实测未被选中 pod → api.kilo.ai:443 通、控制面 pod 同目标被拦 ⇒ 翻 true 会让 AI 问答/通知/联邦在网络层静默失败。前置条件与理由写在 values 注释里，由 owner 在补上显式外部出向放行后拍。**没有翻**。
+- **新增门禁（`internal/gates/network_policy_coverage_gate_test.go`，在原有 4 条基础上扩充 5 条）**：① 禁止空白 `podSelector`（kind 实测会跨 ns 放行）；② 控制面 egress 必须按已启用服务渲染 HTTP+gRPC 并限定到服务名标签；③ agent 自举块必须跟 `device_svc.enabled` 绑定、只放 HTTP（不含 gRPC）；④ metrics 放行必须同时受 `$svc.metrics` 与 metricsFrom 控制，且 values 默认 `metricsFrom: []`；⑤ 生产若翻 true 则模板必须存在 `ipBlock` 外部放行（棘轮，附纯函数三用例反空转）。原有断言继续保留（守卫存在 / 组件覆盖 / 生产显式表态+关键词理由 / 扫描面下限）。
+- **变异反证 6 例**（各自点名转红后已还原）：空白 podSelector / 控制面 egress 丢 gRPC / agent 放行脱离 `device_svc.enabled` / agent 块顺带放 gRPC / metrics 脱离 metricsFrom / 生产翻 true 但无 ipBlock。
+- 验证：`go test ./internal/gates -count=1` 全绿；`helm lint`（networkPolicy=true + device/task）0 失败；`git diff --check` 无空白错误。
 
 ## [0.17.0] — 2026-11-02（新增门禁：鉴权能力「写了必须有人接」——零调用点的鉴权 API 直接判红）
 
