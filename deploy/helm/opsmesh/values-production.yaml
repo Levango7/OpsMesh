@@ -328,18 +328,30 @@ observability:
   # 生产启用 PrometheusRule 内置告警
   prometheusRule:
     enabled: true
-  # 网络策略：**显式表态为 false**，而不是沉默继承 values.yaml 的关。
-  # 2026-11-02 已在 kind(kindnet v1.32.2) 实跑回归：开出 device_svc/task_svc 的完整矩阵 21 条全绿
-  # （cp→svc 的 HTTP+gRPC、agent→device、device→cp/mysql；未授权 pod 与跨 ns 抓取均被拦），
-  # 并用第二态验证 metricsFrom 显式配置后抓取可达。**但这一版仍不能翻 true**，实测理由：
-  #   控制面进程自身要访问外部 HTTPS——LLM 网关 internal/ai/gateway/providers.go（默认 api.kilo.ai）、
-  #   告警 webhook internal/controlplane/webhook.go、federation 对端 internal/controlplane/federation.go；
-  #   本策略 egress 只放行 DNS/MySQL/Redis/自家服务。kind 实测：未选中 pod → api.kilo.ai:443 通，
-  #   控制面 pod → 同目标被拦 ⇒ 翻 true 后 AI 问答/通知/联邦会在网络层静默失败。
-  # 翻 true 的前置：先给控制面加**显式可配置**的外部出向放行（peer/CIDR 值），再跑同一矩阵；
-  #   另：微服务 /metrics 抓取必须显式配置 observability.networkPolicy.metricsFrom（默认空=不放行）。
-  # 结论：加固能力已落地（模板覆盖 controlplane/agent/微服务；默认 values 全关 ⇒ 存量零变化），
-  #      翻默认值属现网变更，由 owner 在补上外部出向放行后拍。
-  # 门禁 internal/gates/network_policy_coverage_gate_test.go 要求本键**必须存在且有理由注释**。
+  # 网络策略：**显式开启**（2026-11-02 起；此前为显式 false）。
+  # 开启依据（全部来自 kind v1.32.2 / kindnet 实测，不是推断）：
+  #   ① 内部放行矩阵 21 条全绿——cp→svc 的 HTTP+gRPC、agent→device、device→cp/mysql 连通；
+  #      未授权 pod（同 ns）与跨 ns 抓取被拦（策略确实生效，有 deny-all 双向对照）。
+  #   ② 控制面的外部 HTTPS 依赖（LLM 网关 internal/ai/gateway/providers.go、告警 webhook
+  #      internal/controlplane/webhook.go、federation internal/controlplane/federation.go）
+  #      由下面的 controlplaneEgressExtra 显式放行：只开 443 且排除私网段。
+  #      复测：cp→api.kilo.ai:443 由 BLOCKED 变 OPEN，cp→私网 443 仍 BLOCKED。
+  # 安装方仍需按实际环境核对：
+  #   - LLM/webhook/federation 若走私网 IP 或非 443 端口，必须自行补 controlplaneEgressExtra 规则；
+  #   - 若开启本 chart 的微服务并让独立命名空间的 Prometheus 抓取，必须显式配置
+  #     observability.networkPolicy.metricsFrom（默认空=不放行任何抓取来源）。
+  # 门禁 internal/gates/network_policy_coverage_gate_test.go 要求本键**必须存在且有理由注释**，
+  # 且在 enabled=true 时要求模板提供可配置出向机制、本文件真的声明了 ipBlock 外部放行。
   networkPolicy:
-    enabled: false
+    enabled: true
+    controlplaneEgressExtra:
+      - to:
+          - ipBlock:
+              cidr: 0.0.0.0/0
+              except:
+                - 10.0.0.0/8
+                - 172.16.0.0/12
+                - 192.168.0.0/16
+        ports:
+          - port: 443
+            protocol: TCP

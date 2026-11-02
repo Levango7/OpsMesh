@@ -877,3 +877,21 @@ observability:
     #         matchLabels:
     #           app.kubernetes.io/name: prometheus
     metricsFrom: []
+    # 控制面**外部**出向（可选，默认空=不放行）。控制面进程自身要访问外部 HTTPS：
+    #   LLM 网关（internal/ai/gateway/providers.go）、告警 webhook（internal/controlplane/webhook.go）、
+    #   federation 对端（internal/controlplane/federation.go）。
+    # 不声明时这些调用会被默认拒绝语义拦掉（2026-11-02 kind 实测 cp→api.kilo.ai:443 超时）。
+    # 这里是**整条 egress rule** 的列表（to + ports），按真实依赖声明；示例（只开 443、排除私网段）：
+    #   controlplaneEgressExtra:
+    #     - to:
+    #         - ipBlock:
+    #             cidr: 0.0.0.0/0
+    #             except:
+    #               - 10.0.0.0/8
+    #               - 172.16.0.0/12
+    #               - 192.168.0.0/16
+    #       ports:
+    #         - port: 443
+    #           protocol: TCP
+    # 注意：私网内的 LLM/webhook 端点、非 443 端口不会被上面示例覆盖，需自行补规则。
+    controlplaneEgressExtra: []

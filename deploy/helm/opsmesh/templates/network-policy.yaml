@@ -66,6 +66,13 @@ spec:
         {{- end }}
     {{- end }}
     {{- end }}
+    # 外部出向（可选，默认空=不放行）：控制面进程自身要访问外部 HTTPS——LLM 网关
+    # （internal/ai/gateway/providers.go）、告警 webhook（internal/controlplane/webhook.go）、
+    # federation 对端（internal/controlplane/federation.go）。值是**整条 egress rule**（to + ports），
+    # 由安装方按真实依赖显式声明；本 chart 不自带 0.0.0.0/0 的默认写法，示例见 values.yaml。
+    {{- with .Values.observability.networkPolicy.controlplaneEgressExtra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 ---
 # agent 出站：仅允许连接 controlplane + DNS
 apiVersion: networking.k8s.io/v1
@@ -134,12 +141,14 @@ spec:
 #     未授权的同 ns pod（intruder）与 monitoring ns 的 prometheus 到 device/task 均被拦；
 #   - 旧写法 `from: [{podSelector: {}}]`（意图"同 ns 任意 pod"）实测**跨命名空间也放行**；
 #     现改为必须显式配置 metricsFrom：配置后 prom→svc 连通、同 ns 非授权 pod 仍被拦。
-# 仍**不建议**把生产默认翻成 true，理由已实测（不是"没测过"）：控制面进程自身要出向外部 HTTPS——
+# 翻 true 的前置已在同批处理（2026-11-02）：控制面进程要出向外部 HTTPS——
 #   LLM 网关 internal/ai/gateway/providers.go（默认 https://api.kilo.ai/v1）、
-#   告警 webhook internal/controlplane/webhook.go、federation 对端 internal/controlplane/federation.go；
-#   本策略 egress 只放行 DNS/MySQL/Redis/自家服务，kind 实测 cp→api.kilo.ai:443 被拦，
-#   而未被策略选中的 pod 到同目标连通 ⇒ 翻 true 会让 AI 问答/通知/联邦在网络层静默失败。
-# 翻默认的前置：先加**显式可配置**的外部出向放行（peer/CIDR 值），再跑同一矩阵。
+#   告警 webhook internal/controlplane/webhook.go、federation 对端 internal/controlplane/federation.go。
+# 现在由 values 的 observability.networkPolicy.controlplaneEgressExtra 显式声明（模板默认空、不自带宽松默认），
+# values-production 里只开 443 且 except 私网段。kind(kindnet) 复测：cp→api.kilo.ai:443 由 BLOCKED 变 OPEN，
+# cp→私网 443（mysql 监听）仍 BLOCKED（except 生效），内部放行/拦截矩阵不变。
+# 仍未覆盖、需安装方按实际环境核对：私网 IP 或非 443 端点的外部依赖要自行补规则；
+# 微服务 /metrics 抓取要显式配置 metricsFrom（默认空=不放行）。
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.enabled }}
 {{- $svcName := $name | replace "_" "-" }}
