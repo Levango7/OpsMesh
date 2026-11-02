@@ -19,8 +19,8 @@ set -uo pipefail
 # 只有 run 块回显 + `Process completed with exit code 1`）。
 # 一条负责区分"未知"与"缺陷"的门禁，首先得真的跑到那句区分。
 set +e
-VER="${1:-${GITHUB_REF_NAME:-}}"
 PRE_RELEASE=0
+VER=""
 for _a in "$@"; do
   case "$_a" in
     --pre-release) PRE_RELEASE=1 ;;
@@ -28,10 +28,24 @@ for _a in "$@"; do
     *) VER="$_a" ;;
   esac
 done
+# 版本号只认「非选项参数」；没有才退回 GITHUB_REF_NAME（tag 触发时的既有行为）。
+# 2026-11-02 实测（v0.17.0 首次真跑 verify-preflight）：旧写法
+# `VER="${1:-${GITHUB_REF_NAME:-}}"` 会把 `--pre-release` 当成版本号——因为 $1 恰是它，
+# `${1:-…}` 不会落到 elseif 分支。后果是去等一个叫 `v--pre-release` 的 tag（20 次轮询
+# 后按"未知"退化），再拿 `--pre-release` 当版本调判据脚本 ⇒ 只打印 usage、exit 2 ⇒
+# 整个 release 红在自家参数上，而不是红在产物上。
+VER="${VER:-${GITHUB_REF_NAME:-}}"
 VER="${VER#v}"
-if [ -z "$VER" ]; then
-  echo "用法: $0 <版本> [--pre-release]（CI 里可由 GITHUB_REF_NAME 推导）" >&2
-  exit 2
+case "$VER" in
+  ""|-*)
+    echo "用法: $0 <版本> [--pre-release]（CI 里可由 GITHUB_REF_NAME 推导）" >&2
+    exit 2
+    ;;
+esac
+# 自测用的干跑钩子：只解析参数并回报，不触发任何网络/registry 访问。
+if [ "${OPSMESH_VERIFY_DRY_RUN:-0}" = "1" ]; then
+  echo "VER=${VER} PRE_RELEASE=${PRE_RELEASE}"
+  exit 0
 fi
 # TD-95 方向②（2026-10-13，板第八十则）：先把等待从"固定秒数估计"换成**可判定的
 # 收敛条件**——按 head_sha 轮询 tag 触发的 ci run 到终态（它产出 binary/agent 镜像
