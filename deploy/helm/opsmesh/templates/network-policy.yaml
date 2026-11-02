@@ -1,6 +1,7 @@
 # OpsMesh NetworkPolicy — 控制面入站/出站 + agent 出站
-# 默认拒绝所有入站，仅开放必要端口（8080 HTTP / 9090 gRPC / 9100 metrics）。
-# agent 侧仅出站（连接 controlplane），无入站端口暴露。
+# 覆盖 controlplane / agent / 已启用的微服务三类 pod（未启用的微服务不渲染，也不被任何策略选中）。
+# 被选中的 pod 进入默认拒绝语义：入站只通本文件写明的来源与端口，出站只通 egress 列出的目标。
+# agent 侧仅出站（连接 controlplane 与 device-svc 自举），无入站端口暴露。
 {{- if .Values.observability.networkPolicy.enabled -}}
 ---
 # 控制面入站：允许 ingress controller / LB 访问 8080，允许同类 pod 间 9090
@@ -46,6 +47,25 @@ spec:
           protocol: TCP
         - port: 9090
           protocol: TCP
+    # 允许访问已启用的微服务端口——svcproxy 的转发路径。
+    # 2026-11-02 kind 实测：不加这一段，贴策略后「控制面 → 微服务」直连被自己的 egress 拦死
+    # （cp → device-svc:8081 = 超时），聚合代理整片 502。策略要能用，必须先让自家转发通。
+    {{- range $name, $svc := .Values.services }}
+    {{- if $svc.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opsmesh
+              app.kubernetes.io/component: {{ $name | replace "_" "-" }}
+      ports:
+        - port: {{ $svc.httpPort }}
+          protocol: TCP
+        {{- if gt (int $svc.grpcPort) 0 }}
+        - port: {{ $svc.grpcPort }}
+          protocol: TCP
+        {{- end }}
+    {{- end }}
+    {{- end }}
 ---
 # agent 出站：仅允许连接 controlplane + DNS
 apiVersion: networking.k8s.io/v1
@@ -82,6 +102,19 @@ spec:
           protocol: TCP
         - port: 9090
           protocol: TCP
+    # agent 自举 → device-svc（install.sh 与 provision register 直连，不经控制面代理）。
+    # 2026-11-02 kind 实测：缺这一段时 agent → device-svc:8081 被 agent 自己的 egress 拦死，
+    # 首次纳管流程在网络层静默失败——入站侧放行没用，出站也得开。
+    {{- if (.Values.services.device_svc).enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opsmesh
+              app.kubernetes.io/component: device-svc
+      ports:
+        - port: {{ .Values.services.device_svc.httpPort }}
+          protocol: TCP
+    {{- end }}
 ---
 # 微服务入站/出站（只对 enabled=true 的服务渲染；values 里 12 个默认全 false ⇒ 存量部署零变化）。
 # 放行依据逐条对得上代码，不是照抄惯例：
@@ -90,11 +123,23 @@ spec:
 #   - agent → device_svc：agent 自举（install.sh 与 provision register）直连 device-svc，
 #     见 internal/controlplane/svcproxy/proxy.go 的 DeviceExtras 注释；不放行则首次纳管在网络层被吞。
 #   - 出站：DNS + 控制面 + 同 name 标签下的 MySQL(3306)/Redis(6379)。
-#   - metrics=true 的服务：放行**同命名空间任意 Pod** 访问其 HTTP 端口。本 chart 不部署 Prometheus
-#     （监控多由外部栈提供），若写死"只允许带某标签的 pod"，在没打该标签的安装里会静默拦掉抓取——
-#     观测面失明比多放行一档更难发现，故这里刻意宽一档并写明原因。
-# 启用前必读的未验证清单：服务间互调、外部 GitOps/CI 直连、备份 CronJob 的访问路径均未逐条实测；
-# CNI 不实现 NetworkPolicy 时（flannel / kind 默认）这些限制整体是空操作。
+#   - metrics：默认**不放行任何抓取来源**。需要抓取时由安装方显式配置
+#     observability.networkPolicy.metricsFrom（peer 列表）。原因见下文 metrics 段的实测记录：
+#     原先的"同命名空间任意 Pod"在 kind 上实测连跨命名空间也通，等于一个比想象更宽的口子。
+# 2026-11-02 kind(kindnet v1.32.2) 实测结论（不是推断；矩阵与复现命令见 docs/semantic-rulings-2026-11-01.md 附一）：
+#   - kindnet **确实强制** NetworkPolicy（同 ns deny-all 双向对照：贴上超时、删掉连通、再贴回又超时）；
+#   - 补齐控制面 egress 的微服务端口段之前，「控制面 → 微服务」被自家 egress 拦死（svcproxy 整片 502）；
+#   - 补齐 agent egress 之前，「agent → device-svc 自举」同样被拦；
+#   - 修正后 21 条矩阵全绿：cp→device/task 的 HTTP+gRPC、agent→device HTTP、device→cp/mysql 均连通；
+#     未授权的同 ns pod（intruder）与 monitoring ns 的 prometheus 到 device/task 均被拦；
+#   - 旧写法 `from: [{podSelector: {}}]`（意图"同 ns 任意 pod"）实测**跨命名空间也放行**；
+#     现改为必须显式配置 metricsFrom：配置后 prom→svc 连通、同 ns 非授权 pod 仍被拦。
+# 仍**不建议**把生产默认翻成 true，理由已实测（不是"没测过"）：控制面进程自身要出向外部 HTTPS——
+#   LLM 网关 internal/ai/gateway/providers.go（默认 https://api.kilo.ai/v1）、
+#   告警 webhook internal/controlplane/webhook.go、federation 对端 internal/controlplane/federation.go；
+#   本策略 egress 只放行 DNS/MySQL/Redis/自家服务，kind 实测 cp→api.kilo.ai:443 被拦，
+#   而未被策略选中的 pod 到同目标连通 ⇒ 翻 true 会让 AI 问答/通知/联邦在网络层静默失败。
+# 翻默认的前置：先加**显式可配置**的外部出向放行（peer/CIDR 值），再跑同一矩阵。
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.enabled }}
 {{- $svcName := $name | replace "_" "-" }}
@@ -137,9 +182,14 @@ spec:
         - port: {{ $svc.httpPort }}
           protocol: TCP
     {{- end }}
-    {{- if $svc.metrics }}
+    {{- if and $svc.metrics $.Values.observability.networkPolicy.metricsFrom }}
+    # 抓取来源必须**显式配置**（observability.networkPolicy.metricsFrom），默认不放行任何来源。
+    # 这里原本写的是 `- from: [{podSelector: {}}]`（意图"同命名空间任意 Pod"），
+    # 2026-11-02 在 kind(kindnet) 实测：跨命名空间的 Pod 也能连上该端口（monitoring ns 的
+    # Pod → 本服务 HTTP 端口 = 连通），即这条放行在实践中比 K8s 规范描述的命名空间边界更宽。
+    # 结论：不做"看起来只放同 ns"的宽容默认——要么安装方显式声明抓取来源，要么不通。
     - from:
-        - podSelector: {}
+        {{- toYaml $.Values.observability.networkPolicy.metricsFrom | nindent 8 }}
       ports:
         - port: {{ $svc.httpPort }}
           protocol: TCP

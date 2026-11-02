@@ -329,15 +329,17 @@ observability:
   prometheusRule:
     enabled: true
   # 网络策略：**显式表态为 false**，而不是沉默继承 values.yaml 的关。
-  # 为什么不在这一版直接翻 true（两条必须先证清的路径，2026-11-02 实测留痕）：
-  #   ① 抓取来源：模板对 metrics 端口只放行「同命名空间任意 Pod」（podSelector: {}），
-  #      而生产常见形态是 kube-prometheus-stack 落在独立命名空间 ⇒ 翻 true 会静默拦掉抓取，
-  #      观测面失明比多放行一档更难发现。要么放宽到 namespaceSelector，要么在本集群确认抓取来源。
-  #   ② 服务间互调矩阵未逐条实测（哪些 svc 直接调哪些 svc、备份 CronJob 的访问路径），
-  #      NetworkPolicy 是默认拒绝语义，漏一条就是现网 502。
-  # 结论：加固能力已落地（模板覆盖 controlplane/agent/微服务，默认 values 下渲染 0 条 ⇒ 存量零变化），
-  #      翻默认值属现网变更，需在真实 CNI 上跑一轮连通性回归后由 owner 拍。
-  #      门禁 internal/gates/network_policy_coverage_gate_test.go 要求本键**必须存在且有理由注释**，
-  #      防止"没人看过所以默认关"再次发生。
+  # 2026-11-02 已在 kind(kindnet v1.32.2) 实跑回归：开出 device_svc/task_svc 的完整矩阵 21 条全绿
+  # （cp→svc 的 HTTP+gRPC、agent→device、device→cp/mysql；未授权 pod 与跨 ns 抓取均被拦），
+  # 并用第二态验证 metricsFrom 显式配置后抓取可达。**但这一版仍不能翻 true**，实测理由：
+  #   控制面进程自身要访问外部 HTTPS——LLM 网关 internal/ai/gateway/providers.go（默认 api.kilo.ai）、
+  #   告警 webhook internal/controlplane/webhook.go、federation 对端 internal/controlplane/federation.go；
+  #   本策略 egress 只放行 DNS/MySQL/Redis/自家服务。kind 实测：未选中 pod → api.kilo.ai:443 通，
+  #   控制面 pod → 同目标被拦 ⇒ 翻 true 后 AI 问答/通知/联邦会在网络层静默失败。
+  # 翻 true 的前置：先给控制面加**显式可配置**的外部出向放行（peer/CIDR 值），再跑同一矩阵；
+  #   另：微服务 /metrics 抓取必须显式配置 observability.networkPolicy.metricsFrom（默认空=不放行）。
+  # 结论：加固能力已落地（模板覆盖 controlplane/agent/微服务；默认 values 全关 ⇒ 存量零变化），
+  #      翻默认值属现网变更，由 owner 在补上外部出向放行后拍。
+  # 门禁 internal/gates/network_policy_coverage_gate_test.go 要求本键**必须存在且有理由注释**。
   networkPolicy:
     enabled: false

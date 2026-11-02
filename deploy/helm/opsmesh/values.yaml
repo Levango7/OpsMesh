@@ -867,3 +867,13 @@ observability:
   # 网络策略（可选，默认关闭）：控制面入站 + agent 出站，限缩 Pod 间网络访问
   networkPolicy:
     enabled: false  
+    # 抓取来源（peer 列表，默认空＝不放行）。enabled=true 且某服务 metrics=true 时，
+    # 必须在这里显式声明谁来抓，否则 /metrics 不可达。示例：
+    #   metricsFrom:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: monitoring
+    #       podSelector:
+    #         matchLabels:
+    #           app.kubernetes.io/name: prometheus
+    metricsFrom: []
