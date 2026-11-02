@@ -126,3 +126,77 @@ awk '/ports:/{f=1;next} f&&/^ *- /{print;f=0} f&&/^ *#/{next} f&&!/^ *- /{f=0}' 
 # 代理侧身份剥离与重注入（应为真代码而非注释）
 grep -n 'Header.Del("X-Tenant-ID")' internal/controlplane/service_proxy.go
 ```
+
+---
+
+## 附一：NetworkPolicy 在真实 CNI 上的回归矩阵（2026-11-02 追加，kindnet 实测）
+
+> 本节是对 §2.5（事实 5：内网没有隔离）的后续验证：模板修改后**实跑**，不是纸面推断。
+> 环境：kind v1.32.2（节点 v1.32.2），CNI=kindnet（默认）。命名空间：`opsmesh`（被测）/ `monitoring`（外部 Prometheus 形态）/ `ctrl`（策略强制力正反对照）。
+> 端口：chart 默认 `httpPort=8081`、`grpcPort=50052`（注意与 compose 的 8101/8102 不同，探针按 chart 默认）。
+
+### 强制力对照（先证明 kindnet 真的执行策略，避免"全绿=没生效"）
+
+| 场景 | 结果 |
+|---|---|
+| `ctrl` ns 有 deny-all 时 c2→c1:9000 | 超时（BLOCKED） |
+| 删除 deny-all 后同一探测 | 连通（OPEN） |
+| 重新贴回 | 再次超时（BLOCKED） |
+
+### 状态 A：`metricsFrom` 为空（chart 默认，不放行任何抓取来源）
+
+| 路径 | 实测 | 期望 |
+|---|---|---|
+| cp→device:8081 / :50052 | OPEN / OPEN | OPEN（svcproxy 转发 HTTP+gRPC） |
+| cp→task:8081 / :50052 | OPEN / OPEN | OPEN |
+| agent→device:8081 | OPEN | OPEN（自举） |
+| agent→device:50052 | BLOCKED | BLOCKED（自举只走 HTTP） |
+| intruder(同 ns)→device:8081 / :50052 / task:8081 | BLOCKED ×3 | BLOCKED |
+| task(同 ns)→device:8081 | BLOCKED | BLOCKED（无服务互调放行） |
+| prom(monitoring ns)→device/task:8081 | BLOCKED / BLOCKED | BLOCKED（未声明抓取来源） |
+| device→cp:8080、device→mysql:3306 | OPEN / OPEN | OPEN |
+
+本态 21 条探测全部与期望一致。判据：busybox `nc -z -w 3 <ip> <port>` 退出码 0=OPEN、非 0=BLOCKED；探针监听用 `nc -lk -p PORT -e /bin/cat`（busybox 不支持 `nc -c`，早期的 `-c` 写法会让监听静默退出、把"没人监听"误判成 BLOCKED）。
+
+### 状态 B：`metricsFrom = monitoring/prometheus`（显式放行抓取来源）
+
+| 路径 | 实测 |
+|---|---|
+| prom→device:8081 / task:8081 | OPEN / OPEN（显式配置的效果） |
+| intruder(同 ns)→device:8081 | BLOCKED（peer 不匹配仍拦） |
+| cp→device:8081、agent→device:8081 | OPEN / OPEN（不受影响） |
+
+### 翻生产默认 true 的实测阻断项
+
+控制面进程需要出向外部 HTTPS（LLM 网关 `internal/ai/gateway/providers.go`、告警 webhook `internal/controlplane/webhook.go`、federation 对端 `internal/controlplane/federation.go`），而策略 egress 只放行 DNS/MySQL/Redis/自家服务：
+
+| 源 | 目标 | 实测 |
+|---|---|---|
+| intruder（未被策略选中，基线） | api.kilo.ai:443 | OPEN |
+| cp（被策略选中） | api.kilo.ai:443 | BLOCKED |
+| cp / intruder | 10.96.0.1:443（集群 API Service） | OPEN / OPEN（本 kind 形态下未被拦；**不作为任何保证**） |
+
+⇒ `values-production.yaml` 保持 `enabled: false`；翻 true 的前置＝先加显式可配置的外部出向放行（见该文件注释与门禁 `TestNetworkPolicyProductionFlipRequiresExternalEgress`）。
+
+### 复现（关键步骤）
+
+```bash
+# 1) kind 单节点集群 + 三个 ns；探针 pod 标签必须与 chart 选择器一致：
+#    app.kubernetes.io/{name: opsmesh, instance: <release>, component: <controlplane|agent|device-svc|task-svc|...>}
+kind create cluster --name np-wb
+kubectl create ns opsmesh && kubectl create ns monitoring && kubectl create ns ctrl
+# 探针容器的监听命令（busybox）：nc -lk -p 8081 -e /bin/cat
+
+# 2) 渲染并只贴策略；-n 不能省，否则策略落到 default ns，opmesh 里的探测会"全通"
+helm template t deploy/helm/opsmesh -n opsmesh -s templates/network-policy.yaml \
+  --set observability.networkPolicy.enabled=true \
+  --set services.device_svc.enabled=true --set services.task_svc.enabled=true > np.yaml
+kubectl delete netpol -n opsmesh --all
+kubectl apply -n opsmesh -f np.yaml
+kubectl get netpol -n opsmesh   # 应 4 条
+
+# 3) 判据：退出码 0=OPEN，非 0=BLOCKED
+kubectl exec -n opsmesh cp -- nc -z -w 3 <devicePodIP> 8081
+
+# 4) 第二态：加 metricsFrom 覆盖文件后重渲染、重贴、复测 prom→svc
+```
