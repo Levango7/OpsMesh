@@ -268,10 +268,11 @@ func TestNetworkPolicyMetricsScrapeIsOptIn(t *testing.T) {
 	}
 }
 
-// TestNetworkPolicyProductionFlipRequiresExternalEgress 是给"以后把生产默认翻 true"上的棘轮。
+// TestNetworkPolicyProductionFlipRequiresExternalEgress 是给"生产默认翻 true"上的棘轮。
 // 2026-11-02 kind 实测：策略生效时 cp→api.kilo.ai:443 被拦（未选中 pod 同目标连通），
-// 而控制面进程需要出向 LLM 网关/webhook/federation。⇒ 允许翻 true 的前提是模板里存在
-// 显式外部放行（ipBlock）；否则翻完就是现网静默失败。
+// 而控制面进程需要出向 LLM 网关/webhook/federation。⇒ 翻 true 必须同时具备两件事：
+// ① 模板提供可配置出向机制（controlplaneEgressExtra，默认空 ⇒ 不自带宽松默认）；
+// ② 生产 values 真的声明了外部放行（含 ipBlock）。只有其一都判红。
 func TestNetworkPolicyProductionFlipRequiresExternalEgress(t *testing.T) {
 	root := repoRoot(t)
 
@@ -303,36 +304,72 @@ func TestNetworkPolicyProductionFlipRequiresExternalEgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读 %s: %v", npTemplate, err)
 	}
-	if err := npCheckProdFlip(enabled, npStripLineComments(string(tmpl))); err != nil {
+	if err := npCheckProdFlip(enabled, npStripLineComments(string(tmpl)), npStripLineComments(string(prodData))); err != nil {
 		t.Fatal(err)
 	}
 
-	// 反空转：判断逻辑本身要被三条用例钉住，否则当前 enabled=false 会让它永远判绿。
+	// 反空转：判断逻辑本身要被四条用例钉住（两条"缺一即红"的负例），
+	// 否则当前 enabled=true 的实现会让某一边的缺失悄悄通过。
 	cases := []struct {
+		name    string
 		enabled bool
 		tmpl    string
+		prod    string
 		wantErr bool
 	}{
-		{false, "egress:\n  - to:\n      - podSelector:\n", false},
-		{true, "egress:\n  - to:\n      - podSelector:\n", true},
-		{true, "egress:\n  - to:\n      - ipBlock:\n          cidr: 0.0.0.0/0\n", false},
+		{"关闭时不要求任何机制", false, "", "", false},
+		{"开启但模板无出向机制", true, "egress: []", "ipBlock:\n  cidr: 0.0.0.0/0", true},
+		{"开启有机制但生产未声明 ipBlock", true, "controlplaneEgressExtra:", "enabled: true", true},
+		{"开启+机制+生产 ipBlock", true, "controlplaneEgressExtra:", "ipBlock:\n  cidr: 0.0.0.0/0", false},
 	}
 	for _, c := range cases {
-		if gotErr := npCheckProdFlip(c.enabled, c.tmpl); (gotErr != nil) != c.wantErr {
-			t.Errorf("npCheckProdFlip(enabled=%v, hasIPBlock=%v) 判定错误：err=%v",
-				c.enabled, strings.Contains(c.tmpl, "ipBlock:"), gotErr)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if gotErr := npCheckProdFlip(c.enabled, c.tmpl, c.prod); (gotErr != nil) != c.wantErr {
+				t.Errorf("npCheckProdFlip 判定错误：err=%v", gotErr)
+			}
+		})
 	}
 }
 
-func npCheckProdFlip(enabled bool, strippedTemplate string) error {
+func npCheckProdFlip(enabled bool, strippedTemplate, strippedProdValues string) error {
 	if !enabled {
 		return nil
 	}
-	if !strings.Contains(strippedTemplate, "ipBlock:") {
-		return fmt.Errorf("%s 已把 networkPolicy.enabled 翻成 true，但 %s 没有任何 ipBlock 外部放行："+
-			"控制面的 LLM 网关/webhook/federation 出向会在网络层静默失败（2026-11-02 kind 实测 cp→api.kilo.ai:443 被拦）",
+	if !strings.Contains(strippedTemplate, "controlplaneEgressExtra") {
+		return fmt.Errorf("%s 已把 networkPolicy.enabled 翻成 true，但 %s 没有 controlplaneEgressExtra 出向机制："+
+			"控制面的 LLM 网关/webhook/federation 出向会被默认拒绝语义拦死（2026-11-02 kind 实测 cp→api.kilo.ai:443 超时）",
 			npProdVals, npTemplate)
 	}
+	if !strings.Contains(strippedProdValues, "ipBlock:") {
+		return fmt.Errorf("%s 已把 networkPolicy.enabled 翻成 true，但没有声明任何 ipBlock 外部放行："+
+			"模板提供的是默认空的机制，不声明等于出向仍被拦", npProdVals)
+	}
 	return nil
+}
+
+// TestNetworkPolicyExternalEgressIsOptIn 守"机制本身不自带宽松默认"：
+// 模板必须用 with 渲染 controlplaneEgressExtra（空值不产出规则），剥掉注释后不得出现
+// 任何 0.0.0.0/0 字面量；values.yaml 的默认值必须是空列表。
+func TestNetworkPolicyExternalEgressIsOptIn(t *testing.T) {
+	root := repoRoot(t)
+
+	tmpl, err := os.ReadFile(filepath.Join(root, npTemplate))
+	if err != nil {
+		t.Fatalf("读 %s: %v", npTemplate, err)
+	}
+	body := string(tmpl)
+	if !strings.Contains(body, "with .Values.observability.networkPolicy.controlplaneEgressExtra") {
+		t.Error("模板没有用 with 渲染 controlplaneEgressExtra：机制缺失或改成无条件渲染")
+	}
+	if strings.Contains(npStripLineComments(body), "0.0.0.0/0") {
+		t.Error("模板自带 0.0.0.0/0 字面量：外部出向必须由安装方在 values 里显式声明，不能藏在模板默认里")
+	}
+
+	vals, err := os.ReadFile(filepath.Join(root, npValues))
+	if err != nil {
+		t.Fatalf("读 %s: %v", npValues, err)
+	}
+	if !strings.Contains(string(vals), "controlplaneEgressExtra: []") {
+		t.Error("values.yaml 的 controlplaneEgressExtra 默认值不是空列表：控制面外部出向默认必须不放行")
+	}
 }
