@@ -14,6 +14,7 @@ package gates
 // "没人看过所以默认关"从此不能悄悄存在。
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -135,4 +136,203 @@ func TestNetworkPolicyFlagIsExplicitInProductionValues(t *testing.T) {
 		t.Errorf("%s:%d 的 networkPolicy 缺**针对本键**的理由注释——显式表态必须写明为什么这么选"+
 			"（翻 true 的前置条件也写在这里），否则等于把沉默换个位置", npProdVals, idx+1)
 	}
+}
+
+// npStripLineComments 去掉整行 # 注释后再做结构断言：模板里刻意保留了对旧写法的引用
+// （注释中写着 `podSelector: {}}` 以说明为什么删掉它），按原文扫描会把注释当实现。
+func npStripLineComments(s string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// npPieceBetween 取 [start, 下一个 kind: NetworkPolicy) 之间的片段；找不到返回 false。
+func npPieceBetween(body, start string) (string, bool) {
+	i := strings.Index(body, start)
+	if i < 0 {
+		return "", false
+	}
+	rest := body[i+len(start):]
+	j := strings.Index(rest, "kind: NetworkPolicy")
+	if j < 0 {
+		return "", false
+	}
+	return rest[:j], true
+}
+
+// TestNetworkPolicyHasNoBlanketPodSelector 守 2026-11-02 kind 实测暴露的放宽：
+// `from: [{podSelector: {}}]` 本意"同命名空间任意 Pod"，实测连**跨命名空间**的 Pod 也放行。
+// 结论是不再允许空白 peer——抓取来源必须显式配置（metricsFrom）。
+func TestNetworkPolicyHasNoBlanketPodSelector(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, npTemplate))
+	if err != nil {
+		t.Fatalf("读 %s: %v", npTemplate, err)
+	}
+	rules := npStripLineComments(string(data))
+	if strings.Contains(rules, "podSelector: {}") {
+		t.Fatalf("%s 里仍有空白 podSelector（podSelector: {}）：按 kind 实测这等于对**任意命名空间**的 Pod 放行，"+
+			"不是注释里写的\"仅同 ns\"。要用就得显式列出 peer（见 observability.networkPolicy.metricsFrom）", npTemplate)
+	}
+	// 反空转：剥注释后必须仍能识别出 podSelector 与 matchLabels，否则说明扫描特征失效、本用例在空转判绿。
+	if !strings.Contains(rules, "podSelector:") || !strings.Contains(rules, "matchLabels:") {
+		t.Fatal("剥注释后的模板里找不到 podSelector/matchLabels 特征——扫描面失效，本用例无法证明任何事")
+	}
+}
+
+// TestNetworkPolicyControlplaneEgressAllowsProxiedServices 守 svcproxy 的转发路径：
+// 控制面的 pod 策略同时限 Ingress+Egress，若 egress 不逐个放行已启用服务的 HTTP/gRPC 端口，
+// 代理转发会被控制面自己的策略拦死（2026-11-02 kind 实测：cp→device-svc:8081 超时，整片 502）。
+func TestNetworkPolicyControlplaneEgressAllowsProxiedServices(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, npTemplate))
+	if err != nil {
+		t.Fatalf("读 %s: %v", npTemplate, err)
+	}
+	section, ok := npPieceBetween(string(data), "}}-controlplane")
+	if !ok {
+		t.Fatal("定位不到 controlplane 策略段（模板结构变了，需同步本门禁）")
+	}
+	for _, frag := range []struct{ why, s string }{
+		{"控制面策略必须仍限 Egress（否则下面的断言失去前提）", "- Egress"},
+		{"控制面 egress 必须按已启用服务清单渲染（否则只覆盖写死的那几个）", "range $name, $svc := .Values.services"},
+		{"控制面 egress 必须放行服务 HTTP 端口（svcproxy 转发目标）", "- port: {{ $svc.httpPort }}"},
+		{"控制面 egress 必须放行服务 gRPC 端口（代理同时转发 gRPC）", "- port: {{ $svc.grpcPort }}"},
+		{"控制面 egress 的放行目标必须按服务名选择 pod（不能放宽到整个 ns）", "app.kubernetes.io/component: {{ $name | replace \"_\" \"-\" }}"},
+	} {
+		if !strings.Contains(section, frag.s) {
+			t.Errorf("controlplane 策略段缺失：%s（判据片段 %q）", frag.why, frag.s)
+		}
+	}
+}
+
+// TestNetworkPolicyAgentBootstrapPath 守 agent 自举：install.sh / provision register 直连
+// device-svc（不经控制面代理），agent 只有出站策略 —— 不放行则首次纳管在网络层静默失败。
+// 自举只走 HTTP；gRPC 端口不应顺带放行（2026-11-02 kind 实测该路径为 BLOCKED）。
+func TestNetworkPolicyAgentBootstrapPath(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, npTemplate))
+	if err != nil {
+		t.Fatalf("读 %s: %v", npTemplate, err)
+	}
+	body := string(data)
+	agent, ok := npPieceBetween(body, "}}-agent")
+	if !ok {
+		t.Fatal("定位不到 agent 策略段（模板结构变了，需同步本门禁）")
+	}
+	if !strings.Contains(agent, "if (.Values.services.device_svc).enabled") {
+		t.Error("agent 的 device-svc 出站放行没有跟 device_svc.enabled 绑定：没装 device-svc 时会渲染一条指向不存在 pod 的规则")
+	}
+	if !strings.Contains(agent, "component: device-svc") || !strings.Contains(agent, ".Values.services.device_svc.httpPort") {
+		t.Error("agent 自举路径缺失：必须放行 device-svc 的 HTTP 端口")
+	}
+
+	i := strings.Index(agent, "if (.Values.services.device_svc).enabled")
+	if i < 0 {
+		t.Fatal("device_svc 放行块不存在，无法检查端口面")
+	}
+	block := agent[i:]
+	if j := strings.Index(block, "{{- end }}"); j >= 0 {
+		block = block[:j]
+	}
+	if strings.Contains(block, "grpcPort") {
+		t.Error("agent 自举只走 HTTP，device_svc 放行块里不应包含 gRPC 端口（实测该路径应保持 BLOCKED）")
+	}
+}
+
+// TestNetworkPolicyMetricsScrapeIsOptIn 守 metrics 放行面：
+// 模板必须把抓取来源绑到 metricsFrom，且 values 默认必须是空列表（默认不放行任何来源）。
+func TestNetworkPolicyMetricsScrapeIsOptIn(t *testing.T) {
+	root := repoRoot(t)
+
+	tmpl, err := os.ReadFile(filepath.Join(root, npTemplate))
+	if err != nil {
+		t.Fatalf("读 %s: %v", npTemplate, err)
+	}
+	if !strings.Contains(string(tmpl), "and $svc.metrics $.Values.observability.networkPolicy.metricsFrom") {
+		t.Error("metrics 放行没有同时受 $svc.metrics 与 metricsFrom 控制——默认可能又变成无条件放行")
+	}
+
+	vals, err := os.ReadFile(filepath.Join(root, npValues))
+	if err != nil {
+		t.Fatalf("读 %s: %v", npValues, err)
+	}
+	if !strings.Contains(string(vals), "metricsFrom: []") {
+		t.Error("values.yaml 的 metricsFrom 默认值不是空列表：抓取来源必须由安装方显式声明")
+	}
+}
+
+// TestNetworkPolicyProductionFlipRequiresExternalEgress 是给"以后把生产默认翻 true"上的棘轮。
+// 2026-11-02 kind 实测：策略生效时 cp→api.kilo.ai:443 被拦（未选中 pod 同目标连通），
+// 而控制面进程需要出向 LLM 网关/webhook/federation。⇒ 允许翻 true 的前提是模板里存在
+// 显式外部放行（ipBlock）；否则翻完就是现网静默失败。
+func TestNetworkPolicyProductionFlipRequiresExternalEgress(t *testing.T) {
+	root := repoRoot(t)
+
+	prodData, err := os.ReadFile(filepath.Join(root, npProdVals))
+	if err != nil {
+		t.Fatalf("读 %s: %v", npProdVals, err)
+	}
+	lines := strings.Split(string(prodData), "\n")
+	idx := -1
+	for i, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "networkPolicy:") {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatal("values-production 缺少 networkPolicy 表态（由另一个用例报告，这里不重复）")
+	}
+	enabled := false
+	window := lines[idx:]
+	if len(window) > 6 {
+		window = window[:6]
+	}
+	if regexp.MustCompile(`enabled:\s*true`).MatchString(strings.Join(window, "\n")) {
+		enabled = true
+	}
+
+	tmpl, err := os.ReadFile(filepath.Join(root, npTemplate))
+	if err != nil {
+		t.Fatalf("读 %s: %v", npTemplate, err)
+	}
+	if err := npCheckProdFlip(enabled, npStripLineComments(string(tmpl))); err != nil {
+		t.Fatal(err)
+	}
+
+	// 反空转：判断逻辑本身要被三条用例钉住，否则当前 enabled=false 会让它永远判绿。
+	cases := []struct {
+		enabled bool
+		tmpl    string
+		wantErr bool
+	}{
+		{false, "egress:\n  - to:\n      - podSelector:\n", false},
+		{true, "egress:\n  - to:\n      - podSelector:\n", true},
+		{true, "egress:\n  - to:\n      - ipBlock:\n          cidr: 0.0.0.0/0\n", false},
+	}
+	for _, c := range cases {
+		if gotErr := npCheckProdFlip(c.enabled, c.tmpl); (gotErr != nil) != c.wantErr {
+			t.Errorf("npCheckProdFlip(enabled=%v, hasIPBlock=%v) 判定错误：err=%v",
+				c.enabled, strings.Contains(c.tmpl, "ipBlock:"), gotErr)
+		}
+	}
+}
+
+func npCheckProdFlip(enabled bool, strippedTemplate string) error {
+	if !enabled {
+		return nil
+	}
+	if !strings.Contains(strippedTemplate, "ipBlock:") {
+		return fmt.Errorf("%s 已把 networkPolicy.enabled 翻成 true，但 %s 没有任何 ipBlock 外部放行："+
+			"控制面的 LLM 网关/webhook/federation 出向会在网络层静默失败（2026-11-02 kind 实测 cp→api.kilo.ai:443 被拦）",
+			npProdVals, npTemplate)
+	}
+	return nil
 }
