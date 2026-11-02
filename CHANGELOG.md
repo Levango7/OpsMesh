@@ -93,6 +93,19 @@
 
 ## [0.17.0] — 2026-10-27（前端覆盖补全 + 布局/导航统一专项：181 条「后端有/前端无」缺口闭合、38 条「有页面无入口」路由入侧栏、InfraConsole/K8s/CloudAccounts 三处真缺陷修复、PageShell 78 页迁移收官）
 
+- **死 API 面清查 + api 使用率守卫（后端做了前端没连的显式记账）**：评估轮实测两个方向并否决——
+  「响应形状审计（后端返回键↔前端读取键）」因后端响应是分支内联 map 致键集只能取并集、前端读取在
+  store action 局部变量里导致 6 样本 1 假阳性、顶层键看不见嵌套数组形状（而真实事故 InfraConsole
+  `data.j.taskID` 恰是嵌套）；「store 状态漂移」因朴素提取把 getters/actions 当 state 致 4/36 全误报。
+  改做零歧义的 C 案：498 个 api 导出中 59 个无 UI 消费方，逐条记账并按类归因——
+  **AI 能力未接 UI 9 条**（提示词 CRUD 5 + RAG 摄入/检索 2 + embed + AI 健康；后端 8 条路由全在
+  `internal/ai/gateway/handler.go:364-378`、api 层全接、views/stores 零引用）、**写操作未接 6 条**
+  （K8s 命名空间建/删、系统服务动作、防火墙规则删除、云账号详情、**云资源列表——真缺口**）、
+  详情读取未做详情页 23 条、命名空间聚合对象 16 条、仅单测断言 5 条。
+  新增守卫 `src/api/__tests__/api-usage.test.js`（3 条）实现**双向棘轮**：新增「导出但无人调用」即红；
+  ALLOW 条目一旦被接上 UI 也必须删条（防账本腐化）。与 router-perms（路由门→权限目录）、
+  endpoint-contract（端点→后端路由）、后端 sql_rbac_catalog（handler→权限目录）共同构成契约四面门禁。
+  **本批零产品代码改动**（只加测试与文档）。本地实测：vitest 63→64 文件 / 1312→1315、eslint 0、vite build 通过。
 - **前端路由门词汇与后端 RBAC 目录对齐 + 新增一致性守卫（真缺陷，workbuddy 通报后全量核对）**：
   按「router 全部 40 个 requirePerm × 后端 PermSpecs 112 项目录」+「各页 api 模块 × 后端 handler 的
   authorize 字面量」两个维度核对，修正 6 处：`/ai-chat`、`/agent` 挂 `aiops:read` 而后端
