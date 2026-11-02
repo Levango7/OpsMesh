@@ -91,6 +91,7 @@
     "agent": "AI Agent",
     "knowledge": "Knowledge Base",
     "aiPrompts": "Prompt Templates",
+    "aiRag": "RAG Search",
     "cost": "Cost Control",
     "cloudResources": "Cloud Resources"
   },

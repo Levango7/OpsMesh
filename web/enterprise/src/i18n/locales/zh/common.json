@@ -91,6 +91,7 @@
     "agent": "AI Agent",
     "knowledge": "知识库",
     "aiPrompts": "提示词模板",
+    "aiRag": "知识检索",
     "cost": "成本控制",
     "cloudResources": "云资源"
   },

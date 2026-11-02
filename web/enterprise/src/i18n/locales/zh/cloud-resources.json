@@ -15,6 +15,7 @@
     "field_type": "资源类型",
     "allAccounts": "全部账号",
     "allTypes": "全部类型",
-    "listFailed": "云资源加载失败"
+    "listFailed": "云资源加载失败",
+    "deleteFailed": "删除失败"
   }
 }

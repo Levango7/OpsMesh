@@ -144,6 +144,8 @@ const routes = [
   // AI 提示词模板管理（2026-11-02 补「后端有、前端无界面」缺口：后端 5 条 CRUD 全在 api 层已接）
   { path: '/ai/prompts', name: 'ai-prompts', component: () => import('@/views/AIPromptsView.vue'), meta: { title: 'nav.aiPrompts', group: 'AI 算力', icon: 'flow', requirePerm: 'ai:read' } },
   { path: '/cost', name: 'cost', component: () => import('@/views/CostView.vue'), meta: { title: 'nav.cost', group: 'AI 算力', icon: 'flow', requirePerm: 'cost:read' } },
+  // RAG 知识检索/入库（2026-11-02 补缺口：后端 /ai/rag/search|ingest 已有、api 层已接、无界面）
+  { path: '/ai/rag', name: 'ai-rag', component: () => import('@/views/AIRagView.vue'), meta: { title: 'nav.aiRag', group: 'AI 算力', icon: 'flow', requirePerm: 'ai:read' } },
   // 云资源列表（2026-11-02 补缺口：后端 GET /api/v1/cloud-resources 已有，此前无界面）
   { path: '/cloud/resources', name: 'cloud-resources', component: () => import('@/views/CloudResourcesView.vue'), meta: { title: 'nav.cloudResources', group: 'AI 算力', icon: 'flow', requirePerm: 'cloud:read' } },
 

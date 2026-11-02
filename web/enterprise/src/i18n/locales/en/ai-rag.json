@@ -1,0 +1,22 @@
+{
+  "rag": {
+    "title": "RAG Knowledge Search",
+    "desc": "Search and ingest against the vector store: look up ingested documents, or add text for later chat/retrieval use",
+    "search_title": "Search",
+    "search_placeholder": "Type to search…",
+    "search_btn": "Search",
+    "ingest_title": "Ingest",
+    "ingest_placeholder": "One document per line; each line is ingested separately…",
+    "ingest_btn": "Ingest",
+    "empty": "Type something to start searching",
+    "noResults": "No matches",
+    "col_score": "Score",
+    "col_content": "Content",
+    "col_meta": "Metadata",
+    "ingested_ok": "Ingested {n} document(s)",
+    "searchFailed": "Search failed",
+    "ingestFailed": "Ingest failed",
+    "health_title": "AI Gateway Health",
+    "health_failed": "Failed to load health status"
+  }
+}

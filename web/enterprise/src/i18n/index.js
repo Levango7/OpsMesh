@@ -36,7 +36,8 @@ export const DOMAINS = [
   'ai',
   'platform',
   'ai-prompts',
-  'cloud-resources'
+  'cloud-resources',
+  'ai-rag'
 ]
 
 // 路由名 → 功能域映射（供 router afterEach 钩子按需加载对应域翻译）
@@ -114,6 +115,7 @@ export const ROUTE_DOMAIN_MAP = {
   'cloud-accounts': 'platform',
   // 2026-11-02 新增两页（补「后端有、前端无界面」缺口）：各自独立域文件，避免动他线认领的 ops.json
   'ai-prompts': 'ai-prompts',
+  'ai-rag': 'ai-rag',
   'cloud-resources': 'cloud-resources',
 
   // ====================================================================

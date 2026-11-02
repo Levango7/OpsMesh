@@ -61,3 +61,8 @@ export function listCloudAccountRegions(id) {
 export function listCloudResources(params) {
   return request.get('/cloud-resources', { params })
 }
+// 2026-11-02 补：删除云资源（后端 DELETE /api/v1/cloud-resources/{id}，cloud:write）。
+// 此前后端有写端点而 api 层无 wrapper，列表页无从接入（见 api-usage 守卫 ALLOW）。
+export function deleteCloudResource(id) {
+  return request.delete(`/cloud-resources/${encodeURIComponent(id)}`)
+}

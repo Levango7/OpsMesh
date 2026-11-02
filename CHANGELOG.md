@@ -132,6 +132,19 @@
   （operator 打不开 /argocd 与仪表盘，是否下放属产品语义）；observability 域是否立真权限族（若要，
   /trace 与 /gitops 应按新族收口而非去门）。本地实测：vitest 61→62 文件/1309（+3 新守卫）、eslint 0、
   vite build、Playwright 80/80 全绿。
+- **RAG 检索/入库页 + AI 网关健康 + 云资源删除（第三批能力缺口，2026-11-02）**：
+  新增 **RAG 页 /ai/rag**：检索结果展示 content/score/metadata——**embedding 不展示**
+  （后端 VectorDocument.embedding 是向量本身，对用户无意义且可能很大）；入库按行拆分，
+  embedding 交后端自动生成（前端只组装 id/content/metadata）；**AI 网关健康**以状态条挂本页
+  顶部（GET /ai/health → {providers}，语义是 LLM 提供商可达性而非进程探针）。
+  **云资源删除**：api 补 deleteCloudResource wrapper（后端 DELETE /api/v1/cloud-resources/{id}，
+  cloud:write），资源列表页接删除按钮 + ConfirmModal；tags 同步与创建**刻意不做**
+  （资源应来自发现而非手填，POST 语义存疑，已在 api 层注释）。
+  本轮再验证 **api-usage 双向棘轮的实战价值**：新页接入 3 个导出后守卫立即判「陈旧账」，
+  按只减不增销掉 3 条（账本 53→51，累计 59→51）——上周同类回归（删 import 未销账被 CI 抓）
+  这次在本地提交前就拦住了。
+  新增单测 17 条（store 7 + view 10，覆盖 embedding 不入列、行拆分、删除确认流）。
+  本地实测：vitest 1335→1349 全绿、eslint 0、vite build 通过。
 - **补两处「后端有、前端无界面」能力缺口 + api-usage 守卫双向棘轮首次实战**（2026-11-02）：
   新增 **AI 提示词模板管理页**（/ai/prompts，PageShell + DataTable + DetailDrawer + ConfirmModal，
   新建/编辑/删除全通）与 **云资源列表页**（/cloud/resources，按账号与资源类型过滤）。此前后端

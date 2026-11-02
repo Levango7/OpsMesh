@@ -40,7 +40,21 @@
         <span class="status-pill" :class="statusClass(value)">{{ value || '-' }}</span>
       </template>
       <template #cell-resourceId="{ value }"><code>{{ value || '-' }}</code></template>
+      <template #cell-actions="{ row }">
+        <div class="row-actions">
+          <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="cloud-resources-delete-btn"><Icon name="delete" :size="13" /></Button>
+        </div>
+      </template>
     </DataTable>
+
+    <!-- 删除确认（后端 cloud:write；无权限时后端 403 由骨架横幅透出） -->
+    <ConfirmModal
+      v-model="deleteConfirm.show"
+      data-testid="cloud-resources-delete-confirm-modal"
+      :title="$t('common.delete')"
+      :message="deleteHint"
+      @confirm="onDeleteConfirm"
+    />
   </PageShell>
 </template>
 
@@ -57,7 +71,8 @@ import DataTable from '@/components/DataTable.vue'
 import Button from '@/components/ui/Button.vue'
 import Icon from '@/components/Icon.vue'
 import { useCloudResourcesStore } from '@/stores/cloud-resources'
-import { listCloudAccounts } from '@/api/cloud-account'
+import ConfirmModal from '@/components/ConfirmModal.vue'
+import { listCloudAccounts, deleteCloudResource } from '@/api/cloud-account'
 
 const store = useCloudResourcesStore()
 
@@ -76,7 +91,8 @@ const columns = computed(() => [
   { key: 'cloudAccountId', label: t('cloudResources.col_account') },
   { key: 'status', label: t('cloudResources.col_status') },
   { key: 'resourceId', label: t('cloudResources.col_resourceId') },
-  { key: 'createdAt', label: t('cloudResources.col_created') }
+  { key: 'createdAt', label: t('cloudResources.col_created') },
+  { key: 'actions', label: '', width: '96px' }
 ])
 
 function statusClass(v) {
@@ -99,6 +115,23 @@ function applyFilters() {
 }
 
 function reload() { store.fetchResources() }
+
+const deleteConfirm = ref({ show: false, row: null })
+const deleteHint = computed(() =>
+  deleteConfirm.value.row ? `确定删除云资源 ${deleteConfirm.value.row.resourceName || deleteConfirm.value.row.id}？` : '')
+
+function onDelete(row) { deleteConfirm.value = { show: true, row } }
+
+async function onDeleteConfirm() {
+  const row = deleteConfirm.value.row
+  if (!row) return
+  try {
+    await deleteCloudResource(row.id)
+    reload()
+  } catch (e) {
+    store.error = e.j?.error || t('cloudResources.deleteFailed')
+  }
+}
 
 onMounted(async () => {
   reload()

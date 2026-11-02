@@ -1,0 +1,22 @@
+{
+  "rag": {
+    "title": "RAG 知识检索",
+    "desc": "面向向量库的检索与入库：检索已入库文档，或把文本入库供后续对话/检索引用",
+    "search_title": "检索",
+    "search_placeholder": "输入检索内容…",
+    "search_btn": "检索",
+    "ingest_title": "入库",
+    "ingest_placeholder": "每行一条文档内容，逐条入库…",
+    "ingest_btn": "入库",
+    "empty": "输入内容开始检索",
+    "noResults": "无匹配结果",
+    "col_score": "相关度",
+    "col_content": "内容",
+    "col_meta": "元数据",
+    "ingested_ok": "已入库 {n} 条",
+    "searchFailed": "检索失败",
+    "ingestFailed": "入库失败",
+    "health_title": "AI 网关健康",
+    "health_failed": "健康状态获取失败"
+  }
+}
