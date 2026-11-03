@@ -42,8 +42,6 @@ const ALLOW = new Map([
   // ── 写操作能力未接（后端有写端点，前端只做了读）──
   ['k8s.js|createK8sNamespace', 'K8s 命名空间创建：后端有端点，前端未提供入口'],
   ['k8s.js|deleteK8sNamespace', 'K8s 命名空间删除：后端有端点，前端未提供入口'],
-  ['system-ops.js|systemServiceAction', '系统服务动作（start/stop/restart）：后端有端点，前端未接按钮'],
-  ['system-ops.js|deleteFirewallRule', '防火墙规则删除：后端有端点，前端仅展示列表'],
   ['cloud-account.js|getCloudAccount', '云账号详情：后端有端点，前端列表已含所需字段'],
 
   // ── 详情读取未做详情页（前端直接用列表数据）──

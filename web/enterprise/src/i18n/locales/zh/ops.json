@@ -157,7 +157,15 @@
     "journal_since": "起始时间",
     "journal_query": "查询",
     "journal_no_result": "暂无日志输出（任务可能仍在执行）",
-    "journal_failed": "日志查询失败"
+    "journal_failed": "日志查询失败",
+    "confirm_delete_user": "确认删除用户 {name}？该操作将通过 agent 下发删除命令。",
+    "confirm_delete_group": "确认删除用户组 {name}？该操作将通过 agent 下发删除命令。",
+    "confirm_delete_rule": "确认删除防火墙规则 {name}？",
+    "service_action_title": "系统服务操作确认",
+    "service_action_start": "启动",
+    "service_action_stop": "停止",
+    "service_action_restart": "重启",
+    "confirm_service_action": "确认对服务 {service} 执行“{action}”？操作将通过 agent 下发。"
   },
   "tasks": {
     "title": "任务下发",

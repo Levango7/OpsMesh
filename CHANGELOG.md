@@ -43,6 +43,18 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-前端-系统运维] — 2026-11-03（SystemOpsView 四表行内操作入口补齐 + 两个写操作接通）
+
+> 置于 [Unreleased] 与 [0.17.0] 之间，与 NetworkPolicy 块并列；发布时按需归并。
+
+- **SystemOpsView 行内操作入口**（`web/enterprise/src/views/SystemOpsView.vue`）：四张表（用户/组/防火墙/服务）此前都声明了 `cell-actions` 列但**模板从未渲染 slot**，`doDelete` 及删除确认弹窗不可达。现补齐：
+  - 用户/组删除按钮 → 既有确认弹窗 → `deleteSystemUser` / `deleteSystemGroup`（agentID + 名称）。
+  - 防火墙规则删除：按钮文案为规则的运行时生成（如 `8080/tcp ← 0.0.0.0/0`），确认后 `deleteFirewallRule({agentID, port, protocol, source})`（DELETE + body，见 `internal/controlplane/system_ops.go` `handleSystemFirewall`）。
+  - 系统服务 `start/stop/restart` 三按钮（`stop` 用 danger 变体），逐个经确认弹窗后 `systemServiceAction({agentID, service, action})`；后端白名单另有 reload/enable/disable/status（`system_services.go`），其中 status 只读、其余三项口径未定，暂不暴露。
+- **i18n**：`ops.json` 的 `system_ops` 域新增 8 个双语键（删除三类确认、服务动作标题/三动作标签/服务动作确认）；未新建域文件（域翻译是 `Object.assign` 浅合并，同 top-level 键会整块覆盖）。
+- **门禁**：`api-usage.test.js` 双向棘轮销账两条（`deleteFirewallRule`、`systemServiceAction`：有后端端点但无前端入口 → 现已接通），ALLOW 51→49；新增 `SystemOpsView.spec.js` 6 例（四类删除与服务三动作的调用参数、未选设备不渲染）。
+- 本批未动：K8s 命名空间建删（`internal/k8slifecycle` 鉴权接线有他线在途，避让）；RAG 元数据表单、云资源创建语义、23 个 `get<Entity>(id)` 详情读取仍待产品口径。
+
 ## [0.17.0] — 2026-11-02（补账：归版时点扫出的未登账提交，按提交与代码事实代拟）
 
 > 本块是**代拟**：owner 定了「冻结点一次归版」的口径（2026-11-02），下列提交在归版时点已在 main 上、

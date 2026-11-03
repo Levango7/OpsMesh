@@ -157,7 +157,15 @@
     "journal_since": "Since",
     "journal_query": "Query",
     "journal_no_result": "No journal output yet (task may still be running)",
-    "journal_failed": "Journal query failed"
+    "journal_failed": "Journal query failed",
+    "confirm_delete_user": "Delete user {name}? The delete command will be dispatched via the agent.",
+    "confirm_delete_group": "Delete group {name}? The delete command will be dispatched via the agent.",
+    "confirm_delete_rule": "Delete firewall rule {name}?",
+    "service_action_title": "Confirm service action",
+    "service_action_start": "Start",
+    "service_action_stop": "Stop",
+    "service_action_restart": "Restart",
+    "confirm_service_action": "Run \"{action}\" on service {service}? It will be dispatched via the agent."
   },
   "tasks": {
     "title": "Tasks",

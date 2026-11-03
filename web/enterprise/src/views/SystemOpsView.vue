@@ -45,7 +45,16 @@
           :data="filteredUsers"
           :columns="usersColumns"
           row-key="name"
-        />
+        >
+          <template #cell-actions="{ row }">
+            <Button
+              variant="danger"
+              size="sm"
+              :data-testid="'del-user-' + row.name"
+              @click="confirmDelete('user', row.name, t('system_ops.confirm_delete_user', { name: row.name }))"
+            >{{ $t('common.delete') }}</Button>
+          </template>
+        </Table>
       </div>
 
       <!-- 用户组 -->
@@ -61,7 +70,16 @@
           :data="filteredGroups"
           :columns="groupsColumns"
           row-key="name"
-        />
+        >
+          <template #cell-actions="{ row }">
+            <Button
+              variant="danger"
+              size="sm"
+              :data-testid="'del-group-' + row.name"
+              @click="confirmDelete('group', row.name, t('system_ops.confirm_delete_group', { name: row.name }))"
+            >{{ $t('common.delete') }}</Button>
+          </template>
+        </Table>
       </div>
 
       <!-- 防火墙 -->
@@ -79,7 +97,16 @@
         <Table
           :data="firewall"
           :columns="firewallColumns"
-        />
+        >
+          <template #cell-actions="{ row }">
+            <Button
+              variant="danger"
+              size="sm"
+              :data-testid="'del-rule-' + (row.port || 'any')"
+              @click="confirmDelete('rule', ruleLabel(row), t('system_ops.confirm_delete_rule', { name: ruleLabel(row) }), row)"
+            >{{ $t('common.delete') }}</Button>
+          </template>
+        </Table>
         <div v-if="firewallRules" class="firewall-rules-result">
           <h4>{{ $t('system_ops.firewall_rules_result') }}</h4>
           <pre class="code-block">{{ JSON.stringify(firewallRules, null, 2) }}</pre>
@@ -98,7 +125,20 @@
         <Table
           :data="services"
           :columns="servicesColumns"
-        />
+        >
+          <template #cell-actions="{ row }">
+            <div class="svc-actions">
+              <Button
+                v-for="action in serviceActions"
+                :key="action"
+                :variant="action === 'stop' ? 'danger' : 'ghost'"
+                size="sm"
+                :data-testid="'svc-' + action + '-' + row.name"
+                @click="requestServiceAction(row.name, action)"
+              >{{ $t('system_ops.service_action_' + action) }}</Button>
+            </div>
+          </template>
+        </Table>
       </div>
 
       <!-- journal 日志查询 -->
@@ -201,7 +241,16 @@
       <p>{{ deleteConfirm.message }}</p>
       <div class="btnbar btnbar--end btnbar--bottom">
         <Button variant="ghost" size="sm" @click="deleteConfirm.show = false">{{ $t('common.cancel') }}</Button>
-        <Button variant="danger" size="sm" @click="doDelete">{{ $t('common.delete') }}</Button>
+        <Button variant="danger" size="sm" data-testid="confirm-delete" @click="doDelete">{{ $t('common.delete') }}</Button>
+      </div>
+    </Modal>
+
+    <!-- 服务动作确认（start/stop/restart 均先确认后下发） -->
+    <Modal v-model="serviceConfirm.show" :title="$t('system_ops.service_action_title')" @close="serviceConfirm.show = false">
+      <p>{{ serviceConfirm.message }}</p>
+      <div class="btnbar btnbar--end btnbar--bottom">
+        <Button variant="ghost" size="sm" @click="serviceConfirm.show = false">{{ $t('common.cancel') }}</Button>
+        <Button variant="primary" size="sm" data-testid="confirm-service-action" @click="doServiceAction">{{ $t('common.confirm') }}</Button>
       </div>
     </Modal>
   </PageShell>
@@ -222,6 +271,8 @@ import {
   createSystemGroup,
   deleteSystemGroup,
   addFirewallRule,
+  deleteFirewallRule,
+  systemServiceAction,
   queryJournal,
   getTaskResult,
   listFirewallRules,
@@ -266,7 +317,12 @@ const showRuleForm = ref(false)
 const userForm = reactive({ username: '', group: '', home: '', shell: '' })
 const groupForm = reactive({ groupName: '' })
 const ruleForm = reactive({ port: '', protocol: 'tcp', source: '' })
-const deleteConfirm = reactive({ show: false, kind: '', name: '', message: '' })
+// payload 供 firewall 规则删除回传行内字段（端口/协议/源）；user/group 删除仅用 name
+const deleteConfirm = reactive({ show: false, kind: '', name: '', message: '', payload: null })
+// 服务动作（start/stop/restart）确认态：后端 action 白名单见 internal/controlplane/system_services.go
+const serviceConfirm = reactive({ show: false, service: '', action: '', message: '' })
+// 暴露给操作员的动作集合：后端另有 reload/enable/disable/status，其中 status 只读、reload/enable/disable 待产品口径
+const serviceActions = ['start', 'stop', 'restart']
 
 const protocolOptions = [
   { value: 'tcp', label: 'tcp' },
@@ -410,13 +466,31 @@ async function submitAddRule() {
   }
 }
 
+function confirmDelete(kind, name, message, payload = null) {
+  Object.assign(deleteConfirm, { show: true, kind, name, message, payload })
+}
+
+// 防火墙规则的人类可读标识：端口/协议（源地址可选）。删除按此三元组下发，与采集行字段一致。
+function ruleLabel(row) {
+  const port = row.port || '*'
+  const proto = row.protocol || 'any'
+  return row.source ? `${port}/${proto} ← ${row.source}` : `${port}/${proto}`
+}
+
 async function doDelete() {
-  const { kind, name } = deleteConfirm
+  const { kind, name, payload } = deleteConfirm
   try {
     if (kind === 'user') {
       await deleteSystemUser({ agentID: currentAgentID(), username: name })
     } else if (kind === 'group') {
       await deleteSystemGroup({ agentID: currentAgentID(), groupName: name })
+    } else if (kind === 'rule' && payload) {
+      await deleteFirewallRule({
+        agentID: currentAgentID(),
+        port: payload.port || '',
+        protocol: payload.protocol || '',
+        source: payload.source || ''
+      })
     }
     toast.success(t('system_ops.task_dispatched'))
     setTimeout(loadSystemInfo, 3000)
@@ -424,6 +498,26 @@ async function doDelete() {
     error.value = e.j?.error || t('system_ops.op_failed')
   } finally {
     deleteConfirm.show = false
+  }
+}
+
+function requestServiceAction(service, action) {
+  serviceConfirm.service = service
+  serviceConfirm.action = action
+  serviceConfirm.message = t('system_ops.confirm_service_action', { service, action })
+  serviceConfirm.show = true
+}
+
+async function doServiceAction() {
+  const { service, action } = serviceConfirm
+  try {
+    await systemServiceAction({ agentID: currentAgentID(), service, action })
+    toast.success(t('system_ops.task_dispatched'))
+    setTimeout(loadSystemInfo, 3000)
+  } catch (e) {
+    error.value = e.j?.error || t('system_ops.op_failed')
+  } finally {
+    serviceConfirm.show = false
   }
 }
 
