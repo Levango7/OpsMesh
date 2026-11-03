@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: auth-svc
-          image: opsmesh/auth-svc:0.17.0
+          image: opsmesh/auth-svc:0.17.1
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

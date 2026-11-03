@@ -4,6 +4,52 @@
 
 ---
 
+## v0.17.1 — 2026-11-03 生产 NetworkPolicy 翻 true（外部出向显式 opt-in）+ 前端能力缺口第三批 + 发布链门禁两处修复
+
+本版是 v0.17.0（tag `v0.17.0`→`ddec516`，2026-11-02）之后 main 上的 **22 个提交**归版。三件事：
+把生产 NetworkPolicy 的默认由「关」翻成「开」，并把控制面外部出向做成安装方**显式声明**；
+补齐前端「后端有 API / 页面无入口」的第三批缺口（AI 提示词管理、云资源列表与删除、RAG 检索/入库、
+AI 网关健康状态条）；修掉两条发布物门禁自身的缺陷（v0.17.0 发布链红的根因）。
+
+> **发布物由本提交切 `v0.17.1` 生成**：`internal/version.Version`、`Chart.yaml version/appVersion`、
+> `values-production.yaml` 全部镜像 tag（14 处）、`production-segment.yaml`、5 份 K8s 样例、
+> `deploy-opsmesh.sh`、compose/`deploy.sh` 示例值、compose 渲染夹具已全部 = `0.17.1`
+> （共 41 处字面量、14 个文件），由 `deploy/scripts/validate-deploy-assets.sh` 第 1 节与第 20 节对账；
+> `release.yml` 的「标签 == appVersion」硬门禁保证 `v0.17.1` 只能压在与 `appVersion` 一致的提交上。
+> **切 tag 顺序**：本版严格等 main 推送 CI（含 `image`/`image-agent`）全绿后才切 tag——让 tag 构建
+> 成为 `:<sha>` 的最后写者，避免第⑤项假红（v0.17.0 的成因，见文末更正）。
+
+### 破坏性 / 行为变更（升级前必读）
+
+- **生产 values 默认开启 NetworkPolicy**（`a8ab2a7`）：`values-production.yaml` 的
+  `observability.networkPolicy.enabled` 翻成 `true`，并把外部出向改成「不声明就不放行」。
+  - 控制面到外部 HTTPS（LLM 网关、告警 webhook、federation）默认**不放行**；安装方需在
+    `observability.networkPolicy.controlplaneEgressExtra` 写整条 egress rule（默认值空，模板
+    不含任何 `0.0.0.0/0` 字面量）。生产默认只开 443/TCP 且 `except` 三个私网段。
+  - 微服务 `/metrics` 抓取来源需显式配 `observability.networkPolicy.metricsFrom`（默认空 = 不放行）。
+  - 未按上述声明的安装，升级后相关外呼/抓取会被拦截——这是**行为变化**，不是缺陷。
+  - kind(kindnet) 实测 14 条：cp→api.kilo.ai:443 由 BLOCKED 变 OPEN；cp→私网 443 仍 BLOCKED；
+    内部矩阵（cp↔device/task、agent→device、cp/device→mysql 等）不变。
+- **K8s 生命周期三条动作仍是 501**（沿用 v0.17.0，本版无变化；真实现见立项书 M1–M3）。
+- **前端新增页面无破坏性 API 变更**：AI 提示词与云资源删除走既有后端路由（权限 `ai:write`/`cloud:write`）。
+
+### 能力降级清单（如实标注；按能力表验收时跳过或先确认前置）
+
+- **NetworkPolicy 的外部前提未在真实环境验完**：本版验证在 kind/kindnet 上；生产 CNI
+  （Calico/Cilium 等）、HA 多控制面、非 443 端点的外部依赖（需安装方自补规则）均未覆盖。
+- **TD-97 四件未接完的事**（AI/成本域收口后剩余）仍按 `docs/tech-debt.md` 标注，本版未改变。
+- **v0.17.0 的两批代拟账**（`a6c587c`/`632d29b` 的 41 条运维域路由）仍只有脚本下发证据，
+  **没有真机 smoke**——本版未改变该状态。
+- **v0.17.0 的 Release 正文不是发布说明**（见下），本版不改写它；按 v0.17.1 升级即可绕开。
+
+### 关于 v0.17.0 的发布链（更正）
+
+v0.17.0 的 tag、14 个镜像（含 `.sig`/`.att`）与 5 个 Release 资产均真实存在、可拉取；但
+`release.yml` 的 `github-release` 与「发布物回核」两个 job 因前置 job 红被跳过，Release 正文
+停留在 goreleaser 的自动 changelog。红因是门禁自身两处缺陷（`--pre-release` 参数解析、
+GHCR `tags/list` 1000 条截断），已在 `6a5364a` / `064fc00` 修复并带回归用例。**v0.17.0 的 tag
+不改写**；正文是否更正另行裁决。
+
 ## v0.17.0 — 2026-11-02 K8s 生命周期假成功收口（对外改口 501）+ 云厂商真实调用 + 运维域广度扩展 + 前端覆盖/布局收官 + 迁移锁上限 + 鉴权接线收口
 
 本版是 v0.16.0（tag `267a104`，2026-10-26）之后 main 上的 **250 个提交**（截至冻结点 `31b8394`）归版。主线三件事：

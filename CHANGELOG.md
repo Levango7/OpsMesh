@@ -4,7 +4,35 @@
 
 > 当前最新已发布版本：`v0.16.0`（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased] — 2026-11-02（生产 NetworkPolicy 翻 true：控制面外部出向做成显式配置 + kind 复测）
+## [0.17.1] — 2026-11-03（发布链门禁两处修复 + v0.17.0 发布链红的更正）
+
+- **`verify-artifacts-ci` 把 `--pre-release` 当版本号（`6a5364a`）**：v0.17.0 的 release run
+  `41376901208` 红在 `verify-preflight`——`VER="${1:-${GITHUB_REF_NAME:-}}"` 里 `$1` 恰是
+  `--pre-release`，于是去等一个叫 `v--pre-release` 的 tag（轮询 20 次后按"未知"退化），
+  再拿它当版本调判据脚本 ⇒ 只打 usage、`exit 2`。该 job 自 `0dac3458` 引入后从未在真 tag 上
+  跑过，这次首跑即暴露。修：选项与版本分开解析（版本只认非选项参数，缺省才退回
+  `GITHUB_REF_NAME`），另加 `OPSMESH_VERIFY_DRY_RUN` 干跑钩子；自测
+  `verify-artifacts-ci.selftest.sh` 8 例（5 绿 3 红），变异＝把旧写法还原到副本后恰好 1 条 FAIL。
+- **产物核验不再用 `tags/list` 判「镜像在不在」（`064fc00`）**：GHCR 的 `tags/list` **单页上限
+  1000**（`n=4000` 也照样截断），`opsmesh-binary`/`opsmesh-agent` 恰好各 1000 条且不含刚发布的
+  `:0.17.0`（直查 `/manifests/0.17.0` 是 200）⇒ ①②④ 会同时假报「没有该 tag」「缺 `.sig`/`.att`」
+  「chart 引用了不存在的镜像 ⇒ 客户会 ErrImagePull」。改：新增 `manifest_head`，存在性一律
+  HEAD `/manifests/<ref>`（200=存在 / 404=不存在 / 重试耗尽=未核对 / 其它确定性拒绝=红），
+  `.sig`/`.att` 同法直取 `sha256-<digest>.sig|att`。自测新增 F 组（列表截断仍绿 / manifest 404
+  判红 / 缺 `.sig` 判红）；变异＝把 `origin/main` 的旧脚本放进同一组假桩 ⇒ 14 个仓库全报
+  「没有 :9.9.9 tag」（rc=1），证明用例有射程。
+- **第⑤项判词更正**：`:<版本>` 与 `:<发布提交>` 的 digest 不一致有两种成因——①版本 tag 被重建；
+  ②**同一提交被 main 推送与 tag 各构建一次、后完成的那次覆盖了 `:<sha>`**（两次构建嵌入的
+  VERSION 不同 ⇒ digest 必然不同）。两种都判红（`:<sha>` 不再是不可变锚点），但不再误写成
+  「版本 tag 从没被签名看过」。**规程**：切 tag 前必须等该提交的 main 推送 CI（含
+  `image`/`image-agent`）全绿，让 tag 构建成为最后写者——v0.17.0 就是在 main CI 还积压 2.5h
+  时切的 tag（tag 构建 03:53:52Z 先、main 构建 04:43:26Z 后），第⑤项因此假红。
+- **v0.17.0 的处境（更正，不改写历史）**：tag `v0.17.0`→`ddec516`，14 个镜像与 `.sig`/`.att`、
+  Release 资产（5 个）均真实存在且可拉；但 `release.yml` 的 `github-release` 与「发布物回核」
+  因其前置 job 红而被 `skipped`，Release 正文是 goreleaser 的自动 changelog。本版不改写该 tag；
+  正文更正另行裁决。
+
+## [0.17.1] — 2026-11-02（生产 NetworkPolicy 翻 true：控制面外部出向做成显式配置 + kind 复测）
 
 > 归 0.17.1：v0.17.0 的冻结点（`ddec516`）上生产默认仍是 `false`（该结论在 [0.17.0] 的部署面加固块里，保持原样不改）。
 > 本块只记录冻结点之后的两件事：控制面外部出向机制、以及据此把生产默认翻 true。
