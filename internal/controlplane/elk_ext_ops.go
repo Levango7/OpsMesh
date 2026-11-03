@@ -619,4 +619,5 @@ func (s *Server) registerELKExtendedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/search/logstash/ext", s.handleLogstashExt)
 	mux.HandleFunc("/api/v1/search/kibana/ext", s.handleKibanaExt)
 	mux.HandleFunc("/api/v1/search/opensearch/ext", s.handleOpenSearchExt)
+	s.registerElasticsearchExtRoutes(mux)
 }
