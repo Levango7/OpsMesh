@@ -451,58 +451,6 @@ func (s *Server) handleDBNeo4j(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
 }
 
-// handleDBCouchDB 处理 POST /api/v1/db/couchdb
-func (s *Server) handleDBCouchDB(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"`
-		DB       string `json:"db"`
-		Query    string `json:"query"`
-		Backup   string `json:"backup"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	db := req.DB
-	if db == "" {
-		db = "appdb"
-	}
-	backup := req.Backup
-	if backup == "" {
-		backup = "/var/backups/couchdb/backup.json"
-	}
-	var script string
-	switch req.Action {
-	case "status":
-		script = `curl -s http://localhost:5984`
-	case "deploy":
-		script = `if command -v couchdb >/dev/null 2>&1; then echo 'CouchDB already installed'; else apt-get install -y couchdb; fi`
-	case "backup":
-		script = fmt.Sprintf(`couchbackup --url http://localhost:5984 --db %s > %s && echo "CouchDB backup done"`, shellQuote(db), shellQuote(backup))
-	case "restore":
-		script = fmt.Sprintf(`couchrestore --url http://localhost:5984 --db %s < %s && echo "CouchDB restore done"`, shellQuote(db), shellQuote(backup))
-	case "query":
-		q := req.Query
-		if q == "" {
-			q = `{"selector":{}}`
-		}
-		script = fmt.Sprintf(`curl -s -X POST http://localhost:5984/%s/_find -H 'Content-Type: application/json' -d %s`, shellQuote(db), shellQuote(q))
-	default:
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
-		return
-	}
-	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "db_couchdb_"+req.Action)
-	if !ok {
-		return
-	}
-	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
-}
-
 // handleDBMinIO 处理 POST /api/v1/db/minio
 func (s *Server) handleDBMinIO(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -565,53 +513,6 @@ func (s *Server) handleDBMinIO(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
 }
 
-// handleDBCassandra 处理 POST /api/v1/db/cassandra
-func (s *Server) handleDBCassandra(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"`
-		Command  string `json:"command"`
-		Keyspace string `json:"keyspace"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	keyspace := req.Keyspace
-	if keyspace == "" {
-		keyspace = "system"
-	}
-	var script string
-	switch req.Action {
-	case "status":
-		script = `nodetool status`
-	case "deploy":
-		script = `if command -v cassandra >/dev/null 2>&1; then echo 'Cassandra already installed'; else apt-get install -y cassandra; fi`
-	case "backup":
-		script = fmt.Sprintf(`nodetool snapshot %s && echo "Cassandra snapshot done"`, shellQuote(keyspace))
-	case "repair":
-		script = fmt.Sprintf(`nodetool repair %s && echo "Cassandra repair done"`, shellQuote(keyspace))
-	case "nodetool":
-		cmd := req.Command
-		if cmd == "" {
-			cmd = "status"
-		}
-		script = fmt.Sprintf(`nodetool %s`, shellQuote(cmd))
-	default:
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
-		return
-	}
-	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "db_cassandra_"+req.Action)
-	if !ok {
-		return
-	}
-	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
-}
-
 // registerDBExtendedRoutes 注册扩展数据库运维路由。
 func (s *Server) registerDBExtendedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/db/sqlite", s.handleDBSQLite)
@@ -621,7 +522,5 @@ func (s *Server) registerDBExtendedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/db/timescaledb", s.handleDBTimescaleDB)
 	mux.HandleFunc("/api/v1/db/cockroachdb", s.handleDBCockroachDB)
 	mux.HandleFunc("/api/v1/db/neo4j", s.handleDBNeo4j)
-	mux.HandleFunc("/api/v1/db/couchdb", s.handleDBCouchDB)
 	mux.HandleFunc("/api/v1/db/minio", s.handleDBMinIO)
-	mux.HandleFunc("/api/v1/db/cassandra", s.handleDBCassandra)
 }

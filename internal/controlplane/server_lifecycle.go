@@ -236,6 +236,8 @@ func (s *Server) Start() error {
 	// 数据库运维：PostgreSQL/Oracle/TiDB/OceanBase（固定路径优先，再泛路由 /api/v1/db/）。
 	s.registerDBRoutes(mux)
 	s.registerDBExtendedRoutes(mux)
+	s.registerNoSQLExtRoutes(mux)
+	s.registerCloudManagedDBRoutes(mux)
 	// 负载均衡运维：HaProxy/LVS/keepalived（固定路径优先，再泛路由 /api/v1/lb/）。
 	s.registerLBRoutes(mux)
 	// 对象存储运维：Amazon S3 / Aliyun OSS / MinIO（固定路径优先，再泛路由 /api/v1/storage/）。
@@ -272,6 +274,7 @@ func (s *Server) Start() error {
 	s.registerDomesticRoutes(mux)
 	s.registerApacheRoutes(mux)
 	s.registerApacheExtRoutes(mux)
+	s.registerApacheExt2Routes(mux)
 	s.registerOSTuningRoutes(mux)
 	s.registerGitUnixRoutes(mux) // 安全运维：漏洞扫描/基线修复/组件更新/回滚（固定路径优先，再泛路由 /api/v1/security/）。
 	s.registerSecurityRoutes(mux)
