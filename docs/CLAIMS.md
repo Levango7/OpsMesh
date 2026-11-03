@@ -396,3 +396,5 @@
   K8s 命名空间建删避让未做：internal/k8slifecycle 鉴权接线有他线在途（CLAIMS 无登记但工作树有改动），待其落地后按同范式接。
   仍未裁：RAG 元数据表单、云资源创建语义、23 个 get<Entity>(id) 详情读取（列表页已含所需字段的除外）。
   教训一条：locale 插入若用 json.dumps 重写整文件，会静默合并原有重复键（zh/ops.json 有 roles/cidr 同键不同值），改为按锚行文本级插入。
+[LANDED] 2026-11-03T10:05:00Z from=zcode commit=b9aa80f branch=feat/web-systemops-actions
+  系统运维第四批已线性合入 main（df85f18..b9aa80f，无 merge commit）；分支 run 41574110198 Frontend 腿 success；main run 待起（排队）。分支保留远端未删。
