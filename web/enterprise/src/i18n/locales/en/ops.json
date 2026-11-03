@@ -792,7 +792,11 @@
     "tokens": "Tokens",
     "steps": "Steps",
     "tool_calls": "Tool Calls",
-    "tools_title": "Available Tools"
+    "tools_title": "Available Tools",
+    "tool_implemented": "Implemented",
+    "tool_not_implemented": "Not implemented",
+    "tool_not_implemented_hint": "Tool not wired to backend",
+    "not_wired_title": "Not-wired tools"
   },
   "aiChat": {
     "title": "AI Chat",

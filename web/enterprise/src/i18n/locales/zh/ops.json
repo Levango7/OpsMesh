@@ -793,7 +793,11 @@
     "tokens": "Token",
     "steps": "步骤",
     "tool_calls": "工具调用",
-    "tools_title": "可用工具"
+    "tools_title": "可用工具",
+    "tool_implemented": "已实现",
+    "tool_not_implemented": "未实现",
+    "tool_not_implemented_hint": "工具尚未接入后端",
+    "not_wired_title": "未接线工具"
   },
   "aiChat": {
     "title": "AI 对话",

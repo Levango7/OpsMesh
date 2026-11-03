@@ -64,18 +64,27 @@
           <span class="tool-duration">{{ (tc.duration / 1000000).toFixed(0) }}ms</span>
         </div>
       </div>
+      <div v-if="notWiredTools.length" class="not-wired-section">
+        <h4>{{ $t('agent.not_wired_title') }}</h4>
+        <ul class="not-wired-list">
+          <li v-for="name in notWiredTools" :key="name" class="not-wired-item">{{ name }}</li>
+        </ul>
+      </div>
     </div>
-
-    <!-- 可用工具 -->
     <div class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('agent.tools_title') }}</h3>
         <Button variant="ghost" size="sm" @click="store.fetchTools()">{{ $t('common.refresh') }}</Button>
       </div>
       <div class="tools-grid">
-        <div v-for="tool in store.tools" :key="tool.name" class="tool-card">
-          <div class="tool-name">{{ tool.name }}</div>
+        <div v-for="tool in store.tools" :key="tool.name" class="tool-card" :class="{ 'tool-card--disabled': tool.implemented === false }">
+          <div class="tool-card__head">
+            <div class="tool-name">{{ tool.name }}</div>
+            <span v-if="tool.implemented === false" class="status-pill bad">{{ $t('agent.tool_not_implemented') }}</span>
+            <span v-else class="status-pill ok">{{ $t('agent.tool_implemented') }}</span>
+          </div>
           <div class="tool-desc">{{ tool.description }}</div>
+          <div v-if="tool.implemented === false" class="tool-hint">{{ tool.notImplementedReason || $t('agent.tool_not_implemented_hint') }}</div>
         </div>
       </div>
     </div>
@@ -97,6 +106,7 @@ const input = ref('')
 const classifying = ref(false)
 const decomposing = ref(false)
 const useDAG = ref(false)
+const notWiredTools = ref([])
 // 操作类调用此前静默吞错——统一骨架批次补上可见错误（store.error 已置错时优先展示它）
 const loadErr = ref('')
 
@@ -123,9 +133,18 @@ async function decompose() {
 }
 
 async function execute() {
+  notWiredTools.value = []
   try {
     await store.execute(input.value, 'admin', 'default', 'session-1', useDAG.value)
-  } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
+  } catch (e) {
+    if (e?.s === 501 && e?.j) {
+      notWiredTools.value = e.j.notWired || []
+      if (e.j.result) store.currentResult = e.j.result
+      loadErr.value = e.j?.error || ''
+    } else {
+      loadErr.value = e.j?.error || t('common.load_failed')
+    }
+  }
 }
 </script>
 
@@ -150,7 +169,14 @@ async function execute() {
 .tool-duration { color: var(--color-ink-muted, #6b7280); }
 .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
 .tool-card { padding: 10px 12px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-sm, 6px); }
+.tool-card--disabled { opacity: 0.75; background: var(--color-surface-2, #f7f9fc); }
+.tool-card__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .tool-card .tool-name { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .tool-card .tool-desc { font-size: 11px; color: var(--color-ink-muted, #6b7280); }
+.tool-hint { margin-top: 6px; font-size: 11px; color: var(--color-ink-muted, #6b7280); }
+.not-wired-section { margin-top: 12px; }
+.not-wired-section h4 { margin: 0 0 8px 0; font-size: 13px; font-weight: 600; color: var(--color-fail, #dc2626); }
+.not-wired-list { margin: 0; padding-left: 18px; font-size: 12px; }
+.not-wired-item { margin-bottom: 2px; }
 /* .muted 已改用 styles/pages.css 全局原语 */
 </style>
