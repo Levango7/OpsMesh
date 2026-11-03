@@ -420,3 +420,7 @@
   ③ RAG 元数据表单 → **做最小版，本批执行**：后端 VectorDocument.metadata=map 且 store 已预留 metadata:{} 通道；入库表单加可选单行 JSON 输入，多行入库共享同一份，解析失败不下发。
   裁决生效后 ALLOW 47 条全部有终态（接通销账 / 裁决不接留档 / 结构豁免），无「待裁」状态残留。
 [CLAIM] 2026-11-04T10:05:00Z from=zcode ttl=8h scope=web/enterprise/src/views/AIRagView.vue,web/enterprise/src/stores/ai-rag.js,web/enterprise/src/i18n/locales/{zh,en}/ai-rag.json,web/enterprise/src/views/__tests__/AIRagView.spec.js,web/enterprise/src/stores/ai-rag.test.js,CHANGELOG.md,docs/CLAIMS.md note=RAG 元数据最小版（裁决③执行批）
+[DONE] 2026-11-04T11:30:00Z from=zcode ref=[CLAIM] 2026-11-04T10:05:00Z paths=web/enterprise/src/views/AIRagView.vue,web/enterprise/src/stores/ai-rag.js,web/enterprise/src/stores/ai-rag.test.js,web/enterprise/src/views/__tests__/AIRagView.spec.js,web/enterprise/src/i18n/locales/{zh,en}/ai-rag.json,CHANGELOG.md
+  裁决③执行批落地：RAG 入库可选 JSON 元数据（解析失败/非对象不下发），store.ingest 加可选第二参，5 例新测试。
+[LANDED] 2026-11-04T11:30:00Z from=zcode commit=63443a2 branch=feat/web-rag-metadata
+  裁决批线性合入 main（4bb013d..63443a2，无 merge commit）；分支 run 41715741126 Frontend 腿 success；main run 待跟踪。
