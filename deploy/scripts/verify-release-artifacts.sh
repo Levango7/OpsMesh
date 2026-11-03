@@ -148,18 +148,29 @@ token() {
 # （本仓 §19 取证时踩过一次，差点把"存在"写成"不存在"）。
 ACCEPT='Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
 NLEAVES=${#LEAVES[@]}
-tags_of() {
-    local leaf="$1" tk body code rc
+# manifest_head <leaf> <ref>：HEAD /manifests/<ref>，把响应头打到 stdout。
+#   返回 0=200（存在）；3=404（确定不存在）；1=GHCR 不可达（重试耗尽，没核对上）；2=其它确定性拒绝。
+#
+# 为什么 ①②④ 的"存在性"一律改走这里、不再 grep /tags/list（2026-11-02 v0.17.0 实测）：
+# GHCR 的 tags/list **单页上限 1000**，`n=4000` 也照样只回 1000 条；opsmesh-binary 与
+# opsmesh-agent 的 tag 数正好压在 1000 上，刚发布几小时的 :0.17.0 根本不在这页里
+# （实取两仓库 tags/list 均为 n=1000 且不含 0.17.0，而 /manifests/0.17.0 返回 200）。
+# 原实现因此在 ① 报"没有 :0.17.0"、在 ④ 报"chart 引用了不存在的镜像"——两条都是假的。
+# 判"这个 tag 能不能拉到"的正确探针是解析 manifest 本身，tags 列表只是索引的一部分。
+manifest_head() {
+    local leaf="$1" ref="$2" tk hdrs code rc
     tk="$(token "$leaf")"; rc=$?
-    [ "$rc" -ne 0 ] && return "$rc"      # 1=GHCR 不可达（重试耗尽）；2=确定性拒绝
-    if ! ghcr_get body code -H "Authorization: Bearer $tk" \
-        "https://ghcr.io/v2/${NS}/${leaf}/tags/list?n=4000"; then
+    [ "$rc" -ne 0 ] && return "$rc"
+    if ! ghcr_get hdrs code -I -H "Authorization: Bearer $tk" -H "$ACCEPT" \
+        "https://ghcr.io/v2/${NS}/${leaf}/manifests/${ref}"; then
         return 1
     fi
-    if [ "$code" != "200" ]; then
-        return 2
-    fi
-    printf '%s' "$body"
+    printf '%s' "$hdrs"
+    case "$code" in
+        200) return 0 ;;
+        404) return 3 ;;
+        *)   return 2 ;;
+    esac
 }
 
 declare -a PUBLISHED=()
@@ -177,49 +188,47 @@ for leaf in "${LEAVES[@]}"; do
         fi
         continue
     fi
-    body=""; code=""
-    if ! ghcr_get body code -H "Authorization: Bearer $tk" \
-        "https://ghcr.io/v2/${NS}/${leaf}/tags/list?n=4000"; then
-        unver "${leaf}: 取 tag 列表重试耗尽（最后 HTTP=${code}）——未核对，不计入缺失"
-        continue
-    fi
-    if [ "$code" != "200" ] || [ -z "$body" ]; then
-        bad "${leaf}: tag 列表返回 HTTP=${code}$([ -z "$body" ] && printf '（且响应体为空）')"
-        MISSING_TAG+=("$leaf"); continue
-    fi
-    if grep -qE "\"${VER}\"" <<<"$body"; then
-        PUBLISHED+=("${leaf}:${VER}")
-    else
-        bad "${leaf}: 没有 :${VER} tag（release job 未跑成功，或该仓库没进矩阵）"
-        MISSING_TAG+=("$leaf")
-    fi
-    # .sig/.att 在 GHCR 里以**本版本 manifest 的 digest**命名（sha256-<digest>.sig），
-    # 所以必须先把 :VER 解析成 digest 再找，否则"仓库里有个 .sig"会被当成"这个版本签过名"。
-    hdrs=""; hcode=""
-    if ! ghcr_get hdrs hcode -I -H "Authorization: Bearer $tk" -H "$ACCEPT" \
-        "https://ghcr.io/v2/${NS}/${leaf}/manifests/${VER}"; then
-        unver "${leaf}:${VER} 解析 manifest 重试耗尽（最后 HTTP=${hcode}）——签名/证据链**未核对**"
-        continue
-    fi
+    # ① tag 存在性：直接解析 manifest（理由见 manifest_head 上方注释：tags/list 会截断到 1000 条）。
+    hdrs="$(manifest_head "$leaf" "$VER")"; hrc=$?
+    case "$hrc" in
+        1)
+            unver "${leaf}: 解析 :${VER} 时 GHCR 不可达（已重试 ${GHCR_ATTEMPTS} 次）——这是**没核对上**，不是说它没发布"
+            continue ;;
+        2)
+            bad "${leaf}: 解析 :${VER} 被 GHCR 确定性拒绝（匿名拉取被拒/仓库不可公开拉取）"
+            MISSING_TAG+=("$leaf"); continue ;;
+        3)
+            bad "${leaf}: 没有 :${VER}（manifest 404：release job 未跑成功，或该仓库没进矩阵）"
+            MISSING_TAG+=("$leaf"); MISSING_SIG+=("$leaf"); MISSING_ATT+=("$leaf"); continue ;;
+    esac
     dig="$(tr -d '\r' <<<"$hdrs" \
         | sed -n 's/^ *[Dd]ocker-[Cc]ontent-[Dd]igest: *sha256:\([0-9a-f]\{64\}\).*/\1/p' | head -1)"
     if [ -z "$dig" ]; then
-        if [ "$hcode" = "404" ]; then
-            if grep -qE "\"${VER}\"" <<<"$body"; then
-                bad "${leaf}:${VER} 的 tag 列表里有它，但 manifest 返回 404（tag 与 manifest 不一致，判红）"
-            else
-                bad "${leaf}:${VER} 的 manifest 404——与上面「没有该 tag」同源，签名/证据链无从核对"
-            fi
-        else
-            bad "${leaf}:${VER} 解析不到 manifest digest（HTTP=${hcode}；无法核对签名，判红）"
-        fi
-        MISSING_SIG+=("$leaf"); MISSING_ATT+=("$leaf"); continue
+        bad "${leaf}:${VER} 解析不到 manifest digest（HTTP=200 但响应头无 Docker-Content-Digest；无法核对签名，判红）"
+        MISSING_TAG+=("$leaf"); MISSING_SIG+=("$leaf"); MISSING_ATT+=("$leaf"); continue
     fi
+    PUBLISHED+=("${leaf}:${VER}")
     DIG_VER["$leaf"]="$dig"
-    grep -q "sha256-${dig}\.sig" <<<"$body" \
-        || { bad "${leaf}:${VER} 没有对应的 .sig（cosign 签名缺失）"; MISSING_SIG+=("$leaf"); }
-    grep -q "sha256-${dig}\.att" <<<"$body" \
-        || { bad "${leaf}:${VER} 没有对应的 .att（provenance/SBOM attest 缺失）"; MISSING_ATT+=("$leaf"); }
+    # ② .sig/.att 在 GHCR 里以**本版本 manifest 的 digest**命名（sha256-<digest>.sig/.att），
+    # 所以必须先把 :VER 解析成 digest 再找，否则"仓库里有个 .sig"会被当成"这个版本签过名"。
+    # 同样直接解析 manifest（HEAD），不再去 tags/list 里 grep（同样会因 1000 条截断而假红）。
+    for kind in sig att; do
+        h2="$(manifest_head "$leaf" "sha256-${dig}.${kind}")"; krc=$?
+        case "$krc" in
+            0) : ;;
+            1) unver "${leaf}:${VER} 的 .${kind} 未核对（GHCR 不可达，已重试 ${GHCR_ATTEMPTS} 次）" ;;
+            3) if [ "$kind" = "sig" ]; then
+                   bad "${leaf}:${VER} 没有对应的 .sig（cosign 签名缺失）"; MISSING_SIG+=("$leaf")
+               else
+                   bad "${leaf}:${VER} 没有对应的 .att（provenance/SBOM attest 缺失）"; MISSING_ATT+=("$leaf")
+               fi ;;
+            *) if [ "$kind" = "sig" ]; then
+                   bad "${leaf}:${VER} 的 .sig 解析被 GHCR 确定性拒绝（匿名拉取被拒）"; MISSING_SIG+=("$leaf")
+               else
+                   bad "${leaf}:${VER} 的 .att 解析被 GHCR 确定性拒绝（匿名拉取被拒）"; MISSING_ATT+=("$leaf")
+               fi ;;
+        esac
+    done
 done
 [ ${#MISSING_TAG[@]} -eq 0 ] && ok "${NLEAVES} 个镜像仓库都有 :${VER}" || echo "         缺 tag: ${MISSING_TAG[*]-}"
 [ ${#MISSING_SIG[@]} -eq 0 ] && ok "${NLEAVES} 个镜像的 :${VER} 都有 cosign .sig" || echo "         缺 .sig: ${MISSING_SIG[*]-}"
@@ -317,18 +326,19 @@ else
         # 这里必须分「没核对上」与「核对到不存在」：run 1 那次报
         # "chart 引用了 GHCR 上不存在的镜像 autoscaler-svc:0.12.0 ⇒ 客户会 ErrImagePull"，
         # 而 release run 37221272686 的 12 个 build-and-push 全 success、
-        # 直查该 tag 三轮都是 200——假红来自这一行原来的 tags_of 无重试。
+        # 直查该 tag 三轮都是 200——假红来自旧实现（取 tag 列表且无重试）。
         # 假红在这条门禁上尤其贵：它给出的正是让人不敢重跑、只能人工去核的那句话。
-        body="$(tags_of "$leaf")"; src=$?
+        # 存在性同样走 manifest 解析（2026-11-02：opsmesh-binary/agent 的 tags/list 被截断到
+        # 1000 条，chart 里 :0.17.0 的引用会被假报成"不存在的镜像"）。
+        manifest_head "$leaf" "$tag" >/dev/null; src=$?
         case "$src" in
+            0) ;;
             1) unver "④ ${leaf}:${tag} 未能核对（GHCR 不可达，已重试 ${GHCR_ATTEMPTS} 次）——不计入缺失"
                continue ;;
             2) badrefs="${badrefs} ${leaf}:${tag}(GHCR 拒绝匿名拉取)"
                continue ;;
+            3) badrefs="${badrefs} ${leaf}:${tag}" ;;
         esac
-        if [ -z "$body" ] || ! grep -qE "\"${tag}\"" <<<"$body"; then
-            badrefs="${badrefs} ${leaf}:${tag}"
-        fi
     done <<< "$rendered"
     if [ "$n" -eq 0 ]; then
         bad "chart 里一个 ghcr.io/${NS}/* 的 image 都没渲染出来（扫描面塌了，判红）"
@@ -414,7 +424,7 @@ else
             continue
         fi
         if [ "$d2" != "$want" ]; then
-            bad "${leaf}: :${VER} 与 :${SHA} 的 digest 不一致（${want:0:12}… vs ${d2:0:12}…）——版本 tag 被重建过，它从没被 Trivy/签名看过"
+            bad "${leaf}: :${VER} 与 :${SHA} 的 digest 不一致（${want:0:12}… vs ${d2:0:12}…）——:${SHA} 已不是 :${VER} 那份镜像的不可变锚点"
             MISMATCH+=("$leaf")
         else
             # 只在这里计数「真的比对过」。早先这行 PASS 打的是 ${NLEAVES}（=全部仓库数），
@@ -434,7 +444,18 @@ else
             echo "         注：其余 $((NLEAVES - CHECKED)) 个未参与本项比对（其 :${VER} digest 在上游已按 FAIL/UNVERIFIED 计），不要把本行读成全量通过"
         fi
     else
-        [ "${#MISMATCH[@]}" -gt 0 ] && echo "         digest 不一致: ${MISMATCH[*]-}"
+        if [ "${#MISMATCH[@]}" -gt 0 ]; then
+            echo "         digest 不一致: ${MISMATCH[*]-}"
+            # 判红保持不变（:SHA 不再是可信锚点），但把**两种成因**都写在结论里：
+            # 2026-11-02 v0.17.0 实测就是第二种——tag 构建 03:53:52Z 先完成，同一提交的
+            # main 推送构建 04:43:26Z 后完成并覆盖了 :<sha>；此时 :${VER} 那份仍是被
+            # Trivy/cosign 看过的那次构建，原判词"从没被签名看过"是**误判**。
+            echo "         ⇒ 成因二选一：①版本 tag 被重建过（那份没被 Trivy/签名看过）；"
+            echo "           ②同一提交被 main 推送与 tag 各构建一次，后完成的那次覆盖了 :${SHA}"
+            echo "             （两者嵌入的 VERSION 不同 ⇒ digest 必然不同）。"
+            echo "           两种都判红：:${SHA} 不再是不可变锚点。根治＝切 tag 前等该提交的"
+            echo "           main 推送 CI（含 image/image-agent）全绿，让 tag 构建成为最后写者。"
+        fi
         [ "${#NO_SHA_TAG[@]}" -gt 0 ] && echo "         缺 :<发布提交> tag: ${NO_SHA_TAG[*]-}"
     fi
 fi

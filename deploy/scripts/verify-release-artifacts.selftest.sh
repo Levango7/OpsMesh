@@ -15,8 +15,10 @@
 #   gh 无凭证（exit=4）："To get started with GitHub CLI, please run:  gh auth login" /
 #                        "Alternatively, populate the GH_TOKEN environment variable …"
 #   gh 真 404（exit=1）："release not found"
-# 假 curl 让 ①②⑤ 全绿（token/tags/manifest 三者自洽，含 sha256-<digest>.sig/.att），
+# 假 curl 让 ①②⑤ 全绿（token + manifest：含 Docker-Content-Digest 与 sha256-<digest>.sig/.att），
 # 假 helm 让 ④ 全绿——于是「全绿用例 rc=0」同时是 ①②④⑤ 整脚本的回归网。
+# 假 curl 的 /tags/list 故意返回**空列表**（模拟 GHCR 单页 1000 条截断，2026-11-02 实测）：
+# 存在性只认 /manifests/<ref>，任何回退成 grep tags/list 的改法都会被 F 组打红。
 #
 # 退出码: 0 = 全部用例符合预期；1 = 判据与预期不符。
 
@@ -84,12 +86,20 @@ for a in "\$@"; do
 done
 case "\$url" in
     *"/token"*)      printf '{"token":"fake"}\n200' ;;
-    *"/tags/list"*)  printf '{"tags":["${VER}","sha256-${DIG}.sig","sha256-${DIG}.att"]}\n200' ;;
+    # 默认故意给**不含该版本**的列表，模拟 GHCR 单页 1000 条的截断（2026-11-02 实测）：
+    # 存在性必须由 /manifests/<ref> 判定，任何回退到 tags/list grep 的改法都会被 F 组打红。
+    *"/tags/list"*)  printf '{"tags":[]}\n200' ;;
     *"/manifests/"*)
-        if [ "\$head_mode" = 1 ]; then
+        ref="\${url##*/manifests/}"
+        case "\$ref" in
+            *".sig") code="\${FAKE_SIG_CODE:-200}" ;;
+            *".att") code="\${FAKE_ATT_CODE:-200}" ;;
+            *)       code="\${FAKE_VER_CODE:-200}" ;;
+        esac
+        if [ "\$head_mode" = 1 ] && [ "\$code" = 200 ]; then
             printf 'Docker-Content-Digest: sha256:${DIG}\n200'
         else
-            printf '{}\n200'
+            printf '{}\n%s' "\$code"
         fi ;;
     *) printf '{"errors":[{"code":"DENIED"}]}\n403' ;;
 esac
@@ -152,6 +162,18 @@ unset GH_ASSETS
 export GH_BODY='本版发布说明（故意没有那四个字）'
 run_case "正文缺「能力降级清单」" 1 "正文没有「能力降级清单」" ok
 unset GH_BODY
+
+echo "== F. tags/list 不可信：存在性只认 manifest（2026-11-02 GHCR 1000 条截断实测）=="
+# F1：tags/list 是空列表（截断形态），manifest 200 ⇒ ① 必须绿。旧实现（grep 列表）在这里假红。
+run_case "列表截断但 manifest 在 ⇒ 绿" 0 "[PASS] 14 个镜像仓库都有 :9.9.9" ok
+# F2：manifest 404 ⇒ 必须判红；列表能不能"证明存在"不是判据。
+export FAKE_VER_CODE=404
+run_case "manifest 404 ⇒ 红（列表不参与判定）" 1 "没有 :9.9.9（manifest 404" ok
+unset FAKE_VER_CODE
+# F3：manifest 在、但 .sig 缺失 ⇒ ② 判红。
+export FAKE_SIG_CODE=404
+run_case "manifest 在但缺 .sig ⇒ 红" 1 "没有对应的 .sig（cosign 签名缺失）" ok
+unset FAKE_SIG_CODE
 
 echo
 if [ "$FAIL" -gt 0 ]; then
