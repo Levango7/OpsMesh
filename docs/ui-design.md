@@ -583,7 +583,8 @@ API 调用失败时在页面顶部或卡片内显示错误消息，使用 `.msg.
 - 信息提示：`info` 模式仅「确定」按钮，用于不可逆操作后的结果告知。
 
 禁止使用原生 `confirm()` / `alert()` / `prompt()`，统一走组件保证视觉一致与无障碍。
-补充（2026-11-03 SystemOpsView 批次）：**表格声明了 `cell-actions` 列就必须渲染对应 slot**——SystemOpsView 四张表曾声明列却未渲染，删除处理函数一度不可达，现由 `SystemOpsView.spec.js` 6 例锁定四类删除与服务三动作的下发参数。服务动作（start/stop/restart）与删除同规格：逐个经确认弹窗后再下发（后端动作白名单另有 reload/enable/disable/status，其中 status 只读、其余口径未定，UI 不暴露）。
+补充（2026-11-03 SystemOpsView 批次）：补充二（2026-11-03 K8s 命名空间批次）：**表单提交一律用原生 `<form>` + `Button native-type="submit"`**——ui 库的 `Form` 组件渲染的是 `div`，挂 `@submit` 收不到事件（SystemOpsView 三处创建弹窗因此从未真正提交过，被 spec 里的 stub 掩盖）。**组件缺陷同样会藏在「默认关闭的容器」里**：FormItem 的 labelWidth 分支曾让任何真实渲染必抛，因表单项全在未展开的 Drawer 内而无人在生产见到——测试 stub 掉的组件，缺陷就不会出现，新交互入口要第一个做真渲染验证。
+**表格声明了 `cell-actions` 列就必须渲染对应 slot**——SystemOpsView 四张表曾声明列却未渲染，删除处理函数一度不可达，现由 `SystemOpsView.spec.js` 6 例锁定四类删除与服务三动作的下发参数。服务动作（start/stop/restart）与删除同规格：逐个经确认弹窗后再下发（后端动作白名单另有 reload/enable/disable/status，其中 status 只读、其余口径未定，UI 不暴露）。
 
 ### 5.5 反馈提示
 

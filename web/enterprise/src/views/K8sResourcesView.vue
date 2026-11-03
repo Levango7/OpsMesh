@@ -23,6 +23,9 @@
             @keyup.enter="onNsChange"
           />
         </div>
+        <Button variant="ghost" size="sm" @click="openNsManage" :disabled="!store.currentClusterID" data-testid="k8s-ns-manage">
+          <Icon name="flow" :size="13" /> {{ $t('k8s.namespacesManage') }}
+        </Button>
         <Button variant="ghost" size="sm" @click="onNsChange">
           <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
         </Button>
@@ -190,6 +193,40 @@
       :message="deleteConfirm.kind === 'restart' ? $t('k8s.restartConfirm') : $t('k8s.deletePodConfirm')"
       @confirm="onDeleteConfirm"
     />
+
+    <!-- 命名空间管理：创建 + 删除（后端 /k8s/clusters/{id}/namespaces，鉴权接线见 internal/k8slifecycle） -->
+    <Drawer v-model="showNsManage" :title="$t('k8s.namespacesManage')" @close="showNsManage = false">
+      <form class="op-form" @submit.prevent="submitCreateNamespace">
+        <FormItem :label="$t('k8s.namespacesCreate')" required>
+          <Input v-model.trim="nsCreateName" :placeholder="$t('k8s.namespacesCreatePlaceholder')" data-testid="k8s-ns-create-input" />
+        </FormItem>
+        <div class="btnbar btnbar--end btnbar--bottom">
+          <Button native-type="submit" variant="primary" size="sm" :disabled="!nsCreateName || nsSubmitting" data-testid="k8s-ns-create-submit">
+            {{ $t('k8s.namespacesCreate') }}
+          </Button>
+        </div>
+      </form>
+      <div class="ns-manage-list">
+        <p v-if="!store.namespaces.length" class="muted">{{ $t('k8s.namespacesEmpty') }}</p>
+        <div v-for="ns in store.namespaces" :key="ns" class="node-row">
+          <code>{{ ns }}</code>
+          <Button
+            variant="danger"
+            size="sm"
+            :data-testid="'k8s-ns-delete-' + ns"
+            @click="confirmDeleteNamespace(ns)"
+          >{{ $t('k8s.delete') }}</Button>
+        </div>
+      </div>
+    </Drawer>
+
+    <ConfirmModal
+      v-model="nsDeleteConfirm.show"
+      data-testid="k8s-ns-delete-confirm-modal"
+      :title="$t('k8s.delete')"
+      :message="nsDeleteConfirm.message"
+      @confirm="doDeleteNamespace"
+    />
   </PageShell>
 </template>
 
@@ -204,7 +241,8 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import K8sSubNav from '@/components/K8sSubNav.vue'
-import { Button } from '@/components/ui'
+import { Button, Input, Drawer, FormItem } from '@/components/ui'
+import { createK8sNamespace, deleteK8sNamespace } from '@/api/k8s'
 import { toast } from '@/utils/toast'
 
 const store = useK8sStore()
@@ -558,6 +596,52 @@ function onNsChange() {
   store.setNamespace(nsInput.value.trim())
 }
 
+// ---- 命名空间管理（建/删） ----
+const showNsManage = ref(false)
+const nsCreateName = ref('')
+const nsSubmitting = ref(false)
+const nsDeleteConfirm = reactive({ show: false, message: '', name: '' })
+
+function openNsManage() {
+  nsCreateName.value = ''
+  showNsManage.value = true
+  // 打开即刷新一次列表（store.fetchNamespaces 幂等拉取当前集群）
+  if (store.currentClusterID) store.fetchNamespaces(store.currentClusterID)
+}
+
+function confirmDeleteNamespace(name) {
+  nsDeleteConfirm.name = name
+  nsDeleteConfirm.message = t('k8s.namespacesDeleteConfirm', { name })
+  nsDeleteConfirm.show = true
+}
+
+async function submitCreateNamespace() {
+  if (!nsCreateName.value || !store.currentClusterID) return
+  nsSubmitting.value = true
+  try {
+    await createK8sNamespace(store.currentClusterID, nsCreateName.value)
+    toast.success(t('k8s.namespacesCreated'))
+    nsCreateName.value = ''
+    await store.fetchNamespaces(store.currentClusterID)
+  } catch (e) {
+    store.error = e.j?.error || t('k8s.createFailed')
+  } finally {
+    nsSubmitting.value = false
+  }
+}
+
+async function doDeleteNamespace() {
+  try {
+    await deleteK8sNamespace(store.currentClusterID, nsDeleteConfirm.name)
+    toast.success(t('k8s.namespacesDeleted'))
+    await store.fetchNamespaces(store.currentClusterID)
+  } catch (e) {
+    store.error = e.j?.error || t('k8s.deleteFailed')
+  } finally {
+    nsDeleteConfirm.show = false
+  }
+}
+
 // ---- Pod 日志 ----
 const logsOpen = ref(false)
 const logsTarget = ref(null)
@@ -764,6 +848,20 @@ onMounted(() => {
 
 .res-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .res-tab { font-size: 12px; }
+
+/* .op-form 与本页 ns-manage-list：表单竖排 + 命名空间清单行（.node-row 用 pages.css 全局原语） */
+.op-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+}
+
+.ns-manage-list {
+  margin-top: var(--space-4, 16px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
 
 /* 对话框已全部改用 styles/pages.css 全局家族 A（2026-10-30 收编）：
    .modal-mask--inset（原 16px 内距，本页 z-index 保持全局 50）/

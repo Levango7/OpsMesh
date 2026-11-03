@@ -43,6 +43,16 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-前端-K8s命名空间] — 2026-11-03（K8s 命名空间建删 UI + 两个潜伏组件缺陷修复）
+
+> 置于 [Unreleased-前端-系统运维] 之前，与 NetworkPolicy 块并列；发布时按需归并。
+
+- **K8s 命名空间建删**（`web/enterprise/src/views/K8sResourcesView.vue`）：资源页工具栏新增「命名空间管理」入口（未选集群禁用）→ Drawer 内含创建表单（原生 `form` + `native-type="submit"`）与命名空间清单（每行删除按钮 + ConfirmModal 二次确认），操作后调用 `store.fetchNamespaces` 刷新。至此 `createK8sNamespace`/`deleteK8sNamespace` 两条 api-usage 挂账销账（ALLOW 49→47），k8slifecycle 鉴权接线随他线落地后避让人解除。
+- **修 `FormItem.vue` 潜伏缺陷**：`itemStyle` 计算属性对普通对象 `{}` 调 `setProperty`，而 `labelWidth` 默认 100 ⇒ **任何真实渲染必抛 TypeError**。此前无页面在挂载时展开过 Drawer/Modal 内的 FormItem（各 spec 均 stub 掉了该组件），故一直未暴露；本批是第一个真渲染它的入口。改为直接返回 CSS 自定义属性对象。
+- **修表单提交始终不触发**（`SystemOpsView.vue` 三处创建用户/组/规则弹窗 + 本批新表单）：`<Form>` 组件渲染的是 `<div class="form">` 而非 `<form>` 元素，其上的 `@submit.prevent` 永远收不到事件；统一改为原生 `<form>` + `Button native-type="submit"`（与 AIRagView/AIPromptsView 既有范式一致）。
+- **门禁**：`K8sResourcesView.spec.js` 新增 4 例（打开刷新列表/创建下发参数/删除确认链路/未选集群禁用），存量 18 例不回归；api-usage 双向棘轮销账 2 条。
+- 验证：`npx vitest run src/views/__tests__/K8sResourcesView.spec.js src/views/__tests__/SystemOpsView.spec.js src/api/__tests__/api-usage.test.js` 9 例全绿；后续跑全套 + eslint + build。
+
 ## [Unreleased-前端-系统运维] — 2026-11-03（SystemOpsView 四表行内操作入口补齐 + 两个写操作接通）
 
 > 置于 [Unreleased] 与 [0.17.0] 之间，与 NetworkPolicy 块并列；发布时按需归并。

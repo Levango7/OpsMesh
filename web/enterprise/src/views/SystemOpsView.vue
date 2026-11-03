@@ -184,7 +184,7 @@
 
     <!-- 创建用户弹窗 -->
     <Drawer v-model="showUserForm" :title="$t('system_ops.add_user')" @close="showUserForm = false">
-      <Form class="op-form" @submit.prevent="submitCreateUser">
+      <form class="op-form" @submit.prevent="submitCreateUser">
         <FormItem :label="t('system_ops.col_name') + ' *'" required>
           <Input v-model.trim="userForm.username" placeholder="deploy" />
         </FormItem>
@@ -198,28 +198,28 @@
           <Input v-model.trim="userForm.shell" placeholder="/bin/bash" />
         </FormItem>
         <div class="btnbar btnbar--end btnbar--bottom">
-          <Button type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
+          <Button native-type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
           <Button variant="ghost" size="sm" @click="showUserForm = false">{{ $t('common.cancel') }}</Button>
         </div>
-      </Form>
+      </form>
     </Drawer>
 
     <!-- 创建组弹窗 -->
     <Drawer v-model="showGroupForm" :title="$t('system_ops.add_group')" @close="showGroupForm = false">
-      <Form class="op-form" @submit.prevent="submitCreateGroup">
+      <form class="op-form" @submit.prevent="submitCreateGroup">
         <FormItem :label="t('system_ops.col_group_name') + ' *'" required>
           <Input v-model.trim="groupForm.groupName" placeholder="deploy" />
         </FormItem>
         <div class="btnbar btnbar--end btnbar--bottom">
-          <Button type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
+          <Button native-type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
           <Button variant="ghost" size="sm" @click="showGroupForm = false">{{ $t('common.cancel') }}</Button>
         </div>
-      </Form>
+      </form>
     </Drawer>
 
     <!-- 添加防火墙规则弹窗 -->
     <Drawer v-model="showRuleForm" :title="$t('system_ops.add_rule')" @close="showRuleForm = false">
-      <Form class="op-form" @submit.prevent="submitAddRule">
+      <form class="op-form" @submit.prevent="submitAddRule">
         <FormItem :label="t('system_ops.col_port') + ' *'" required>
           <Input v-model.trim="ruleForm.port" placeholder="8080" />
         </FormItem>
@@ -230,10 +230,10 @@
           <Input v-model.trim="ruleForm.source" placeholder="0.0.0.0/0" />
         </FormItem>
         <div class="btnbar btnbar--end btnbar--bottom">
-          <Button type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
+          <Button native-type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
           <Button variant="ghost" size="sm" @click="showRuleForm = false">{{ $t('common.cancel') }}</Button>
         </div>
-      </Form>
+      </form>
     </Drawer>
 
     <!-- 删除确认 -->
@@ -263,7 +263,7 @@ import { useDeviceStore } from '@/stores/device'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
 import Icon from '@/components/Icon.vue'
-import { Button, Input, Select, Drawer, Modal, Table, Form, FormItem, Tabs, TabItem } from '@/components/ui'
+import { Button, Input, Select, Drawer, Modal, Table, FormItem, Tabs, TabItem } from '@/components/ui'
 import {
   getDeviceSystemInfo,
   createSystemUser,

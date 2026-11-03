@@ -399,3 +399,15 @@
 [LANDED] 2026-11-03T10:05:00Z from=zcode commit=b9aa80f branch=feat/web-systemops-actions
   系统运维第四批已线性合入 main（df85f18..b9aa80f，无 merge commit）；分支 run 41574110198 Frontend 腿 success；main run 待起（排队）。分支保留远端未删。
 [DONE] 2026-11-03T05:49:51Z from=qoder scope=CHANGELOG.md,docs/CLAIMS.md note=v0.17.1 已发布并完成四点验收。切版提交 `7315622`（owner 裁定走 B：不改写已发布的 v0.17.0 tag）；annotated tag `v0.17.1`（tag 对象 `19c0ef9` → 提交 `7315622`）；main 推送 CI `41570131816` 全绿（image/image-agent 成功 ⇒ tag 构建是最后写者）；release run `41578892594` **28/28 job success**（12 build-and-push + 12 promote + 发布前回核 + github-release + 发布物回核 + changelog）；tag 的 ci `41578892622` 13/13 绿。Release：04:34:05Z 上线、assets=5、正文取自 release-notes v0.17.1 节（48 行，含「能力降级清单」×1、「破坏性」×2）。本机独立回核 `verify-release-artifacts.sh 0.17.1` ⇒ **PASS=8 FAIL=0**：14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、.sig/.att 齐全、chart 渲染引用全部存在且无 :latest。CHANGELOG 顶部冻结指针已回写 v0.17.1。遗留：v0.17.0 的 Release 正文仍是自动 changelog，是否改写等 owner 裁。
+[CLAIM] 2026-11-03T11:10:00Z from=zcode ttl=8h scope=web/enterprise/src/views/K8sResourcesView.vue,web/enterprise/src/i18n/locales/{zh,en}/ops.json,web/enterprise/src/views/__tests__/K8sResourcesView.spec.js,web/enterprise/src/api/__tests__/api-usage.test.js,CHANGELOG.md,docs/ui-design.md
+  K8s 命名空间建删第五批：k8slifecycle 鉴权接线已随他线落地 main（a3e5f87 之后），避让解除；scope 不含 K8sLifecycleView.vue 与 K8sClustersView.vue（他人历史认领范围，保持不动）。
+[CLAIM] 2026-11-03T12:00:00Z from=zcode ttl=4h scope=web/enterprise/src/components/ui/FormItem.vue
+  FormItem itemStyle 在 labelWidth（默认 100 ⇒ 恒触发）为真时对普通对象调 setProperty ⇒ 首次真渲染即抛；此前无视图在挂载时展开 Drawer/Modal 内的 FormItem 故未暴露（各 spec 均 stub）。修复后由 K8sResourcesView 命名空间 Drawer 用例兜底。
+[DONE] 2026-11-03T17:35:00Z from=zcode ref=[CLAIM] 2026-11-03T11:10:00Z + [CLAIM] 2026-11-03T12:00:00Z paths=web/enterprise/src/views/K8sResourcesView.vue,web/enterprise/src/components/ui/FormItem.vue,web/enterprise/src/views/SystemOpsView.vue,web/enterprise/src/i18n/locales/{zh,en}/ops.json,web/enterprise/src/views/__tests__/K8sResourcesView.spec.js,web/enterprise/src/api/__tests__/api-usage.test.js,CHANGELOG.md,docs/ui-design.md
+  K8s 命名空间建删第五批：资源页工具栏入口 + Drawer 建/删 + ConfirmModal；api-usage 销账两条（49→47）。
+  顺带抓住两个潜伏缺陷（均因『组件藏在默认关闭容器 + spec 全 stub』而从未暴露）：
+  ① FormItem itemStyle 对普通对象调 setProperty（labelWidth 默认 100 ⇒ 任何真实渲染必抛）——本批新入口是第一个真渲染它的页面；
+  ② ui 库 Form 组件渲染 div 而非 form，@submit 永不触发 ⇒ SystemOpsView 三处创建弹窗的提交按钮生产上从未生效（第四批的 stub 同样掩盖了它，已同修）。
+  教训：新交互入口必须做一次真渲染验证（stub 掉的组件不会替你暴露缺陷）；原生 form 提交范式见 ui-design.md。
+[NOTE] 2026-11-03T17:35:00Z from=zcode to=product-owner
+  api-usage ALLOW 现存 47 条，剩余大头 = 23 个 get<Entity>(id) 详情读取 + RAG 元数据表单 + 云资源创建语义，均待产品口径；会逐个核『列表页是否已含所需字段』，确认纯冗余的按样板走一轮（像上一批 23→销账 2 条那样收缩）。

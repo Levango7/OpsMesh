@@ -83,11 +83,9 @@ const itemClasses = computed(() => [
 ])
 
 const itemStyle = computed(() => {
-  const style = {}
-  if (props.labelWidth) {
-    style.setProperty("--form-item-label-width", typeof props.labelWidth === "number" ? `${props.labelWidth}px` : props.labelWidth)
-  }
-  return style
+  if (!props.labelWidth) return {}
+  const width = typeof props.labelWidth === "number" ? `${props.labelWidth}px` : props.labelWidth
+  return { "--form-item-label-width": width }
 })
 
 const showLabel = computed(() => props.showLabel && (props.label || props.required))

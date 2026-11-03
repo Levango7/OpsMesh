@@ -40,8 +40,6 @@ const ALLOW = new Map([
   ['ai.js|embed', '向量化：POST /ai/embed 已有，属内部能力、暂不面向用户'],
 
   // ── 写操作能力未接（后端有写端点，前端只做了读）──
-  ['k8s.js|createK8sNamespace', 'K8s 命名空间创建：后端有端点，前端未提供入口'],
-  ['k8s.js|deleteK8sNamespace', 'K8s 命名空间删除：后端有端点，前端未提供入口'],
   ['cloud-account.js|getCloudAccount', '云账号详情：后端有端点，前端列表已含所需字段'],
 
   // ── 详情读取未做详情页（前端直接用列表数据）──

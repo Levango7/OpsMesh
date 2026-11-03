@@ -18,7 +18,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
-const { k8sState, mockFetchClusters, mockSetResourceType, mockSelectCluster, mockSetNamespace, mockFetchResources } = vi.hoisted(() => {
+const { k8sState, mockFetchClusters, mockSetResourceType, mockSelectCluster, mockSetNamespace, mockFetchResources, mockFetchNamespaces, mockCreateNamespace, mockDeleteNamespace } = vi.hoisted(() => {
   const { reactive } = require('vue')
   return {
     k8sState: reactive({
@@ -29,12 +29,16 @@ const { k8sState, mockFetchClusters, mockSetResourceType, mockSelectCluster, moc
       resourceType: 'pods',
       resources: [],
       resourcesLoading: false,
+      namespaces: ['default', 'team-a'],
     }),
     mockFetchClusters: vi.fn(),
     mockSetResourceType: vi.fn(),
     mockSelectCluster: vi.fn(),
     mockSetNamespace: vi.fn(),
     mockFetchResources: vi.fn(),
+    mockFetchNamespaces: vi.fn().mockResolvedValue(undefined),
+    mockCreateNamespace: vi.fn().mockResolvedValue(undefined),
+    mockDeleteNamespace: vi.fn().mockResolvedValue(undefined),
   }
 })
 
@@ -57,6 +61,8 @@ vi.mock('@/stores/k8s', () => ({
     resourcesLoading: k8sState.resourcesLoading,
     fetchClusters: mockFetchClusters,
     fetchResources: mockFetchResources,
+    namespaces: k8sState.namespaces,
+    fetchNamespaces: mockFetchNamespaces,
     setResourceType: mockSetResourceType,
     selectCluster: mockSelectCluster,
     setNamespace: mockSetNamespace,
@@ -66,6 +72,11 @@ vi.mock('@/stores/k8s', () => ({
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
   useRoute: () => ({ path: '/k8s/resources' }),
+}))
+
+vi.mock('@/api/k8s', () => ({
+  createK8sNamespace: mockCreateNamespace,
+  deleteK8sNamespace: mockDeleteNamespace,
 }))
 
 vi.mock('@/utils/toast', () => ({
@@ -98,7 +109,7 @@ vi.mock('@/components/ConfirmModal.vue', () => ({
     name: 'ConfirmModal',
     props: ['modelValue', 'title', 'message', 'confirmText', 'info'],
     emits: ['update:modelValue', 'confirm', 'cancel'],
-    template: '<div v-if="modelValue" class="confirm-modal-mock" />',
+    template: '<div v-if="modelValue" class="confirm-modal-mock"><button class="confirm-ok" @click="$emit(\'confirm\')">ok</button></div>',
   },
 }))
 
@@ -263,5 +274,55 @@ describe('K8sResourcesView 视图', () => {
       const wrapper = mountK8s()
       expect(wrapper.text()).toContain('common.loading')
     })
+  })
+})
+
+describe('K8sResourcesView 命名空间管理', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    k8sState.currentClusterID = 'c1'
+  })
+
+  const openManage = async (wrapper) => {
+    await wrapper.find('[data-testid="k8s-ns-manage"]').trigger('click')
+    await flushPromises()
+  }
+
+  it('打开管理入口会按当前集群刷新命名空间列表', async () => {
+    const wrapper = mountK8s()
+    await flushPromises()
+    await openManage(wrapper)
+    expect(mockFetchNamespaces).toHaveBeenCalledWith('c1')
+    expect(wrapper.find('[data-testid="k8s-ns-delete-team-a"]').exists()).toBe(true)
+  })
+
+  it('创建命名空间：提交后按当前集群与名称下发', async () => {
+    const wrapper = mountK8s()
+    await flushPromises()
+    await openManage(wrapper)
+    await wrapper.find('[data-testid="k8s-ns-create-input"] input').setValue('team-b')
+    await flushPromises()
+    // jsdom 下原生 submit 按钮点击不冒泡为表单 submit 事件（历批教训）：直接在 form 上触发
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(mockCreateNamespace).toHaveBeenCalledWith('c1', 'team-b')
+  })
+
+  it('删除命名空间：确认后按当前集群与名称下发', async () => {
+    const wrapper = mountK8s()
+    await flushPromises()
+    await openManage(wrapper)
+    await wrapper.find('[data-testid="k8s-ns-delete-team-a"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="k8s-ns-delete-confirm-modal"]').exists()).toBe(true)
+    await wrapper.find('.confirm-ok').trigger('click')
+    expect(mockDeleteNamespace).toHaveBeenCalledWith('c1', 'team-a')
+  })
+
+  it('未选集群时管理按钮禁用', async () => {
+    k8sState.currentClusterID = ''
+    const wrapper = mountK8s()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="k8s-ns-manage"]').attributes('disabled')).toBeDefined()
   })
 })
