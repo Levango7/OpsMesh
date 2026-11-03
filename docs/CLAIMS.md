@@ -411,3 +411,6 @@
   教训：新交互入口必须做一次真渲染验证（stub 掉的组件不会替你暴露缺陷）；原生 form 提交范式见 ui-design.md。
 [NOTE] 2026-11-03T17:35:00Z from=zcode to=product-owner
   api-usage ALLOW 现存 47 条，剩余大头 = 23 个 get<Entity>(id) 详情读取 + RAG 元数据表单 + 云资源创建语义，均待产品口径；会逐个核『列表页是否已含所需字段』，确认纯冗余的按样板走一轮（像上一批 23→销账 2 条那样收缩）。
+[LANDED] 2026-11-03T19:05:00Z from=zcode commit=fb1dc35 branch=feat/web-k8s-namespace-ui
+  K8s 命名空间第五批已线性合入 main（bd06090..fb1dc35；期间 Elasticsearch 扩展运维线 bd06090 先我落地，rebase 后 CLAIMS.md 追加区两侧并存）。
+  分支 run 41623682390 Frontend 腿 success；main run 待跟踪。
