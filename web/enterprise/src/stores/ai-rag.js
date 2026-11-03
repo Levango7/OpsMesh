@@ -37,13 +37,15 @@ export const useAIRagStore = defineStore('ai-rag', () => {
   }
 
   // UI 多行文本逐条入库；embedding 由后端生成，故只组装 id/content/metadata。
-  async function ingest(text) {
+  // metadata（裁决③ 2026-11-04）：可选对象，由视图层解析 JSON 后传入；
+  // 多行入库共享同一份（与后端 VectorDocument.metadata=map 语义一致），未传则维持 {}。
+  async function ingest(text, metadata) {
     const lines = (text || '').split('\n').map((l) => l.trim()).filter(Boolean)
     if (!lines.length) return 0
     loading.value = true
     error.value = ''
     try {
-      const documents = lines.map((content, i) => ({ id: `ui-${Date.now()}-${i}`, content, metadata: {} }))
+      const documents = lines.map((content, i) => ({ id: `ui-${Date.now()}-${i}`, content, metadata: metadata || {} }))
       const resp = await ragIngest({ documents })
       return resp.ingested ?? documents.length
     } catch (e) {

@@ -43,6 +43,15 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-前端-裁决批] — 2026-11-04（三条待裁项终态裁决 + RAG 元数据最小版）
+
+> 置于 [Unreleased-前端-K8s命名空间] 之上；裁决由用户授权（「那就裁决一下」），记录见 docs/CLAIMS.md [RULING] 2026-11-04 条目。
+
+- **三条待裁项全部终态**：① 详情读取 28 条（原口径 23）**不接**——逐条判据=列表页已含所需字段，api-usage ALLOW 注释即裁决记录固化，新实体若列表缺字段按新需求走认领；② 云资源创建**不接**——后端 POST/PUT 为同步/导入语义而非「新建资源」（第三批查证），接了会做误导性 UI，现状只读列表+删除已覆盖管理需求；③ RAG 元数据**做最小版**，本批执行。
+- **RAG 入库元数据**（`AIRagView.vue` + `stores/ai-rag.js`）：入库表单新增可选「元数据（JSON）」单行输入，解析后经 `store.ingest(text, metadata)` 透传给本批全部文档（后端 `VectorDocument.metadata` 为 map，store 此前恒传 `{}`）；非法 JSON（含数组/标量）**不下发**并就地提示。store 侧签名加可选第二参，未传行为不变。
+- **门禁**：`ai-rag.test.js` 增 metadata 透传/缺省 2 例；`AIRagView.spec.js` 增合法透传+清空、非法拦截、数组拦截 3 例（并修既有入库断言适配新签名）；api-usage 棘轮无变化（无新导出、无销账）。
+- 至此 api-usage ALLOW 47 条全部处于终态（接通销账 / 裁决不接留档 / 结构豁免），无「待裁」残留；「后端有、前端无」能力缺口专项至此**全部收口**。
+
 ## [Unreleased-前端-K8s命名空间] — 2026-11-03（K8s 命名空间建删 UI + 两个潜伏组件缺陷修复）
 
 > 置于 [Unreleased-前端-系统运维] 之前，与 NetworkPolicy 块并列；发布时按需归并。

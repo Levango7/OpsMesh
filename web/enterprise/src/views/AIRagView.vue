@@ -57,6 +57,16 @@
           <label>{{ $t('rag.ingest_title') }}</label>
           <textarea v-model="ingestText" rows="5" :placeholder="$t('rag.ingest_placeholder')" data-testid="ai-rag-ingest" />
         </div>
+        <div class="field">
+          <label>{{ $t('rag.metadata_label') }}</label>
+          <input
+            v-model.trim="ingestMeta"
+            type="text"
+            :placeholder="$t('rag.metadata_placeholder')"
+            data-testid="ai-rag-ingest-meta"
+          />
+        </div>
+        <div v-if="ingestMetaError" class="poll-err">{{ ingestMetaError }}</div>
         <div v-if="ingestMsg" class="msg ok">{{ ingestMsg }}</div>
         <div class="btnbar btnbar--bottom">
           <Button variant="primary" size="md" native-type="submit" :disabled="store.loading" data-testid="ai-rag-ingest-btn">
@@ -87,6 +97,8 @@ const store = useAIRagStore()
 
 const query = ref('')
 const ingestText = ref('')
+const ingestMeta = ref('')
+const ingestMetaError = ref('')
 const ingestMsg = ref('')
 
 const columns = computed(() => [
@@ -115,10 +127,24 @@ async function onSearch() {
 
 async function onIngest() {
   ingestMsg.value = ''
-  const n = await store.ingest(ingestText.value)
+  ingestMetaError.value = ''
+  // 元数据（裁决③ 2026-11-04）：可选单行 JSON，多行入库共享同一份；解析失败不下发。
+  let metadata = undefined
+  if (ingestMeta.value) {
+    try {
+      const parsed = JSON.parse(ingestMeta.value)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object')
+      metadata = parsed
+    } catch {
+      ingestMetaError.value = t('rag.metadata_invalid')
+      return
+    }
+  }
+  const n = await store.ingest(ingestText.value, metadata)
   if (n > 0) {
     ingestMsg.value = t('rag.ingested_ok', { n })
     ingestText.value = ''
+    if (metadata) ingestMeta.value = ''
   }
 }
 

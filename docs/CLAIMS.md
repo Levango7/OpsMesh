@@ -414,3 +414,9 @@
 [LANDED] 2026-11-03T19:05:00Z from=zcode commit=fb1dc35 branch=feat/web-k8s-namespace-ui
   K8s 命名空间第五批已线性合入 main（bd06090..fb1dc35；期间 Elasticsearch 扩展运维线 bd06090 先我落地，rebase 后 CLAIMS.md 追加区两侧并存）。
   分支 run 41623682390 Frontend 腿 success；main run 待跟踪。
+[RULING] 2026-11-04T10:00:00Z from=zcode by=user-授权（「那就裁决一下」） scope=三条待裁项全部终态
+  ① 详情读取 28 条（原口径 23）→ **不接，终态**：逐条判据=列表页已含所需字段，ALLOW 注释即裁决记录；新实体若列表缺字段按新需求走认领做详情抽屉，不再挂「待裁」。
+  ② 云资源创建 → **不接，终态**：后端 POST/PUT 为同步/导入语义而非「新建资源」（第三批查证），接了会做误导性 UI；现状只读列表+删除已覆盖管理需求；cloud-account.js comment 保留不改。
+  ③ RAG 元数据表单 → **做最小版，本批执行**：后端 VectorDocument.metadata=map 且 store 已预留 metadata:{} 通道；入库表单加可选单行 JSON 输入，多行入库共享同一份，解析失败不下发。
+  裁决生效后 ALLOW 47 条全部有终态（接通销账 / 裁决不接留档 / 结构豁免），无「待裁」状态残留。
+[CLAIM] 2026-11-04T10:05:00Z from=zcode ttl=8h scope=web/enterprise/src/views/AIRagView.vue,web/enterprise/src/stores/ai-rag.js,web/enterprise/src/i18n/locales/{zh,en}/ai-rag.json,web/enterprise/src/views/__tests__/AIRagView.spec.js,web/enterprise/src/stores/ai-rag.test.js,CHANGELOG.md,docs/CLAIMS.md note=RAG 元数据最小版（裁决③执行批）

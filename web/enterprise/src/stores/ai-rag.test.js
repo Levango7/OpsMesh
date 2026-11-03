@@ -52,6 +52,19 @@ describe('useAIRagStore', () => {
     expect('embedding' in body.documents[0]).toBe(false)
   })
 
+  it('入库可选 metadata 透传给每条文档，未传则维持空对象', async () => {
+    ragIngest.mockResolvedValue({ ingested: 2 })
+    const store = useAIRagStore()
+    await store.ingest('a\nb', { team: 'a' })
+    const withMeta = ragIngest.mock.calls[0][0]
+    expect(withMeta.documents[0].metadata).toEqual({ team: 'a' })
+    expect(withMeta.documents[1].metadata).toEqual({ team: 'a' })
+    ragIngest.mockClear()
+    await store.ingest('c')
+    const withoutMeta = ragIngest.mock.calls[0][0]
+    expect(withoutMeta.documents[0].metadata).toEqual({})
+  })
+
   it('入库返回 0 时写错误文案', async () => {
     ragIngest.mockRejectedValue({ j: { error: 'quota' } })
     const store = useAIRagStore()
