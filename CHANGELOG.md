@@ -12,6 +12,13 @@
 - **`bd06090`（2026-11-03）**：Elasticsearch 扩展运维 3 条（node drain/undrain/status、shard relocate/suggest、diagnostic bundle/health-check/shard-allocation-explain）；新增 `internal/controlplane/elasticsearch_ops_ext.go`（166 行）并挂到 `registerELKExtendedRoutes`，无新增测试。
 - **附带发现（重要，未修）**：上述 17 条新路由与现有同族一样**没有任何权限校验**——`*ops*.go` 中 69 个文件 / 301 条 `mux.HandleFunc` 的 `requireProd`/`requirePermission` 命中为 0，`dispatchKafkaTask` 只校验租户上下文（`kafka_ops.go:29-40`）。生产 `requireAuth: true` 下等价于“任意已登录用户可执行系统运维脚本”；`requireAuth: false` 下带 `X-Tenant-ID` 头即可。材料与建议（先止血 17 条 + 加“未覆盖只许减不许增”的棘轮门禁 + 按域补权限）见 `docs/decision-materials-2026-11-04.md` §3。**本批只记账，不改代码。**
 
+## [Unreleased-门禁] — 2026-11-05（归版判据认得 `[Unreleased-主题]` 变体标题：切版会静默漏归版的盲区已堵）
+
+- **缺陷（`9513ebc` 修）**：`deploy/scripts/changelog-fold-gate.py` 的标题判据只认 `## [Unreleased]` 与 `## [Unreleased] — ` 两种形态，而并行线一直在写 `## [Unreleased-前端-裁决批] — 日期（…）` 这类**变体标题**（本文件现有 4 个）。判据看不见它们：修前对同一份 CHANGELOG 现测 `SUMMARY … unreleased=0 offenders=0`、CI 全绿——下轮切版会把这些块静默留在 Unreleased 里发出去，而客户按 Keep-a-Changelog 读这份账，会把已交付的东西当成欠账。
+- **修法**：判据换成正则 `^## \[Unreleased[^\]]*\]( — |$)`，认得任意 `[Unreleased-主题]` 变体；同时仍**不把正文里的散文行当标题**（例如「把 `## [Unreleased]` 一次性改成 `## [0.12.0]`」——`]` 后紧跟反引号，不匹配 `( — |$)`）。修后对 main 现测 `released_max=2026-11-03 released_blocks=187 unreleased=6 offenders=0 stale=0` rc=0（含本条；命令 `python deploy/scripts/changelog-fold-gate.py CHANGELOG.md`）。
+- **射程自证（`changelog-fold-gate.selftest.sh` 10 → 16 例，变异 2 → 3 例）**：新增「变体标题早于发布日＝红」「变体同日＝绿**且被计数**（防"绿但压根没看见"）」「变体无日期＝红」「变体可被豁免账放行」「散文行不是标题」；变异 C 把正则收窄回 `^## \[Unreleased\]`，要求真实 CHANGELOG 转红而散文夹具仍绿——**放松会误报、收窄会漏报，两头都钉住**。CI 侧 `shellcheck -S info` 对本脚本 0 findings，main 推送 run `41868866812` 12 job 全绿。
+- 门禁面不变：`validate-deploy-assets.sh` 第 16 节仍只断言退出码并打印 SUMMARY（不耦合计数），故本条不会让任何既有断言失效。
+
 ## [0.17.1] — 2026-11-03（发布链门禁两处修复 + v0.17.0 发布链红的更正）
 
 - **`verify-artifacts-ci` 把 `--pre-release` 当版本号（`6a5364a`）**：v0.17.0 的 release run
