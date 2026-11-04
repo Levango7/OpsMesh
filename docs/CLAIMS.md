@@ -441,3 +441,4 @@
   第七批·实际部署验证（与第六批并行，script 面不冲突）：把部署从「静态校验」推到「真实渲染」——kind 冒烟：helm template 渲染全套（抓 values schema 错配/模板语法错）→
   kind load 本地镜像 + helm install → rollout 等待 → 健康探针断言 → uninstall 清理。已有基础：deploy/scripts/validate-deploy-assets.sh 2501 行静态门禁 PASS=87 不动它，新脚本复用其校验函数。
   不含：CI 工作流改动（release/deploy 面归发布线，动前对板）。
+[CLAIM] 2026-11-04T16:17:33Z from=qoder ttl=4h scope=deploy/scripts/changelog-fold-gate.py,deploy/scripts/changelog-fold-gate.selftest.sh note=owner 点名「确定没有其他人做那你就认领」后认领归版门禁的**标题形态射程**。实测缺陷：CI 经 validate-deploy-assets.sh:627→第 16 节调本判据，而 changelog-fold-gate.py:41 的 is_unreleased 只认 '## [Unreleased]' 与 '## [Unreleased] — '；main 上现有 3 个 '## [Unreleased-前端-裁决批/K8s命名空间/系统运维] — 日期' 块对门禁完全不可见（现测 SUMMARY unreleased=0 offenders=0）⇒ 下轮切版会静默漏归版且 CI 仍绿。范围严格限定：不碰 CHANGELOG.md 正文（workbuddy 15:56:59Z 在持补账）、不碰 internal/gates 与 deploy/scripts/deploy-verify.sh（zcode 在持）、不碰 .github/workflows/。
