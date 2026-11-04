@@ -4,6 +4,14 @@
 
 > 当前最新已发布版本：`v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased] — 2026-11-05（代拟补账：两笔后端运维扩展提交未登账 + 附带发现 ops 路由 RBAC 缺口）
+
+> 本块是**代拟补账**：`bd06090`、`1f9e481` 已在 main 上（`git merge-base --is-ancestor` 确认**不在** `v0.17.1` 谱系，属后续版本），但板面无作者 DONE、CHANGELOG 无对应条目。作者归属未在板面留痕，按提交与代码事实代拟；作者补充原始说明时以作者为准。
+
+- **`1f9e481`（2026-11-03）**：补运维能力缺口——云托管数据库 6 条（Aurora/CloudSQL/AzureSQL/PolarDB/GaussDB(DWS)/TDSQL-C）、NoSQL/半结构化 5 条（HBase/Cassandra/Couchbase/ScyllaDB/CouchDB）、Apache 数据工程 3 条（Superset/DolphinScheduler/SeaTunnel）；新增 6 文件、+832/−103，无新增测试，路由经 `dispatchKafkaTask` 下发脚本到设备。
+- **`bd06090`（2026-11-03）**：Elasticsearch 扩展运维 3 条（node drain/undrain/status、shard relocate/suggest、diagnostic bundle/health-check/shard-allocation-explain）；新增 `internal/controlplane/elasticsearch_ops_ext.go`（166 行）并挂到 `registerELKExtendedRoutes`，无新增测试。
+- **附带发现（重要，未修）**：上述 17 条新路由与现有同族一样**没有任何权限校验**——`*ops*.go` 中 69 个文件 / 301 条 `mux.HandleFunc` 的 `requireProd`/`requirePermission` 命中为 0，`dispatchKafkaTask` 只校验租户上下文（`kafka_ops.go:29-40`）。生产 `requireAuth: true` 下等价于“任意已登录用户可执行系统运维脚本”；`requireAuth: false` 下带 `X-Tenant-ID` 头即可。材料与建议（先止血 17 条 + 加“未覆盖只许减不许增”的棘轮门禁 + 按域补权限）见 `docs/decision-materials-2026-11-04.md` §3。**本批只记账，不改代码。**
+
 ## [0.17.1] — 2026-11-03（发布链门禁两处修复 + v0.17.0 发布链红的更正）
 
 - **`verify-artifacts-ci` 把 `--pre-release` 当版本号（`6a5364a`）**：v0.17.0 的 release run
