@@ -109,7 +109,9 @@ func (s *Server) handleFastDFS(w http.ResponseWriter, r *http.Request) {
 
 // dispatchFastDFSTask 封装租户上下文获取 + 任务创建
 func (s *Server) dispatchFastDFSTask(w http.ResponseWriter, r *http.Request, deviceID, script, action string) (string, bool) {
-	actx, ok := s.requireTenantContext(w, r)
+	// 鉴权同 dispatchKafkaTask：requireTenantContext 不校验权限点，导致这条 FastDFS
+	// 派发路径对只读身份开放（docs/opsmesh-authz-audit-2026-11-04.md）。task:write 与正门一致。
+	actx, ok := s.subsystemAuthorize(w, r, "task:write")
 	if !ok {
 		return "", false
 	}

@@ -26,8 +26,15 @@ import (
 var kafkaResourceRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // dispatchKafkaTask creates a system task for a kafka operation and returns its task ID.
+//
+// 鉴权：走 subsystemAuthorize 而非 requireTenantContext——后者只校验「头声称的租户与
+// 令牌一致」，从不校验调用者是否具备下发 shell 的权限。所有 *_ops.go 运维域 handler
+// 都经此函数派发，此前等于把它们整体漏在 RBAC 之外（详见
+// docs/opsmesh-authz-audit-2026-11-04.md：527 条路由中 223 条可派发但无权限校验）。
+// 权限点取 task:write，与正门 POST /api/v1/tasks 一致——本函数本质就是"建一条 shell 任务"。
+// 副作用：viewer 等只读身份从"静默 202"变为"显式 403"，这是应有形态而非破坏。
 func (s *Server) dispatchKafkaTask(w http.ResponseWriter, r *http.Request, deviceID, script, action string) (string, bool) {
-	actx, ok := s.requireTenantContext(w, r)
+	actx, ok := s.subsystemAuthorize(w, r, "task:write")
 	if !ok {
 		return "", false
 	}

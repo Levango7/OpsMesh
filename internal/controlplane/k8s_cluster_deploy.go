@@ -848,6 +848,18 @@ func (s *Server) handleK8sClusterDeploy(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// 鉴权：本端点必须具备 k8s:write 权限（此前完全无鉴权）。
+	//
+	// 严重性说明（docs/opsmesh-authz-audit-2026-11-04.md 附带发现）：body 里的
+	// NodeSpec 携带 Host/Port/User/SSHKey/Password，executeDeploy → precheckNodes
+	// 会用 sshPool.Get(node.Host, port, user, node.SSHKey, node.Password) 去连这些
+	// 主机并执行 kubeadm 安装。一个匿名可调端点等于把控制面变成「用调用方给的
+	// 凭据 SSH 到任意主机跑安装命令」的代理，故权限点取写面的 k8s:write，与
+	// k8s_deployments.go / k8s_workloads.go 等同域写操作一致。
+	if _, ok := s.requireProd(w, r, "k8s:write"); !ok {
+		return
+	}
+
 	var spec K8sClusterDeploySpec
 	if err := decodeJSONBody(w, r, &spec); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -882,6 +894,11 @@ func (s *Server) handleK8sClusterDeploy(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleK8sClusterDeployStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	// 鉴权：deployID 可枚举，且状态体含各节点 NameStatus ⇒ 需 k8s:read。
+	if _, ok := s.requireProd(w, r, "k8s:read"); !ok {
 		return
 	}
 

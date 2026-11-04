@@ -533,3 +533,21 @@
   用户点名「看 P1-B2 按域权限矩阵细节 / 看 P4 镜像源选型对比」→ 把两项从口头建议做成可决策材料，写入立项书 §10/§11。
   取证用与 `ops_route_ratchet_gate_test.go` 同一套正则的独立程序复算（TOTAL=284 与门禁台账一致）。
   顺带记录一条：**lint 修复我没动手**——PR #3（`fix/td97-lint`，d7a705b）已覆盖我要改的两行，20 项 check 全绿，逐子项比对后不重复施工。
+
+
+
+[NOTE] 2026-11-04T20:31:22Z from=opencode 本线 rebase 到最新 origin/main 后的范围修正与认领。原分支基于 10-29 的 main，rebase 后发现 **k8s 生命周期假成功那一项已被 a554697（10-31，裁决单 A 项/501）完成**，且对方把四个子步骤与状态机整体删除、另立 charter 文档，比本线的 B 项更干净。本线已丢弃那部分改动（internal/k8slifecycle/、K8sLifecycleView.vue、i18n 键），不重复施工、不给 main 添冲突。同时更正一个认知：先前在全local 数据上判断『其余各线已搁置 5 天以上』是错的——本地 main 落后 origin 153 个 commit，真实情况是 zcode 11-05 11:20Z 仍在动、qoder/workbuddy 11-04 在动、kilo 11-02 后由其自行接管闭环。故本线不接管任何他线领地（internal/gates 亦在 zcode 11-05T09:00Z ttl=16h 的活认领内，刻意不进）。下列 scope 经核对 origin CLAIMS 无活认领、无冲突。
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/kafka_ops.go note=派发鉴权：dispatchKafkaTask 补 subsystemAuthorize(task:write)
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/storage_fastdfs.go note=派发鉴权：dispatchFastDFSTask 同上
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/dispatch_authz_test.go note=派发鉴权守卫 6 例
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/k8s_cluster_deploy.go note=堵匿名 SSH 代理：POST->k8s:write、status->k8s:read
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/k8s_cluster_deploy_authz_test.go note=K8s 部署鉴权守卫 5 例
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=pkg/shellquote/quote.go note=shell 转义+白名单工具
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=pkg/shellquote/quote_test.go note=转义守卫（真 shell 求值）
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/activemq_ext_ops.go note=注入收编 8 处
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/activemq_ext_injection_test.go note=注入守卫 5 例
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/activemq_ops.go note=deploy version 白名单
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/cache_ops.go note=注入收编（四校验器+全 handler）
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/cache_injection_test.go note=注入守卫 7 例
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=scripts/authz-route-audit.py note=路由鉴权面可复算脚本
+[CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=docs/opsmesh-authz-audit-2026-11-04.md note=审计报告

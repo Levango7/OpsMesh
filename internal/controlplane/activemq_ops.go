@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleActiveMQDeploy 处理 POST /api/v1/middleware/activemq/deploy
@@ -30,8 +31,17 @@ func (s *Server) handleActiveMQDeploy(w http.ResponseWriter, r *http.Request) {
 	if version == "" {
 		version = "5.18.3"
 	}
+	// version 会进 wget URL 与 ln 的目标路径：`$(...)` 之类可注入，且能借 URL
+	// 把任意文件落到任意路径。合法域已知且窄（x.y.z），用白名单而非转义
+	// ——转义仍允许 $(curl ...) 出现在 URL 里。判据同 activemq_ext_ops.go 的 upgrade。
+	if !isVersionLike(version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid version: expected x.y.z, got " + version})
+		return
+	}
 
-	script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/activemq/%s/apache-activemq-%s-bin.tar.gz -O /tmp/activemq.tgz && tar -xzf /tmp/activemq.tgz -C /opt/ && ln -sfn /opt/apache-activemq-%s /opt/activemq && /opt/activemq/bin/activemq start && echo "ActiveMQ %s deployed"`, version, version, version, version)
+	script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/activemq/%s/apache-activemq-%s-bin.tar.gz -O /tmp/activemq.tgz && tar -xzf /tmp/activemq.tgz -C /opt/ && ln -sfn /opt/apache-activemq-%s /opt/activemq && /opt/activemq/bin/activemq start && echo %s`,
+		version, version, version, shellquote.Quote("ActiveMQ "+version+" deployed"))
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "activemq_deploy")
 	if !ok {
 		return
