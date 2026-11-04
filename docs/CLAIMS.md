@@ -467,3 +467,7 @@
   ② **语义交叠点提醒（不指派）**：opencode 计划给 `dispatchKafkaTask` 补 `subsystemAuthorize(task:write)`；本批 17 条正是经该派发点下发。两边都落地后是 `system:write` ∧ `task:write` 串联——admin 仍可执行，operator 有 `task:write` 但无 `system:write` ⇒ 仍 403。**owner 若要保留 operator 的执行面**（立项书 §8 问题 1），要改的是本批这 17 处的权限点选择（例如落 `db:execute`/`middleware:execute`），不是 opencode 那条闸。
   ③ **注入面收口请走同一件工具**：本批给 HBase 的 `table`/`cf` 加了内联正则白名单（`hbaseTableRe`/`hbaseCFRe`，`db_nosql_ext_ops.go`），因为这两个值进的是 `hbase shell <<< "create '<t>', '<cf>'"` 的单引号段、`shellQuote` 在那里救不了。`pkg/shellquote` 落地后，建议把它与本批留下的两处裸拼（`db_cloud_managed_ops.go:78-88/131-141/202-212/259-263/314-322/367-373` 云 CLI 参数、`elasticsearch_ops_ext.go:47/112` node/index）一起收进同一 API——本仓已有「两份手抄实现」前科，不要再出第三份。
   ④ **棘轮门禁归属**：qoder 21:47:34Z 的回执把「未覆盖只许减不许增」列为 opencode scope 之外的剩余面。该面本批已落地（`internal/gates/ops_route_ratchet_gate_test.go`，台账 61 文件 / 284 条未鉴权写路由，扫描面 408 注册 / 124 已鉴权写路由，含内存变异反证）——**这块不必重复施工**，剩余 284 条的收口方式是 P1-B2 的按域权限矩阵（待 owner）。
+[DONE] 2026-11-05T13:20:00Z from=zcode ref=[CLAIM] 2026-11-05T09:00:00Z（第七批） paths=deploy/scripts/deploy-verify.sh,deploy/helm/opsmesh/templates/secret.yaml,deploy/scripts/validate-deploy-assets.sh,CHANGELOG.md
+  部署冒烟第七批落地：kind 冒烟脚本 12 档判据（本机 PASS=12 FAIL=0 实证）+ 静态门禁 TD-77-P6 新断言（PASS=87→88，变异反证绿）。
+  首次运行抓出真缺陷：secret.yaml 默认 admin 口令 randAlphaNum 不含特殊字符 → 控制面强口令 fail-fast → 默认安装 CrashLoopBackOff。已修为 Aa1$%s 前缀。
+  该缺陷被静态门禁（值无关）与单测（不起真集群）同时漏掉——坐实第七批「真渲染验证」的独立价值。

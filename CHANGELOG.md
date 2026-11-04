@@ -71,6 +71,19 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-部署冒烟] — 2026-11-05（kind 真集群冒烟落地：首次运行即抓出默认安装必炸的缺陷）
+
+> 置于 [Unreleased-服务治理] 之上；归版时按需合并。
+
+- **新增 `deploy/scripts/deploy-verify.sh`**（第七批·实际部署验证）：把部署从「静态校验」推到「真集群真渲染」。与既有 2501 行 `validate-deploy-assets.sh`（PASS=87 静态门禁）互补——那个回答「资产自洽吗」，本脚本回答「真装得上、真起来吗」。五种模式：完整冒烟 / `--keep` 保留排查 / `--skip-install` 纯渲染断言 / `--cluster NAME` 指定集群；退出即清理（uninstall + kind delete）。
+  - 判据 12 档：helm template 渲染 + 渲染面自证（Deployment/Service/livenessProbe）→ 生产 values 渲染 → kind 集群 → helm install --wait → rollout 状态（动态取 Deployment 名）→ pod 全就绪（READY 列解析 x==x）→ **端点活断言**（`/healthz`、`/readyz`、`/version`、`/enterprise/` 逐个 curl 200）。
+  - 失败路径自带诊断：pods+events+describe pod 日志固化到工件目录，且**区分内容失败与环境/吞吐失败**（本机实测：多 kind 集群并置时单节点 API server QPS 打满会以 `client rate limiter` 形态冒出来，不判成资产缺陷）。
+  - 跨环境工具解析（Git Bash / CI / 异壳子进程）：`TOOL_xxx` 显式解析 + `.exe` 回退 + 常见安装目录兜底；docker daemon 预检。
+- **修 chart 真缺陷（本批最大价值）**：`deploy/helm/opsmesh/templates/secret.yaml` 的默认 admin 口令生成器 `printf "Aa1%s" (randAlphaNum 28)`——`randAlphaNum` **只出字母数字**，不含特殊字符，而控制面 `credentials/password.go` 的 `ValidateStrongPassword` 要求 ≥12 位且四类字符全含。后果：**helm 默认安装必炸**（控制面 fail-fast → CrashLoopBackOff → install --wait 超时），且症状链每一步都指错方向（镜像拉取成功、日志只在容器 logs 里说真话）。修为 `printf "Aa1$%s" (randAlphaNum 28)`。这条此前被静态门禁（值无关）与单测（不起真集群）同时漏掉，是 kind 冒烟第一次运行抓出来的。
+- **静态门禁补断言 TD-77-P6**（validate-deploy-assets.sh，追加式独立节不碰他人维护区）：默认口令必须呈"显式四类字符前缀 + 随机串"形态；变异反证——前缀改回无特殊字符即红、还原回绿。门禁 PASS 87→88。
+- **实证**：kind 冒烟本机全跑通——`PASS=12 FAIL=0`（渲染 4 → 集群 → install → rollout → pod 2/2 → 端点 4×200 → 自动清理）；静态门禁 `PASS=88 FAIL=0`；TD-77-P6 变异反证绿。
+- 部署流程教训（CHANGELOG 留痕）：默认口令/密钥类生成器必须逐字符类校验，不能只看长度；「值随机的资产问题只有真渲染/真安装能暴露」。
+
 ## [Unreleased-服务治理] — 2026-11-05（微服务探针回归门禁：把 TD-77 既有事实变成构建期红）
 
 > 置于 [Unreleased-前端-裁决批] 之上；归版时按需合并。

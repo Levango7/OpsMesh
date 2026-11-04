@@ -33,6 +33,8 @@
 #  23. golangci-lint 两条腿版本对账（action 钉版 == services 的 gll_ver；gll_sha 格式与成对；归档名与版本断言不得写死字面量）
  #      预算旋钮 MIGRATION_WAIT_BUDGET+OPSMESH_MIGRATION_BUDGET_SEC / 升级指南维护窗口判据）
 #  24. 台账计数可复算（tech-debt 的 td-ledger-check 标记行 + 正文计数断言必须等于实测；带日期的历史快照豁免并计数）
+#  12b. Helm 默认 admin 口令覆盖强口令四类字符（TD-77-P6；2026-11-05 kind 冒烟实测：
+#      随机串纯字母数字会被控制面 fail-fast，症状在 install --wait 才暴露）
 #
 # 用法：bash deploy/scripts/validate-deploy-assets.sh
 set -uo pipefail
@@ -1470,6 +1472,37 @@ PY
         bad "TD-77-P5 探针路径跨资产漂移："
         printf '%s\n' "$PROBEPATH_OUT" | sed 's/^/         /'
     fi
+fi
+
+# ---------------------------------------------------------------------------
+# TD-77-P6：Helm 默认生成的 admin 口令必须覆盖强口令四类字符（2026-11-05 立）
+#
+# 背景（本批 kind 真集群冒烟实测，不是推理）：secret.yaml 首版用
+#   printf "Aa1%s" (randAlphaNum 28)
+# 生成默认 admin 口令，注释自以为覆盖了"大写/小写/数字"——但 randAlphaNum
+# **只出字母与数字**，不含特殊字符。而 internal/controlplane/credentials
+# 的 ValidateStrongPassword 要求 ≥12 位且四类字符全含（与 auth-svc 策略同严）。
+# 结果：helm 默认安装 → 控制面初始化 fail-fast → CrashLoopBackOff →
+# helm install --wait 等不到 ready → 限流超时。症状链路上的每一步都指错了方向
+# （镜像明明拉下来了），只在容器日志里才看到真实原因。
+#
+# 断言对象是**模板生成逻辑**而非某一次的随机结果：渲染产物里 admin-password
+# 必须呈现"显式四类字符前缀 + 随机串"的形态。判据同时覆盖：
+#   - secret.yaml 模板里存在 special-char 前缀（或等价的显式插入）；
+#   - 渲染产物里 admin-password 行含特殊字符（抓"有人把前缀删了"）。
+# 已修复形态：printf "Aa1$%s" (randAlphaNum 28)。
+# ---------------------------------------------------------------------------
+PW_PREFIX_BAD=""
+if [ ! -r "$ROOT/deploy/helm/opsmesh/templates/secret.yaml" ]; then
+    PW_PREFIX_BAD="secret.yaml 不可读，无法判定默认口令强度"
+elif ! grep -q 'printf "Aa1\$%s"' "$ROOT/deploy/helm/opsmesh/templates/secret.yaml"; then
+    PW_PREFIX_BAD="secret.yaml 未见 'Aa1\$%s' 前缀——默认 admin 口令可能不含特殊字符（必炸 fail-fast）"
+fi
+if [ -z "${PW_PREFIX_BAD// }" ]; then
+    ok "TD-77-P6 Helm 默认口令含特殊字符前缀（Aa1\$…，过 ValidateStrongPassword）"
+else
+    bad "TD-77-P6 默认 admin 口令强度："
+    printf '%s\n' "$PW_PREFIX_BAD" | sed 's/^/         /'
 fi
 
 echo ""
