@@ -51,6 +51,16 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-服务治理] — 2026-11-05（微服务探针回归门禁：把 TD-77 既有事实变成构建期红）
+
+> 置于 [Unreleased-前端-裁决批] 之上；归版时按需合并。
+
+- **新增 `internal/gates/microservices_probes_gate_test.go`**（第六批·服务治理）：12 个微服务的健康探针/关停一致性回归门禁。背景：TD-77（docs/COORDINATION.md 2026-10-05 通告）已把 12 微服务的健康端点统一到 `/health`+`/ready`、旧别名 `/api/v1/health` 按口径保留不摘，控制面 (`internal/controlplane`) 因 federation peer 探测打 `/healthz` **不在收敛范围**。源码侧已达标，但无任何东西守着它——本门禁补上这一环。
+- **判据四档**：①扫描面自证（枚举到 12 个 *-svc、路由正则自校验已知注册、路由总量下限）；②每微服务必须注册 `/health` 与 `/ready`（main.go 或 handler 层均可——这是 TD-77 落地时的真实分布：portal/incident/task 等在 main，runbook/autoscaler 等在 handler）；③`values.yaml` 逐服务 `probe.path` 必须是 `/health`（部署面与源码对齐，防止运行期 404）；④`signal.Notify` 与 `Shutdown(` **成对**出现（单缺前者=Pod 被杀不关停，单缺后者=滚动更新挂死）。
+- **变异反证 4/4**：/health 改名、probe.path 改错、服务目录改名（扫描面收缩）、剔除 signal.Notify——四组变异逐一让门禁变红，基态回绿。
+- **范围修正记录**（docs/CLAIMS.md [NOTE] 2026-11-05T09:40）：本批最初误判「runbook/autoscaler 零探针、incident 缺 health」——实为只扫了 main.go 一层路由（它们的探针注册在 `internal/handler.RegisterRoutes`），两渠道合并后 12/12 达标。已连同误判根因上板，第六批因此从「补缺口」改为「固化为门禁」。
+- 验证：`go test ./internal/gates -count=1` 全包绿（含新用例与变异反证 4 组）。
+
 ## [Unreleased-前端-裁决批] — 2026-11-04（三条待裁项终态裁决 + RAG 元数据最小版）
 
 > 置于 [Unreleased-前端-K8s命名空间] 之上；裁决由用户授权（「那就裁决一下」），记录见 docs/CLAIMS.md [RULING] 2026-11-04 条目。
