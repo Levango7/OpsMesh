@@ -194,7 +194,7 @@
       @confirm="onDeleteConfirm"
     />
 
-    <!-- 命名空间管理：创建 + 删除（后端 /k8s/clusters/{id}/namespaces，鉴权接线见 internal/k8slifecycle） -->
+    <!-- 命名空间管理：创建 + 删除（后端 /k8s/clusters/{id}/namespaces；鉴权已接线：internal/k8slifecycle/handler.go，commit a3e5f87，2026-11-05 核） -->
     <Drawer v-model="showNsManage" :title="$t('k8s.namespacesManage')" @close="showNsManage = false">
       <form class="op-form" @submit.prevent="submitCreateNamespace">
         <FormItem :label="$t('k8s.namespacesCreate')" required>
