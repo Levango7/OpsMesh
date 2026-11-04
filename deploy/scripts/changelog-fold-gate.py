@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # changelog-fold-gate.py —— CHANGELOG 归版账目的判据（部署资产门禁第 16 节）。
 #
-# 判据：`## [Unreleased]` 的标题日期不得早于最新已发布版本的标题日期——早于即说明它随
-# 某个已发布版本发出去了，标题却还写着未发布（客户按 Keep-a-Changelog 读这份文件，
-# 会把已交付的东西当成欠账）。
+# 判据：`## [Unreleased…]`（含 `[Unreleased-主题]` 变体）的标题日期不得早于最新已发布版本的
+# 标题日期——早于即说明它随某个已发布版本发出去了，标题却还写着未发布（客户按
+# Keep-a-Changelog 读这份文件，会把已交付的东西当成欠账）。
 #
 # 为什么是「日期比较」而不是「查 git tag」：本门禁所在的 CI job 是浅检出（未设
 # fetch-depth: 0），拿不到 tag 列表；真要查 tag 会让这道门禁在 CI 里静默空转。
@@ -34,12 +34,23 @@ except Exception:
 DATE = re.compile(r" — (\d{4}-\d{2}-\d{2})")
 
 
-# 标题行的严格定义：`## [x.y.z]` / `## [Unreleased]` 独占一行，或后跟 " — 描述"。
+# 标题行的严格定义：`## [x.y.z]` / `## [Unreleased…]` 独占一行，或后跟 " — 描述"。
 # 为什么这么严：正文里存在以 `## [Unreleased]` 开头的**散文行**（例如「把 `## [Unreleased]`
 # 一次性改成 `## [0.12.0]`」），松判会把它当成无日期标题 ⇒ 假阳性判红。判据一旦会因散文
 # 误报，下一次真错标就会被当成「又是老毛病」而被忽略。
+#
+# 为什么 `[Unreleased]` 允许带后缀标识（2026-11-04 实测补的射程）：各线并行时会写
+# `## [Unreleased-前端-裁决批] — 2026-11-04（…）` 这种带主题名的块（为的是避开别的线正在
+# 做的归版），而旧判据只认精确的 `[Unreleased]`——这类块对门禁**完全不可见**（实测 main 上
+# 同时有 3 个这样的块，SUMMARY 仍报 `unreleased=0 offenders=0`）。后果正是本判据要防的那一类：
+# 下一次切版把它们的日期留在发布日之前，块既不会被折叠也不会判红，发布账与 CHANGELOG 从此
+# 对不上，而 CI 全绿。规则：方括号内以 `Unreleased` 开头、且 `]` 之后要么行尾要么 " — "。
+# 那条散文行 `## [Unreleased]` 一次性改成 …` 在 `]` 后紧跟反引号，仍不算标题。
+UNRELEASED_HEADING = re.compile(r"^## \[Unreleased[^\]]*\]( — |$)")
+
+
 def is_unreleased(line):
-    return line == "## [Unreleased]" or line.startswith("## [Unreleased] — ")
+    return bool(UNRELEASED_HEADING.match(line))
 
 
 def is_version(line):
