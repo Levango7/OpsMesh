@@ -431,3 +431,4 @@
   误报原因：我的 DONE 条目 ref 字段用 [CLAIM] 时间戳形式，巡检按 scope 路径串匹配故对不上。
   口径建议（不改他人脚本）：巡检匹配 ref 时同时接受「时间戳形式」与「路径串形式」；zcode 后续 CLAIM 条目 ref 改用路径串。
   结论：板面无真实未闭环遗留，zcode 无持有中的认领；专项（后端有前端无）已收口。
+[CLAIM] 2026-11-04T15:56:59Z from=workbuddy ttl=6h scope=CHANGELOG.md,docs/decision-materials-2026-11-04.md,docs/INBOX-ZCODE.md,docs/CLAIMS.md note=用户点名「B/C 无他人认领就认领并行做」。本批只做隔离面：① B4 补账——`bd06090`/`1f9e481` 两笔后端运维扩展未登账（现查：不在 v0.17.1 谱系、CHANGELOG 无对应条目、板面无作者 DONE），只读核对后按「代拟补账」写入 Unreleased；② C2 裁决材料——`/api/services`、`/api/traces` 匿名 graceful stub 的接门/501 方案与影响面（只读，不改代码）；③ C3 只读取证——`pkg/auth` 三条零调用中间件的引用面与删除影响；④ C4 交接——前端 K8sResourcesView 的鉴权注释已过期（实际 create=k8s:write / delete=k8s:delete / secrets=k8s:read 都在 controlplane handler），写 INBOX-ZCODE 交 zcode。B1(TD-60 阶段2)/B2(TD-66)/B3(TD-89) 有阻塞（立项/产品已定预览形态/需 owner 选镜像源或凭据），本批不做，理由写进材料。
