@@ -138,13 +138,11 @@ func TestDispatchFastDFSTask_DeniesReadOnlyRole(t *testing.T) {
 
 // TestDispatchTasks_CreatePendingShellTask 正向回归：派发成功后库里确有一条
 // shell 任务，证明闸门没有把正常路径一起挡死。
+//
+// 不设 recover 兜底：handler 若 panic 就该让测试响亮失败，而不是被吞掉——
+// 本用例要的正是"派发成功且落库"这一事实。
 func TestDispatchTasks_CreatePendingShellTask(t *testing.T) {
 	s := newDispatchAuthzServer()
-	defer func() {
-		if p := recover(); p != nil {
-			// handler 未写响应时 taskID 为空即可接受；此处只关心 store 侧落库
-		}
-	}()
 	rec := httptest.NewRecorder()
 	const foundAgentID = "audit-dev"
 	taskID, ok := s.dispatchKafkaTask(rec, dispatchReq("admin", "/api/v1/cache/deploy"),
