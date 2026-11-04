@@ -5,9 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+)
+
+// hbaseTableRe / hbaseCFRe 是 HBase 表名（可带 namespace）与列族名的字符白名单。
+// 这两个值会被拼进 `hbase shell <<< "create '<table>', '<cf>'"` 的单引号段：
+// 一个 `'` 即可跳出引号，外层双引号还会继续展开 `$()` 与反引号。
+// 与 kafka_ops.go 的 kafkaResourceRe 同族——同文件其余分支用 shellQuote，表名这里改校验。
+var (
+	hbaseTableRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}(:[A-Za-z0-9_.-]{1,128})?$`)
+	hbaseCFRe    = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 )
 
 func firstNonEmptyNoSQL(vals ...string) string {
@@ -23,6 +33,9 @@ func firstNonEmptyNoSQL(vals ...string) string {
 func (s *Server) handleDBHBase(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
 	var req struct {
@@ -47,6 +60,10 @@ func (s *Server) handleDBHBase(w http.ResponseWriter, r *http.Request) {
 	cf := firstNonEmptyNoSQL(req.CF, req.ColumnFamily, req.Family)
 	if cf == "" {
 		cf = "cf"
+	}
+	if !hbaseTableRe.MatchString(table) || !hbaseCFRe.MatchString(cf) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported table or columnFamily name"})
+		return
 	}
 	var script string
 	switch req.Action {
@@ -79,6 +96,9 @@ func (s *Server) handleDBHBase(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDBCassandra(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
 	var req struct {
@@ -126,6 +146,9 @@ func (s *Server) handleDBCassandra(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDBCouchbase(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
 	var req struct {
@@ -186,6 +209,9 @@ func (s *Server) handleDBScyllaDB(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+		return
+	}
 	var req struct {
 		DeviceID string `json:"deviceID"`
 		Action   string `json:"action"`
@@ -231,6 +257,9 @@ func (s *Server) handleDBScyllaDB(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDBCouchDB(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
 	var req struct {

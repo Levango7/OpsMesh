@@ -17,6 +17,9 @@ func (s *Server) handleElasticsearchNodeDrain(w http.ResponseWriter, r *http.Req
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+		return
+	}
 
 	var req struct {
 		DeviceID string `json:"deviceID"`
@@ -61,6 +64,9 @@ func (s *Server) handleElasticsearchNodeDrain(w http.ResponseWriter, r *http.Req
 func (s *Server) handleElasticsearchShardRelocate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
 
@@ -121,6 +127,9 @@ func (s *Server) handleElasticsearchShardRelocate(w http.ResponseWriter, r *http
 func (s *Server) handleElasticsearchDiagnostic(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
 

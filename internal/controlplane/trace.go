@@ -76,6 +76,12 @@ func (s *Server) handleTraceServices(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// 四个 trace 端点此前匿名可达（无全局认证中间件，认证历来由各 handler 自调）。
+	// 这里先收"匿名面"：接真实 Jaeger 前只要求登录；是否再立 observability 权限族待裁决
+	// （docs/projects-2026-11-05.md P2）。
+	if _, ok := s.requireTenantContext(w, r); !ok {
+		return
+	}
 	// 未接入真实 Jaeger，返回空服务列表。
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"data":  []TraceService{},
@@ -100,6 +106,9 @@ func (s *Server) handleTraceServiceOperations(w http.ResponseWriter, r *http.Req
 func (s *Server) handleListTraces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requireTenantContext(w, r); !ok {
 		return
 	}
 	// 未接入真实 Jaeger，返回空 traces 列表。
@@ -127,6 +136,10 @@ func (s *Server) handleGetTrace(w http.ResponseWriter, r *http.Request, traceID 
 
 // handleTraceRouting 分发 trace 子路径：/api/services/{service}/operations 和 /api/traces/{traceID}。
 func (s *Server) handleTraceRouting(w http.ResponseWriter, r *http.Request) {
+	// 闸加在分派入口：两个子 handler 只经此路径可达，重复校验没有意义。
+	if _, ok := s.requireTenantContext(w, r); !ok {
+		return
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/")
 
 	switch {

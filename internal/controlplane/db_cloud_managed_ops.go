@@ -57,6 +57,9 @@ func (s *Server) handleDBAurora(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+		return
+	}
 	raw, err := decodeCloudManagedBody(r)
 	if err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -101,6 +104,9 @@ func (s *Server) handleDBAurora(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDBCloudSQL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
 	raw, err := decodeCloudManagedBody(r)
@@ -149,6 +155,9 @@ func (s *Server) handleDBCloudSQL(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDBAzureSQL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
 	raw, err := decodeCloudManagedBody(r)
@@ -219,6 +228,9 @@ func (s *Server) handleDBPolarDB(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+		return
+	}
 	raw, err := decodeCloudManagedBody(r)
 	if err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -271,6 +283,9 @@ func (s *Server) handleDBGaussDBDWS(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+		return
+	}
 	raw, err := decodeCloudManagedBody(r)
 	if err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -321,6 +336,9 @@ func (s *Server) handleDBGaussDBDWS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDBTDSQLC(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
 	raw, err := decodeCloudManagedBody(r)
