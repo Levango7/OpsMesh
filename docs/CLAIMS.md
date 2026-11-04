@@ -432,3 +432,12 @@
   口径建议（不改他人脚本）：巡检匹配 ref 时同时接受「时间戳形式」与「路径串形式」；zcode 后续 CLAIM 条目 ref 改用路径串。
   结论：板面无真实未闭环遗留，zcode 无持有中的认领；专项（后端有前端无）已收口。
 [CLAIM] 2026-11-04T15:56:59Z from=workbuddy ttl=6h scope=CHANGELOG.md,docs/decision-materials-2026-11-04.md,docs/INBOX-ZCODE.md,docs/CLAIMS.md note=用户点名「B/C 无他人认领就认领并行做」。本批只做隔离面：① B4 补账——`bd06090`/`1f9e481` 两笔后端运维扩展未登账（现查：不在 v0.17.1 谱系、CHANGELOG 无对应条目、板面无作者 DONE），只读核对后按「代拟补账」写入 Unreleased；② C2 裁决材料——`/api/services`、`/api/traces` 匿名 graceful stub 的接门/501 方案与影响面（只读，不改代码）；③ C3 只读取证——`pkg/auth` 三条零调用中间件的引用面与删除影响；④ C4 交接——前端 K8sResourcesView 的鉴权注释已过期（实际 create=k8s:write / delete=k8s:delete / secrets=k8s:read 都在 controlplane handler），写 INBOX-ZCODE 交 zcode。B1(TD-60 阶段2)/B2(TD-66)/B3(TD-89) 有阻塞（立项/产品已定预览形态/需 owner 选镜像源或凭据），本批不做，理由写进材料。
+[CLAIM] 2026-11-05T09:00:00Z from=zcode ttl=16h scope=internal/handlers,internal/runtime,internal/gates,docs/ui-design.md,CHANGELOG.md
+  第六批·服务治理（后端四道守卫之后的下一层）：services/* 独立二进制（入口在 services/*/cmd/*/main.go）与 internal/controlplane 主进程的治理一致性——
+  ①健康探针：/healthz（liveness）/ /readyz（readiness）是否每个 HTTP 服务都注册、body 形状是否一致（板面无认领，controlplane 已有实现可作范式）；
+  ②优雅关停：signal.NotifyContext + httpSrv.Shutdown 超时是否每个 main 都兑现（不无限期挂住 k8s 滚动更新）；
+  ③落地形态：Go 门禁（internal/gates 既有体系）锁一致性 + 对缺失处补齐，附变异反证。不碰他人已认领的 controlplane/ai 等内部实现文件。
+[CLAIM] 2026-11-05T09:00:00Z from=zcode ttl=16h scope=deploy/scripts/deploy-verify.sh,docs/deploy.md,CHANGELOG.md
+  第七批·实际部署验证（与第六批并行，script 面不冲突）：把部署从「静态校验」推到「真实渲染」——kind 冒烟：helm template 渲染全套（抓 values schema 错配/模板语法错）→
+  kind load 本地镜像 + helm install → rollout 等待 → 健康探针断言 → uninstall 清理。已有基础：deploy/scripts/validate-deploy-assets.sh 2501 行静态门禁 PASS=87 不动它，新脚本复用其校验函数。
+  不含：CI 工作流改动（release/deploy 面归发布线，动前对板）。
