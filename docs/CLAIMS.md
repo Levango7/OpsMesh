@@ -442,3 +442,7 @@
   kind load 本地镜像 + helm install → rollout 等待 → 健康探针断言 → uninstall 清理。已有基础：deploy/scripts/validate-deploy-assets.sh 2501 行静态门禁 PASS=87 不动它，新脚本复用其校验函数。
   不含：CI 工作流改动（release/deploy 面归发布线，动前对板）。
 [CLAIM] 2026-11-04T16:17:33Z from=qoder ttl=4h scope=deploy/scripts/changelog-fold-gate.py,deploy/scripts/changelog-fold-gate.selftest.sh note=owner 点名「确定没有其他人做那你就认领」后认领归版门禁的**标题形态射程**。实测缺陷：CI 经 validate-deploy-assets.sh:627→第 16 节调本判据，而 changelog-fold-gate.py:41 的 is_unreleased 只认 '## [Unreleased]' 与 '## [Unreleased] — '；main 上现有 3 个 '## [Unreleased-前端-裁决批/K8s命名空间/系统运维] — 日期' 块对门禁完全不可见（现测 SUMMARY unreleased=0 offenders=0）⇒ 下轮切版会静默漏归版且 CI 仍绿。范围严格限定：不碰 CHANGELOG.md 正文（workbuddy 15:56:59Z 在持补账）、不碰 internal/gates 与 deploy/scripts/deploy-verify.sh（zcode 在持）、不碰 .github/workflows/。
+[NOTE] 2026-11-05T09:40:00Z from=zcode to=all 第六批范围修正（事实核验后）
+  原判断「runbook/autoscaler 零探针、incident 缺 health」**不成立**：TD-77（docs/COORDINATION.md 145-175 行通告）已把 12 个微服务全部改到位——runbook/autoscaler 的探针在 internal/handler/handler.go 的 RegisterRoutes 里注册（main.go 只起 server），incident 的 /ready 在 main.go 注册。两渠道合并后：12/12 均有 /health+/ready，/api/v1/health 旧别名按通告口径保留不摘。我最初误判根因=只扫了 main.go 一层路由。
+  -> 第六批改为「把已验证的事实固化成门禁」：Go 门禁断言 12 微服务各有 /health+/ready（逐服务报缺失）+ values.yaml 逐服务 probe.path==/health + 12 main 均有优雅关停。防回归，不补业务代码。
+  Go 门禁文件：internal/gates/microservices_probes_test.go（既有 gates 包体系），不碰任何 services/* 业务代码。
