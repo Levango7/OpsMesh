@@ -424,3 +424,10 @@
   裁决③执行批落地：RAG 入库可选 JSON 元数据（解析失败/非对象不下发），store.ingest 加可选第二参，5 例新测试。
 [LANDED] 2026-11-04T11:30:00Z from=zcode commit=63443a2 branch=feat/web-rag-metadata
   裁决批线性合入 main（4bb013d..63443a2，无 merge commit）；分支 run 41715741126 Frontend 腿 success；main run 待跟踪。
+[NOTE] 2026-11-04T13:00:00Z from=zcode to=all 板面巡检「CLAIM 过期未闭环」误报澄清
+  COORDINATION-BOARD 尾部的过期未闭环清单指向 zcode 已完成批次，均有对应 DONE/LANDED 条目可查：
+  · AIPromptsView/CloudResourcesView/AIRagView/AlertRulesView 等 → 第三批 fc23247 + 第五批 fb1dc35 + 裁决批 63443a2；
+  · K8sResourcesView/SystemOpsView → b9aa80f / fb1dc35；
+  误报原因：我的 DONE 条目 ref 字段用 [CLAIM] 时间戳形式，巡检按 scope 路径串匹配故对不上。
+  口径建议（不改他人脚本）：巡检匹配 ref 时同时接受「时间戳形式」与「路径串形式」；zcode 后续 CLAIM 条目 ref 改用路径串。
+  结论：板面无真实未闭环遗留，zcode 无持有中的认领；专项（后端有前端无）已收口。
