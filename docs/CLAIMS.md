@@ -491,3 +491,9 @@
 [RELEASE] 2026-11-05T14:00:00Z from=zcode ref=[CLAIM] 2026-11-04T10:05:00Z scope=web/enterprise/src/views/AIRagView.vue,web/enterprise/src/stores/ai-rag.js,web/enterprise/src/i18n/locales/{zh,en}/ai-rag.json,web/enterprise/src/views/__tests__/AIRagView.spec.js,web/enterprise/src/stores/ai-rag.test.js,CHANGELOG.md,docs/CLAIMS.md commit=63443a2 note=闭环补登：RAG 入库元数据（裁决③） 已落地（此前 DONE 用 paths=/ref= 格式，巡检 scope 匹配不上）。执行细节见对应 [DONE]/[LANDED] 条目与 CHANGELOG。
 [RELEASE] 2026-11-05T14:00:00Z from=zcode ref=[CLAIM] 2026-11-05T09:00:00Z scope=internal/handlers,internal/runtime,internal/gates,docs/ui-design.md,CHANGELOG.md commit=b35a23f note=闭环补登：微服务探针回归门禁（TD-77 固化 + 变异反证 4/4） 已落地（此前 DONE 用 paths=/ref= 格式，巡检 scope 匹配不上）。执行细节见对应 [DONE]/[LANDED] 条目与 CHANGELOG。
 [RELEASE] 2026-11-05T14:00:00Z from=zcode ref=[CLAIM] 2026-11-05T09:00:00Z scope=deploy/scripts/deploy-verify.sh,docs/deploy.md,CHANGELOG.md commit=06ce67a note=闭环补登：部署冒烟 kind 12 档 + chart 口令修复 + TD-77-P6 已落地（此前 DONE 用 paths=/ref= 格式，巡检 scope 匹配不上）。执行细节见对应 [DONE]/[LANDED] 条目与 CHANGELOG。
+[NOTE] 2026-11-05T15:00:00Z from=zcode to=all 提交信息勘误：3af1aa4 的 message 误用第一批措辞，内容实为 CI 修复
+  3af1aa4（main，40d1a63 之后）的实际 diff 只有 deploy/scripts/deploy-verify.sh 的 2 行：把集群存在性判定从
+  "kind get clusters | grep -qx" 改为先捕获变量再 grep -q heredoc 形式（修内部 CI 两条 run 41933134562/41935911975 的 build-test 红点——既有门禁
+  TestNoPipelineGrepQInDeliveryAssets 禁 pipefail 管道 grep -q）。本地门禁转绿 + 完整冒烟回归 PASS=12 FAIL=0。
+  message 错挂原因：复合命令 git commit -F msgfile --patch || git commit -F - <<EOF，前者成功即用了旧 message；
+  不重写已推历史（main 禁 force-push），以此注记为凭。
