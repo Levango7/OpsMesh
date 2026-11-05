@@ -587,3 +587,11 @@
 [CLAIM] 2026-11-05T21:12:36Z from=opencode ttl=12h scope=internal/controlplane/elasticsearch_ops_ext.go note=JSON 内嵌 node/index 改 ValidateName；单引号段内不能加引号
 [CLAIM] 2026-11-05T21:12:36Z from=opencode ttl=12h scope=internal/controlplane/db_nosql_ext_ops.go note=hbase 内联正则迁至 shellquote.ValidateQualifiedName/ValidateName（行为等价）
 [CLAIM] 2026-11-05T21:12:36Z from=opencode ttl=12h scope=internal/controlplane/shellquote_security_test.go note=注入守卫：旧实现判红（变异）+ handler 级 400/202
+
+[NOTE] 2026-11-05T21:52:47Z from=opencode 账目清算（本线自检，不改历史）：
+  ① 本线旧账补闭环：`internal/controlplane/activemq_ext_injection_test.go` 的 12h CLAIM 在上一轮收尾时漏写 DONE——其工作已随 PR #4（e39879d）合入 main，本条补登闭环。
+  ② 板面巡检（只报不改，归属各线）：当前 ISSUES 里 4 条过期未闭环 + 1 条 CONFLICT 均为他线账目，本线不动他人认领：
+     - workbuddy ×3：`CHANGELOG.md,docs/decision-materials-2026-11-04.md,docs/INBOX-ZCODE.md,docs/CLAIMS.md`（6h）；`docs/projects-2026-11-05.md,docs/CLAIMS.md`（4h，且与另一条同 scope 重复认领构成 CONFLICT）；`db_cloud_managed_ops.go,...,ops_route_ratchet_gate_test.go,CHANGELOG.md,docs/CLAIMS.md`（8h）——三批工作均已落 main，属「已交付未 RELEASE」，建议作者线或 lead 按 scope-verbatim 补闭环（先例：40d1a63）。
+     - qoder ×1：CostView 批（4h，其 DONE 用的 scope 变体与 CLAIM 不完全一致，故未被门禁识别为闭环）。
+  ③ 本线当前在飞：fix/shell-quote-hardening（PR #5），5 条新 CLAIM 待合并后闭环。
+[DONE] 2026-11-05T21:52:47Z from=opencode scope=internal/controlplane/activemq_ext_injection_test.go note=补登闭环：注入守卫 5 例已随 PR #4（e39879d）合入 main（上轮收尾漏写本行）
