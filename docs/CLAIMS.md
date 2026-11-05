@@ -581,3 +581,8 @@
 [DONE] 2026-11-06T10:00:00Z from=zcode ref=[CLAIM] 2026-11-05T16:00:00Z（TD-97 前端消费适配） paths=web/enterprise/src/views/AIChatView.vue,web/enterprise/src/stores/ai.js,web/enterprise/src/api/ai.js,web/enterprise/src/i18n/locales/{zh,en}/ops.json,CHANGELOG.md
   TD-97 消费侧闭环：预算超限错误 i18n 化（识别 budget exceeded 形态）、用量卡片 scope 徽标 + 平台全量切换（403 自动回退）、挂载拉用量。
   naked-keys 2/2、stores 737、api-usage 棘轮、eslint 全绿。TD-97 至此后端+前端双侧完整。
+[CLAIM] 2026-11-06T11:00:00Z from=zcode ttl=24h scope=web/enterprise/src/api/*.js,web/enterprise/src/views/*.vue,web/enterprise/src/stores/auth*.js,web/enterprise/src/router/index.js,web/enterprise/src/composables/*,web/enterprise/src/i18n/locales/{zh,en}/*.json,CHANGELOG.md
+  按钮级禁用（workbuddy 11-04 DONE 指派「前端按钮级禁用归 zcode」）：对前端实际调用、且落在后端 284 条未鉴权写路由台账
+  （internal/gates/ops_route_ratchet_gate_test.go）范围内的写操作按钮，加权限级禁用/隐藏（防误用层——后端未收口前
+  任何登录用户点按钮都能真执行）。做法：前端权限判定基建（复用 router requirePerm 的既有机制）→ api 写端点 ∩ 台账 →
+  视图按钮点逐一挂门。不碰 internal/（后端债归后端线）、不改台账数字。分批提交，批间独立。
