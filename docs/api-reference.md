@@ -47,6 +47,7 @@
 - [纳管 Bootstrap 端点](#纳管-bootstrap-端点)
 - [平台化 API（租户 / API Key / 插件市场 / 平台管理）](#平台化-api租户--api-key--插件市场--平台管理)
 - [计费 API](#计费-api)
+- [成本控制 API](#成本控制-api)
 - [网关 API](#网关-api)
 - [备份与灾备 API](#备份与灾备-api)
 - [合规 API](#合规-api)
@@ -3215,6 +3216,152 @@ Phase 6 计费：订阅计划（平台级）+ 订阅（按租户隔离）+ 账�
 - 计算失败：`500`，`{"error": "failed to calculate usage"}`
 
 ---
+
+## 成本控制 API
+
+AI Token 用量与预算：预算（日/月窗口，按租户时区切分）+ 越限告警 + 成本报表 + 模型路由。
+八条端点由 `internal/cost/handler.go` 的 `RegisterCostRoutes` 注册，权限点为 `cost:read`（六条读）
+与 `cost:write`（两条写：改预算、改路由规则）。`cost` 组在 operator 的只读集里，因此 operator 只到
+`cost:read`；`cost:write` 按最小权限留给 admin（是否下放属产品语义，未决）。
+
+**四条容易被误判的口径**：
+
+- **额度是进程内计数**：控制面重启即归零；多副本部署时每个副本各自计数，有效额度 ≈ 单副本额度 × 副本数。
+  跨重启/跨副本的持久化硬限**未实现**。执法发生在 AI 网关的补全入口（`internal/ai/gateway`）：入口判定越限
+  即拒（明确报错，不静默降级），出口按租户计量，语义缓存命中**不重复计量**。
+- **租户作用域以已验签上下文为准**：`tenantId`（查询串或请求体）仅在**未启用鉴权**时才生效；启用鉴权后改
+  参数既读不到、也改不动别家的额度与报表。
+- **窗口按租户自己的时区切**：日/月窗口按该租户 `timezone`（IANA 名，出厂 `UTC`）的自然日/自然月零点切，
+  不按服务器时区——否则异地租户每月会凭空损失数小时额度。
+- **改额度不清用量**：已发生的消耗是事实，提额不会顺带抹掉历史（否则可反复清零套利）。
+
+### GET /api/v1/cost/budget
+
+读当前租户的预算与窗口用量。
+
+- **认证**：需 `cost:read` 权限
+- **查询参数**：`tenantId`（可选，仅在未启用鉴权时生效）
+- **响应**：`200 OK`
+
+```json
+{
+  "tenantId": "t-a",
+  "dailyLimit": 100000,
+  "monthlyLimit": 1000000,
+  "usedToday": 1200,
+  "usedMonth": 34000,
+  "alertThreshold": 0.8,
+  "lastReset": "2026-11-05T00:00:00+08:00",
+  "timezone": "Asia/Shanghai"
+}
+```
+
+- **未登记的租户不返回 404**：返回出厂默认额度（日 `100000` / 月 `1000000` / 阈值 `0.8` / `UTC`），
+  用量从 0 起算。同一次消耗首次落到某租户时也会按这套默认值建档，不是无限额。
+- 读侧同样做窗口归一：跨过零点/月初后立刻读到追平后的用量，不必等下一次写入才「追平」。
+
+### POST /api/v1/cost/budget
+
+设置额度、告警阈值与窗口时区。
+
+- **认证**：需 `cost:write` 权限
+- **请求体**：`tenantId`（口径同上）、`daily`、`monthly`、`threshold`（0-1 小数，`0.8` = 80%）、
+  `timezone`（IANA 名；空串归一为 `UTC`）
+- **`daily` / `monthly` 传 0 = 不设该窗口上限**（既不拦截也不告警，不是「额度为 0」）
+- **响应**：`200 OK` `{"status": "updated"}`
+- **`timezone` 非法时在改额度之前就被拒绝**（`400`），不会出现「额度已改、窗口仍按旧时区切」的半应用。
+
+### GET /api/v1/cost/alerts
+
+本租户的越限告警历史。
+
+- **认证**：需 `cost:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "alerts": [
+    {"tenantId": "t-a", "type": "daily", "threshold": 0.8, "used": 81200, "limit": 100000, "timestamp": "2026-11-05T09:12:03Z"}
+  ],
+  "count": 1
+}
+```
+
+- `type` 为 `daily` 或 `monthly`，两个窗口各自独立判定（日额度先触发不会吞掉月度告警）。
+- 同一窗口内同一「类型:阈值」**只记一次**，不会每次写入都追加同样一条；窗口切换后重新计。
+
+### GET /api/v1/cost/report
+
+本租户的成本报表。
+
+- **认证**：需 `cost:read` 权限
+- **查询参数**：`since`（RFC3339；**非法即 `400`**，不会静默忽略过滤条件让调用方误读成全量）、
+  `format`（`markdown` 时直接回 `text/markdown` 正文）
+- **响应**：`200 OK`
+
+```json
+{
+  "totalCost": 1.2345,
+  "totalInputTokens": 120000,
+  "totalOutputTokens": 48000,
+  "byProvider": {"openai": 1.1},
+  "byModel": {"gpt-4o-mini": 1.1},
+  "byTenant": {"t-a": 1.2345},
+  "byTaskType": {"classify": 0.3},
+  "recordCount": 42
+}
+```
+
+- 报表按租户聚合，`byTenant` 在单租户查询里通常只有一项；跨租户汇总需平台级入口，不属于本端点。
+
+### GET /api/v1/cost/routes
+
+列出模型路由规则。
+
+- **认证**：需 `cost:read` 权限
+- **响应**：`200 OK`
+
+```json
+{
+  "rules": [
+    {"taskType": "classify", "tier": "small", "provider": "openai", "model": "gpt-4o-mini", "maxTokens": 2048}
+  ]
+}
+```
+
+- `tier` 取 `small` / `medium` / `large`；`taskType` 常见 `classify` / `extract` / `reason` / `chat` / `code`。
+- 规则是**全局**的（不分租户），因此读它也要显式权限，不能匿名。
+
+### POST /api/v1/cost/routes
+
+替换模型路由规则。
+
+- **认证**：需 `cost:write` 权限
+- **请求体**：`{"rules": [...]}`——**全量替换**，不是增量合并；漏传的条目会直接消失。
+- **响应**：`200 OK` `{"status": "updated"}`
+
+### POST /api/v1/cost/route
+
+查询「某个任务类型会走哪个模型」，不改任何状态。
+
+- **认证**：需 `cost:read` 权限
+- **请求体**：`{"taskType": "classify"}`
+- **响应**：`200 OK`，返回命中的规则。
+- **未知 `taskType` 不回 `null`，而是回落默认规则**：
+  `{"taskType": <所询>, "tier": "medium", "provider": "openai", "model": "gpt-4o-mini", "maxTokens": 2048}`。
+  调用方若要区分「命中规则」与「回落默认」，需自行与 `GET /api/v1/cost/routes` 比对。
+
+### POST /api/v1/cost/report/generate
+
+把调用方给的段落渲染成 markdown 报表。
+
+- **认证**：需 `cost:read` 权限
+- **请求体**：`title`（空则用 `OpsMesh Report`）、`sections`（每项含 `title` / `content`，可选 `table`
+  二维字符串数组与 `footer`）、`format`
+- **响应**：`format` 为空或 `markdown` → `200 OK` + `Content-Type: text/markdown`（正文即报表）；
+  其他 `format` → `200 OK` `{"markdown": "..."}`
+- **本端点不查任何用量数据**（纯渲染调用方给的内容）。要带真实成本数字的 markdown，用
+  `GET /api/v1/cost/report?format=markdown`。
 
 ## 网关 API
 
