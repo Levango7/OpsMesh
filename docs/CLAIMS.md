@@ -551,3 +551,23 @@
 [CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=internal/controlplane/cache_injection_test.go note=注入守卫 7 例
 [CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=scripts/authz-route-audit.py note=路由鉴权面可复算脚本
 [CLAIM] 2026-11-04T20:31:22Z from=opencode ttl=12h scope=docs/opsmesh-authz-audit-2026-11-04.md note=审计报告
+
+[NOTE] 2026-11-05T04:03:43Z from=opencode 收尾说明：本线四次 PR 迭代（e9414b4 → ca20e07 → c343ccd → 9966af5 → 5f2837e）期间，workbuddy/kilo/zcode 持续活跃（zcode 11-05 仍在动；qoder/workbuddy 11-04 也有 DONE）——本线自始未接管他线领地；internal/gates 归 zcode（11-05 09:00Z ttl=16h 活认领），刻意未进。本线全部工作经 origin/main 真源对拍：派发鉴权（kafka_ops.go / storage_fastdfs.go）、K8s 部署匿名洞（k8s_cluster_deploy.go POST→k8s:write / status→k8s:read）、shell 注入面（pkg/shellquote + activemq/cache 三文件收编）、全部守卫经 CI -race 真红-真绿验证。
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=internal/controlplane/kafka_ops.go note=dispatchKafkaTask 改调 subsystemAuthorize(w,r,task:write)；465 调用点/50 文件
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=internal/controlplane/storage_fastdfs.go note=dispatchFastDFSTask 同上；50 调用点/3 文件
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=internal/controlplane/dispatch_authz_test.go note=6 守卫：viewer 403 / operator 已授权 202 / admin 202 / 无身份 401 / FastDFS 同款 / 落库审计
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=internal/controlplane/k8s_cluster_deploy.go note=堵匿名 SSH 代理：POST→k8s:write、status→k8s:read；深拷快照根治 -race data race（updateStatus/updateNodeStatus 与 HTTP 序列化竞争）
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=internal/controlplane/k8s_cluster_deploy_authz_test.go note=6 守卫：匿名 202/403 矩阵 + 别名守卫（pointer/NodeStatus map）；窄变异仍判红
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=pkg/shellquote/quote.go note=shell 转义（' -> '\'' 语法）+ Host/Ident/Port/Path 白名单；空串返回 ''（合法零长 shell 词）
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=pkg/shellquote/quote_test.go note=真 shell 求值断言（Windows 探 git-bash/WSL 而非 skip）；Quote/白名单共 12 例
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=internal/controlplane/activemq_ext_ops.go note=8 处注入收编（master/slave/brokers/user/role/version 全改为白名单或 Quote）
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=internal/controlplane/activemq_ops.go note=deploy version 白名单（wget URL + ln 路径）
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=internal/controlplane/cache_ops.go note=注入收编：validateNodeList / isRedisMemory / isRedisEvictionPolicy / isRedisACLRules；deploy/cluster/sentinel/tuning/acl 全 handler
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=internal/controlplane/cache_injection_test.go note=7 守卫（version/mode/nodes/master/host/user/rules/maxMemory 载荷全拒）
+[DONE] 2026-11-05T04:03:43Z from=opencode scope=scripts/authz-route-audit.py note=可复算的路由鉴权面审计（527 条路由分类；--json / --fail-on gate 用途）
+[DONE] %s from=opencode scope=docs/opsmesh-authz-audit-2026-11-04.md note=审计报告（PoC/223 路径明细/a554697 替代说明）
+
+[NOTE] 2026-11-05T04:04:01Z from=opencode 口径更正：上一行 [DONE] 少写了时间戳（脚本漏插值），本条不改历史、只在末尾补齐。
+[DONE] 2026-11-05T04:04:01Z from=opencode scope=docs/opsmesh-authz-audit-2026-11-04.md note=审计报告（PoC 复现 / 223 条路径明细 / a554697 已完成 k8s 假成功故本线不再重复施工）
+
+[NOTE] 2026-11-05T17:01:11Z from=opencode 板面清洁（本线自检）：本线此前解 rebase 冲突时有两行非法的残片混入 CLAIMS.md（形如 ` ca20e07 (fix(controlplane): …)`——是 marker 行的截断残留，非合法 [KIND] 行）。这两行不承载任何账目信息（内容为已存在于 git 的提交号与标题），且会干扰日志可读性。因是**本线自己引入的损坏**而非他人的历史记录，本轮 rebase 时予以清除；除此两行外未改任何历史行。教训：解冲突脚本对 marker 行必须整行跳过（不能按字符偏移切），否则会把 marker 尾部文本残留进正文。
