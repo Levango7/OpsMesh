@@ -87,6 +87,25 @@ func NewK8sClusterDeployer() *K8sClusterDeployer {
 }
 
 // Deploy 启动集群部署 (异步)
+// snapshotDeployStatus 返回 K8sClusterDeployStatus 的深拷贝（NodeStatus map 一并复制）。
+//
+// 为什么必须有它：updateStatus 在后台 goroutine 里就地改写 map 中的结构体，而
+// Deploy/GetStatus/ListDeployments 都要把状态交给 HTTP 层序列化。交出内部指针
+// 会让响应编码与后台写入构成 data race——CI 的 -race 实测抓到
+// （handleK8sClusterDeploy 读 status.Phase ↔ updateStatus 写同一字段）。
+// 判据与写法同 internal/k8slifecycle 的 snapshotUpgradeStatus：值拷贝不够，
+// NodeStatus 是 map，浅拷贝仍共享底层。
+func snapshotDeployStatus(s *K8sClusterDeployStatus) *K8sClusterDeployStatus {
+	cp := *s
+	if s.NodeStatus != nil {
+		cp.NodeStatus = make(map[string]string, len(s.NodeStatus))
+		for k, v := range s.NodeStatus {
+			cp.NodeStatus[k] = v
+		}
+	}
+	return &cp
+}
+
 func (d *K8sClusterDeployer) Deploy(ctx context.Context, spec K8sClusterDeploySpec) (*K8sClusterDeployStatus, error) {
 	deployID := spec.ClusterName + "-" + time.Now().Format("20060102150405")
 
@@ -103,6 +122,10 @@ func (d *K8sClusterDeployer) Deploy(ctx context.Context, spec K8sClusterDeploySp
 	d.deployments[deployID] = status
 	d.mu.Unlock()
 
+	// 快照必须在 goroutine 启动前取：返回内部指针会让 HTTP 响应序列化与
+	// executeDeploy 的 updateStatus 构成 data race（CI -race 实测判红）。
+	resp := snapshotDeployStatus(status)
+
 	go func() {
 		deployCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancel()
@@ -114,7 +137,7 @@ func (d *K8sClusterDeployer) Deploy(ctx context.Context, spec K8sClusterDeploySp
 		}
 	}()
 
-	return status, nil
+	return resp, nil
 }
 
 func (d *K8sClusterDeployer) executeDeploy(ctx context.Context, deployID string, spec K8sClusterDeploySpec) error {
@@ -821,8 +844,8 @@ func (d *K8sClusterDeployer) GetStatus(deployID string) (*K8sClusterDeployStatus
 	if !ok {
 		return nil, false
 	}
-	cp := *s
-	return &cp, true
+	// 深拷而非浅拷：NodeStatus map 共享底层时，调用方遍历仍与后台写入竞态。
+	return snapshotDeployStatus(s), true
 }
 
 func (d *K8sClusterDeployer) ListDeployments() []*K8sClusterDeployStatus {
@@ -830,8 +853,7 @@ func (d *K8sClusterDeployer) ListDeployments() []*K8sClusterDeployStatus {
 	defer d.mu.RUnlock()
 	out := make([]*K8sClusterDeployStatus, 0, len(d.deployments))
 	for _, s := range d.deployments {
-		cp := *s
-		out = append(out, &cp)
+		out = append(out, snapshotDeployStatus(s))
 	}
 	return out
 }
@@ -845,6 +867,18 @@ func (d *K8sClusterDeployer) ListDeployments() []*K8sClusterDeployStatus {
 func (s *Server) handleK8sClusterDeploy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	// 鉴权：本端点必须具备 k8s:write 权限（此前完全无鉴权）。
+	//
+	// 严重性说明（docs/opsmesh-authz-audit-2026-11-04.md 附带发现）：body 里的
+	// NodeSpec 携带 Host/Port/User/SSHKey/Password，executeDeploy → precheckNodes
+	// 会用 sshPool.Get(node.Host, port, user, node.SSHKey, node.Password) 去连这些
+	// 主机并执行 kubeadm 安装。一个匿名可调端点等于把控制面变成「用调用方给的
+	// 凭据 SSH 到任意主机跑安装命令」的代理，故权限点取写面的 k8s:write，与
+	// k8s_deployments.go / k8s_workloads.go 等同域写操作一致。
+	if _, ok := s.requireProd(w, r, "k8s:write"); !ok {
 		return
 	}
 
@@ -882,6 +916,11 @@ func (s *Server) handleK8sClusterDeploy(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleK8sClusterDeployStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	// 鉴权：deployID 可枚举，且状态体含各节点 NameStatus ⇒ 需 k8s:read。
+	if _, ok := s.requireProd(w, r, "k8s:read"); !ok {
 		return
 	}
 
