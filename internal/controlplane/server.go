@@ -319,6 +319,54 @@ func (s *Server) shutdownTLSReloader() {
 	}
 }
 
+// TD-97 ① 共享预算件：BudgetManager 单实例 + 四个 Gateway 全挂同一份。
+//
+// 为什么必须共享：本结构体 Literal 里历史上建了 4 个独立 Gateway（AI handler /
+// agent orchestrator / agent handler / knowledge handler），各自持一份预算就是
+// 四个各算各的账——租户打满 A 实例的额度，B 实例照样放行。计量与执法的口径
+// 天然要求进程内唯一计数器，故在此提出来一次注入。
+//
+// 进程内语义（写进契约的口子）：重启归零、多副本各自计数（副本数×额度）。
+// 持久化硬限是 v0.19 的 B 方案，本批不做。
+var (
+	sharedBudgets     *cost.BudgetManager
+	sharedBudgetsOnce sync.Once
+)
+
+// sharedBudgetManager 返回进程内唯一的 BudgetManager（惰性单例）。
+func sharedBudgetManager() *cost.BudgetManager {
+	sharedBudgetsOnce.Do(func() {
+		sharedBudgets = cost.NewBudgetManager()
+	})
+	return sharedBudgets
+}
+
+// newSharedCostHandler 构造挂在共享预算上的 cost handler（只读展示面同时变真）。
+func newSharedCostHandler() *cost.CostHandler {
+	return cost.NewCostHandler(sharedBudgetManager(), cost.NewModelRouter(), cost.NewCostTracker())
+}
+
+// budgetedGateway 建一个挂了共享预算的 Gateway。
+func budgetedGateway() *aigateway.Gateway {
+	g := aigateway.NewGateway()
+	g.SetBudgets(sharedBudgetManager())
+	return g
+}
+
+func newBudgetedAIGatewayHandler() *aigateway.AIGatewayHandler {
+	return aigateway.NewAIGatewayHandler(budgetedGateway(), aigateway.NewInMemoryVectorStore(), 5)
+}
+
+func newBudgetedAgentHandler() *agent.AgentHandler {
+	// agent 包有两处 Gateway（orchestrator + handler 直连），都挂共享预算。
+	o := agent.NewOrchestrator(budgetedGateway(), agent.DefaultToolRegistry(), agent.NewMemoryManager())
+	return agent.NewAgentHandler(o, budgetedGateway(), agent.NewMemoryManager())
+}
+
+func newBudgetedKnowledgeHandler() *knowledge.KnowledgeHandler {
+	return knowledge.NewKnowledgeHandler(knowledge.NewInMemoryKnowledgeStore(), budgetedGateway())
+}
+
 func NewServer(cfg *config.Config) (*Server, error) {
 	// Kafka brokers/topic 经参数传入事件总线（避免 os.Setenv 并发不安全）。
 	bus := events.New(cfg.EventBus, cfg.KafkaBrokers, cfg.KafkaTopic)
@@ -345,33 +393,29 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		cfg:              cfg,
-		store:            st,
-		httpPort:         cfg.HTTPPort,
-		grpcPort:         cfg.GRPCPort,
-		metricsPort:      cfg.MetricsPort,
-		metricsCounts:    metricscache.AppCountsCache{TTL: cfg.MetricsCacheTTL},
-		requireAuth:      cfg.RequireAuth,
-		tlsCert:          cfg.TLSCert,
-		tlsKey:           cfg.TLSKey,
-		clientCA:         cfg.ClientCA,
-		shutdownWait:     cfg.ShutdownTimeout,
-		bus:              bus,
-		metrics:          metrics.New(),
-		cmdbHandler:      factory.NewCMDBHandler(st),
-		logHandler:       factory.NewLogHandler(st, cfg),
-		deployHandler:    deployHandler,
-		orchHandler:      orchHandler,
-		aiopsHandler:     aiops.NewHandler(aiops.NewEngine(cfg, st)),
-		aiopsEngine:      aiops.NewEngine(cfg, st),
-		aiGatewayHandler: aigateway.NewAIGatewayHandler(aigateway.NewGateway(), aigateway.NewInMemoryVectorStore(), 5),
-		agentHandler: agent.NewAgentHandler(
-			agent.NewOrchestrator(aigateway.NewGateway(), agent.DefaultToolRegistry(), agent.NewMemoryManager()),
-			aigateway.NewGateway(),
-			agent.NewMemoryManager(),
-		),
-		knowledgeHandler:     knowledge.NewKnowledgeHandler(knowledge.NewInMemoryKnowledgeStore(), aigateway.NewGateway()),
-		costHandler:          cost.NewCostHandler(cost.NewBudgetManager(), cost.NewModelRouter(), cost.NewCostTracker()),
+		cfg:                  cfg,
+		store:                st,
+		httpPort:             cfg.HTTPPort,
+		grpcPort:             cfg.GRPCPort,
+		metricsPort:          cfg.MetricsPort,
+		metricsCounts:        metricscache.AppCountsCache{TTL: cfg.MetricsCacheTTL},
+		requireAuth:          cfg.RequireAuth,
+		tlsCert:              cfg.TLSCert,
+		tlsKey:               cfg.TLSKey,
+		clientCA:             cfg.ClientCA,
+		shutdownWait:         cfg.ShutdownTimeout,
+		bus:                  bus,
+		metrics:              metrics.New(),
+		cmdbHandler:          factory.NewCMDBHandler(st),
+		logHandler:           factory.NewLogHandler(st, cfg),
+		deployHandler:        deployHandler,
+		orchHandler:          orchHandler,
+		aiopsHandler:         aiops.NewHandler(aiops.NewEngine(cfg, st)),
+		aiopsEngine:          aiops.NewEngine(cfg, st),
+		costHandler:          newSharedCostHandler(),
+		aiGatewayHandler:     newBudgetedAIGatewayHandler(),
+		agentHandler:         newBudgetedAgentHandler(),
+		knowledgeHandler:     newBudgetedKnowledgeHandler(),
 		k8sLifecycleHandler:  k8slifecycle.NewK8sLifecycleHandler(),
 		cloudProviderFactory: cloudprovider.NewAdapterFactory(),
 		eventSubs:            make(map[chan SSEEvent]struct{}), // SSE 订阅者集合

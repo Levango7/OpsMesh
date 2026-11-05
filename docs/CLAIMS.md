@@ -513,3 +513,7 @@
 [DONE] 2026-11-05T17:30:00Z from=zcode ref=[CLAIM] 2026-11-05T16:00:00Z（TD-97 ②） paths=internal/ai/gateway/rag.go,internal/ai/gateway/prompt.go,internal/knowledge/retrieval.go,internal/knowledge/handler.go,internal/ai/gateway/handler.go,internal/authctx/authctx.go,internal/ai/gateway/rag_tenant_test.go,internal/knowledge/retrieval_tenant_test.go,CHANGELOG.md
   TD-97 ② 落地：三共享存储租户隔离键（tenant+\x1f+id）+ authctx ctx 管道 + handler 13 处 authorize 点接线。空租户归 default（auth_users.go 先例）。新契约测试 2 例全绿；ai/gateway、knowledge、controlplane 全量回归绿。
   后续：① 预算真执法（同一 ctx 管道）→ ③④ 平台视图绑 GatewaySecret 必配。
+[DONE] 2026-11-05T18:30:00Z from=zcode ref=[CLAIM] 2026-11-05T16:00:00Z（TD-97 ①） paths=internal/ai/gateway/gateway.go,internal/ai/gateway/budget_enforce_test.go,internal/controlplane/server.go,CHANGELOG.md
+  预算真执法（A 方案）落地：Complete 入口 IsOverBudget 拦截 + 出口 RecordUsage 按租户；共享单例 BudgetManager 注入 4 个 Gateway；
+  无租户 ctx 放行记账 default（拍板口径）；进程内口径（重启归零/多副本×额度）写进 Complete 契约注释；B（持久化硬限）排 v0.19。
+  5 例行为测试；go test ./internal/... 全绿。TD-97 余 ③④（平台视图绑 GatewaySecret 必配）按序。

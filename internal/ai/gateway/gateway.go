@@ -7,6 +7,10 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/cost"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // Role 消息角色
@@ -114,7 +118,11 @@ type Gateway struct {
 	breakers   map[string]*CircuitBreaker
 	rateLimits map[string]*RateLimiter
 	tokenUsage *TokenUsageTracker
-	cache      *SemanticCache
+	// budgets 是进程内预算管理器（TD-97 ①）：nil=不执法（独立使用/单测路径）。
+	// 必须由控制面把同一个实例注入所有 Gateway 实例——server.go 建了 4 个 Gateway，
+	// 各自持一份会导致每个实例只看自己的账，执法出现口子。
+	budgets BudgetEnforcer
+	cache   *SemanticCache
 }
 
 func NewGateway() *Gateway {
@@ -126,6 +134,28 @@ func NewGateway() *Gateway {
 		tokenUsage: NewTokenUsageTracker(),
 		cache:      NewSemanticCache(1000),
 	}
+}
+
+// BudgetEnforcer 是预算执法/计量面（TD-97 ①）。用接口而非具体类型，
+// 便于单测替身与将来换持久化实现（v0.19 的 B 方案）不惊动 Gateway。
+type BudgetEnforcer interface {
+	IsOverBudget(tenantID string) bool
+	RecordUsage(tenantID string, tokens int) (bool, []cost.BudgetAlert)
+}
+
+// SetBudgets 注入共享预算管理器；nil 表示不执法（默认）。
+func (g *Gateway) SetBudgets(b BudgetEnforcer) {
+	g.budgets = b
+}
+
+// budgetTenant 取本次请求的记账租户：ctx 里注入了身份就用它，否则归 DefaultTenantID
+// （单机/开发/内部 agent 路径无租户 ctx——按拍板口径：放行但记账到 default，
+// 不锁死无网关形态；该口子写进 API/UI 契约）。
+func budgetTenant(ctx context.Context) string {
+	if t := authctx.FromContext(ctx).TenantID; t != "" {
+		return t
+	}
+	return store.DefaultTenantID
 }
 
 // RegisterProvider 注册 LLM 提供商
@@ -146,6 +176,19 @@ func (g *Gateway) SetRoutes(routes []ModelRoute) {
 }
 
 // Complete 执行 LLM 补全（带路由/熔断/限流/缓存/计费）
+//
+// 预算契约（TD-97 ①，2026-11-05 接线；owner 拍板 A 方案·进程内）：
+//   - 入口按 ctx 租户做 IsOverBudget 判定，越限即拒（明确错误，不静默降级）；
+//   - 出口按 ctx 租户 RecordUsage（prompt+completion），缓存命中不重复计量；
+//   - 无租户 ctx（单机/内部 agent 路径）**放行但记账到 store.DefaultTenantID**
+//     ——不锁死无网关形态，这是已知口子；
+//   - SetBudgets(nil) 时完全不执法（独立使用/单测的向后兼容路径）。
+//
+// **进程内口径（写进 API/UI 契约，勿当持久化承诺）**：计数器在进程内存，
+// 重启归零、多副本各自计数（有效额度 ≈ 单副本额度 × 副本数）。要硬限，
+// 走 v0.19 的持久化方案（B）：新增用量表+启动加载+DB 原子 upsert。
+// 控制面 NewServer 把同一个 BudgetManager 注入全部 4 个 Gateway 实例
+// （server.go 的 budgetedGateway()），否则各算各的账、执法出现口子。
 func (g *Gateway) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	// 1. 语义缓存检查
 	if cached := g.cache.Get(req); cached != nil {
@@ -158,6 +201,12 @@ func (g *Gateway) Complete(ctx context.Context, req CompletionRequest) (*Complet
 		return nil, err
 	}
 	req.Model = model
+
+	// 2.5 预算执法（TD-97 ①）：越限即拒，明确错误而非静默降级。
+	// 放在路由/限流之后、真打钱之前——路由失败不该消耗预算判定。
+	if g.budgets != nil && g.budgets.IsOverBudget(budgetTenant(ctx)) {
+		return nil, fmt.Errorf("budget exceeded for tenant %s (daily/monthly token limit reached)", budgetTenant(ctx))
+	}
 
 	// 3. 限流检查
 	if err := g.rateLimits[provider].Wait(ctx); err != nil {
@@ -177,8 +226,14 @@ func (g *Gateway) Complete(ctx context.Context, req CompletionRequest) (*Complet
 	}
 	g.breakers[provider].RecordSuccess()
 
-	// 6. 记录 Token 用量
+	// 6. 记录 Token 用量（网关级）+ 租户级预算计量（TD-97 ①）。
+	// 缓存命中在步骤 1 已返回、不重复计量；此处是真打了钱的路径。
 	g.tokenUsage.Record(provider, model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	if g.budgets != nil {
+		tenant := budgetTenant(ctx)
+		// 本次可能正是把额度打满的那一次：仍放行（钱已花），ok=false 只影响下一次调用。
+		_, _ = g.budgets.RecordUsage(tenant, resp.Usage.PromptTokens+resp.Usage.CompletionTokens)
+	}
 
 	// 7. 缓存结果
 	g.cache.Set(req, resp)

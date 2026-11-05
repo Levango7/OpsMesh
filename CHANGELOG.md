@@ -71,6 +71,15 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-AI预算执法] — 2026-11-05（TD-97 ①：预算从只读展示变为真执法·A 方案）
+
+- **`internal/ai/gateway/gateway.go`**：`Complete` 入口（路由后、限流前）按 ctx 租户 `IsOverBudget` 判定，越限即拒——明确错误、不静默降级，且钱没花（provider 未被调用）；出口按租户 `RecordUsage(prompt+completion)`，语义缓存命中不重复计量。此前 `RecordUsage`/`IsOverBudget` 在生产代码零调用方（TD-97 ① 原始状态）。
+- **`BudgetEnforcer` 接口 + `SetBudgets` 注入**：`nil`=不执法（独立使用/单测向后兼容路径，与 handler 的 Authorize 回调同一模式）；编译期断言 `*cost.BudgetManager` 满足接口。
+- **`internal/controlplane/server.go`**：BudgetManager 提为**进程内共享单例**，四个 Gateway 实例（AI handler / agent orchestrator / agent handler / knowledge handler）全部挂同一份——此前四实例各自为政，租户打满一个实例的额度其他实例照样放行。
+- **无租户 ctx 口径（owner 拍板）**：单机/内部 agent 路径无租户身份时**放行但记账到 `default`**——不锁死无网关部署形态；该口子写进 `Complete` 头部的契约注释。
+- **进程内口径写进契约**（A 方案的前提）：重启归零、多副本各自计数（有效额度 ≈ 单副本额度 × 副本数）。持久化硬限（B：用量表+启动加载+DB 原子 upsert）排 v0.19。
+- **测试**：`budget_enforce_test.go` 5 例——越限先拦且不花钱、按租户各自计量、无租户记账 default 且与 default 租户 ctx 同空间、缓存命中不双计、nil 关闭执法。`go test ./internal/...` 全绿、gofmt/vet 干净。
+
 ## [Unreleased-AI租户隔离] — 2026-11-05（TD-97 ②：RAG/提示词/知识库三共享存储租户化）
 
 - **`internal/ai/gateway/rag.go`**：`InMemoryVectorStore` 的 docs 键从裸 ID 改为租户隔离键（`tenant + \x1f + id`）——Upsert/Search/Delete/Count 全部按租户收窄，出口还原裸 ID。此前 A 租户写入的文档会出现在 B 租户的检索结果里（跨租户数据泄露）。

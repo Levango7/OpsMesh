@@ -14,7 +14,6 @@ import (
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
-
 // tenantSep / tenantKey / tenantPrefix / bareID：TD-97 ② 租户隔离键
 // （与 internal/ai/gateway 同语义——knowledge 的 InMemory store 也曾全局单份）。
 const tenantSep = "\x1f"
