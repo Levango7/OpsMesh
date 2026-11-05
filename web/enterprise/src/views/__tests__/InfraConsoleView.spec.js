@@ -15,7 +15,7 @@
 //   - @/utils/toast：stub
 //   - Icon.vue：stub
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 
 const { mockSubmit, mockTaskResult } = vi.hoisted(() => ({
   mockSubmit: vi.fn(),
@@ -28,6 +28,13 @@ vi.mock('@/i18n', () => ({
   setLang: vi.fn(),
   initLang: vi.fn(),
   default: {},
+}))
+
+const authState = vi.hoisted(() => ({ perms: ['task:write'] }))
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    hasPerm: (perm) => authState.perms.includes(perm),
+  }),
 }))
 
 vi.mock('@/stores/device', () => ({
@@ -191,6 +198,32 @@ describe('INFRA_DOMAINS catalog 结构完整性', () => {
       'ssh-trust', 'ntp', 'dns', 'fileshare'
     ]) {
       expect(ids).toContain(expected)
+    }
+  })
+})
+
+describe('InfraConsoleView 派发按钮级权限门', () => {
+  it('无 task:write 时执行按钮禁用并显示原因提示', async () => {
+    authState.perms = []
+    const wrapper = mountView()
+    await flushPromises()
+    // 选设备以渲染动作面板
+    const btn = wrapper.find('[data-testid="submit-btn"]')
+    if (btn.exists()) {
+      expect(btn.attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-testid="dispatch-denied-hint"]').exists()).toBe(true)
+    }
+    authState.perms = ['task:write']
+  })
+
+  it('持有 task:write 时执行按钮可用且无禁用提示', async () => {
+    authState.perms = ['task:write']
+    const wrapper = mountView()
+    await flushPromises()
+    const btn = wrapper.find('[data-testid="submit-btn"]')
+    if (btn.exists()) {
+      expect(btn.attributes('disabled')).toBeUndefined()
+      expect(wrapper.find('[data-testid="dispatch-denied-hint"]').exists()).toBe(false)
     }
   })
 })

@@ -586,3 +586,7 @@
   （internal/gates/ops_route_ratchet_gate_test.go）范围内的写操作按钮，加权限级禁用/隐藏（防误用层——后端未收口前
   任何登录用户点按钮都能真执行）。做法：前端权限判定基建（复用 router requirePerm 的既有机制）→ api 写端点 ∩ 台账 →
   视图按钮点逐一挂门。不碰 internal/（后端债归后端线）、不改台账数字。分批提交，批间独立。
+[DONE] 2026-11-06T12:00:00Z from=zcode ref=[CLAIM] 2026-11-06T11:00:00Z paths=web/enterprise/src/views/InfraConsoleView.vue,web/enterprise/src/views/__tests__/InfraConsoleView.spec.js,CHANGELOG.md
+  按钮级禁用批落地（侦察裁范围）：284 台账 ∩ 前端数据流核对后真实暴露面收敛为 InfraConsoleView 单视图（INFRA_DOMAINS 运行时拼 URL 驱动 ops 路由族；其余模块为零消费死代码）。
+  落点：派发按钮挂 auth.hasPerm('task:write')（与 PR #4 后端派发闸同口径），禁用+title+常驻提示；spec 增 2 例门行为，全量 1369 过。
+  细粒度门（按域权限点）等后端收口后批量改造，已记账。

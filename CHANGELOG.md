@@ -71,6 +71,18 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-按钮级禁用] — 2026-11-06（InfraConsole 派发按钮挂 task:write 权限门——数据流侦察结论：284 条台账路由的前端暴露面收敛为单视图）
+
+> workbuddy 11-04 DONE 指派「前端按钮级禁用归 zcode」的落地。侦察结论值得留档，因为它重裁了批的范围。
+
+- **侦察发现（本批方法论）**：284 条未鉴权写路由（internal/gates/ops_route_ratchet_gate_test.go 逐文件台账）与前端写端点（238 条 / 59 个 api 模块）逐条交叉比对后：
+  - P1-A 的 17 条：前端无调用方（workbuddy 已验，纯后端 API 面）；
+  - ops-suite / cache-gpu / search / graph-domestic 等 api 模块的台账路由命中是**零消费死代码**（无任何视图/store import）；
+  - 真正的前端暴露面是 **InfraConsoleView 一处**——它经 `INFRA_DOMAINS` 数据驱动目录在**运行时拼 URL**（`action.path(payload)` → getJSON/postJSON/deleteJSONBody），覆盖 ops 路由族大头。静态 grep 会同时漏（路径运行时构造）与误（目录数据里的路径字面量），故用「模块 → 导出函数 → 视图消费」三级数据流核对。
+- **落点**：`InfraConsoleView.vue` 的派发按钮加 `auth.hasPerm('task:write')` 门（基建是现成的 `useAuthStore().hasPerm`，router 守卫同源）——无权限时按钮禁用 + title 明示 + 表单内常驻提示。与后端 PR #4 的派发闸（515 调用点 subsystemAuthorize(task:write)）同口径：**这是防误用层**，按钮禁用让 403 显式化；防直连仍靠后端收口（284 条是后端债，棘轮台账不动）。
+- **测试**：`InfraConsoleView.spec.js` 增 2 例门行为（无权限禁用+提示 / 有权限可用无提示），mock 改造为可切换 perms；原 10 例不回归。全量 vitest 72 文件 / 1369 过。
+- 未做（如实记账）：单路由级细粒度门（如按 button↔具体路由的权限映射）——后端这些路由本身没有声明权限点（这是 284 的含义），前端无从得知，只有等后端按域收口后按域细化；届时每个域一个权限点，批量改造此视图即可。
+
 ## [Unreleased-AI前端消费] — 2026-11-06（TD-97 前端消费适配：预算超限 UX + 用量口径徽标 + 平台全量入口）
 
 > TD-97 后端三批（② 7e03cfb / ① a1f6e61 / ③④ a7231fe）的前端消费侧闭环，本批补齐。

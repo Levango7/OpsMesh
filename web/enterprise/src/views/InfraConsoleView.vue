@@ -115,9 +115,16 @@
             </div>
 
             <div class="btnbar">
-              <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="submit-btn">
+              <Button
+                variant="primary" size="md" native-type="submit"
+                :disabled="submitting || !canDispatch" data-testid="submit-btn"
+                :title="canDispatch ? '' : L('需要 task:write 权限（当前角色不可派发运维动作）', 'Requires task:write (current role cannot dispatch ops actions)')"
+              >
                 {{ submitting ? $t('common.loading') : L('执行', 'Execute') }}
               </Button>
+              <p v-if="!canDispatch" class="muted" data-testid="dispatch-denied-hint">
+                {{ L('当前角色无 task:write 权限，运维动作派发已禁用。', 'task:write permission missing — ops action dispatch is disabled for this role.') }}
+              </p>
               <Button variant="ghost" size="md" native-type="button" @click="resetResult">{{ L('清空结果', 'Clear result') }}</Button>
             </div>
           </form>
@@ -165,12 +172,18 @@ import { currentLang } from '@/i18n'
 import { toast } from '@/utils/toast'
 import Icon from '@/components/Icon.vue'
 import { INFRA_DOMAINS, submitInfraAction, getInfraTaskResult } from '@/api/infra-ops'
+import { useAuthStore } from '@/stores/auth'
 import Button from "@/components/ui/Button.vue"
 
 // 本地双语选择器（catalog 内嵌 {zh,en}，不依赖 i18n 域文件）。
 const L = (zh, en) => (currentLang.value === 'en' ? en : zh)
 
 const deviceStore = useDeviceStore()
+// TD-97 后端派发闸同口径（PR #4：515 派发调用点 subsystemAuthorize(task:write)）：
+// 本视图经 INFRA_DOMAINS 运行时拼 URL 直连后端 ops 路由族 ⇒ 无 task:write 不给执行。
+// 这是防误用层（后端收口前 viewer/operator 点了也会 403，但按钮禁用让这一点显式化）。
+const auth = useAuthStore()
+const canDispatch = computed(() => auth.hasPerm('task:write'))
 // device store 的设备列表 getter 是 flat（segments 扁平化）。
 const devices = computed(() => deviceStore.flat || [])
 
