@@ -5,20 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
-// hbaseTableRe / hbaseCFRe 是 HBase 表名（可带 namespace）与列族名的字符白名单。
-// 这两个值会被拼进 `hbase shell <<< "create '<table>', '<cf>'"` 的单引号段：
-// 一个 `'` 即可跳出引号，外层双引号还会继续展开 `$()` 与反引号。
-// 与 kafka_ops.go 的 kafkaResourceRe 同族——同文件其余分支用 shellQuote，表名这里改校验。
-var (
-	hbaseTableRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}(:[A-Za-z0-9_.-]{1,128})?$`)
-	hbaseCFRe    = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
-)
+// HBase 表名（可带 namespace）与列族名走 pkg/shellquote 的统一白名单
+// （2026-11-05 迁移，opencode 按 workbuddy 2026-11-04T22:58Z NOTE 收编）。
+//
+// 为什么这两个值必须白名单而不是引号转义：它们进的是
+// `hbase shell <<< "create '<table>', '<cf>'"` 的**单引号段**，一个 `'` 即可
+// 跳出引号，外层双引号还会继续展开 `$()` 与反引号——那里没有合法转义空间。
+// 语义与旧内联正则逐字等价：每段 [A-Za-z0-9_.-]、1..128 字符、至多一层 `ns:`
+// 前缀（ValidateQualifiedName 拒绝三段及以上、拒绝空段），错误文案保持不变。
+const hbaseNameMaxSegLen = 128
 
 func firstNonEmptyNoSQL(vals ...string) string {
 	for _, v := range vals {
@@ -61,7 +62,8 @@ func (s *Server) handleDBHBase(w http.ResponseWriter, r *http.Request) {
 	if cf == "" {
 		cf = "cf"
 	}
-	if !hbaseTableRe.MatchString(table) || !hbaseCFRe.MatchString(cf) {
+	if shellquote.ValidateQualifiedName(table, hbaseNameMaxSegLen) != nil ||
+		shellquote.ValidateName(cf, hbaseNameMaxSegLen) != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported table or columnFamily name"})
 		return
 	}

@@ -75,17 +75,17 @@ func (s *Server) handleDBAurora(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch action {
 	case "status":
-		script = fmt.Sprintf("aws rds describe-db-clusters --db-cluster-identifier %s", id)
+		script = fmt.Sprintf("aws rds describe-db-clusters --db-cluster-identifier %s", shellQuote(id))
 	case "create":
 		script = "aws rds create-db-cluster --engine aurora-mysql"
 	case "delete":
-		script = fmt.Sprintf("aws rds delete-db-cluster --db-cluster-identifier %s --skip-final-snapshot", id)
+		script = fmt.Sprintf("aws rds delete-db-cluster --db-cluster-identifier %s --skip-final-snapshot", shellQuote(id))
 	case "backup":
 		script = "aws rds create-db-cluster-snapshot"
 	case "restore":
 		script = "aws rds restore-db-cluster-from-snapshot"
 	case "replica":
-		script = fmt.Sprintf("aws rds create-db-instance --db-cluster-identifier %s --db-instance-class db.r6g.large", id)
+		script = fmt.Sprintf("aws rds create-db-instance --db-cluster-identifier %s --db-instance-class db.r6g.large", shellQuote(id))
 	case "failover":
 		script = "aws rds failover-db-cluster"
 	default:
@@ -128,17 +128,17 @@ func (s *Server) handleDBCloudSQL(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch action {
 	case "status":
-		script = fmt.Sprintf("gcloud sql instances describe %s", name)
+		script = fmt.Sprintf("gcloud sql instances describe %s", shellQuote(name))
 	case "create":
-		script = fmt.Sprintf("gcloud sql instances create %s --database-version=MYSQL_8_0 --tier=db-f1-micro", name)
+		script = fmt.Sprintf("gcloud sql instances create %s --database-version=MYSQL_8_0 --tier=db-f1-micro", shellQuote(name))
 	case "delete":
-		script = fmt.Sprintf("gcloud sql instances delete %s", name)
+		script = fmt.Sprintf("gcloud sql instances delete %s", shellQuote(name))
 	case "backup":
-		script = fmt.Sprintf("gcloud sql backups create --instance=%s", name)
+		script = fmt.Sprintf("gcloud sql backups create --instance=%s", shellQuote(name))
 	case "restore":
-		script = fmt.Sprintf("gcloud sql backups restore %s --backup-instance=%s", backupID, name)
+		script = fmt.Sprintf("gcloud sql backups restore %s --backup-instance=%s", shellQuote(backupID), shellQuote(name))
 	case "replica":
-		script = fmt.Sprintf("gcloud sql instances create %s-replica --master-instance-name=%s", name, name)
+		script = fmt.Sprintf("gcloud sql instances create %s-replica --master-instance-name=%s", shellQuote(name), shellQuote(name))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return
@@ -199,17 +199,17 @@ func (s *Server) handleDBAzureSQL(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch action {
 	case "status":
-		script = fmt.Sprintf("az sql db show --name %s --server %s --resource-group %s", db, server, rg)
+		script = fmt.Sprintf("az sql db show --name %s --server %s --resource-group %s", shellQuote(db), shellQuote(server), shellQuote(rg))
 	case "create":
-		script = fmt.Sprintf("az sql db create --name %s --server %s --resource-group %s --edition Standard", db, server, rg)
+		script = fmt.Sprintf("az sql db create --name %s --server %s --resource-group %s --edition Standard", shellQuote(db), shellQuote(server), shellQuote(rg))
 	case "delete":
-		script = fmt.Sprintf("az sql db delete --name %s --server %s --resource-group %s --yes", db, server, rg)
+		script = fmt.Sprintf("az sql db delete --name %s --server %s --resource-group %s --yes", shellQuote(db), shellQuote(server), shellQuote(rg))
 	case "backup":
-		script = fmt.Sprintf("az sql db export --name %s --server %s --storage-key %s --storage-key-type StorageAccessKey --storage-uri %s", db, server, key, uri)
+		script = fmt.Sprintf("az sql db export --name %s --server %s --storage-key %s --storage-key-type StorageAccessKey --storage-uri %s", shellQuote(db), shellQuote(server), shellQuote(key), shellQuote(uri))
 	case "restore":
-		script = fmt.Sprintf("az sql db import --name %s --server %s --storage-key %s --storage-key-type StorageAccessKey --storage-uri %s", db, server, key, uri)
+		script = fmt.Sprintf("az sql db import --name %s --server %s --storage-key %s --storage-key-type StorageAccessKey --storage-uri %s", shellQuote(db), shellQuote(server), shellQuote(key), shellQuote(uri))
 	case "firewall":
-		script = fmt.Sprintf("az sql server firewall-rule create --name %s --server %s --resource-group %s --start-ip-address %s --end-ip-address %s", rule, server, rg, ip, ip)
+		script = fmt.Sprintf("az sql server firewall-rule create --name %s --server %s --resource-group %s --start-ip-address %s --end-ip-address %s", shellQuote(rule), shellQuote(server), shellQuote(rg), shellQuote(ip), shellQuote(ip))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return
@@ -256,11 +256,11 @@ func (s *Server) handleDBPolarDB(w http.ResponseWriter, r *http.Request) {
 	case "status":
 		script = "aliyun polardb DescribeDBClusters"
 	case "create":
-		script = fmt.Sprintf("aliyun polardb CreateDBCluster --DBType MySQL --DBVersion 8.0 --PayType Postpaid --DBNodeClass polar.mysql.x4.medium --ClusterNetworkType VPC --VPCId %s --VSwitchId %s", vpc, vswitch)
+		script = fmt.Sprintf("aliyun polardb CreateDBCluster --DBType MySQL --DBVersion 8.0 --PayType Postpaid --DBNodeClass polar.mysql.x4.medium --ClusterNetworkType VPC --VPCId %s --VSwitchId %s", shellQuote(vpc), shellQuote(vswitch))
 	case "delete":
-		script = fmt.Sprintf("aliyun polardb DeleteDBCluster --DBClusterId %s", id)
+		script = fmt.Sprintf("aliyun polardb DeleteDBCluster --DBClusterId %s", shellQuote(id))
 	case "backup":
-		script = fmt.Sprintf("aliyun polardb CreateBackup --DBClusterId %s", id)
+		script = fmt.Sprintf("aliyun polardb CreateBackup --DBClusterId %s", shellQuote(id))
 	case "restore":
 		script = "aliyun polardb RestoreTable"
 	case "replica":
@@ -311,15 +311,15 @@ func (s *Server) handleDBGaussDBDWS(w http.ResponseWriter, r *http.Request) {
 	case "status":
 		script = "huaweicloud gaussdb list-instances"
 	case "create":
-		script = fmt.Sprintf("huaweicloud gaussdb create-instance --name %s --engine-version 9.1.0.128 --node-type dws.m1.xlarge.ultrahigh", name)
+		script = fmt.Sprintf("huaweicloud gaussdb create-instance --name %s --engine-version 9.1.0.128 --node-type dws.m1.xlarge.ultrahigh", shellQuote(name))
 	case "delete":
-		script = fmt.Sprintf("huaweicloud gaussdb delete-instance --instance-id %s", id)
+		script = fmt.Sprintf("huaweicloud gaussdb delete-instance --instance-id %s", shellQuote(id))
 	case "backup":
-		script = fmt.Sprintf("huaweicloud gaussdb create-backup --instance-id %s", id)
+		script = fmt.Sprintf("huaweicloud gaussdb create-backup --instance-id %s", shellQuote(id))
 	case "restore":
-		script = fmt.Sprintf("huaweicloud gaussdb restore-instance --instance-id %s --backup-id %s", id, backupID)
+		script = fmt.Sprintf("huaweicloud gaussdb restore-instance --instance-id %s --backup-id %s", shellQuote(id), shellQuote(backupID))
 	case "node":
-		script = fmt.Sprintf("huaweicloud gaussdb create-node --instance-id %s --node-type dws.m1.xlarge.ultrahigh", id)
+		script = fmt.Sprintf("huaweicloud gaussdb create-node --instance-id %s --node-type dws.m1.xlarge.ultrahigh", shellQuote(id))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return
@@ -364,13 +364,13 @@ func (s *Server) handleDBTDSQLC(w http.ResponseWriter, r *http.Request) {
 	case "create":
 		script = "tccli cdb CreateDBInstance --GoodsNum 1 --Memory 1000 --Volume 10 --Period 1 --Zone ap-guangzhou-2 --InstanceRole master"
 	case "delete":
-		script = fmt.Sprintf("tccli cdb DeleteDBInstance --InstanceId %s", id)
+		script = fmt.Sprintf("tccli cdb DeleteDBInstance --InstanceId %s", shellQuote(id))
 	case "backup":
-		script = fmt.Sprintf("tccli cdb CreateBackup --InstanceId %s", id)
+		script = fmt.Sprintf("tccli cdb CreateBackup --InstanceId %s", shellQuote(id))
 	case "restore":
-		script = fmt.Sprintf("tccli cdb RestoreInstance --InstanceId %s --BackupId %s", id, backupID)
+		script = fmt.Sprintf("tccli cdb RestoreInstance --InstanceId %s --BackupId %s", shellQuote(id), shellQuote(backupID))
 	case "replica":
-		script = fmt.Sprintf("tccli cdb CreateRoInstance --MasterInstanceId %s", id)
+		script = fmt.Sprintf("tccli cdb CreateRoInstance --MasterInstanceId %s", shellQuote(id))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return

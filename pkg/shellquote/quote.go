@@ -70,6 +70,35 @@ func QuoteJoin(sep string, args ...string) string {
 	return strings.Join(parts, sep)
 }
 
+// QuoteDouble 把 s 转成**双引号包裹**的安全字面量：转义双引号段内全部特殊字符
+// （\ " $ 与反引号）。
+//
+// 为什么除 Quote 之外还需要它：本仓历史上有 269 处调用点用的 shellQuote 产出
+// 双引号形状，其中一部分把结果**嵌在既有双引号段内**（如 `".backup %s"`、
+// `".read %s"`）——换成单引号语义会改变最终取值（字面单引号会被带进参数），
+// 所以修复那批调用点时不能改形状，只能把转义补全。新代码优先用 Quote。
+//
+// 语义保证：转义后双引号段内不存在任何可展开结构——无变量展开（$VAR）、
+// 无命令替换（$(cmd) 与反引号）、无反斜杠歧义（结尾 \ 不再吞掉收尾引号）。
+// 与旧实现（只转义 "）的差别恰好就是这三类注入面。
+//
+// 注意：本函数产出的是「一个完整 shell 词」。不要把它嵌进另一段引号里——
+// 那种位置（如 JSON 文本嵌在单引号内的 `-d '{"k":"%s"}'`）请改用 ValidateName
+// 这类白名单，因为那里根本没有合法的转义空间。
+func QuoteDouble(s string) string {
+	return `"` + doubleQuoteEscaper.Replace(s) + `"`
+}
+
+// doubleQuoteEscaper 把双引号段内的四个特殊字符转义。
+// strings.NewReplacer 单趟扫描：替换产物不再参与匹配，故不存在二次转义；
+// 四个模式都是单字符，也无重叠歧义。
+var doubleQuoteEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	`"`, `\"`,
+	"$", `\$`,
+	"`", "\\`",
+)
+
 // ---------------------------------------------------------------- 白名单校验
 //
 // 白名单比转义更严：当字段的合法域已知且窄（hostname、版本号、端口）时，
@@ -142,6 +171,58 @@ func ParsePort(s string) (int, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+// ValidateName 校验通用资源名（单段）：字符集 [A-Za-z0-9_.-]，长度 1..maxLen。
+//
+// 什么时候用它而不是 Quote/QuoteDouble：当值会被**嵌入既有引号段**、没有合法
+// 转义空间时——典型是 JSON 文本整体嵌在 shell 单引号里（`-d '{"k":"%s"}'`）：
+// 那里再加一层引号会破坏外层，且 JSON 语法本身还要求转义 " 与 \。
+// 把字符集限死是唯一同时满足两层语法的做法。
+// ES 节点名/索引名、HBase 列族名、kafka 资源名等窄域标识适用。
+func ValidateName(s string, maxLen int) error {
+	if s == "" {
+		return fmt.Errorf("name is empty")
+	}
+	if len(s) > maxLen {
+		return fmt.Errorf("name too long (%d > %d)", len(s), maxLen)
+	}
+	for i := 0; i < len(s); i++ {
+		if !isNameByte(s[i]) {
+			return fmt.Errorf("invalid name %q: char %q not allowed", s, string(s[i]))
+		}
+	}
+	return nil
+}
+
+// ValidateQualifiedName 校验可带命名空间前缀的段式名：`seg(:seg)?`，
+// 每段 1..maxSegLen、字符集同 ValidateName（如 HBase 的 namespace:table）。
+// 段数超过 2 一律拒绝——本仓需要限定名的场景（HBase 表名）最多一层前缀。
+func ValidateQualifiedName(s string, maxSegLen int) error {
+	if s == "" {
+		return fmt.Errorf("qualified name is empty")
+	}
+	segs := strings.Split(s, ":")
+	if len(segs) > 2 {
+		return fmt.Errorf("invalid qualified name %q: too many ':' segments", s)
+	}
+	for _, seg := range segs {
+		if err := ValidateName(seg, maxSegLen); err != nil {
+			return fmt.Errorf("invalid qualified name %q: %v", s, err)
+		}
+	}
+	return nil
+}
+
+// isNameByte 是资源名字符集：字母数字与 . _ -（与 HBase/kafka 既有白名单一致）。
+func isNameByte(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	case c == '_' || c == '.' || c == '-':
+		return true
+	}
+	return false
 }
 
 // ValidatePath 校验**绝对**路径，且不含 shell 元字符与 .. 穿越。
