@@ -744,7 +744,8 @@
     "tier": "层级",
     "max_tokens": "最大 Token",
     "routes_title": "模型路由",
-    "no_routes": "未配置路由。"
+    "no_routes": "未配置路由。",
+    "budget_note": "额度为进程内计数：控制面重启即归零；多副本部署时每个副本各自计数，有效额度 ≈ 单副本额度 × 副本数。跨重启、跨副本的持久化硬限尚未实现。"
   },
   "knowledge": {
     "title": "知识库",

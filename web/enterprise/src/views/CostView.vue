@@ -45,6 +45,7 @@
           <Button variant="primary" size="sm" @click="updateBudget">{{ $t('cost.save_budget') }}</Button>
         </div>
       </div>
+      <p class="muted" data-testid="cost-budget-note">{{ $t('cost.budget_note') }}</p>
     </div>
 
     <!-- 告警列表 -->

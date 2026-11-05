@@ -88,6 +88,21 @@
 - **进程内口径写进契约**（A 方案的前提）：重启归零、多副本各自计数（有效额度 ≈ 单副本额度 × 副本数）。持久化硬限（B：用量表+启动加载+DB 原子 upsert）排 v0.19。
 - **测试**：`budget_enforce_test.go` 5 例——越限先拦且不花钱、按租户各自计量、无租户记账 default 且与 default 租户 ctx 同空间、缓存命中不双计、nil 关闭执法。`go test ./internal/...` 全绿、gofmt/vet 干净。
 
+## [Unreleased-docs-成本族契约] — 2026-11-05（cost 族八条端点首次有对外契约文档）
+
+- **缺口（先实测再补）**：`docs/api-reference.md` 对 `/api/v1/cost/*` 的覆盖为 **0**——`grep '/api/v1/cost'`、`cost/budget`、`成本控制` 三种措辞全 0，`docs/api-specification.md` 同样 0。八条端点从没有对外契约，接入方只能读 Go 代码；而这一族恰好集中了最容易误判的语义（额度何时真生效、`tenantId` 谁说了算、未知 `taskType` 会不会回 null）。
+- **补法**：新增 `## 成本控制 API` 小节（插在计费与网关之间，目录同步加条目），八条端点逐条写权限点、参数、响应与错误码；口径全部从代码取（`internal/cost/handler.go` 的注册与 handler 体、`internal/store/model/perm.go` 的权限目录），不引用行号以免随重构腐烂。
+- **四条对外必须说清的口径**：① `GET /cost/budget` 对**未登记租户返出厂默认额度而非 404**，首次消耗也按该默认建档；② `POST /cost/route` 对**未知 `taskType` 回落默认规则**（medium/openai/gpt-4o-mini/2048），不回 null，要区分「命中」与「回落」得自己跟 `GET /cost/routes` 比对；③ `GET /cost/report` 的 `since` 非法**明确 400**，不静默忽略过滤条件；④ `tenantId` 以已验签上下文为准，自报值仅在未启用鉴权时生效。另把 TD-97 ① 的「额度是进程内计数（重启归零、多副本×副本数）、语义缓存命中不重复计量、`daily/monthly=0` 是不设上限而非额度为 0」写进族级说明——与 P1 刚补到 UI 的是同一条口径。
+- **验证**：文档端点集合与代码注册集合逐条对账 `diff` 为空（8 == 8，方法也一致）；`go test ./internal/gates/` 整包绿（含守本文件的 `TestDocPathsExist`）；**该门对新增段有射程**经探针反证——在段内插入不存在的 `internal/cost/nonexistent_probe.go` 即 FAIL 并点名该路径，还原后按 sha256 逐字节核对一致并复绿。
+
+## [Unreleased-前端-预算口径] — 2026-11-05（TD-97 ① 的用户面补口：预算卡显示「进程内口径」+ CostView 首个 spec）
+
+- **补的是哪半口**：执法已落 main（`a1f6e61`），但 A 方案的前提——「进程内口径：重启归零、多副本各自计数 ⇒ 有效额度 ≈ 单副本额度 × 副本数」——只写在 `internal/ai/gateway/gateway.go:187` 的 `Complete` 契约注释里。用户面一个字没有：`web/enterprise/src/views/CostView.vue` 只摆「用量 / 额度」两个裸数字（改前 grep `进程|重启|副本` 在该视图命中 **0**），客户会把这条边界当成不存在，越限被拒时也无从解释。
+- **修法**：`web/enterprise/src/i18n/locales/{zh,en}/ops.json` 的 `cost` 段各加一个 `budget_note` 双语键；预算设置卡渲染 `data-testid="cost-budget-note"` 的提示，且**不挂在 `v-if="store.budget"` 之后**——额度数据没加载时口径照样要看得见。
+- **新增 `web/enterprise/src/views/__tests__/CostView.spec.js`（4 例；该视图此前零 spec）**：① 提示真出现在渲染 DOM 且可见（不是源码里写了个键）；② `budget=null` 时提示仍在；③ 双语都能解析且三要素（进程内 / 重启 / 副本）说全；④ 反向不得过度宣称成「已持久化 / 已支持跨副本硬限」。
+- **射程自证（本机变异两轮，红绿样本都有）**：变异 A 删模板里的提示行 ⇒ 例①②转红；变异 B 删 `en/ops.json` 的 `budget_note` ⇒ 例③④转红；两文件还原后按 sha256 逐字节核对一致并复跑 4/4 转绿。`eslint` 对 `CostView.vue` + 新 spec 退出码 0（CI 前端腿同条命令）；`src/i18n/naked-keys.test.js` 双语棘轮同步通过——新键若漏任一侧即红。
+- **如实登记一处本批未改**：`CostView.vue:173/178/199-201` 硬编码 `'default'` 租户。生产鉴权下它被 `internal/cost/handler.go:586` 的 `scopedTenant`（已验签上下文优先）忽略，无越权路径；`--require-auth=false` 的单机形态下该页读写恒落 `default` 租户，属既有单机口径。要改成「前端不带租户」需先定前端是否该自报租户，另议——本批只补口径、不动语义。
+
 ## [Unreleased-AI租户隔离] — 2026-11-05（TD-97 ②：RAG/提示词/知识库三共享存储租户化）
 
 - **`internal/ai/gateway/rag.go`**：`InMemoryVectorStore` 的 docs 键从裸 ID 改为租户隔离键（`tenant + \x1f + id`）——Upsert/Search/Delete/Count 全部按租户收窄，出口还原裸 ID。此前 A 租户写入的文档会出现在 B 租户的检索结果里（跨租户数据泄露）。
