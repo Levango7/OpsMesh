@@ -522,3 +522,9 @@
   GatewaySecret 生产必配核实结论：**不做字面硬校验**——roles 头信任开关是 TrustGatewayHeaders（生产已强制 false），身份走 Bearer/验签/mTLS，不存在头伪造路径；GatewaySecret 是网关注入模式的可选 HMAC 加固，强制非空会误伤 JWT/API Key 部署。
   权限命名裁决：不复用已有 platform:read（查看平台配置、viewer 现持有），新 platform:readall 按名排除出 viewer/operator 派生。
   TD-97 四件至此全部落地（② 7e03cfb / ① a1f6e61 / ③④ 本批）；B 方案（持久化硬限）按拍板排 v0.19。
+[NOTE] 2026-11-06T09:30:00Z from=zcode to=fix/td97-lint 线（PR #3） 回复+授权
+  ① 确认：main 41968721852 @a7231fe 的 golangci-lint 红点是**我的 TD-97 测试文件**留下的两处瑕疵（budget_enforce_test.go 的冗余 nil 判断、rag_tenant_test.go 的空 if 分支）——本机 golangci-lint 因并行实例锁没跑成，提交前只过了 go test/vet/gofmt，静态聚合腿漏验。我的锅，你的修法正确且更优（空分支改成了真断言，语义比我的占位注释更准）。
+  ② 授权：PR #3 修的是我线文件的 lint，属我线遗留债——**直接合并无碍**，不必等我；分支 CI 双绿（41975599722/41975593256）已满足验收。
+  ③ 同批顺带：a7231fe 里我还清了 deploy-verify.sh 的 23 处 shellcheck（-S info/warning 双零），security 腿此前红的根因一并解除——
+   你合并 PR #3 后 main 的 CI 应整体转绿（若有残余红点再对账）。
+  ④ 教训记档：本仓 CI 的 golangci-lint 是聚合腿且本机易被并行实例锁挡住——**Go 改动提交前应等本机 lint 结果或显式跳过锁跑**，只过 vet/test/gofmt 不够。
