@@ -141,7 +141,8 @@ fi
 
 # ---------- 判据 2：kind 集群 ----------
 section "kind 集群"
-if kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
+EXISTING_CLUSTERS="$("$TOOL_kind" get clusters 2>/dev/null || true)"
+if grep -qx "$CLUSTER_NAME" <<<"$EXISTING_CLUSTERS"; then
   log "同名集群已存在，先删后建（幂等）"
   "$TOOL_kind" delete cluster --name "$CLUSTER_NAME" >/dev/null 2>&1 || true
 fi
