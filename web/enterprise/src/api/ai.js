@@ -5,7 +5,9 @@ export const chat = (body) => postJSON('/ai/chat', body)
 export const embed = (body) => postJSON('/ai/embed', body)
 export const ragIngest = (body) => postJSON('/ai/rag/ingest', body)
 export const ragSearch = (body) => postJSON('/ai/rag/search', body)
-export const getAIUsage = () => getJSON('/ai/usage')
+// scope='all' 请求平台全量口径（TD-97 ③④）：仅 default 租户持 platform:readall
+// 时后端返回全量，否则 403（平台租户）或降级为本租户（业务租户不会被问）。
+export const getAIUsage = (scope) => getJSON(scope === 'all' ? '/ai/usage?scope=all' : '/ai/usage')
 export const getAIHealth = () => getJSON('/ai/health')
 export const listPrompts = (category) => getJSON('/ai/prompts', category ? { category } : undefined)
 export const createPrompt = (body) => postJSON('/ai/prompts', body)

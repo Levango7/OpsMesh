@@ -810,6 +810,11 @@
     "clear": "Clear",
     "use_rag": "Use Knowledge Base",
     "token_usage": "Token Usage",
+    "scope_own": "This tenant",
+    "scope_all": "Platform-wide",
+    "view_platform": "View platform-wide",
+    "view_own": "Back to this tenant",
+    "budget_exceeded": "This tenant has exhausted its AI quota (daily/monthly limit). Ask an administrator to raise the budget and retry.",
     "input_tokens": "Input Tokens",
     "output_tokens": "Output Tokens",
     "total_tokens": "Total Tokens"

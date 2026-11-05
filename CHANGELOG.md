@@ -71,6 +71,15 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-AI前端消费] — 2026-11-06（TD-97 前端消费适配：预算超限 UX + 用量口径徽标 + 平台全量入口）
+
+> TD-97 后端三批（② 7e03cfb / ① a1f6e61 / ③④ a7231fe）的前端消费侧闭环，本批补齐。
+
+- **① 预算超限 UX**（`stores/ai.js` chat 失败路径）：识别后端明确拒绝形态（`budget exceeded for tenant …`，gateway.go Complete 入口执法），转本地化可操作提示（aiChat.budget_exceeded：联系管理员调额），不再把英文内部错误甩给用户。
+- **③④ 用量口径可视化**（`AIChatView.vue` 用量卡片 + `api/ai.js`）：卡片加 **scope 徽标**（own=本租户 / all=平台全量，消费后端新回显的 scope 字段）；新增「查看平台全量 / 返回本租户」切换——`getAIUsage(scope)` 支持 `?scope=all`，403（非平台租户/无 platform:readall）时 store 自动回退本租户口径；挂载即拉一次用量（此前卡片只在聊天后才出现）。
+- **i18n**：ops.json 的 aiChat 域新增 5 键双语（scope_own/scope_all/view_platform/view_own/budget_exceeded）；naked-keys 守卫 2/2 过。
+- **验证**：stores 全量 737 过、api-usage 双向棘轮绿、eslint 0。后端零改动（纯消费侧）。
+
 ## [Unreleased-AI平台视图] — 2026-11-05（TD-97 ③④：/ai/usage 本租户口径 + 平台全量双门 + 新权限点）
 
 - **③ `/api/v1/ai/usage` 默认返回本租户用量**（`handler.go` 的 HandleTokenUsage）：此前是网关级累计，任何持 `ai:read` 的人都能看到平台总量。TokenUsageTracker 的 `Record` 带租户、`Report(tenant)` 按租户过滤（空=平台全量），报表回显 `scope`（own/all）让调用方不必猜口径。
