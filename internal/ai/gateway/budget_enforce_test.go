@@ -81,7 +81,7 @@ func TestComplete_BudgetBlocksBeforeSpend(t *testing.T) {
 	if sp.called != 0 {
 		t.Fatalf("越限时不应真打模型（钱没花）：called=%d", sp.called)
 	}
-	if en.records != nil && len(en.records) > 0 {
+	if len(en.records) > 0 {
 		t.Fatal("入口拒绝路径不应记账（没有用量发生）")
 	}
 }

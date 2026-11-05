@@ -116,9 +116,9 @@ func TestPromptTemplateStore_TenantIsolation(t *testing.T) {
 	if len(ps.List(ctxB, "")) != 1 {
 		t.Fatal("A 的删除影响了 B")
 	}
-	// B 删除 A 已删的 ID 返回 false（租户命名空间独立）
-	if ps.Delete(ctxB, "t1") != true {
-		// 这里 B 自己的还在，应 true；删第二次才 false
+	// B 删除自己的 t1 返回 true（租户命名空间独立）
+	if !ps.Delete(ctxB, "t1") {
+		t.Fatal("B 应能删除自己的 t1（租户命名空间独立）")
 	}
 	if ps.Delete(ctxB, "t1") {
 		t.Fatal("B 第二次删除应 false")
