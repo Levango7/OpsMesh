@@ -43,10 +43,28 @@
       </div>
     </div>
 
-    <!-- Token 用量 -->
+    <!-- Token 用量（TD-97 ③④：后端默认本租户口径；scope 徽标回显口径，
+         平台全量按钮仅对有权限者生效——403 时 store 自动回退本租户） -->
     <div class="card" v-if="store.tokenUsage">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('aiChat.token_usage') }}</h3>
+        <span class="tag--plain" :class="store.tokenUsage.scope === 'all' ? 'usage-scope-all' : 'usage-scope-own'">
+          {{ store.tokenUsage.scope === 'all' ? $t('aiChat.scope_all') : $t('aiChat.scope_own') }}
+        </span>
+        <Button
+          v-if="store.tokenUsage.scope !== 'all'"
+          variant="ghost"
+          size="sm"
+          data-testid="usage-scope-all-btn"
+          @click="store.fetchUsage('all')"
+        >{{ $t('aiChat.view_platform') }}</Button>
+        <Button
+          v-else
+          variant="ghost"
+          size="sm"
+          data-testid="usage-scope-own-btn"
+          @click="store.fetchUsage()"
+        >{{ $t('aiChat.view_own') }}</Button>
       </div>
       <div class="usage-grid">
         <div class="usage-item">
@@ -69,7 +87,7 @@
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 import { useAIStore } from '@/stores/ai'
 import { Button } from '@/components/ui'
 
@@ -78,6 +96,9 @@ const input = ref('')
 const useRAG = ref(false)
 const model = ref('gpt-4o-mini')
 const messagesRef = ref(null)
+
+// 挂载即拉一次本租户口径（此前卡片只在聊天后才出现，用户不知道有用量面）。
+onMounted(() => store.fetchUsage())
 
 async function send() {
   const text = input.value.trim()
@@ -96,6 +117,21 @@ async function send() {
 </script>
 
 <style scoped>
+/* 用量口径徽标（.tag--plain 本地同形：无底色 token 式） */
+.tag--plain {
+  display: inline-flex; align-items: center;
+  gap: var(--space-1, 4px); padding: 2px 8px;
+  border-radius: var(--radius-pill-sm, 64px);
+  font-size: var(--font-size-xs, 11px); font-weight: 500;
+}
+.usage-scope-own {
+  background: var(--color-surface-2, #141516);
+  color: var(--color-ink-tertiary, #62666d);
+}
+.usage-scope-all {
+  background: color-mix(in srgb, var(--color-warning, #d97706) 15%, transparent);
+  color: var(--color-warning, #d97706);
+}
 .chat-container { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 .chat-messages { max-height: 500px; overflow-y: auto; padding: 12px; border: 1px solid var(--color-hairline, #d3dbe8); border-radius: var(--radius-md, 8px); background: var(--color-surface-1, #ffffff); }
 .chat-msg { margin-bottom: 12px; }

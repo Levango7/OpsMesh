@@ -35,8 +35,16 @@ export const useAIStore = defineStore('ai', {
           this.tokenUsage = await getAIUsage()
         } catch { /* ignore */ }
       } catch (e) {
-        this.error = e.j?.error || t('error.aiChatFailed')
-        this.messages.push({ role: 'assistant', content: t('error.aiChatFailed') })
+        // TD-97 ① 前端闭环：预算超限是后端明确拒绝形态（gateway.go Complete 入口），
+        // 识别后给可操作的本地化提示，而不是把英文内部错误甩给用户。
+        const raw = e.j?.error || ''
+        if (raw.startsWith('budget exceeded for tenant')) {
+          this.error = t('aiChat.budget_exceeded')
+          this.messages.push({ role: 'assistant', content: t('aiChat.budget_exceeded') })
+        } else {
+          this.error = raw || t('error.aiChatFailed')
+          this.messages.push({ role: 'assistant', content: t('error.aiChatFailed') })
+        }
       } finally {
         this.loading = false
       }
@@ -44,10 +52,13 @@ export const useAIStore = defineStore('ai', {
     clearMessages() {
       this.messages = []
     },
-    async fetchUsage() {
+    async fetchUsage(scope) {
       try {
-        this.tokenUsage = await getAIUsage()
-      } catch { /* ignore */ }
+        this.tokenUsage = await getAIUsage(scope)
+      } catch {
+        // scope=all 被拒（非平台租户/无权限）时回退本租户口径
+        if (scope === 'all') await this.fetchUsage()
+      }
     }
   }
 })

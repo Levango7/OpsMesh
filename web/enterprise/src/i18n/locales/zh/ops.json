@@ -811,6 +811,11 @@
     "clear": "清空",
     "use_rag": "使用知识库",
     "token_usage": "Token 用量",
+    "scope_own": "本租户口径",
+    "scope_all": "平台全量",
+    "view_platform": "查看平台全量",
+    "view_own": "返回本租户",
+    "budget_exceeded": "本租户 AI 额度已用尽（日/月限额），请联系管理员调整预算后重试",
     "input_tokens": "输入 Token",
     "output_tokens": "输出 Token",
     "total_tokens": "总 Token"
