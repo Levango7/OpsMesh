@@ -71,6 +71,17 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-AI租户隔离] — 2026-11-05（TD-97 ②：RAG/提示词/知识库三共享存储租户化）
+
+- **`internal/ai/gateway/rag.go`**：`InMemoryVectorStore` 的 docs 键从裸 ID 改为租户隔离键（`tenant + \x1f + id`）——Upsert/Search/Delete/Count 全部按租户收窄，出口还原裸 ID。此前 A 租户写入的文档会出现在 B 租户的检索结果里（跨租户数据泄露）。
+- **`internal/ai/gateway/prompt.go`**：`PromptTemplateStore` 五个 method（Create/Get/List/Update/Delete）加 `ctx` 参数、键同步租户化；List 只列本租户（提示词模板此前全平台共用）。
+- **`internal/knowledge/retrieval.go`**：`InMemoryKnowledgeStore` 同范式（Upsert/Search/Delete/Count/ListBySource 全部按租户收窄 + 出口还原裸 ID）。
+- **`internal/authctx/authctx.go`**：新增 `NewContext(parent, Context)` / `FromContext(ctx)`——store 方法签名不变，租户经 Go ctx 传递（TD-97 ①② 共用的管道）。
+- **handler 接线**：`ai/gateway/handler.go`（chat/rag ingest/rag search/prompts 五处）与 `knowledge/handler.go`（8 处 authorize 点）把 authorize 回调返回的 `authctx.Context` 注入请求 ctx——此前这些 Context 全部被 `_` 丢弃。
+- 空租户 ctx 归 `store.DefaultTenantID`（与 `auth_users.go:52/77` 的平台租户先例同口径），单机/开发形态不受影响。
+- **测试**：`rag_tenant_test.go`（向量库隔离+跨租户同 ID 不互覆盖+default 归并）与 `retrieval_tenant_test.go`（知识库同套语义）共 2 个新契约用例；既有 `ai/gateway`、`knowledge`、`controlplane` 全量回归绿。
+- 部署影响：仅进程内 InMemory store（多副本/持久化存储本就不在此形态）；DB/契约零变更。TD-97 ② 闭环，① 预算执法与 ③④ 平台视图按序后续。
+
 ## [Unreleased-部署冒烟] — 2026-11-05（kind 真集群冒烟落地：首次运行即抓出默认安装必炸的缺陷）
 
 > 置于 [Unreleased-服务治理] 之上；归版时按需合并。

@@ -50,7 +50,8 @@ func (h *AIGatewayHandler) HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	// 对话不写业务状态 ⇒ ai:read；但它会真打一次 LLM 并计入用量，匿名开放等于
 	// 给公网一个免费的模型代理（烧的是本租户的额度）。
-	if _, ok := h.authorize(w, r, "ai:read"); !ok {
+	actx, ok := h.authorize(w, r, "ai:read")
+	if !ok {
 		return
 	}
 
@@ -77,10 +78,10 @@ func (h *AIGatewayHandler) HandleChat(w http.ResponseWriter, r *http.Request) {
 		model = "gpt-4o-mini"
 	}
 
-	// RAG 检索
+	// RAG 检索（TD-97 ②：租户化 ctx——只检索本租户文档）
 	if req.UseRAG {
 		lastMsg := req.Messages[len(req.Messages)-1].Content
-		docs, err := h.retriever.Retrieve(r.Context(), lastMsg, req.Filter)
+		docs, err := h.retriever.Retrieve(authctx.NewContext(r.Context(), actx), lastMsg, req.Filter)
 		if err == nil && len(docs) > 0 {
 			ctx := h.retriever.BuildContext(docs)
 			// 注入到系统消息
@@ -155,7 +156,8 @@ func (h *AIGatewayHandler) HandleRAGIngest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// 落库动作：写入的文档会立刻出现在所有人的检索结果里 ⇒ ai:write。
-	if _, ok := h.authorize(w, r, "ai:write"); !ok {
+	actx, ok := h.authorize(w, r, "ai:write")
+	if !ok {
 		return
 	}
 
@@ -184,7 +186,7 @@ func (h *AIGatewayHandler) HandleRAGIngest(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	if err := h.retriever.vectorStore.Upsert(r.Context(), req.Documents); err != nil {
+	if err := h.retriever.vectorStore.Upsert(authctx.NewContext(r.Context(), actx), req.Documents); err != nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -201,7 +203,8 @@ func (h *AIGatewayHandler) HandleRAGSearch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// 检索读的是向量库内容（可能含其他动作写入的资料）⇒ 必须登录，按 ai:read。
-	if _, ok := h.authorize(w, r, "ai:read"); !ok {
+	actx, ok := h.authorize(w, r, "ai:read")
+	if !ok {
 		return
 	}
 
@@ -220,7 +223,7 @@ func (h *AIGatewayHandler) HandleRAGSearch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	docs, err := h.retriever.Retrieve(r.Context(), req.Query, req.Filter)
+	docs, err := h.retriever.Retrieve(authctx.NewContext(r.Context(), actx), req.Query, req.Filter)
 	if err != nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -273,17 +276,19 @@ func (h *AIGatewayHandler) HandleHealth(w http.ResponseWriter, r *http.Request) 
 func (h *AIGatewayHandler) HandlePromptTemplates(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		if _, ok := h.authorize(w, r, "ai:read"); !ok {
+		actx, ok := h.authorize(w, r, "ai:read")
+		if !ok {
 			return
 		}
 		category := r.URL.Query().Get("category")
-		templates := h.promptStore.List(category)
+		templates := h.promptStore.List(authctx.NewContext(r.Context(), actx), category)
 		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"templates": templates,
 		})
 	case http.MethodPost:
 		// 新建模板写的是 Agent 侧的提示词事实源 ⇒ ai:write，且必须在 Create 之前。
-		if _, ok := h.authorize(w, r, "ai:write"); !ok {
+		actx, ok := h.authorize(w, r, "ai:write")
+		if !ok {
 			return
 		}
 		var tmpl PromptTemplate
@@ -291,7 +296,7 @@ func (h *AIGatewayHandler) HandlePromptTemplates(w http.ResponseWriter, r *http.
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 			return
 		}
-		created, err := h.promptStore.Create(&tmpl)
+		created, err := h.promptStore.Create(authctx.NewContext(r.Context(), actx), &tmpl)
 		if err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -306,17 +311,19 @@ func (h *AIGatewayHandler) HandlePromptTemplates(w http.ResponseWriter, r *http.
 func (h *AIGatewayHandler) HandlePromptTemplate(w http.ResponseWriter, r *http.Request, id string) {
 	switch r.Method {
 	case http.MethodGet:
-		if _, ok := h.authorize(w, r, "ai:read"); !ok {
+		actx, ok := h.authorize(w, r, "ai:read")
+		if !ok {
 			return
 		}
-		tmpl, ok := h.promptStore.Get(id)
+		tmpl, ok := h.promptStore.Get(authctx.NewContext(r.Context(), actx), id)
 		if !ok {
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 			return
 		}
 		paginate.WriteJSON(w, http.StatusOK, tmpl)
 	case http.MethodPut:
-		if _, ok := h.authorize(w, r, "ai:write"); !ok {
+		actx, ok := h.authorize(w, r, "ai:write")
+		if !ok {
 			return
 		}
 		var req struct {
@@ -327,17 +334,18 @@ func (h *AIGatewayHandler) HandlePromptTemplate(w http.ResponseWriter, r *http.R
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 			return
 		}
-		updated, err := h.promptStore.Update(id, req.Content, req.Variables)
+		updated, err := h.promptStore.Update(authctx.NewContext(r.Context(), actx), id, req.Content, req.Variables)
 		if err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		paginate.WriteJSON(w, http.StatusOK, updated)
 	case http.MethodDelete:
-		if _, ok := h.authorize(w, r, "ai:write"); !ok {
+		actx, ok := h.authorize(w, r, "ai:write")
+		if !ok {
 			return
 		}
-		if !h.promptStore.Delete(id) {
+		if !h.promptStore.Delete(authctx.NewContext(r.Context(), actx), id) {
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found"})
 			return
 		}

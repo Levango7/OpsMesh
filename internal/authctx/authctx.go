@@ -20,6 +20,7 @@
 package authctx
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -48,6 +49,24 @@ const (
 	hdrUser   = "x-user-id"
 	hdrRoles  = "x-user-roles"
 )
+
+// ctxKey 是 Identity 在 context.Context 中的注入键（私有类型防碰撞）。
+type ctxKey struct{}
+
+// NewContext 把身份上下文注入 Go context，供下游 store/handler 从 ctx 取租户
+// （TD-97 ②：共享存储租户隔离的传递管道——store 方法签名无需改，租户走 ctx）。
+func NewContext(parent context.Context, c Context) context.Context {
+	return context.WithValue(parent, ctxKey{}, c)
+}
+
+// FromContext 从 Go context 取身份上下文；未注入时返回零值（TenantID 为空）。
+// 调用方需自行决定空租户的兜底（共享存储默认归 DefaultTenantID）。
+func FromContext(ctx context.Context) Context {
+	if c, ok := ctx.Value(ctxKey{}).(Context); ok {
+		return c
+	}
+	return Context{}
+}
 
 // 网关身份头 HMAC 签名相关头（安全加固 S6）。
 // 当配置了 GatewaySecret 时，网关在注入身份头的同时计算 HMAC 签名，

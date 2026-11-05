@@ -10,7 +10,37 @@ import (
 	"strings"
 
 	gateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
+
+
+// tenantSep / tenantKey / tenantPrefix / bareID：TD-97 ② 租户隔离键
+// （与 internal/ai/gateway 同语义——knowledge 的 InMemory store 也曾全局单份）。
+const tenantSep = "\x1f"
+
+func tenantKey(ctx context.Context, id string) string {
+	tenant := authctx.FromContext(ctx).TenantID
+	if tenant == "" {
+		tenant = store.DefaultTenantID
+	}
+	return tenant + tenantSep + id
+}
+
+func tenantPrefix(ctx context.Context) string {
+	tenant := authctx.FromContext(ctx).TenantID
+	if tenant == "" {
+		tenant = store.DefaultTenantID
+	}
+	return tenant + tenantSep
+}
+
+func bareID(key string) string {
+	if i := strings.Index(key, tenantSep); i >= 0 {
+		return key[i+len(tenantSep):]
+	}
+	return key
+}
 
 // HybridRetriever 混合检索器 (向量 + 关键词 + 图谱)
 type HybridRetriever struct {
@@ -259,17 +289,23 @@ func NewInMemoryKnowledgeStore() *InMemoryKnowledgeStore {
 
 func (s *InMemoryKnowledgeStore) Upsert(ctx context.Context, docs []KnowledgeDoc) error {
 	for _, d := range docs {
-		s.docs[d.ID] = d
+		s.docs[tenantKey(ctx, d.ID)] = d
 	}
 	return nil
 }
 
 func (s *InMemoryKnowledgeStore) Search(ctx context.Context, query string, topK int, filter map[string]interface{}) ([]KnowledgeDoc, error) {
 	var results []KnowledgeDoc
-	for _, doc := range s.docs {
+	prefix := tenantPrefix(ctx)
+	for key, doc := range s.docs {
+		// TD-97 ②：只检索本租户的文档。
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
 		if !matchKnowledgeFilter(doc.Metadata, filter) {
 			continue
 		}
+		doc.ID = bareID(key) // 出口还原裸 ID
 		results = append(results, doc)
 	}
 	if topK > 0 && topK < len(results) {
@@ -280,19 +316,32 @@ func (s *InMemoryKnowledgeStore) Search(ctx context.Context, query string, topK 
 
 func (s *InMemoryKnowledgeStore) Delete(ctx context.Context, ids []string) error {
 	for _, id := range ids {
-		delete(s.docs, id)
+		delete(s.docs, tenantKey(ctx, id))
 	}
 	return nil
 }
 
 func (s *InMemoryKnowledgeStore) Count(ctx context.Context) (int, error) {
-	return len(s.docs), nil
+	prefix := tenantPrefix(ctx)
+	n := 0
+	for key := range s.docs {
+		if strings.HasPrefix(key, prefix) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (s *InMemoryKnowledgeStore) ListBySource(ctx context.Context, source KnowledgeSource) ([]KnowledgeDoc, error) {
 	var results []KnowledgeDoc
-	for _, doc := range s.docs {
+	prefix := tenantPrefix(ctx)
+	for key, doc := range s.docs {
+		// TD-97 ②：只列本租户的文档。
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
 		if doc.Source == source {
+			doc.ID = bareID(key)
 			results = append(results, doc)
 		}
 	}

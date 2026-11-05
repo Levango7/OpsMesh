@@ -510,3 +510,6 @@
   ① 预算真执法（A 方案）：Complete 出口按租户 RecordUsage；入口 IsOverBudget 拦截并返回明确错误；无租户 ctx 放行但记账 default（单机/开发形态不被锁死，口子写进契约）。B（持久化硬限）排 v0.19 不动。
   ③④ 绑一批：/ai/usage 默认本租户；平台租户（default 先例）+ 新权限点 platform:read 可 ?scope=all；GatewaySecret 设为生产必配（否则 X-User-Roles 可伪造、平台判定不可信——没这条 ④ 不开）。
   取证结论七条已核验（docs/CLAIMS.md 本 NOTE 之后的代码快照均验证过）；逐批提交，批间独立可回滚。
+[DONE] 2026-11-05T17:30:00Z from=zcode ref=[CLAIM] 2026-11-05T16:00:00Z（TD-97 ②） paths=internal/ai/gateway/rag.go,internal/ai/gateway/prompt.go,internal/knowledge/retrieval.go,internal/knowledge/handler.go,internal/ai/gateway/handler.go,internal/authctx/authctx.go,internal/ai/gateway/rag_tenant_test.go,internal/knowledge/retrieval_tenant_test.go,CHANGELOG.md
+  TD-97 ② 落地：三共享存储租户隔离键（tenant+\x1f+id）+ authctx ctx 管道 + handler 13 处 authorize 点接线。空租户归 default（auth_users.go 先例）。新契约测试 2 例全绿；ai/gateway、knowledge、controlplane 全量回归绿。
+  后续：① 预算真执法（同一 ctx 管道）→ ③④ 平台视图绑 GatewaySecret 必配。

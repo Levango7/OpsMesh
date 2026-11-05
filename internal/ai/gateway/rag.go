@@ -7,7 +7,44 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
+
+// tenantSep 是租户隔离键的分隔符（unit separator：文档 ID 由用户经 API 提供，
+// 可能含 "/" 等字符，用可打印分隔符会被构造出跨租户碰撞键；\x1f 几乎不会出现在 ID 里）。
+const tenantSep = "\x1f"
+
+// tenantKey 把「裸文档 ID」编成「租户隔离键」：tenant + \x1f + id。
+// 空租户归 store.DefaultTenantID（与平台租户先例同口径，见 internal/controlplane/auth_users.go）。
+// TD-97 ②：A 租户写入的文档不会出现在 B 租户的检索/删除/计数里。
+func tenantKey(ctx context.Context, id string) string {
+	tenant := authctx.FromContext(ctx).TenantID
+	if tenant == "" {
+		tenant = store.DefaultTenantID
+	}
+	return tenant + tenantSep + id
+}
+
+// tenantPrefix 返回当前租户的键前缀（Scan 类操作用来只扫本租户）。
+func tenantPrefix(ctx context.Context) string {
+	tenant := authctx.FromContext(ctx).TenantID
+	if tenant == "" {
+		tenant = store.DefaultTenantID
+	}
+	return tenant + tenantSep
+}
+
+// bareID 从租户隔离键还原裸 ID（翻过前缀即原始 ID；无前缀时原样返回，
+// 兼容未经本函数编码的历史键——但注意那也意味着可被任何租户看到，
+// 故 InMemory store 之外的生产存储不应有未编码键）。
+func bareID(key string) string {
+	if i := strings.Index(key, tenantSep); i >= 0 {
+		return key[i+len(tenantSep):]
+	}
+	return key
+}
 
 // VectorDocument 向量文档
 type VectorDocument struct {
@@ -37,7 +74,7 @@ func NewInMemoryVectorStore() *InMemoryVectorStore {
 
 func (s *InMemoryVectorStore) Upsert(ctx context.Context, docs []VectorDocument) error {
 	for _, d := range docs {
-		s.docs[d.ID] = d
+		s.docs[tenantKey(ctx, d.ID)] = d
 	}
 	return nil
 }
@@ -49,13 +86,20 @@ func (s *InMemoryVectorStore) Search(ctx context.Context, embedding []float64, t
 	}
 	var results []scored
 
-	for _, doc := range s.docs {
+	prefix := tenantPrefix(ctx)
+	for key, doc := range s.docs {
+		// TD-97 ②：只检索本租户的文档（编码键的前缀即租户）。
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
 		// 过滤
 		if !matchFilter(doc.Metadata, filter) {
 			continue
 		}
 		score := cosineSimilarity(embedding, doc.Embedding)
-		results = append(results, scored{doc: doc, score: score})
+		// 出口还原裸 ID：调用方（handler/上层）只见自己写入时的 ID。
+		doc.ID = bareID(key)
+		results = append(results, scored{doc, score})
 	}
 
 	// 排序
@@ -77,14 +121,22 @@ func (s *InMemoryVectorStore) Search(ctx context.Context, embedding []float64, t
 }
 
 func (s *InMemoryVectorStore) Delete(ctx context.Context, ids []string) error {
+	// 按本租户键删：A 租户传 B 租户的文档 ID 删不到（键前缀不匹配即不存在）。
 	for _, id := range ids {
-		delete(s.docs, id)
+		delete(s.docs, tenantKey(ctx, id))
 	}
 	return nil
 }
 
 func (s *InMemoryVectorStore) Count(ctx context.Context) (int, error) {
-	return len(s.docs), nil
+	prefix := tenantPrefix(ctx)
+	n := 0
+	for key := range s.docs {
+		if strings.HasPrefix(key, prefix) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func matchFilter(metadata map[string]interface{}, filter map[string]interface{}) bool {

@@ -2,7 +2,9 @@
 package aigateway
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -33,14 +35,15 @@ func NewPromptTemplateStore() *PromptTemplateStore {
 	}
 }
 
-func (s *PromptTemplateStore) Create(tmpl *PromptTemplate) (*PromptTemplate, error) {
+func (s *PromptTemplateStore) Create(ctx context.Context, tmpl *PromptTemplate) (*PromptTemplate, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if tmpl.ID == "" {
 		return nil, fmt.Errorf("template ID is required")
 	}
-	if _, exists := s.templates[tmpl.ID]; exists {
+	key := tenantKey(ctx, tmpl.ID)
+	if _, exists := s.templates[key]; exists {
 		return nil, fmt.Errorf("template %s already exists", tmpl.ID)
 	}
 
@@ -48,14 +51,14 @@ func (s *PromptTemplateStore) Create(tmpl *PromptTemplate) (*PromptTemplate, err
 	tmpl.CreatedAt = now
 	tmpl.UpdatedAt = now
 	tmpl.Version = 1
-	s.templates[tmpl.ID] = tmpl
+	s.templates[key] = tmpl
 	return tmpl, nil
 }
 
-func (s *PromptTemplateStore) Get(id string) (*PromptTemplate, bool) {
+func (s *PromptTemplateStore) Get(ctx context.Context, id string) (*PromptTemplate, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	tmpl, ok := s.templates[id]
+	tmpl, ok := s.templates[tenantKey(ctx, id)]
 	if !ok {
 		return nil, false
 	}
@@ -63,26 +66,32 @@ func (s *PromptTemplateStore) Get(id string) (*PromptTemplate, bool) {
 	return &cp, true
 }
 
-func (s *PromptTemplateStore) List(category string) []*PromptTemplate {
+func (s *PromptTemplateStore) List(ctx context.Context, category string) []*PromptTemplate {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	out := make([]*PromptTemplate, 0)
-	for _, t := range s.templates {
+	prefix := tenantPrefix(ctx)
+	for key, t := range s.templates {
+		// TD-97 ②：只列本租户模板（提示词模板此前全平台共用）。
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
 		if category != "" && t.Category != category {
 			continue
 		}
 		cp := *t
+		cp.ID = bareID(key) // 出口还原裸 ID
 		out = append(out, &cp)
 	}
 	return out
 }
 
-func (s *PromptTemplateStore) Update(id string, content string, variables []string) (*PromptTemplate, error) {
+func (s *PromptTemplateStore) Update(ctx context.Context, id string, content string, variables []string) (*PromptTemplate, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	tmpl, ok := s.templates[id]
+	tmpl, ok := s.templates[tenantKey(ctx, id)]
 	if !ok {
 		return nil, fmt.Errorf("template %s not found", id)
 	}
@@ -94,13 +103,14 @@ func (s *PromptTemplateStore) Update(id string, content string, variables []stri
 	return tmpl, nil
 }
 
-func (s *PromptTemplateStore) Delete(id string) bool {
+func (s *PromptTemplateStore) Delete(ctx context.Context, id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.templates[id]; !ok {
+	key := tenantKey(ctx, id)
+	if _, ok := s.templates[key]; !ok {
 		return false
 	}
-	delete(s.templates, id)
+	delete(s.templates, key)
 	return true
 }
 

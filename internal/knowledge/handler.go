@@ -55,7 +55,8 @@ func (h *KnowledgeHandler) HandleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 同步会从外部源拉资料并覆盖文档库 ⇒ knowledge:write。
-	if _, ok := h.authorize(w, r, "knowledge:write"); !ok {
+	_, ok := h.authorize(w, r, "knowledge:write")
+	if !ok {
 		return
 	}
 
@@ -96,7 +97,8 @@ func (h *KnowledgeHandler) HandleSearch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// 检索读的是文档库正文（rerank 还会打一次模型）⇒ knowledge:read，不能匿名。
-	if _, ok := h.authorize(w, r, "knowledge:read"); !ok {
+	_, ok := h.authorize(w, r, "knowledge:read")
+	if !ok {
 		return
 	}
 
@@ -150,7 +152,8 @@ func (h *KnowledgeHandler) HandleIngest(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 导入直接写文档库 ⇒ knowledge:write。
-	if _, ok := h.authorize(w, r, "knowledge:write"); !ok {
+	actx, ok := h.authorize(w, r, "knowledge:write")
+	if !ok {
 		return
 	}
 
@@ -183,7 +186,7 @@ func (h *KnowledgeHandler) HandleIngest(w http.ResponseWriter, r *http.Request) 
 		req.Documents[i].UpdatedAt = time.Now()
 	}
 
-	if err := h.store.Upsert(r.Context(), req.Documents); err != nil {
+	if err := h.store.Upsert(authctx.NewContext(r.Context(), actx), req.Documents); err != nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -201,7 +204,8 @@ func (h *KnowledgeHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 列出的是文档正文（一次最多 1000 条）⇒ knowledge:read。
-	if _, ok := h.authorize(w, r, "knowledge:read"); !ok {
+	actx, ok := h.authorize(w, r, "knowledge:read")
+	if !ok {
 		return
 	}
 
@@ -210,9 +214,9 @@ func (h *KnowledgeHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if source != "" {
-		docs, err = h.store.ListBySource(r.Context(), KnowledgeSource(source))
+		docs, err = h.store.ListBySource(authctx.NewContext(r.Context(), actx), KnowledgeSource(source))
 	} else {
-		docs, err = h.store.Search(r.Context(), "", 1000, nil)
+		docs, err = h.store.Search(authctx.NewContext(r.Context(), actx), "", 1000, nil)
 	}
 	if err != nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -233,11 +237,12 @@ func (h *KnowledgeHandler) HandleDelete(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// 删除是破坏性动作 ⇒ knowledge:write。
-	if _, ok := h.authorize(w, r, "knowledge:write"); !ok {
+	actx, ok := h.authorize(w, r, "knowledge:write")
+	if !ok {
 		return
 	}
 
-	if err := h.store.Delete(r.Context(), []string{id}); err != nil {
+	if err := h.store.Delete(authctx.NewContext(r.Context(), actx), []string{id}); err != nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -252,11 +257,12 @@ func (h *KnowledgeHandler) HandleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 统计含各同步源的配置 ⇒ knowledge:read。
-	if _, ok := h.authorize(w, r, "knowledge:read"); !ok {
+	actx, ok := h.authorize(w, r, "knowledge:read")
+	if !ok {
 		return
 	}
 
-	count, err := h.store.Count(r.Context())
+	count, err := h.store.Count(authctx.NewContext(r.Context(), actx))
 	if err != nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -276,7 +282,8 @@ func (h *KnowledgeHandler) HandleSyncConfigs(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	// 同步配置里含外部源标识 ⇒ knowledge:read（与 stats 同一口径）。
-	if _, ok := h.authorize(w, r, "knowledge:read"); !ok {
+	_, ok := h.authorize(w, r, "knowledge:read")
+	if !ok {
 		return
 	}
 
@@ -294,7 +301,8 @@ func (h *KnowledgeHandler) HandleUpdateSyncConfig(w http.ResponseWriter, r *http
 	}
 
 	// 改同步开关/周期会决定后续对外部源的拉取 ⇒ knowledge:write。
-	if _, ok := h.authorize(w, r, "knowledge:write"); !ok {
+	_, ok := h.authorize(w, r, "knowledge:write")
+	if !ok {
 		return
 	}
 

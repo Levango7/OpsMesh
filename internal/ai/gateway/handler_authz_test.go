@@ -88,7 +88,7 @@ func TestAIGatewayRoutePermissionMapping(t *testing.T) {
 func TestAIGatewayDenyDoesNotMutate(t *testing.T) {
 	vs := NewInMemoryVectorStore()
 	h := NewAIGatewayHandler(NewGateway(), vs, 5)
-	if _, err := h.promptStore.Create(&PromptTemplate{ID: "p1", Content: "原始内容"}); err != nil {
+	if _, err := h.promptStore.Create(context.Background(), &PromptTemplate{ID: "p1", Content: "原始内容"}); err != nil {
 		t.Fatalf("seed prompt: %v", err)
 	}
 	mux := http.NewServeMux()
@@ -113,21 +113,21 @@ func TestAIGatewayDenyDoesNotMutate(t *testing.T) {
 	if code := serve(http.MethodPost, "/api/v1/ai/prompts", `{"id":"p2","content":"c"}`); code != http.StatusForbidden {
 		t.Fatalf("prompts POST 拒绝应 403，got %d", code)
 	}
-	if got := h.promptStore.List(""); len(got) != 1 || got[0].ID != "p1" {
+	if got := h.promptStore.List(context.Background(), ""); len(got) != 1 || got[0].ID != "p1" {
 		t.Fatalf("403 之后不应新增模板，got %+v", got)
 	}
 
 	if code := serve(http.MethodPut, "/api/v1/ai/prompts/p1", `{"content":"篡改"}`); code != http.StatusForbidden {
 		t.Fatalf("prompts PUT 拒绝应 403，got %d", code)
 	}
-	if tmpl, ok := h.promptStore.Get("p1"); !ok || tmpl.Content != "原始内容" {
+	if tmpl, ok := h.promptStore.Get(context.Background(), "p1"); !ok || tmpl.Content != "原始内容" {
 		t.Fatalf("403 之后模板内容不应被改写，got %+v ok=%v", tmpl, ok)
 	}
 
 	if code := serve(http.MethodDelete, "/api/v1/ai/prompts/p1", ""); code != http.StatusForbidden {
 		t.Fatalf("prompts DELETE 拒绝应 403，got %d", code)
 	}
-	if _, ok := h.promptStore.Get("p1"); !ok {
+	if _, ok := h.promptStore.Get(context.Background(), "p1"); !ok {
 		t.Fatal("403 之后模板不应被删除")
 	}
 }
