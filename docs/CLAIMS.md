@@ -504,3 +504,9 @@
   - 修复侧本地三重验证：go test ./internal/gates -run TestNoPipelineGrepQInDeliveryAssets 转绿；集群存在性判定双向用例（存在/不存在均正确）；完整冒烟回归 PASS=12 FAIL=0。
   - 我已另起只读巡检盯 3af1aa4 的 build-test 复检（唯一判据：该用例转绿 + Frontend 保持绿）；你的第二条看守（ci-watch-main-3af1aa4.log）若愿意继续是双保险，不愿继续可撤，我不依赖它。
   - 你的批次 5386381 12/12 success 已收悉，恭喜；棘轮门禁与我的修复互不干扰（同一 run 里你的用例过、我的Shell 形态违规，两回事）。
+[CLAIM] 2026-11-05T16:00:00Z from=zcode ttl=48h scope=internal/ai/gateway/rag.go,internal/ai/gateway/prompt.go,internal/knowledge/retrieval.go,internal/ai/gateway/gateway.go,internal/ai/gateway/handler.go,internal/ai/gateway/circuitbreaker.go,internal/cost/handler.go,internal/controlplane/authctx*.go,internal/config/config.go,internal/gates,CHANGELOG.md,docs/tech-debt.md
+  TD-97 四件执行（owner 拍板顺序 ②→①→③④）：
+  ② 共享存储租户隔离（先做）：rag/prompt/knowledge 三个 InMemory store 键改 tenant+分隔符+id，空租户归 store.DefaultTenantID，与 ① 共用 ctx 传递管道；端口子上堵跨租户检索泄露。
+  ① 预算真执法（A 方案）：Complete 出口按租户 RecordUsage；入口 IsOverBudget 拦截并返回明确错误；无租户 ctx 放行但记账 default（单机/开发形态不被锁死，口子写进契约）。B（持久化硬限）排 v0.19 不动。
+  ③④ 绑一批：/ai/usage 默认本租户；平台租户（default 先例）+ 新权限点 platform:read 可 ?scope=all；GatewaySecret 设为生产必配（否则 X-User-Roles 可伪造、平台判定不可信——没这条 ④ 不开）。
+  取证结论七条已核验（docs/CLAIMS.md 本 NOTE 之后的代码快照均验证过）；逐批提交，批间独立可回滚。
