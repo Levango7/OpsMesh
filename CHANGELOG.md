@@ -88,6 +88,14 @@
 - **进程内口径写进契约**（A 方案的前提）：重启归零、多副本各自计数（有效额度 ≈ 单副本额度 × 副本数）。持久化硬限（B：用量表+启动加载+DB 原子 upsert）排 v0.19。
 - **测试**：`budget_enforce_test.go` 5 例——越限先拦且不花钱、按租户各自计量、无租户记账 default 且与 default 租户 ctx 同空间、缓存命中不双计、nil 关闭执法。`go test ./internal/...` 全绿、gofmt/vet 干净。
 
+## [Unreleased-前端-预算口径] — 2026-11-05（TD-97 ① 的用户面补口：预算卡显示「进程内口径」+ CostView 首个 spec）
+
+- **补的是哪半口**：执法已落 main（`a1f6e61`），但 A 方案的前提——「进程内口径：重启归零、多副本各自计数 ⇒ 有效额度 ≈ 单副本额度 × 副本数」——只写在 `internal/ai/gateway/gateway.go:187` 的 `Complete` 契约注释里。用户面一个字没有：`web/enterprise/src/views/CostView.vue` 只摆「用量 / 额度」两个裸数字（改前 grep `进程|重启|副本` 在该视图命中 **0**），客户会把这条边界当成不存在，越限被拒时也无从解释。
+- **修法**：`web/enterprise/src/i18n/locales/{zh,en}/ops.json` 的 `cost` 段各加一个 `budget_note` 双语键；预算设置卡渲染 `data-testid="cost-budget-note"` 的提示，且**不挂在 `v-if="store.budget"` 之后**——额度数据没加载时口径照样要看得见。
+- **新增 `web/enterprise/src/views/__tests__/CostView.spec.js`（4 例；该视图此前零 spec）**：① 提示真出现在渲染 DOM 且可见（不是源码里写了个键）；② `budget=null` 时提示仍在；③ 双语都能解析且三要素（进程内 / 重启 / 副本）说全；④ 反向不得过度宣称成「已持久化 / 已支持跨副本硬限」。
+- **射程自证（本机变异两轮，红绿样本都有）**：变异 A 删模板里的提示行 ⇒ 例①②转红；变异 B 删 `en/ops.json` 的 `budget_note` ⇒ 例③④转红；两文件还原后按 sha256 逐字节核对一致并复跑 4/4 转绿。`eslint` 对 `CostView.vue` + 新 spec 退出码 0（CI 前端腿同条命令）；`src/i18n/naked-keys.test.js` 双语棘轮同步通过——新键若漏任一侧即红。
+- **如实登记一处本批未改**：`CostView.vue:173/178/199-201` 硬编码 `'default'` 租户。生产鉴权下它被 `internal/cost/handler.go:586` 的 `scopedTenant`（已验签上下文优先）忽略，无越权路径；`--require-auth=false` 的单机形态下该页读写恒落 `default` 租户，属既有单机口径。要改成「前端不带租户」需先定前端是否该自报租户，另议——本批只补口径、不动语义。
+
 ## [Unreleased-AI租户隔离] — 2026-11-05（TD-97 ②：RAG/提示词/知识库三共享存储租户化）
 
 - **`internal/ai/gateway/rag.go`**：`InMemoryVectorStore` 的 docs 键从裸 ID 改为租户隔离键（`tenant + \x1f + id`）——Upsert/Search/Delete/Count 全部按租户收窄，出口还原裸 ID。此前 A 租户写入的文档会出现在 B 租户的检索结果里（跨租户数据泄露）。

@@ -743,7 +743,8 @@
     "tier": "Tier",
     "max_tokens": "Max Tokens",
     "routes_title": "Model Routes",
-    "no_routes": "No routes configured."
+    "no_routes": "No routes configured.",
+    "budget_note": "Budget counters live in-process: they reset when the control plane restarts, and each replica counts separately (effective limit ≈ per-replica limit × replica count). Persistent cross-replica enforcement is not implemented."
   },
   "knowledge": {
     "title": "Knowledge Base",
