@@ -595,3 +595,4 @@
      - qoder ×1：CostView 批（4h，其 DONE 用的 scope 变体与 CLAIM 不完全一致，故未被门禁识别为闭环）。
   ③ 本线当前在飞：fix/shell-quote-hardening（PR #5），5 条新 CLAIM 待合并后闭环。
 [DONE] 2026-11-05T21:52:47Z from=opencode scope=internal/controlplane/activemq_ext_injection_test.go note=补登闭环：注入守卫 5 例已随 PR #4（e39879d）合入 main（上轮收尾漏写本行）
+[CLAIM] 2026-11-05T21:57:38Z from=opencode ttl=12h scope=docs/opsmesh-authz-audit-2026-11-04.md note=第二批（PR #5）：补 §3.4 shellQuote 缺陷取证与修复范围
