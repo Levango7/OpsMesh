@@ -127,37 +127,50 @@ func TestK8sClusterDeploy_NoAliasingWithInternalState(t *testing.T) {
 		t.Fatalf("Deploy: %v", err)
 	}
 
-	// 找出内部登记的那一条（同 deployID）。
-	var internal *K8sClusterDeployStatus
+	// 改调用方手里的副本，再观察内部状态是否被污染。
+	//
+	// 铁律：**所有对内部状态的读取都必须在 d.mu 保护下**。后台 goroutine 除了
+	// updateStatus 改 Phase/Progress/…，updateNodeStatus 还会写 NodeStatus map
+	// （executeDeploy → precheckNodes 一路在调）。任何锁外读 internal.* 都会与
+	// 它们构成新的 data race——本仓 -race CI 第一轮正是红在测试的锁外读上，
+	// 而非生产代码。故这里把要断言的值一次性在锁内取出，锁外只做比较。
+	got.Phase = "MUTATED"
+	got.NodeStatus["cp1"] = "poison"
+
+	var (
+		foundInternal bool
+		aliasedPtr    bool
+		sharedMap     bool
+		internalPhase string
+		internalCP1   string
+		hasCP1        bool
+	)
 	d.mu.RLock()
 	for _, s := range d.deployments {
 		if s.StartedAt.Equal(got.StartedAt) {
-			internal = s
+			foundInternal = true
+			aliasedPtr = got == s
+			sharedMap = sameMapPointer(got.NodeStatus, s.NodeStatus)
+			internalPhase = s.Phase
+			internalCP1, hasCP1 = s.NodeStatus["cp1"]
 			break
 		}
 	}
 	d.mu.RUnlock()
-	if internal == nil {
+
+	if !foundInternal {
 		t.Fatal("Deploy 未在 deployments map 中登记条目")
 	}
-
-	if got == internal {
+	if aliasedPtr {
 		t.Fatal("Deploy 返回了内部指针——后台 goroutine 改它时 HTTP 响应正在序列化（data race）")
 	}
-	if sameMapPointer(got.NodeStatus, internal.NodeStatus) {
+	if sharedMap {
 		t.Fatal("NodeStatus map 与内部共享底层——浅拷贝同样会竞态")
 	}
-
-	// 改调用方手里的副本，不得影响内部状态（这是深拷贝的可观察行为）。
-	got.Phase = "MUTATED"
-	got.NodeStatus["cp1"] = "poison"
-	d.mu.RLock()
-	stillInternal := internal
-	d.mu.RUnlock()
-	if stillInternal.Phase == "MUTATED" {
+	if internalPhase == "MUTATED" {
 		t.Error("改调用方副本影响了内部状态")
 	}
-	if v := stillInternal.NodeStatus["cp1"]; v == "poison" {
+	if hasCP1 && internalCP1 == "poison" {
 		t.Error("NodeStatus 是共享 map：改副本污染了内部状态")
 	}
 }
