@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // --- 测试替身 ---
@@ -130,7 +132,7 @@ func TestRateLimiterBurstAndRefill(t *testing.T) {
 
 func TestTokenUsageTrackerReport(t *testing.T) {
 	tr := NewTokenUsageTracker()
-	empty := tr.Report()
+	empty := tr.Report("")
 	if empty.ByProvider == nil || empty.ByModel == nil {
 		t.Fatal("空统计也应返回非 nil 映射（前端直接遍历）")
 	}
@@ -138,11 +140,11 @@ func TestTokenUsageTrackerReport(t *testing.T) {
 		t.Fatalf("空统计 TotalTokens = %d", empty.TotalTokens)
 	}
 
-	tr.Record("p1", "m1", 100, 40)
-	tr.Record("p1", "m2", 50, 10)
-	tr.Record("p2", "m1", 7, 3)
+	tr.Record("p1", "m1", "tenant-a", 100, 40)
+	tr.Record("p1", "m2", "tenant-a", 50, 10)
+	tr.Record("p2", "m1", "tenant-b", 7, 3)
 
-	rep := tr.Report()
+	rep := tr.Report("")
 	if rep.TotalInputTokens != 157 || rep.TotalOutputTokens != 53 || rep.TotalTokens != 210 {
 		t.Fatalf("总量统计 = %+v", rep)
 	}
@@ -232,7 +234,7 @@ func TestGatewayCompleteRecordsUsageAndCaches(t *testing.T) {
 		t.Fatalf("第二次应走缓存, provider 调用次数 = %d", got)
 	}
 
-	rep := g.GetTokenUsage()
+	rep := g.GetTokenUsage(store.DefaultTenantID)
 	if rep.TotalInputTokens != 10 || rep.TotalOutputTokens != 5 || rep.ByProvider["p1"] != 15 {
 		t.Fatalf("用量统计只应记一次真实调用: %+v", rep)
 	}

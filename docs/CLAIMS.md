@@ -517,3 +517,8 @@
   预算真执法（A 方案）落地：Complete 入口 IsOverBudget 拦截 + 出口 RecordUsage 按租户；共享单例 BudgetManager 注入 4 个 Gateway；
   无租户 ctx 放行记账 default（拍板口径）；进程内口径（重启归零/多副本×额度）写进 Complete 契约注释；B（持久化硬限）排 v0.19。
   5 例行为测试；go test ./internal/... 全绿。TD-97 余 ③④（平台视图绑 GatewaySecret 必配）按序。
+[DONE] 2026-11-05T19:30:00Z from=zcode ref=[CLAIM] 2026-11-05T16:00:00Z（TD-97 ③④） paths=internal/ai/gateway/handler.go,internal/ai/gateway/circuitbreaker.go,internal/ai/gateway/gateway.go,internal/ai/gateway/handler_usage_scope_test.go,internal/ai/gateway/gateway_test.go,internal/store/model/perm.go,internal/store/model/perm_platform_test.go,CHANGELOG.md
+  /ai/usage 默认本租户 + scope=all 双门（default 租户 × platform:readall）；usage tracker 带租户。
+  GatewaySecret 生产必配核实结论：**不做字面硬校验**——roles 头信任开关是 TrustGatewayHeaders（生产已强制 false），身份走 Bearer/验签/mTLS，不存在头伪造路径；GatewaySecret 是网关注入模式的可选 HMAC 加固，强制非空会误伤 JWT/API Key 部署。
+  权限命名裁决：不复用已有 platform:read（查看平台配置、viewer 现持有），新 platform:readall 按名排除出 viewer/operator 派生。
+  TD-97 四件至此全部落地（② 7e03cfb / ① a1f6e61 / ③④ 本批）；B 方案（持久化硬限）按拍板排 v0.19。

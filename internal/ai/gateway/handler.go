@@ -8,6 +8,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // AIGatewayHandler AI 网关 HTTP handler
@@ -236,18 +237,49 @@ func (h *AIGatewayHandler) HandleRAGSearch(w http.ResponseWriter, r *http.Reques
 }
 
 // HandleTokenUsage 处理 GET /api/v1/ai/usage
+//
+// 口径（TD-97 ③④，2026-11-05）：
+//   - 默认返回**本租户**用量（ctx 租户；无身份时归 default）；
+//   - `?scope=all` 返回平台全量，但仅当调用方同时满足：
+//     ① 租户是平台租户（store.DefaultTenantID，auth_users.go:52/77 同先例）；
+//     ② 持 platform:read 权限点（本函数内二次 authorize，不给默认角色）；
+//   - 否则 scope=all 静默降回本租户口径（不报错——不向非平台调用方确认
+//     「存在全量口径」这一事实本身）。此前该端点是网关级累计，任何持
+//     ai:read 的人都能看到平台总量。
 func (h *AIGatewayHandler) HandleTokenUsage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	// 用量报表是网关级累计（不区分租户），匿名可读等于把平台的模型消耗暴露到公网 ⇒ ai:read。
-	if _, ok := h.authorize(w, r, "ai:read"); !ok {
+	actx, ok := h.authorize(w, r, "ai:read")
+	if !ok {
 		return
 	}
 
-	report := h.gateway.GetTokenUsage()
-	paginate.WriteJSON(w, http.StatusOK, report)
+	tenant := actx.TenantID
+	if tenant == "" {
+		tenant = store.DefaultTenantID
+	}
+
+	if r.URL.Query().Get("scope") == "all" {
+		// 平台全量 = default 租户 + platform:readall 双重门（TD-97 ③④）。
+		// 顺序有意如此：先判租户（纯读 actx，不写响应），只有平台租户才发起第二次
+		// 鉴权。业务租户永远不会被问到这个权限点——既不泄露「存在全量口径」这一
+		// 事实，也避免 authorize 失败时回调写入的 403 把「静默降级」变成空话
+		// （实测过：任何 authorize 拒绝都会先写 403 到同一个 ResponseWriter）。
+		// 平台租户被问而没权限 ⇒ 正常 403（平台运维本人就该知道缺权限）。
+		if tenant == store.DefaultTenantID {
+			if _, ok := h.authorize(w, r, "platform:readall"); ok {
+				paginate.WriteJSON(w, http.StatusOK, h.gateway.GetTokenUsage(""))
+				return
+			}
+			// authorize 失败时响应已由回调写入（403），直接返回。
+			return
+		}
+		// 业务租户：静默降回本租户口径，不告知原因。
+	}
+
+	paginate.WriteJSON(w, http.StatusOK, h.gateway.GetTokenUsage(tenant))
 }
 
 // HandleHealth 处理 GET /api/v1/ai/health

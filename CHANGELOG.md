@@ -71,6 +71,14 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-AI平台视图] — 2026-11-05（TD-97 ③④：/ai/usage 本租户口径 + 平台全量双门 + 新权限点）
+
+- **③ `/api/v1/ai/usage` 默认返回本租户用量**（`handler.go` 的 HandleTokenUsage）：此前是网关级累计，任何持 `ai:read` 的人都能看到平台总量。TokenUsageTracker 的 `Record` 带租户、`Report(tenant)` 按租户过滤（空=平台全量），报表回显 `scope`（own/all）让调用方不必猜口径。
+- **④ 平台全量双门**：`?scope=all` 仅在「default 租户 + `platform:readall` 权限点」同时满足时返回。判定顺序有意为之——先判租户（纯读 actx、不写响应），**只有平台租户才发起第二次鉴权**：业务租户永远不被问到这个权限点（不泄露「存在全量口径」这一事实），且规避了「authorize 失败时回调已把 403 写进同一 ResponseWriter、继续写 200 只得半截响应」的坑（实测捕获，设计据此修正）。平台租户被问而没权限 ⇒ 明确 403。
+- **新权限点 `platform:readall`**（`internal/store/model/perm.go`）：**刻意不复用已有的 `platform:read`**——那是「查看平台配置」（platform_config.go/license_gate.go 在消费，且 viewer 按 `*:read` 后缀现持有它），复用等于把跨租户汇总漏给每个 viewer。`platform:readall` 按**精确名**排除出 viewer/operator 派生（不按组排——那会误伤 platform:read 的既有语义），只由 owner 显授或 admin 全量继承。`perm_platform_test.go` 三条不变量：在目录里（否则端点恒 403）、不进 viewer/operator、admin 仍全量。
+- **GatewaySecret 生产必配——核实后不做字面执行**：调查发现 roles/tenant 头的信任开关是 `TrustGatewayHeaders`（`config.go:940-942` **生产强制 false**，身份必须走 Bearer token/联邦验签/mTLS），与 authctx 的 GatewaySecret（网关头注入模式的 HMAC 加固）是两层；生产默认形态下 `platform:readall` 只可能由密码学验证过的 token 账号持有，不存在头伪造路径。故不新增「生产必须配 GatewaySecret」的硬校验（那会误伤合法的 JWT/API Key 部署——那种部署 GatewaySecret 本就应为空）。此核实结论记入板面 NOTE。
+- **测试**：`handler_usage_scope_test.go` 3 例（默认 own 且不问平台权限 / default+权限给全量 300 / 业务租户持权限也只给自己 150 / 平台租户无权限 403）；`go test ./internal/...` 全绿、gofmt/vet 干净。
+
 ## [Unreleased-AI预算执法] — 2026-11-05（TD-97 ①：预算从只读展示变为真执法·A 方案）
 
 - **`internal/ai/gateway/gateway.go`**：`Complete` 入口（路由后、限流前）按 ctx 租户 `IsOverBudget` 判定，越限即拒——明确错误、不静默降级，且钱没花（provider 未被调用）；出口按租户 `RecordUsage(prompt+completion)`，语义缓存命中不重复计量。此前 `RecordUsage`/`IsOverBudget` 在生产代码零调用方（TD-97 ① 原始状态）。

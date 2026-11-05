@@ -189,6 +189,14 @@ var PermSpecs = []PermSpec{
 	{"knowledge", "knowledge:write", "同步/导入/删除知识库文档与同步配置"},
 	{"cost", "cost:read", "查看成本报表、预算与模型路由"},
 	{"cost", "cost:write", "设置预算、改模型路由、生成成本报表"},
+	// 平台级跨租户全量读（TD-97 ③④，2026-11-05）：/ai/usage 的 scope=all 等
+	// 平台全量口径的显式权限点。**刻意不复用 platform:read**——那已是「查看平台
+	// 配置」（platform_config.go/license_gate.go 在消费，且 viewer 按 *:read 后缀
+	// 持有它），复用会把跨租户汇总视图漏给每个 viewer。
+	// 本权限点按名不进 viewer/operator 派生（见下方 deriveRolePermissions 的精确排除），
+	// 只由 owner 显授或 admin 全量继承；配合「平台租户（default）」双重判定，
+	// 见 internal/ai/gateway/handler.go 的 HandleTokenUsage。
+	{"platform", "platform:readall", "平台级跨租户全量读：用量/成本汇总（scope=all）"},
 	// flux 族（2026-11-02，由新加的源码守护 TestRolePermissions_CoversAuthorizeCallSites
 	// 扫出，非人工盘点）：internal/controlplane/flux.go 的 5 个 handler 全部
 	// requirePermission(w, r, "flux:read"/"flux:write")，但目录里没有 flux 族 ⇒
@@ -269,6 +277,14 @@ func RolePermissions() map[string][]string {
 		}
 		group, action := p[:idx], p[idx+1:]
 		if strings.HasSuffix(p, ":read") {
+			// 平台级跨租户全量读（platform:readall）**按名不进 viewer 全集**：
+			// 它以 ":read" 后缀家族收尾，按后缀派生会漏给每个 viewer——TD-97 ④ 的
+			// 最小权限就废了（viewer 拿跨租户汇总=越权）。注意按**精确名**排除而非
+			// 按 platform 组：platform:read（查看平台配置）是既有语义且 viewer 现持有，
+			// 按组排除会误伤它。operator 同理不进（platform 组不在两个 operator 组表里）。
+			if p == "platform:readall" {
+				continue
+			}
 			viewerPerms = append(viewerPerms, p)
 		}
 		if (operatorGroups[group] && operatorGroupActions[action]) ||

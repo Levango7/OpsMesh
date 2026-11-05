@@ -228,7 +228,7 @@ func (g *Gateway) Complete(ctx context.Context, req CompletionRequest) (*Complet
 
 	// 6. 记录 Token 用量（网关级）+ 租户级预算计量（TD-97 ①）。
 	// 缓存命中在步骤 1 已返回、不重复计量；此处是真打了钱的路径。
-	g.tokenUsage.Record(provider, model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	g.tokenUsage.Record(provider, model, budgetTenant(ctx), resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 	if g.budgets != nil {
 		tenant := budgetTenant(ctx)
 		// 本次可能正是把额度打满的那一次：仍放行（钱已花），ok=false 只影响下一次调用。
@@ -316,8 +316,10 @@ func (g *Gateway) HealthCheck(ctx context.Context) map[string]bool {
 }
 
 // GetTokenUsage 获取 Token 用量统计
-func (g *Gateway) GetTokenUsage() *TokenUsageReport {
-	return g.tokenUsage.Report()
+// GetTokenUsage 出用量报表。tenant 为空 = 平台全量（需 platform:read 的调用方
+// 才会走到，见 HandleTokenUsage）；非空 = 本租户口径（默认形态，TD-97 ③）。
+func (g *Gateway) GetTokenUsage(tenant string) *TokenUsageReport {
+	return g.tokenUsage.Report(tenant)
 }
 
 // ListProviders 列出所有已注册提供商

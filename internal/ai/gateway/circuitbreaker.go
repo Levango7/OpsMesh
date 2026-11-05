@@ -107,6 +107,7 @@ type TokenUsageTracker struct {
 type TokenRecord struct {
 	Provider     string    `json:"provider"`
 	Model        string    `json:"model"`
+	Tenant       string    `json:"tenant,omitempty"` // TD-97 ③：租户级用量（空=未注入身份的历史记录）
 	InputTokens  int       `json:"inputTokens"`
 	OutputTokens int       `json:"outputTokens"`
 	Timestamp    time.Time `json:"timestamp"`
@@ -118,6 +119,9 @@ type TokenUsageReport struct {
 	TotalTokens       int            `json:"totalTokens"`
 	ByProvider        map[string]int `json:"byProvider"`
 	ByModel           map[string]int `json:"byModel"`
+	// Scope 回显本次报表的作用域（own=本租户 / all=平台全量，TD-97 ③④）——
+	// 让调用方不必靠猜判断手里这份数字是什么口径。
+	Scope string `json:"scope"`
 }
 
 func NewTokenUsageTracker() *TokenUsageTracker {
@@ -126,12 +130,15 @@ func NewTokenUsageTracker() *TokenUsageTracker {
 	}
 }
 
-func (t *TokenUsageTracker) Record(provider, model string, input, output int) {
+// Record 记一条用量（TD-97 ③：tenant 由调用方从 ctx 解析后传入，
+// 空串 = 未注入身份的历史/单测路径）。
+func (t *TokenUsageTracker) Record(provider, model, tenant string, input, output int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.records = append(t.records, TokenRecord{
 		Provider:     provider,
 		Model:        model,
+		Tenant:       tenant,
 		InputTokens:  input,
 		OutputTokens: output,
 		Timestamp:    time.Now(),
@@ -140,23 +147,34 @@ func (t *TokenUsageTracker) Record(provider, model string, input, output int) {
 	t.totalOut += output
 }
 
-func (t *TokenUsageTracker) Report() *TokenUsageReport {
+// Report 出报表（TD-97 ③）：tenant 为空 = 平台全量口径（scope=all，
+// 仅 default 租户持 platform:read 的调用方能拿到，见 handler）；
+// 非空 = 该租户的本租户口径（scope=own，/ai/usage 的默认形态）。
+// 注意：totalIn/totalOut 是进程级累计，作为 own 口径时按记录逐条过滤，
+// 避免「看自己的数字却把别人算进来」。
+func (t *TokenUsageTracker) Report(tenant string) *TokenUsageReport {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
 	report := &TokenUsageReport{
-		TotalInputTokens:  t.totalIn,
-		TotalOutputTokens: t.totalOut,
-		TotalTokens:       t.totalIn + t.totalOut,
-		ByProvider:        make(map[string]int),
-		ByModel:           make(map[string]int),
+		ByProvider: make(map[string]int),
+		ByModel:    make(map[string]int),
+		Scope:      "all",
+	}
+	if tenant != "" {
+		report.Scope = "own"
 	}
 
 	for _, r := range t.records {
+		if tenant != "" && r.Tenant != tenant {
+			continue
+		}
+		report.TotalInputTokens += r.InputTokens
+		report.TotalOutputTokens += r.OutputTokens
 		report.ByProvider[r.Provider] += r.InputTokens + r.OutputTokens
 		report.ByModel[r.Model] += r.InputTokens + r.OutputTokens
 	}
-
+	report.TotalTokens = report.TotalInputTokens + report.TotalOutputTokens
 	return report
 }
 

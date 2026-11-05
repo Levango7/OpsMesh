@@ -65,6 +65,12 @@ find_tool() {
   done
   return 1
 }
+# 静态可见性：动态 export 的 TOOL_ 变量对扫描器不可见（SC2154），
+# 故先显式声明再循环赋值（声明即「已赋值」的证明）。
+TOOL_kind=""
+TOOL_kubectl=""
+TOOL_helm=""
+TOOL_docker=""
 missing=()
 for tool in kind kubectl helm docker; do
   path="$(find_tool "$tool")" || { missing+=("$tool"); continue; }
@@ -80,8 +86,9 @@ if ! "$TOOL_docker" info >/dev/null 2>&1; then
 fi
 
 PF_PID=""
+# shellcheck disable=SC2317 # trap 注册的 EXIT 钩子：静态分析看不见调用面故判「不可达」；实为退出必经
 cleanup() {
-  [[ -n "$PF_PID" ]] && kill "$PF_PID" 2>/dev/null || true
+  if [[ -n "$PF_PID" ]]; then kill "$PF_PID" 2>/dev/null || true; fi
   if [[ $KEEP -eq 1 ]]; then
     log "--keep：集群/命名空间/release 保留（集群=$CLUSTER_NAME ns=$NS）"
     return
@@ -168,8 +175,10 @@ else
   for c in controlplane agent; do
     pod="$("$TOOL_kubectl" get pods -n "$NS" -l "app.kubernetes.io/component=$c" \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
-    [[ -n "$pod" ]] && "$TOOL_kubectl" logs -n "$NS" "$pod" --tail=80 \
-      >"$ARTIFACT_DIR/logs-$c.txt" 2>&1 || true
+    if [[ -n "$pod" ]]; then
+      "$TOOL_kubectl" logs -n "$NS" "$pod" --tail=80 \
+        >"$ARTIFACT_DIR/logs-$c.txt" 2>&1 || true
+    fi
   done
   # ---- 失败分类：内容问题 vs 环境/吞吐 ----
   if grep -qE 'rate limiter|context deadline|Client\.Timeout|timed out waiting|connection refused|TLS handshake' "$ARTIFACT_DIR/install.log"; then
