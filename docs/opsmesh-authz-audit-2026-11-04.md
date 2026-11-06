@@ -288,6 +288,81 @@ lb 1。其中 `db_extended_ops.go` 等位置把结果嵌在**既有双引号段�
 （13 个载荷 `sh` 求值 == 原串、命令替换阴性用例）。窄变异两处：
 `shellQuote` 退回旧实现 ⇒ 4 例判红（脚本里落 `"$(id)"`）；拆 ES 校验 ⇒ 7 个载荷全部 202 放行。
 
+## 3.5 附带发现 E：`git_unix_ops.go` 28 处收编 与注入面全景盘点（第三批 / PR #6）
+
+### 3.5.1 运行时语义（本批关键发现，修正此前设计假设）
+
+agent 端解释器按**目标平台**选择：Windows = `cmd /C`、其他 = `sh -c`
+（`internal/agent/agent.go` 的 `shellCommand`）。同一段脚本跨两种语法执行，
+而两边的"引号段内语义"不同：
+
+| 双引号段内 | sh（Unix agent） | cmd（Windows agent） |
+|---|---|---|
+| `$(cmd)` / 反引号 | **命令替换**（QuoteDouble 转义后为字面量） | 无此语法（本就字面量） |
+| `%VAR%` | 无（字面量） | **展开**（引号内也展开） |
+| `"` 能否转义 | 能（`\"`） | **不能**——`\"` 里的 `"` 照样闭合引号 |
+| `\` / `$` 的转义 | QuoteDouble 补 `\\` `\$` 正确 | 转义产物变成**字面反斜杠**（污染值） |
+
+本机 cmd 探针（2026-11-06，经 `exec.Command("cmd","/C",…)` 生产同路径）：
+
+1. `echo "a & echo MARKER"` → `"a & echo MARKER"`（引号内 `&` 是字面量）；
+2. `echo "a" & echo MARKER & "b"` → **`MARKER` 被执行**（`"` 逃脱后 `&` 恢复特殊义）；
+3. 载荷自带 `\"` 亦能逃脱 → **`\"` 不是 cmd 的转义**（Go 的 exec 转义也救不了）；
+4. `echo "start %PATH:~0,1% end"` → `start E end`（`%VAR%` 引号内仍展开）。
+
+⇒ 结论：**POSIX 转义对 cmd 语境既不足（`"` 逃脱不封闭）又会污染值（`\\`/`\$`）**。
+因此 cmd 语境改用**拒绝式校验**：新建 `shellquote.ValidateCmdQuoted`，拒绝
+`"` `%` `!` CR/LF NUL 五类（其余字节在 cmd 双引号段内均为字面量），
+并配真 cmd 对拍用例（Windows 本地实跑、Linux CI 自动 skip）。
+
+### 3.5.2 本批修复（28 处）
+
+| 段 | 处数 | 修复配方 |
+|---|---|---|
+| Git（clone/pull/push/commit/branch/checkout/tag/log/diff/status/remote） | 11 条语句 | token → `shellQuote`；`-m "%s"` 与 `echo "…%s…"` 内嵌位 → 重建为完整字面量整体转义 |
+| Unix（pkg-install/service-start/service-stop） | 3 | 同上（含 `/etc/init.d/%s` 前缀拼接位） |
+| macOS（brew-install/brew-upgrade） | 2 | 同上 |
+| 磁盘健康（smart/badblocks） | 2 | 同上（含中文消息段） |
+| RAID（create/remove 回显） | 2 | 回显重建为 `echo <字面量>` |
+| Windows registry（query/set/delete） | 3 | `ValidateCmdQuoted` 拒绝式校验 + `regType` 白名单 |
+| windows-package（detect 行 + 4 条命令 × 3 管理器） | 5 | `mgr` 白名单（auto/winget/choco/scoop）+ `pkg` 12 个拼接位转义 |
+
+这些路由全部**无产品级 RBAC**（在 284 条棘轮台账内），任意登录用户可达，
+故按注入面最高优先级处理。
+
+### 3.5.3 残留面盘点（`scripts/shell-injection-audit.py` 复算口径）
+
+本批新增盘点器（只读静态统计，判据见脚本 docstring）。本批后
+`internal/controlplane` 候选 **616 行**（`fmt.Sprintf` 型 588 + 字符串拼接型 28；
+按预期解释器：sh 601 / powershell 15 / cmd 0）。
+
+- **`git_unix_ops.go` 残留 9 处** = 防火墙默认名生成 1 + **PowerShell 家族 8**
+  （firewall 2 / user 3 / eventlog 3）——按计划留给下一批。
+- **PowerShell 家族全仓 15 处**（盘点器新发现 7 处）：除上述 8 处外，
+  `os_ext_ops.go` 6 处（服务 start/stop/restart/new/delete/query）、
+  `server_network.go` 1 处（`Test-NetConnection` 目标拼接）。
+- **两个 cmd 残面（诚实账，尚未封闭）**：
+  1. git/unix 等 sh 语向的 handler 若打到 **Windows agent**（cmd 运行时），
+     QuoteDouble 不能封闭 `"` 逃脱、且 `\`/`$` 值会被污染——需要"目标平台感知"
+     或值域白名单，超出本批边界；
+  2. `windows-package` 脚本为 POSIX 写法（`case`/`command -v`），在 cmd 下
+     本就无法正确执行（**既有平台缺陷**，与注入无关），其安全修复按"脚本所写的
+     那个 shell"（sh）落地。
+
+**下一批（Windows 批）设计（修订版，基于 3.5.1 实测）**：
+PowerShell 语境是"cmd 外层 `"…"` × PS 内层 `'…'`"两层——① PS 层转义
+`'` → `''`；② cmd 层拒绝 `"` `%` `!` CR/LF（直接复用 `ValidateCmdQuoted`）；
+**不再**走此前设想的"POSIX 双引号转义"外层（该假设已被 3.5.1 证伪）。
+
+### 3.5.4 验证与窄变异
+
+- 新增守卫 7 个：`shellquote_security_test.go` 4 例（git / unix+macos+disk+raid /
+  registry / windows-package）；`quote_test.go` 3 例（拒绝集 / 真 cmd 逃脱校准 /
+  真 cmd 字面量对拍）。
+- 窄变异 3 处，全部判红后复原：拆 git clone 转义 ⇒ 脚本落 `"$(id)"`；
+  拆 registry 校验 ⇒ 3 个载荷全部 202 放行（含 `" & echo MARKER & "`）；
+  拆 mgr 白名单 ⇒ 4 个载荷（`winget; echo MARKER` 等）全部 202 放行。
+
 ## 4. 受影响面（223 条路径）
 
 ### 按域汇总
@@ -336,10 +411,13 @@ lb 1。其中 `db_extended_ops.go` 等位置把结果嵌在**既有双引号段�
 | 云 CLI 收编（§3.4，第二批） | `internal/controlplane/db_cloud_managed_ops.go` | 六厂商 27 处参数过引号层 |
 | ES 收编（§3.4，第二批） | `internal/controlplane/elasticsearch_ops_ext.go` | `node/index/from/to` → `ValidateName` 白名单（JSON-in-single-quote 无转义空间） |
 | HBase 迁移（§3.4，第二批） | `internal/controlplane/db_nosql_ext_ops.go` | 内联正则 → `ValidateQualifiedName`/`ValidateName`（语义等价） |
+| 注入清扫（§3.5，第三批） | `internal/controlplane/git_unix_ops.go` | 28 处：git/unix/macos/disk/raid → `shellQuote`；registry → `ValidateCmdQuoted`；windows-package → mgr 白名单 + pkg 转义 |
+| cmd 语境校验器（§3.5，第三批） | `pkg/shellquote/quote.go` | 新增 `ValidateCmdQuoted`（拒 `"` `%` `!` CR/LF NUL；真 cmd 对拍） |
+| 注入面盘点器（§3.5，第三批） | `scripts/shell-injection-audit.py` | 全仓候选复算：616（sh 601 / PS 15 / cmd 0） |
 
-守卫测试（本分支保留）：`dispatch_authz_test.go`(6) / `k8s_cluster_deploy_authz_test.go`(5) /
+守卫测试（本分支保留）：`dispatch_authz_test.go`(6) / `k8s_cluster_deploy_authz_test.go`(6) /
 `activemq_ext_injection_test.go`(5) / `cache_injection_test.go`(7) /
-`pkg/shellquote/quote_test.go`(8+5) / `shellquote_security_test.go`(7)，合计 43 个。
+`pkg/shellquote/quote_test.go`(17) / `shellquote_security_test.go`(11)，合计 52 个。
 （`fake_success_test.go` 4 个随假成功改动一并丢弃——那部分已由 a554697 覆盖。）
 
 > 诚实边界：`domestic_ops.go` 我原估有注入，逐条复核后确认**全部是静态脚本、无 req 字段

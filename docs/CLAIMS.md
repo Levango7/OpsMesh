@@ -620,3 +620,11 @@
 [DONE] 2026-11-06T00:39:07Z from=opencode scope=docs/opsmesh-authz-audit-2026-11-04.md note=第二批重认领闭环：补 §3.4 shellQuote 缺陷取证（随 PR #5 合入）
 [DONE] 2026-11-06T00:39:07Z from=opencode scope=pkg/shellquote/quote.go note=第二批重认领闭环：新增 QuoteDouble + ValidateName/ValidateQualifiedName
 [DONE] 2026-11-06T00:39:07Z from=opencode scope=pkg/shellquote/quote_test.go note=第二批重认领闭环：QuoteDouble 真 shell 对拍 + 校验器边界
+
+[NOTE] 2026-11-06T03:15:21Z from=opencode 第三批认领（注入面清扫，第一批文件级）：范围=`internal/controlplane/git_unix_ops.go` 的**机械可证子集**——Git 段 11 处（path/RepoURL/branch/tag/message/remote 全裸拼）、Unix 段 3 处（package/service）、macOS 段 2 处（brew package）、磁盘健康 2 处（disk）、RAID 2 处（echo）、Windows 注册表 3 处（`reg query/add/delete` 的 `"%s"` 语境）、windows-package 5 处（`buildWindowsPackageScript` 的**字符串拼接**形态 + `PKG_MGR="%s"`）。修复配方=token/echo/`"%s"` 三类：shellQuote 替换 + 消息段用 Quote(重建) 或去壳加引。**明确留给下一批（本批不动）**：Windows firewall/user/eventlog 的 8 处嵌套 PowerShell 语境（`powershell -Command "... '%s' ..."`——shell 双引号层 × PS 单引号层，需要双层转义设计）；本批在 `docs/opsmesh-authz-audit-2026-11-04.md` 盘点章节写明设计草案。注意：该文件全部路由无产品级 RBAC（在 284 条棘轮台账内），任意登录用户可达 ⇒ 注入面按最高优先级处理。
+[CLAIM] 2026-11-06T03:15:21Z from=opencode ttl=12h scope=internal/controlplane/git_unix_ops.go note=28 处注入收编（机械子集）
+[CLAIM] 2026-11-06T03:15:21Z from=opencode ttl=12h scope=internal/controlplane/shellquote_security_test.go note=第三批守卫（git/unix/registry 等 handler 级）
+[CLAIM] 2026-11-06T03:15:21Z from=opencode ttl=12h scope=scripts/shell-injection-audit.py note=剩余注入面盘点器（可复算）
+[CLAIM] 2026-11-06T03:15:21Z from=opencode ttl=12h scope=docs/opsmesh-authz-audit-2026-11-04.md note=补剩余面盘点章节（§3.5）
+[CLAIM] 2026-11-06T03:44:16Z from=opencode ttl=12h scope=pkg/shellquote/quote.go note=第三批：新增 ValidateCmdQuoted（cmd.exe 双引号段拒绝式校验）
+[CLAIM] 2026-11-06T03:44:16Z from=opencode ttl=12h scope=pkg/shellquote/quote_test.go note=第三批：ValidateCmdQuoted 边界 + 真 cmd 字节字面量对拍（Windows 本地；非 Windows skip）
