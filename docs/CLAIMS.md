@@ -682,3 +682,10 @@
 [DONE] 2026-11-06T08:18:52Z from=opencode scope=pkg/shellquote/quote.go note=闭合（随 PR #6）
 [DONE] 2026-11-06T08:18:52Z from=opencode scope=pkg/shellquote/quote_test.go note=闭合（随 PR #6）
 [DONE] 2026-11-06T08:18:52Z from=opencode scope=scripts/shell-injection-audit.py note=闭合（随 PR #6）
+[CLAIM] 2026-11-06T13:56:53Z from=workbuddy ttl=6h scope=internal/controlplane/db_cloud_managed_ops.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/apache_ext_ops2.go,internal/controlplane/elasticsearch_ops_ext.go,internal/controlplane/ops_route_authz_test.go,docs/projects-2026-11-05.md,CHANGELOG.md,docs/CLAIMS.md
+  owner 裁决（原话）：「运维 当然要 运维执行面啊」「那就这样吧，不要对访客开放，避免信息安全泄露」→ 把 11-05 P1-A 那 17 条从
+  `requireProd("system:write")`（admin-only）改为 `requireProd("task:write")`，与其余 284 条经派发口 `subsystemAuthorize(task:write)` 的口径一致：
+  **operator 通行 / viewer 仍 403 / 匿名仍 401**。只改这 4 个文件的 17 处权限点 + `ops_route_authz_test.go` 的角色期望（viewer 拒、operator 放、admin 放），
+  不新建权限族、不动派发口、不动前端、不动权限目录（`task:write` 已在 PermSpecs 且 operator 本就持有）。
+  CHANGELOG 由 zcode [CLAIM] 2026-11-06T11:00:00Z ttl=24h 覆盖（仍活），故我只在自己已有的「[Unreleased-门禁] — 2026-11-06」块内追加一条 bullet，
+  不新开标题、不占顶部插入点。
