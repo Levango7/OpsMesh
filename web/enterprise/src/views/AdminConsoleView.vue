@@ -13,7 +13,7 @@
             <option value="error">error</option>
           </select>
         </label>
-        <Button variant="ghost" size="sm" @click="window.open(getDiagnosticsUrl(), '_blank')" data-testid="admin-diagnostics-link">
+        <Button variant="ghost" size="sm" @click="handleDownloadDiagnostics" data-testid="admin-diagnostics-link">
           <Icon name="download" :size="14" /> {{ t('admin_console.diagnostics_download') }}
         </Button>
         <Button variant="ghost" size="sm" @click="fetchAll">
@@ -57,7 +57,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import PageShell from '@/components/PageShell.vue'
-import { getAdminConfig, setLogLevel, getDiagnosticsUrl, getStoreFailures, getServiceRouting, getServiceTraffic } from '@/api/admin'
+import { getAdminConfig, setLogLevel, getDiagnosticsUrl, downloadDiagnostics, getStoreFailures, getServiceRouting, getServiceTraffic } from '@/api/admin'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
@@ -105,17 +105,26 @@ async function fetchAll() {
     serviceRouting.value = sr || { domains: [] }
     serviceTraffic.value = st || { domains: [], window: '' }
   } catch (e) {
-    loadError.value = e.j?.error || t('admin_console.load_failed')
+    loadError.value = e?.message || t('admin_console.load_failed')
   } finally {
     loading.value = false
+  }
+}
+
+async function handleDownloadDiagnostics() {
+  try {
+    await downloadDiagnostics()
+  } catch (e) {
+    loadError.value = e?.message || t('admin_console.download_failed')
   }
 }
 
 async function onLogLevelChange() {
   try {
     await setLogLevel({ level: logLevel.value })
-  } catch {
-    // ignore
+  } catch (error) {
+    console.error('Failed to change log level:', error)
+    loadError.value = t('admin_console.log_level_change_failed')
   }
 }
 
