@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleGitOps 处理 POST /api/v1/os/git
@@ -43,7 +45,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = "/tmp/" + req.RepoURL[strings.LastIndex(req.RepoURL, "/")+1:]
 		}
-		script := fmt.Sprintf(`git clone %s %s 2>&1 && echo "Cloned %s to %s"`, req.RepoURL, path, req.RepoURL, path)
+		script := fmt.Sprintf(`git clone %s %s 2>&1 && echo %s`, shellQuote(req.RepoURL), shellQuote(path), shellQuote("Cloned "+req.RepoURL+" to "+path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_clone")
 		if !ok {
 			return
@@ -59,7 +61,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = "/tmp/repo"
 		}
-		script := fmt.Sprintf(`cd %s && git pull 2>&1 && echo "Pull complete"`, path)
+		script := fmt.Sprintf(`cd %s && git pull 2>&1 && echo "Pull complete"`, shellQuote(path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_pull")
 		if !ok {
 			return
@@ -83,7 +85,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if branch == "" {
 			branch = "main"
 		}
-		script := fmt.Sprintf(`cd %s && git push %s %s 2>&1 && echo "Push complete"`, path, remote, branch)
+		script := fmt.Sprintf(`cd %s && git push %s %s 2>&1 && echo "Push complete"`, shellQuote(path), shellQuote(remote), shellQuote(branch))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_push")
 		if !ok {
 			return
@@ -99,7 +101,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = "/tmp/repo"
 		}
-		script := fmt.Sprintf(`cd %s && git add -A && git commit -m "%s" 2>&1 && echo "Committed: %s"`, path, req.Message, req.Message)
+		script := fmt.Sprintf(`cd %s && git add -A && git commit -m %s 2>&1 && echo %s`, shellQuote(path), shellQuote(req.Message), shellQuote("Committed: "+req.Message))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_commit")
 		if !ok {
 			return
@@ -115,7 +117,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = "/tmp/repo"
 		}
-		script := fmt.Sprintf(`cd %s && git branch -a 2>&1 && echo "---" && git branch --show-current 2>&1`, path)
+		script := fmt.Sprintf(`cd %s && git branch -a 2>&1 && echo "---" && git branch --show-current 2>&1`, shellQuote(path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_branch_list")
 		if !ok {
 			return
@@ -135,7 +137,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if branch == "" {
 			branch = "main"
 		}
-		script := fmt.Sprintf(`cd %s && git checkout %s 2>&1 && echo "Checked out %s"`, path, branch, branch)
+		script := fmt.Sprintf(`cd %s && git checkout %s 2>&1 && echo %s`, shellQuote(path), shellQuote(branch), shellQuote("Checked out "+branch))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_checkout")
 		if !ok {
 			return
@@ -151,7 +153,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = "/tmp/repo"
 		}
-		script := fmt.Sprintf(`cd %s && git tag %s 2>&1 && echo "Tag %s created"`, path, req.Tag, req.Tag)
+		script := fmt.Sprintf(`cd %s && git tag %s 2>&1 && echo %s`, shellQuote(path), shellQuote(req.Tag), shellQuote("Tag "+req.Tag+" created"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_tag")
 		if !ok {
 			return
@@ -167,7 +169,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = "/tmp/repo"
 		}
-		script := fmt.Sprintf(`cd %s && git log --oneline -20 2>&1`, path)
+		script := fmt.Sprintf(`cd %s && git log --oneline -20 2>&1`, shellQuote(path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_log")
 		if !ok {
 			return
@@ -183,7 +185,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = "/tmp/repo"
 		}
-		script := fmt.Sprintf(`cd %s && git diff 2>&1 | head -100`, path)
+		script := fmt.Sprintf(`cd %s && git diff 2>&1 | head -100`, shellQuote(path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_diff")
 		if !ok {
 			return
@@ -199,7 +201,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = "/tmp/repo"
 		}
-		script := fmt.Sprintf(`cd %s && git status 2>&1`, path)
+		script := fmt.Sprintf(`cd %s && git status 2>&1`, shellQuote(path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_status")
 		if !ok {
 			return
@@ -215,7 +217,7 @@ func (s *Server) handleOSGit(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = "/tmp/repo"
 		}
-		script := fmt.Sprintf(`cd %s && git remote -v 2>&1`, path)
+		script := fmt.Sprintf(`cd %s && git remote -v 2>&1`, shellQuote(path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "git_remote")
 		if !ok {
 			return
@@ -252,7 +254,7 @@ func (s *Server) handleUnixOps(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "package is required"})
 			return
 		}
-		script = fmt.Sprintf(`if command -v pkgadd >/dev/null 2>&1; then pkgadd -d %s 2>/dev/null; elif command -v swinstall >/dev/null 2>&1; then swinstall %s 2>/dev/null; elif command -v pkgutil >/dev/null 2>&1; then pkgutil -i %s 2>/dev/null; else echo "Unknown package manager"; fi && echo "Installed %s"`, req.Package, req.Package, req.Package, req.Package)
+		script = fmt.Sprintf(`if command -v pkgadd >/dev/null 2>&1; then pkgadd -d %s 2>/dev/null; elif command -v swinstall >/dev/null 2>&1; then swinstall %s 2>/dev/null; elif command -v pkgutil >/dev/null 2>&1; then pkgutil -i %s 2>/dev/null; else echo "Unknown package manager"; fi && echo %s`, shellQuote(req.Package), shellQuote(req.Package), shellQuote(req.Package), shellQuote("Installed "+req.Package))
 	case "pkg-list":
 		script = `if command -v lslpp >/dev/null 2>&1; then lslpp -L 2>/dev/null | head -30; elif command -v swlist >/dev/null 2>&1; then swlist 2>/dev/null | head -30; elif command -v pkginfo >/dev/null 2>&1; then pkginfo 2>/dev/null | head -30; else echo "Unknown OS" ; fi`
 	case "service-start":
@@ -260,13 +262,13 @@ func (s *Server) handleUnixOps(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "service is required"})
 			return
 		}
-		script = fmt.Sprintf(`if command -v svcadm >/dev/null 2>&1; then svcadm enable %s; elif command -v startsrc >/dev/null 2>&1; then startsrc -s %s; else /etc/init.d/%s start; fi && echo "Service %s started"`, req.Service, req.Service, req.Service, req.Service)
+		script = fmt.Sprintf(`if command -v svcadm >/dev/null 2>&1; then svcadm enable %s; elif command -v startsrc >/dev/null 2>&1; then startsrc -s %s; else /etc/init.d/%s start; fi && echo %s`, shellQuote(req.Service), shellQuote(req.Service), shellQuote(req.Service), shellQuote("Service "+req.Service+" started"))
 	case "service-stop":
 		if req.Service == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "service is required"})
 			return
 		}
-		script = fmt.Sprintf(`if command -v svcadm >/dev/null 2>&1; then svcadm disable %s; elif command -v stopsrc >/dev/null 2>&1; then stopsrc -s %s; else /etc/init.d/%s stop; fi && echo "Service %s stopped"`, req.Service, req.Service, req.Service, req.Service)
+		script = fmt.Sprintf(`if command -v svcadm >/dev/null 2>&1; then svcadm disable %s; elif command -v stopsrc >/dev/null 2>&1; then stopsrc -s %s; else /etc/init.d/%s stop; fi && echo %s`, shellQuote(req.Service), shellQuote(req.Service), shellQuote(req.Service), shellQuote("Service "+req.Service+" stopped"))
 	case "info":
 		script = `echo "=== OS ===" && uname -a && echo "=== Version ===" && oslevel 2>/dev/null || swlist 2>/dev/null | head -1 || uname -r && echo "=== Arch ===" && uname -m`
 	default:
@@ -305,10 +307,10 @@ func (s *Server) handleMacOSExt(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "package is required"})
 			return
 		}
-		script = fmt.Sprintf(`brew install %s 2>/dev/null && echo "Installed %s" || echo "brew not available"`, req.Package, req.Package)
+		script = fmt.Sprintf(`brew install %s 2>/dev/null && echo %s || echo "brew not available"`, shellQuote(req.Package), shellQuote("Installed "+req.Package))
 	case "brew-upgrade":
 		if req.Package != "" {
-			script = fmt.Sprintf(`brew upgrade %s 2>/dev/null && echo "Upgraded %s" || echo "brew not available"`, req.Package, req.Package)
+			script = fmt.Sprintf(`brew upgrade %s 2>/dev/null && echo %s || echo "brew not available"`, shellQuote(req.Package), shellQuote("Upgraded "+req.Package))
 		} else {
 			script = `brew upgrade 2>/dev/null && echo "All packages upgraded" || echo "brew not available"`
 		}
@@ -332,6 +334,9 @@ func (s *Server) handleMacOSExt(w http.ResponseWriter, r *http.Request) {
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
 }
 
+// windowsPkgMgrRe 是 windows-package 的包管理器白名单（mgr 会被拼进脚本）。
+var windowsPkgMgrRe = regexp.MustCompile(`^(winget|choco|scoop)$`)
+
 // handleWindowsPackage 处理 POST /api/v1/os/windows-package
 func (s *Server) handleWindowsPackage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -353,6 +358,10 @@ func (s *Server) handleWindowsPackage(w http.ResponseWriter, r *http.Request) {
 	mgr := req.Manager
 	if mgr == "" || mgr == "auto" {
 		mgr = "auto"
+	}
+	if mgr != "auto" && !windowsPkgMgrRe.MatchString(mgr) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported package manager: " + mgr})
+		return
 	}
 
 	var script string
@@ -560,6 +569,9 @@ func (s *Server) handleWindowsEventLog(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// windowsRegTypeRe 是 reg add /t 的注册表类型白名单（reg.exe 接受的集合）。
+var windowsRegTypeRe = regexp.MustCompile(`(?i)^REG_(SZ|DWORD|QWORD|BINARY|MULTI_SZ|EXPAND_SZ|NONE)$`)
+
 // handleWindowsRegistry 处理 POST /api/v1/os/windows-registry
 func (s *Server) handleWindowsRegistry(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -587,6 +599,12 @@ func (s *Server) handleWindowsRegistry(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
 			return
 		}
+		// 值嵌在 cmd 双引号段里：cmd 无引号内转义语法，只能力度=拒绝
+		// （`"`/`%`/`!`/CR/LF 五类可改变解析；见 shellquote.ValidateCmdQuoted）。
+		if err := shellquote.ValidateCmdQuoted(req.Path, 512); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
+			return
+		}
 		script = fmt.Sprintf(`reg query "%s" 2>/dev/null || echo "Registry path not found"`, req.Path)
 	case "set":
 		if req.Path == "" || req.Name == "" {
@@ -597,10 +615,34 @@ func (s *Server) handleWindowsRegistry(w http.ResponseWriter, r *http.Request) {
 		if regType == "" {
 			regType = "REG_SZ"
 		}
+		if !windowsRegTypeRe.MatchString(regType) {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported registry type: " + regType})
+			return
+		}
+		if err := shellquote.ValidateCmdQuoted(req.Path, 512); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
+			return
+		}
+		if err := shellquote.ValidateCmdQuoted(req.Name, 255); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name: " + err.Error()})
+			return
+		}
+		if err := shellquote.ValidateCmdQuoted(req.Value, 8192); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "value: " + err.Error()})
+			return
+		}
 		script = fmt.Sprintf(`reg add "%s" /v "%s" /t %s /d "%s" /f 2>/dev/null && echo "Registry value set" || echo "Failed"`, req.Path, req.Name, regType, req.Value)
 	case "delete":
 		if req.Path == "" || req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path and name are required"})
+			return
+		}
+		if err := shellquote.ValidateCmdQuoted(req.Path, 512); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
+			return
+		}
+		if err := shellquote.ValidateCmdQuoted(req.Name, 255); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name: " + err.Error()})
 			return
 		}
 		script = fmt.Sprintf(`reg delete "%s" /v "%s" /f 2>/dev/null && echo "Registry value deleted" || echo "Failed"`, req.Path, req.Name)
@@ -711,7 +753,7 @@ func (s *Server) handleDiskHealth(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "磁盘设备名必填 (如 /dev/sda)"})
 			return
 		}
-		script := fmt.Sprintf(`smartctl -a %s 2>/dev/null || echo "smartctl 不可用或磁盘 %s 不支持 SMART"`, req.Disk, req.Disk)
+		script := fmt.Sprintf(`smartctl -a %s 2>/dev/null || echo %s`, shellQuote(req.Disk), shellQuote("smartctl 不可用或磁盘 "+req.Disk+" 不支持 SMART"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_disk_smart")
 		if !ok {
 			return
@@ -723,7 +765,7 @@ func (s *Server) handleDiskHealth(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "磁盘设备名是必填项"})
 			return
 		}
-		script := fmt.Sprintf(`badblocks -sv %s 2>/dev/null | head -50 || echo "badblocks 不可用"`, req.Disk)
+		script := fmt.Sprintf(`badblocks -sv %s 2>/dev/null | head -50 || echo "badblocks 不可用"`, shellQuote(req.Disk))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_badblocks")
 		if !ok {
 			return
@@ -769,7 +811,7 @@ func (s *Server) handleOSRAID(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "需要指定阵列名、磁盘列表和 RAID 级别"})
 			return
 		}
-		script := fmt.Sprintf(`echo "创建 RAID %s: %s 上的磁盘 %s"`, req.Name, req.Disks, req.Name) + `
+		script := fmt.Sprintf(`echo %s`, shellQuote("创建 RAID "+req.Name+": "+req.Disks+" 上的磁盘 "+req.Name)) + `
 # 实际命令取决于 RAID 控制器类型 (MegaRAID/HP Smart Array/HPSSA 等)
 # 示例: storcli /c0/add vd type=raid1 drives=0:1,0:2
 #       或: hpssacli controller slot=0 create ld type=raid1 drives=1:1,1:2`
@@ -784,7 +826,7 @@ func (s *Server) handleOSRAID(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "阵列名是必填项"})
 			return
 		}
-		script := fmt.Sprintf(`echo "删除 RAID 阵列: %s"`, req.Name)
+		script := fmt.Sprintf(`echo %s`, shellQuote("删除 RAID 阵列: "+req.Name))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "raid_remove")
 		if !ok {
 			return
@@ -799,23 +841,23 @@ func (s *Server) handleOSRAID(w http.ResponseWriter, r *http.Request) {
 func buildWindowsPackageScript(mgr, action, pkg string) string {
 	detect := `PKG_MGR=""; command -v winget >/dev/null 2>&1 && PKG_MGR="winget"; command -v choco >/dev/null 2>&1 && [ -z "$PKG_MGR" ] && PKG_MGR="choco"; command -v scoop >/dev/null 2>&1 && [ -z "$PKG_MGR" ] && PKG_MGR="scoop"`
 	if mgr != "auto" {
-		detect = fmt.Sprintf(`PKG_MGR="%s"`, mgr)
+		detect = fmt.Sprintf(`PKG_MGR=%s`, shellQuote(mgr))
 	}
 
 	var cmd string
 	switch action {
 	case "install":
-		cmd = `case "$PKG_MGR" in winget) winget install --id ` + pkg + ` --silent --accept-package-agreements --accept-source-agreements ;; choco) choco install ` + pkg + ` -y ;; scoop) scoop install ` + pkg + ` ;; esac`
+		cmd = `case "$PKG_MGR" in winget) winget install --id ` + shellQuote(pkg) + ` --silent --accept-package-agreements --accept-source-agreements ;; choco) choco install ` + shellQuote(pkg) + ` -y ;; scoop) scoop install ` + shellQuote(pkg) + ` ;; esac`
 	case "remove":
-		cmd = `case "$PKG_MGR" in winget) winget uninstall --id ` + pkg + ` --silent ;; choco) choco uninstall ` + pkg + ` -y ;; scoop) scoop uninstall ` + pkg + ` ;; esac`
+		cmd = `case "$PKG_MGR" in winget) winget uninstall --id ` + shellQuote(pkg) + ` --silent ;; choco) choco uninstall ` + shellQuote(pkg) + ` -y ;; scoop) scoop uninstall ` + shellQuote(pkg) + ` ;; esac`
 	case "upgrade":
 		if pkg != "" {
-			cmd = `case "$PKG_MGR" in winget) winget upgrade --id ` + pkg + ` --silent ;; choco) choco upgrade ` + pkg + ` -y ;; scoop) scoop update ` + pkg + ` ;; esac`
+			cmd = `case "$PKG_MGR" in winget) winget upgrade --id ` + shellQuote(pkg) + ` --silent ;; choco) choco upgrade ` + shellQuote(pkg) + ` -y ;; scoop) scoop update ` + shellQuote(pkg) + ` ;; esac`
 		} else {
 			cmd = `case "$PKG_MGR" in winget) winget upgrade --all --silent ;; choco) choco upgrade all -y ;; scoop) scoop update * ;; esac`
 		}
 	case "search":
-		cmd = `case "$PKG_MGR" in winget) winget search ` + pkg + ` ;; choco) choco search ` + pkg + ` ;; scoop) scoop search ` + pkg + ` ;; esac`
+		cmd = `case "$PKG_MGR" in winget) winget search ` + shellQuote(pkg) + ` ;; choco) choco search ` + shellQuote(pkg) + ` ;; scoop) scoop search ` + shellQuote(pkg) + ` ;; esac`
 	case "list":
 		cmd = `case "$PKG_MGR" in winget) winget list ;; choco) choco list --local-only ;; scoop) scoop list ;; esac`
 	}

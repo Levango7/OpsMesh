@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -324,6 +325,96 @@ func TestValidateQualifiedName(t *testing.T) {
 	for _, b := range bad {
 		if err := ValidateQualifiedName(b, 128); err == nil {
 			t.Errorf("ValidateQualifiedName(%q) 应拒", b)
+		}
+	}
+}
+
+// ---------------------------------------------------------------- ValidateCmdQuoted
+//
+// 该函数的正确性有两层：字符串层（拒绝集）与真 cmd 语义层（接受集保持字面量、
+// 拒绝集确实能逃逸）。后者用本机 cmd.exe 对拍——CI 在 Linux 上自动跳过。
+
+func TestValidateCmdQuoted(t *testing.T) {
+	good := []string{
+		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion`,
+		`HKLM\SOFTWARE\My App`,
+		`C:\Program Files (x86)\Some App`,
+		`a & b`, `a | b`, `a ^ b`, `a > b`, `a < b`, `a ; b`,
+		`it's fine`, `中文值`, `a=b,c d`, `50 off`,
+	}
+	bad := []string{
+		`a"b`, `a%b`, `a%b%c`, `a!b`,
+		"a\rb", "a\nb", "a\x00b",
+	}
+	for _, g := range good {
+		if err := ValidateCmdQuoted(g, 512); err != nil {
+			t.Errorf("ValidateCmdQuoted(%q) 误拒: %v", g, err)
+		}
+	}
+	for _, b := range bad {
+		if err := ValidateCmdQuoted(b, 512); err == nil {
+			t.Errorf("ValidateCmdQuoted(%q) 应拒", b)
+		}
+	}
+	if err := ValidateCmdQuoted("abcd", 3); err == nil {
+		t.Error("ValidateCmdQuoted(abcd, 3) 应拒（超长）")
+	}
+	// 空串：内容层不设必填（是否必填由调用方决定——reg /d 允许空值）
+	if err := ValidateCmdQuoted("", 8); err != nil {
+		t.Errorf("ValidateCmdQuoted 空串不应拒: %v", err)
+	}
+}
+
+// cmdRunsMarker 以生产同路径（exec.Command("cmd","/C",script)）执行脚本，
+// 判定 MARKER 是否作为独立命令被执行（注入成功的信号）。
+func cmdRunsMarker(t *testing.T, script string) bool {
+	t.Helper()
+	out, _ := exec.Command("cmd", "/C", script).CombinedOutput()
+	return strings.Contains(string(out), "\r\nMARKER")
+}
+
+// TestValidateCmdQuotedRejectsRealBreakout 校准 + 载荷：
+// 先证明含 `"` 的值在真 cmd 下确实能逃出引号执行额外命令（否则"拒绝"是空谈），
+// 再断言 ValidateCmdQuoted 拒绝这类值。注意 `\"` 在本路径下同样不能防逃逸
+// （Go 的 exec 转义只加反斜杠，cmd 不把反斜杠当转义——2026-11-06 实测）。
+func TestValidateCmdQuotedRejectsRealBreakout(t *testing.T) {
+	payload := `HKLM\Soft" & echo MARKER & "`
+	if err := ValidateCmdQuoted(payload, 512); err == nil {
+		t.Fatalf("含双引号的载荷应被拒: %q", payload)
+	}
+	if err := ValidateCmdQuoted(`%PATH%`, 512); err == nil {
+		t.Fatal("含 % 的载荷应被拒")
+	}
+
+	if runtime.GOOS != "windows" {
+		t.Skip("cmd.exe 仅在 Windows 上可对拍")
+	}
+	// 校准：同一载荷不设防时确实执行 MARKER（证明拒绝是承重的）
+	if !cmdRunsMarker(t, `echo "`+payload+`"`) {
+		t.Fatalf("校准失败：载荷 %q 未能在真 cmd 逃逸执行", payload)
+	}
+}
+
+// TestValidateCmdQuotedAcceptedStaysLiteralUnderRealCmd：
+// 通过校验的"敌意外观"值在真 cmd 引号段内保持字面量（& | ^ 空格 反斜杠均不重解析）。
+func TestValidateCmdQuotedAcceptedStaysLiteralUnderRealCmd(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("cmd.exe 仅在 Windows 上可对拍")
+	}
+	samples := []string{
+		`a & echo MARKER`,
+		`a | echo MARKER`,
+		`a ^ b ; c 'd'`,
+		`C:\Program Files\My App`,
+		`中文 ok=1,2`,
+	}
+	for _, v := range samples {
+		if err := ValidateCmdQuoted(v, 512); err != nil {
+			t.Fatalf("样本 %q 被误拒: %v", v, err)
+		}
+		script := `echo "` + v + `"`
+		if cmdRunsMarker(t, script) {
+			t.Errorf("样本 %q 在真 cmd 下逃逸执行", v)
 		}
 	}
 }

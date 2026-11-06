@@ -225,6 +225,40 @@ func isNameByte(c byte) bool {
 	return false
 }
 
+// ValidateCmdQuoted 校验将嵌入 **cmd.exe 双引号段** 的值（Windows agent 的
+// 脚本经 `cmd /C` 执行，见 internal/agent/agent.go 的 shellCommand）。
+//
+// 为什么这里必须"拒绝"而不是"转义"：cmd 没有可用于引号段内的转义语法。
+//   - 反斜杠不是转义符：`\"` 序列里的 `"` 在 cmd 视角**照样闭合引号**
+//     （2026-11-06 本机 cmd 探针实测），闭合后 `& | < >` 立即恢复特殊义；
+//   - QuoteDouble 面向 POSIX sh：它补的反斜杠/美元符/反引号转义在 cmd 里
+//     会变成字面反斜杠**污染值**（如 Windows 路径被写坏），而救命的那半边
+//     （`"` 的转义）在 cmd 里并不存在——POSIX 转义对 cmd 既是错的又是不足的。
+//
+// cmd 双引号段内能改变解析结果的字节只有五类，全部拒绝：
+//
+//	"      闭合引号（其后 `& | < >` 恢复特殊义）
+//	%      引号内仍做 %VAR% 展开（展开产物可再次影响解析；本仓 agent 子进程
+//	       环境已沙箱化，仍按防御性拒绝——REG_EXPAND_SZ 风格的 %VAR% 值不支持）
+//	!      延迟展开开启时做 !VAR!（默认关，防御性拒绝）
+//	CR/LF  注入新命令行
+//	NUL    截断
+//
+// 其余字节（`& | < > ^` 空白 反斜杠 分号 单引号 中文……）在双引号段内均为
+// 字面量（真 cmd 对拍见 quote_test.go）。空串不在此层校验（是否必填由调用方决定）。
+func ValidateCmdQuoted(s string, maxLen int) error {
+	if len(s) > maxLen {
+		return fmt.Errorf("value too long (%d > %d)", len(s), maxLen)
+	}
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '"', '%', '!', '\r', '\n', 0:
+			return fmt.Errorf("value %q: char %q not allowed in cmd quoted context", s, string(s[i]))
+		}
+	}
+	return nil
+}
+
 // ValidatePath 校验**绝对**路径，且不含 shell 元字符与 .. 穿越。
 // 用于 backupDir / file 一类会直接拼进命令的路径字段。
 func ValidatePath(p string) error {

@@ -4,6 +4,31 @@
 
 > 当前最新已发布版本：`v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased-注入清扫] — 2026-11-06（git_unix_ops.go 28 处注入收编 + cmd 语境校验器 + 注入面盘点器）
+
+- **`git_unix_ops.go` 28 处收编**（Git 11 / Unix 3 / macOS 2 / 磁盘 2 / RAID 2 /
+  注册表 3 / windows-package 5）：token 与回显消息位 → `shellQuote`；registry 的
+  `"%s"`（cmd 双引号段）→ `ValidateCmdQuoted` 拒绝式校验；windows-package 的
+  `mgr` → 白名单、`pkg` 的 12 个拼接位 → 转义。这些路由的鉴权已随 PR #4 的
+  派发口收口（`dispatchKafkaTask` → `task:write`，棘轮台账口径更正见下方
+  [Unreleased-门禁] 块）——注入面属「已授权用户越出授权语义在目标机执行任意
+  命令」，故仍按高优先级处理。
+- **新校验器 `shellquote.ValidateCmdQuoted`（cmd 语境没有引号内转义语法）**：
+  Windows agent 由 `cmd /C` 执行脚本（`internal/agent/agent.go` 的 shellCommand）。
+  实测：`\"` 里的 `"` 照样闭合引号（Go 的 exec 转义也救不了）、`%VAR%` 引号内
+  仍展开、`!` 延迟展开、CR/LF 注入新行——五类全拒（其余字节在 cmd 双引号段内
+  均为字面量）；否定与肯定两侧都有真 cmd 对拍用例（Windows 本地实跑、Linux CI
+  自动 skip）。
+- **windows-package `mgr` 白名单**：`auto/winget/choco/scoop` 之外一律 400
+  （修前 `manager: "winget; echo MARKER"` 一类值可直达脚本）。
+- **新盘点器 `scripts/shell-injection-audit.py`**：全仓注入候选可复算（本批后
+  616 行：sprintf 588 + concat 28；sh 601 / powershell 15 / cmd 0）。全仓
+  PowerShell 家族 15 处（git_unix 8 + os_ext_ops 6 + server_network 1）与两个
+  cmd 残面（跨平台 handler 的 Windows 运行时、windows-package 的 POSIX 写死）
+  在审计报告 §3.5 挂账，下一批"Windows 批"统一处理。
+- **验证**：新增守卫 7 例；窄变异 3 处全部判红（拆 git 转义 / 拆 registry 校验 /
+  拆 mgr 白名单）；`go test ./internal/controlplane/ ./pkg/shellquote/ ./internal/gates/`
+  全 PASS。
 ## [Unreleased-门禁] — 2026-11-06（ops 路由棘轮对齐派发口：台账 284→0，408 条写路由全部已鉴权）
 
 - **口径更正（我自己的门禁算错了，不是新需求）**：11-05 落地的 `internal/gates/ops_route_ratchet_gate_test.go` 只跟 `s.handle*` 兄弟转手、**不跟派发口**。而 PR #4/#5 把闸装在 `dispatchKafkaTask` / `dispatchFastDFSTask`（`subsystemAuthorize(task:write)`）上，284 条存量运维写路由正是经此收口的——旧门禁把已还的债继续记成欠账。
