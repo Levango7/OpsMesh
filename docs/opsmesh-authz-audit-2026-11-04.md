@@ -421,6 +421,23 @@ PowerShell 语境是"cmd 外层 `"…"` × PS 内层 `'…'`"两层——① PS 
   本批转换（非注入面）；它们在原形态下同样受引号改写与 `2>/dev/null` 影响——
   如需启用这批功能，建议单独一批做「静态命令传输切换」并逐条验证。
 
+## 3.7 附带发现 G：`os_ext_ops.go` sh 清扫（第五批 / PR #8）
+
+§3.6.4 挂账的 13 行（15 值位）收口：
+
+- `handleOSProcess`：`ps aux | grep -i %s` 的 filter → `shellQuote`；`kill -%s` 的
+  信号名是**裸词位** → `procSignalRe` 白名单（仅字母数字、≤16）；
+- `handleOSLog`：`journalctl` 的 unit（`-u ` 前缀拼接）与 since → `shellQuote`；
+- `handleMacOSService`：`launchctl load/unload/start/stop/status` 五动作 →
+  `shellQuote` + 消息段重建为完整字面量；
+- `handleAgentDistribute`：download/install 两条 echo 消息 → 重建 + `shellQuote`；
+- `handleHarmonyOSExt`：`hdc install/uninstall/file send` 三动作 → 同上。
+
+全部 sh 语境（这些命令天然面向 Unix/macOS 设备），`QuoteDouble` 语义可证。
+盘点器复算：os_ext 13 → 0；全仓 589 → 576（余 2 为已备注假阳性：git_unix 的
+Go 侧路径拼装行、server_network 的调用侧白名单行）。守卫 3 例 + 窄变异 2 处
+（拆 launchctl 转义 ⇒ 判红；拆信号白名单 ⇒ 4 载荷全 202）判红后复原。
+
 ## 4. 受影响面（223 条路径）
 
 ### 按域汇总
@@ -474,11 +491,12 @@ PowerShell 语境是"cmd 外层 `"…"` × PS 内层 `'…'`"两层——① PS 
 | 注入面盘点器（§3.5，第三批） | `scripts/shell-injection-audit.py` | 全仓候选复算：616（sh 601 / PS 15 / cmd 0） |
 | PS 家族收口（§3.6，第四批） | `internal/controlplane/git_unix_ops.go`、`os_ext_ops.go` | 14 处 → `PowerShellEncodedCommand` + `QuotePowerShellSingle`；`2>/dev/null` → `2>nul`；eventlog level 白名单 |
 | PS 嵌入工具（§3.6，第四批） | `pkg/shellquote/powershell.go` | 新增 `QuotePowerShellSingle` / `PowerShellEncodedCommand`（真 PS 对拍 + 校准） |
+| os_ext sh 清扫（§3.7，第五批） | `internal/controlplane/os_ext_ops.go` | 13 行/15 值位 → `shellQuote` + 信号白名单；盘点器 589→576 |
 
 守卫测试（本分支保留）：`dispatch_authz_test.go`(6) / `k8s_cluster_deploy_authz_test.go`(6) /
 `activemq_ext_injection_test.go`(5) / `cache_injection_test.go`(7) /
 `pkg/shellquote/quote_test.go`(17) / `powershell_test.go`(4) /
-`shellquote_security_test.go`(14)，合计 59 个。
+`shellquote_security_test.go`(17)，合计 62 个。
 （`fake_success_test.go` 4 个随假成功改动一并丢弃——那部分已由 a554697 覆盖。）
 
 > 诚实边界：`domestic_ops.go` 我原估有注入，逐条复核后确认**全部是静态脚本、无 req 字段
