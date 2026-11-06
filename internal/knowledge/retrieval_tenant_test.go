@@ -46,7 +46,7 @@ func TestInMemoryKnowledgeStore_TenantIsolation(t *testing.T) {
 		t.Fatalf("A 的删除影响了 B：B Count=%d", n)
 	}
 	// ListBySource 同口径（B 的还在）
-	listB, _ := ks.ListBySource(ctxB, KnowledgeSource(""))
+	listB, _ := ks.ListBySource(ctxB, KnowledgeSource(""), 0)
 	for _, d := range listB {
 		if d.ID != "k1" {
 			t.Fatalf("B ListBySource 出现非本租户文档：%+v", d)

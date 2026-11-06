@@ -63,7 +63,7 @@ func (s *spyStore) Delete(context.Context, []string) error { return nil }
 
 func (s *spyStore) Count(context.Context) (int, error) { return len(s.docs), nil }
 
-func (s *spyStore) ListBySource(context.Context, KnowledgeSource) ([]KnowledgeDoc, error) {
+func (s *spyStore) ListBySource(context.Context, KnowledgeSource, int) ([]KnowledgeDoc, error) {
 	return s.docs, nil
 }
 
