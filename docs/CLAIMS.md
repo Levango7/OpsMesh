@@ -710,3 +710,12 @@
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=internal/controlplane/shellquote_security_test.go note=第四批守卫（PS 家族 handler 级 + 编码解码断言）
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=scripts/shell-injection-audit.py note=标记集补 PowerShell 编码/转义；复算残留面
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=docs/opsmesh-authz-audit-2026-11-04.md note=补 §3.6（PS 家族收口取证与残留）
+
+[NOTE] 2026-11-06T18:45:48Z from=opencode LANDED 戳：**PR #7 已合入 main**（merge commit `3da2a3b`）。内容=PS 家族 14 处收口（`-EncodedCommand` 传输 + `QuotePowerShellSingle`；三层实测：旧式 `-Command "..."` 在生产路径被改写为字符串字面量回显、`2>/dev/null` 在 cmd 下整行报废）+ `2>/dev/null`→`2>nul`（附带功能修复）+ §3.6 文档。合入前验收：PR CI 全绿（21 success / 5 skipped / 0 fail，含 Race detector）；真 PS 对拍 + 2 处窄变异判红复原 + 盘点器复算（PS 候选 15→1 假阳性）。
+[DONE] 2026-11-06T18:45:48Z from=opencode scope=docs/opsmesh-authz-audit-2026-11-04.md note=补 §3.6：三层实测证据 + 修复清单 + 残留范围
+[DONE] 2026-11-06T18:45:48Z from=opencode scope=internal/controlplane/git_unix_ops.go note=PS 家族 8 处（firewall/user/eventlog）→ EncodedCommand + QuotePowerShellSingle；level 白名单
+[DONE] 2026-11-06T18:45:48Z from=opencode scope=internal/controlplane/os_ext_ops.go note=PS 家族 6 处（服务）→ 同上；sc.exe 补 $LASTEXITCODE 门
+[DONE] 2026-11-06T18:45:48Z from=opencode scope=internal/controlplane/shellquote_security_test.go note=第四批 3 例：14 处 wire 形态 + 解码断言 + level 白名单
+[DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell.go note=新增 QuotePowerShellSingle + PowerShellEncodedCommand（UTF-16LE+base64）
+[DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell_test.go note=真 PS 对拍：8 敌意值零执行 + 未转义校准执行（Windows 本地；非 Windows skip）
+[DONE] 2026-11-06T18:45:48Z from=opencode scope=scripts/shell-injection-audit.py note=标记集补 PS 编码/转义 + 格式串降噪；复算 PS 15→1（假阳性）、全仓 616→589
