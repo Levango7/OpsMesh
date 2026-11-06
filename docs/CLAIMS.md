@@ -609,3 +609,14 @@
   按钮级禁用批落地（侦察裁范围）：284 台账 ∩ 前端数据流核对后真实暴露面收敛为 InfraConsoleView 单视图（INFRA_DOMAINS 运行时拼 URL 驱动 ops 路由族；其余模块为零消费死代码）。
   落点：派发按钮挂 auth.hasPerm('task:write')（与 PR #4 后端派发闸同口径），禁用+title+常驻提示；spec 增 2 例门行为，全量 1369 过。
   细粒度门（按域权限点）等后端收口后批量改造，已记账。
+
+[NOTE] 2026-11-06T00:38:20Z from=opencode LANDED 戳：**PR #5 已合入 main**（merge commit `5d0db31`）。内容=shellQuote 全量修正（17 文件 / 269 调用点：只转义 `"` → 补全 `\ " $` 与反引号，形状保持双引号）+ 两处裸拼收编（云 CLI 六厂商 27 处、ES node/index/from/to 白名单）+ HBase 内联正则迁入 pkg/shellquote（逐字等价）+ CHANGELOG 两块（本批 + 补登 PR #4）+ 审计报告 §3.4。合入前验收：分支 head（397690e）CI 全绿——push run 42118437041 completed/success、PR run 42118448983 success，均含 Race detector / build-test / security / services / integration / E2E×2 / Frontend / proto / image×2。合并时 main 已含 zcode 的 InfraConsole 门（9172e44，与 `task:write` 口径对齐），GitHub 自动合并无冲突。
+[DONE] 2026-11-06T00:38:20Z from=opencode scope=internal/controlplane/middleware_ops.go note=shellQuote 委托 QuoteDouble；17 文件 269 调用点一次收口（形状保持双引号）
+[DONE] 2026-11-06T00:38:20Z from=opencode scope=internal/controlplane/db_cloud_managed_ops.go note=六家云厂商 27 处参数过引号层
+[DONE] 2026-11-06T00:38:20Z from=opencode scope=internal/controlplane/elasticsearch_ops_ext.go note=node/index/from/to → ValidateName 白名单（JSON-in-single-quote 无转义空间）
+[DONE] 2026-11-06T00:38:20Z from=opencode scope=internal/controlplane/db_nosql_ext_ops.go note=HBase 内联正则迁至 ValidateQualifiedName/ValidateName（逐字等价）
+[DONE] 2026-11-06T00:38:20Z from=opencode scope=internal/controlplane/shellquote_security_test.go note=7 守卫；窄变异：旧实现 ⇒ 4 例红、拆 ES 校验 ⇒ 7 载荷全放行
+
+[DONE] 2026-11-06T00:39:07Z from=opencode scope=docs/opsmesh-authz-audit-2026-11-04.md note=第二批重认领闭环：补 §3.4 shellQuote 缺陷取证（随 PR #5 合入）
+[DONE] 2026-11-06T00:39:07Z from=opencode scope=pkg/shellquote/quote.go note=第二批重认领闭环：新增 QuoteDouble + ValidateName/ValidateQualifiedName
+[DONE] 2026-11-06T00:39:07Z from=opencode scope=pkg/shellquote/quote_test.go note=第二批重认领闭环：QuoteDouble 真 shell 对拍 + 校验器边界
