@@ -1,7 +1,7 @@
 # 第三方依赖许可证清单（自动生成，勿手改）
 
 > 生成命令：`bash deploy/scripts/gen-third-party-licenses.sh`（CI 用 `--check` 阻止文档与 go.sum 漂移）  
-> 生成时间：2026-10-28T04:04:18Z  
+> 生成时间：2026-11-06T23:48:48Z  
 > 依赖来源：根模块 + `services/*/go.mod` + `operator/go.mod` 的全部 `go.sum`（163 个 module@version）  
 > 许可证识别：读本地 Go 模块缓存里各模块自带的 LICENSE 文件，按签名表分类为常见 SPDX 名。
 
@@ -67,7 +67,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `google.golang.org/grpc` | v1.83.2 | `NOTICE.txt` |
 | `gopkg.in/yaml.v3` | v3.0.1 | `NOTICE` |
 
-## 同一模块存在多个版本（8 个）
+## 同一模块存在多个版本（2 个）
 
 上表**按模块取语义最高版本**判定许可证。以下是 `go.sum` 里同时出现多个版本的模块——
 低版本若许可证不同，本清单不会体现，故逐个列出供核对。
@@ -76,14 +76,8 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 
 | 模块 | go.sum 内全部版本 | 本清单判定用 |
 |---|---|---|
-| `github.com/go-jose/go-jose/v4` | v4.1.4, v4.1.6 | `v4.1.6` |
-| `github.com/klauspost/compress` | v1.15.9, v1.18.7 | `v1.18.7` |
-| `golang.org/x/net` | v0.58.0, v0.59.0, v0.60.0 | `v0.60.0` |
-| `golang.org/x/sync` | v0.22.0, v0.23.0 | `v0.23.0` |
-| `golang.org/x/sys` | v0.47.0, v0.48.0 | `v0.48.0` |
-| `golang.org/x/term` | v0.45.0, v0.46.0 | `v0.46.0` |
-| `golang.org/x/text` | v0.41.0, v0.42.0 | `v0.42.0` |
-| `golang.org/x/tools` | v0.49.0, v0.50.0 | `v0.50.0` |
+| `github.com/pmezard/go-difflib` | v1.0.0, v1.0.1-0.20181226105442-5d4384ee4fb2 | `v1.0.1-0.20181226105442-5d4384ee4fb2` |
+| `golang.org/x/sys` | v0.47.0, v0.49.0 | `v0.49.0` |
 
 ## 全量清单
 
@@ -178,16 +172,16 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/shirou/gopsutil/v3` | v3.24.5 | 直接 |
 | `github.com/spf13/pflag` | v1.0.5 | 间接 |
 | `github.com/tklauser/go-sysconf` | v0.3.12 | 间接 |
-| `golang.org/x/crypto` | v0.57.0 | 直接 |
+| `golang.org/x/crypto` | v0.58.0 | 直接 |
 | `golang.org/x/mod` | v0.41.0 | 间接 |
-| `golang.org/x/net` | v0.60.0 | 间接 |
+| `golang.org/x/net` | v0.62.0 | 间接 |
 | `golang.org/x/oauth2` | v0.36.0 | 间接 |
-| `golang.org/x/sync` | v0.23.0 | 间接 |
-| `golang.org/x/sys` | v0.48.0 | 直接 |
-| `golang.org/x/term` | v0.46.0 | 间接 |
-| `golang.org/x/text` | v0.42.0 | 间接 |
+| `golang.org/x/sync` | v0.24.0 | 间接 |
+| `golang.org/x/sys` | v0.49.0 | 直接 |
+| `golang.org/x/term` | v0.47.0 | 间接 |
+| `golang.org/x/text` | v0.43.0 | 间接 |
 | `golang.org/x/time` | v0.12.0 | 直接 |
-| `golang.org/x/tools` | v0.50.0 | 间接 |
+| `golang.org/x/tools` | v0.51.0 | 间接 |
 | `gonum.org/v1/gonum` | v0.17.0 | 间接 |
 | `google.golang.org/protobuf` | v1.36.11 | 直接 |
 | `gopkg.in/evanphx/json-patch.v4` | v4.12.0 | 间接 |

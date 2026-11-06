@@ -19,6 +19,11 @@
 - **连带升级（MVS 最小闭包）**：x/crypto 0.57.0→0.58.0、x/sys 0.48.0→0.49.0、
   x/term 0.46.0→0.47.0、x/text 0.42.0→0.43.0、x/sync 0.23.0→0.24.0（仅在需要的
   模块里出现）；每模块 `go mod tidy` 补齐传递依赖哈希（go.sum）。
+- **许可证清单同步重生成**（依赖集变了 ⇒ 清单集合必然变）：`docs/third-party-licenses.md`
+  按 `deploy/scripts/gen-third-party-licenses.sh` 重生成——163 个模块 / 6 种许可证 /
+  直接依赖 25 个 / 需法务确认 24 个；「同一模块存在多个版本」从 8 个降到 2 个；
+  `golang.org/x/tools` 由 v0.50.0 → v0.51.0（tidy 的 MVS 结果）。本地覆盖率 100%
+  （NO-SOURCE = 0，CI 门禁的下限是 90%）。npm 侧清单仅生成时间戳变化（前端依赖未变）。
 - **验证**：10 模块 `go build ./...` / `go vet ./...` 全绿、各模块 `go test ./...`
   全 PASS；x/net 版本全仓复核统一为 v0.62.0。
 
