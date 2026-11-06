@@ -719,3 +719,14 @@
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell.go note=新增 QuotePowerShellSingle + PowerShellEncodedCommand（UTF-16LE+base64）
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell_test.go note=真 PS 对拍：8 敌意值零执行 + 未转义校准执行（Windows 本地；非 Windows skip）
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=scripts/shell-injection-audit.py note=标记集补 PS 编码/转义 + 格式串降噪；复算 PS 15→1（假阳性）、全仓 616→589
+
+[NOTE] 2026-11-06T21:23:44Z from=opencode P4（TD-89）认领与方案（owner 令「想办法克服，多测试几种办法」）：
+  ① 本机复测：docker.io / mirror.gcr.io / hub.docker.com 仍不可达，但 **docker.m.daocloud.io 与 ghcr.io 可达**，
+  且本机 daemon 已配 daocloud 镜像源 ⇒ 本地已取到 mysql:8 / redis:7 的 daocloud digest（a81d… / 2e3e…）。
+  ② 克服点：§11.5 要求「digest 对照在 runner 上跑并留证据」——本线把对照做成**可复现的 runner 工作流**
+  （.github/workflows/mirror-digest-check.yml：docker.io vs mirror.gcr.io vs daocloud vs 华为 SWR，
+  含 mysql:8/redis:7 硬判据 + 4 个基镜像参考行），触发即得证据；随后按 §11.4 B-min 换 ci.yml 的 3 处
+  service 引用（mysql ×2、redis ×1），以 PR 的 services/integration 两腿绿为第二判据。
+  A（配 secrets）仍需 owner 动作，不在本线射程。
+[CLAIM] 2026-11-06T21:23:44Z from=opencode ttl=12h scope=.github/workflows/ci.yml,.github/workflows/mirror-digest-check.yml note=P4 B-min：service 镜像源 + digest 对照工作流
+[CLAIM] 2026-11-06T21:23:44Z from=opencode ttl=12h scope=CHANGELOG.md note=P4 结项块（随 B-min）
