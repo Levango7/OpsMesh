@@ -35,6 +35,8 @@ const GATED = [
   ['K8sResourcesView.vue', 'k8s:write'],
   ['SystemOpsView.vue', 'system:write'],
   ['secrets/SecretsView.vue', 'secrets:write'],
+  // 批 2：死信处置门（task:write）——同批补了 purge 的 ConfirmModal
+  ['DeadLetterView.vue', 'task:write'],
   // 先行批（留档，勿删）
   ['FluxView.vue', 'flux:write'],
   ['InfraConsoleView.vue', 'task:write']
@@ -59,7 +61,6 @@ const PENDING = [
   ['CanaryView.vue', 'task:write'],
   ['ConfigHotpushView.vue', 'cmdb:write'],
   ['CostView.vue', 'cost:write'],
-  ['DeadLetterView.vue', 'task:cancel/task:write'],
   ['DeploysView.vue', 'deploy:write'],
   ['DeviceDetailView.vue', 'device:delete/provision:execute'],
   ['DeviceDiscoveryView.vue', 'device:delete/provision:execute'],

@@ -74,7 +74,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit" data-testid="apikeys-onsave-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('apikeys.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="apikeys-onsave-btn" :disabled="!canWrite || saving" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('apikeys.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('apikeys.cancel') }}</Button>
         </div>
       </form>
@@ -198,10 +198,16 @@ function openEdit(row) {
   form.value = { id: row.id, name: row.name || '', scopes: [...(row.scopes || [])], rateLimitPerSec: row.rateLimitPerSec || 0, expiresAt: exp }
 }
 
+// 在飞态（防重复提交）：双击即重复创建 API Key（列表两条同名，需人工清理）——2026-11-06 五维排查批 2。
+const saving = ref(false)
+
 async function onSave() {
+  if (saving.value) return
+  saving.value = true
   formError.value = ''
   if (!form.value.scopes.length) {
     formError.value = t('apikeys.scopes_required')
+    saving.value = false
     return
   }
   try {
@@ -232,6 +238,8 @@ async function onSave() {
     }
   } catch (e) {
     formError.value = e.j?.error || t('apikeys.save_failed')
+  } finally {
+    saving.value = false
   }
 }
 

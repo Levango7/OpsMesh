@@ -60,7 +60,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit" data-testid="scripts-onsave-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('scripts.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="scripts-onsave-btn" :disabled="!canWrite || saving" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('scripts.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('scripts.cancel') }}</Button>
         </div>
       </form>
@@ -79,7 +79,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit" data-testid="scripts-onexecute-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="task" :size="14" /> {{ $t('scripts.execute') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="scripts-onexecute-btn" :disabled="!canWrite || executing" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="task" :size="14" /> {{ $t('scripts.execute') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="execForm = null">{{ $t('scripts.cancel') }}</Button>
         </div>
       </form>
@@ -151,6 +151,11 @@ const execRow = ref(null)
 const executions = ref([])
 const execLoading = ref(false)
 
+// 在飞态（防重复提交）：脚本执行对生产机不可幂等——慢网络下连点两次就是两次下发
+// （2026-11-06 五维排查批 2 发现：此文件此前全文件零 :disabled）。保存同理（重复创建）。
+const saving = ref(false)
+const executing = ref(false)
+
 // 删除确认弹窗（替代 confirm）
 const deleteConfirm = reactive({ show: false, row: null })
 // 错误提示弹窗（替代 alert）
@@ -203,6 +208,8 @@ function openEdit(row) {
 }
 
 async function onSave() {
+  if (saving.value) return
+  saving.value = true
   formError.value = ''
   try {
     const body = {
@@ -218,6 +225,8 @@ async function onSave() {
     await fetchScripts()
   } catch (e) {
     formError.value = e.j?.error || t('scripts.save_failed')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -227,9 +236,12 @@ function openExec(row) {
 }
 
 async function onExecute() {
+  if (executing.value) return
+  executing.value = true
   formError.value = ''
   if (!execForm.value.deviceID) {
     formError.value = t('scripts.need_device')
+    executing.value = false
     return
   }
   try {
@@ -242,6 +254,8 @@ async function onExecute() {
     execForm.value = null
   } catch (e) {
     formError.value = e.j?.error || t('scripts.execute_failed')
+  } finally {
+    executing.value = false
   }
 }
 
