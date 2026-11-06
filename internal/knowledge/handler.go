@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	gateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
@@ -210,13 +211,24 @@ func (h *KnowledgeHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source := r.URL.Query().Get("source")
+	// 两条取数分支回同一条上界：Search 固定 1000；ListBySource 此前无 limit
+	//（?source=<大源> 可一次拉回整源正文，A2 审计 BB-05）。limit 可显式传，1..1000 夹紧。
+	listLimit := 1000
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 1 || n > 1000 {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be an integer in [1,1000]"})
+			return
+		}
+		listLimit = n
+	}
 	var docs []KnowledgeDoc
 	var err error
 
 	if source != "" {
-		docs, err = h.store.ListBySource(authctx.NewContext(r.Context(), actx), KnowledgeSource(source))
+		docs, err = h.store.ListBySource(authctx.NewContext(r.Context(), actx), KnowledgeSource(source), listLimit)
 	} else {
-		docs, err = h.store.Search(authctx.NewContext(r.Context(), actx), "", 1000, nil)
+		docs, err = h.store.Search(authctx.NewContext(r.Context(), actx), "", listLimit, nil)
 	}
 	if err != nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

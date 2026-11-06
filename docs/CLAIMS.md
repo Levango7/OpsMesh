@@ -737,3 +737,11 @@
      只扫 controlplane 会出假幽灵（我实测 30 条，修后 0）；**权限点只认守卫调用实参里的字面量**，
      函数体里其它 `x:y` 会把 action 名（如 HBase 的 ns:table）误记成权限点缺口。
   ⑥ 批 2 已排期（重复提交 / 无确认与静默吞错 / cost 口径字段），做完再发 [DONE]（scope 逐字）。
+
+[CLAIM] 2026-11-07T09:30:00Z from=zcode ttl=24h scope=internal/controlplane/abac_ops.go,internal/knowledge/retrieval.go,internal/knowledge/handler.go,internal/cost/handler.go,web/enterprise/src/views/TasksView.vue,web/enterprise/src/views/KnowledgeView.vue,web/enterprise/src/views/UsersView.vue,web/enterprise/src/views/AIOpsView.vue,web/enterprise/src/views/{AlertsView,AutoscalerView,BatchView,BotView,CanaryView,CMDBView,ConfigHotpushView,DeadLetterView,DeploysView}.vue,web/enterprise/src/i18n/locales/{zh,en}/{ops,observability,assets,system}.json,docs/api-specification.md,docs/api-reference.md,docs/qa-sweep-2026-11-06.md,CHANGELOG.md,docs/CLAIMS.md
+  五维排查批 3（接 [CLAIM] 2026-11-06T14:05:00Z）：① BA-04 P0——abac_ops.go 裸拼 user 字段进 shell
+  + evaluate 恒假 ALLOWED（opencode 注入清扫第三批只扫 git_unix_ops.go，本文件 main 现状仍裸拼，板面无人持）；
+  ② BB-05 knowledge?source= 无上界；③ P1-7 cost/budget 响应体补「进程内口径」字段（qoder 11-05 交接）；
+  ④ 前端无确认四视图（TasksView approve/reject 复用页内 ConfirmModal、KnowledgeView 删除加确认+toast、
+  UsersView reject 复用 deleteConfirm 模式、AIOpsView executePlan 加确认）；⑤ 九视图保存在飞态；
+  ⑥ BB-08 文档更正（错误体 schema/过滤参数/排序约定按实测改，两份文档互矛盾处二选一）。

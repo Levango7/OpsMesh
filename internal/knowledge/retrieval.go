@@ -331,7 +331,10 @@ func (s *InMemoryKnowledgeStore) Count(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-func (s *InMemoryKnowledgeStore) ListBySource(ctx context.Context, source KnowledgeSource) ([]KnowledgeDoc, error) {
+// ListBySource 列出指定来源的文档；limit<=0 视为无界（仅内部调用允许），
+// HTTP 面必须传正上限——旧版无 limit，`?source=<大源>` 一次拉回整源正文（含 content），
+// 单请求内存/带宽无上界，与同端点 Search 的 1000 条承诺自相矛盾（A2 审计 BB-05）。
+func (s *InMemoryKnowledgeStore) ListBySource(ctx context.Context, source KnowledgeSource, limit int) ([]KnowledgeDoc, error) {
 	var results []KnowledgeDoc
 	prefix := tenantPrefix(ctx)
 	for key, doc := range s.docs {
@@ -342,6 +345,9 @@ func (s *InMemoryKnowledgeStore) ListBySource(ctx context.Context, source Knowle
 		if doc.Source == source {
 			doc.ID = bareID(key)
 			results = append(results, doc)
+			if limit > 0 && len(results) >= limit {
+				break
+			}
 		}
 	}
 	return results, nil
