@@ -210,3 +210,120 @@ func TestValidateErrorNamesField(t *testing.T) {
 		t.Errorf("错误未引用字段值: %s", msg)
 	}
 }
+
+// ---------------------------------------------------------------- QuoteDouble
+//
+// QuoteDouble 存在的理由与本仓 269 处历史调用点绑定（双引号形状不能改），
+// 其语义保证与 Quote 相同：shell 求值结果 == 原字符串，且不含可展开结构。
+// 关键差异用例：$()/反引号/$VAR/结尾反斜杠——旧 shellQuote 在这四类上全失守。
+
+func TestQuoteDoubleShape(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", `""`},
+		{"plain", `"plain"`},
+		{`a"b`, `"a\"b"`},
+		{`$(id)`, `"\$(id)"`},
+		{"`id`", "\"\\`id\\`\""},
+		{`$HOME`, `"\$HOME"`},
+		{"abc\\", `"abc\\"`},
+		{"a\\\"b", `"a\\\"b"`},
+	}
+	for _, c := range cases {
+		if got := QuoteDouble(c.in); got != c.want {
+			t.Errorf("QuoteDouble(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestQuoteDoubleRoundTripsThroughRealShell 语义保证交给真 shell 验：
+// 任何"看起来对了"的转义实现都能骗过字符串断言，骗不过 sh 求值。
+func TestQuoteDoubleRoundTripsThroughRealShell(t *testing.T) {
+	if shProbe == nil {
+		t.Skip("no POSIX shell available on this host")
+	}
+	cases := []string{
+		"",
+		"plain",
+		"with space",
+		"$(id)",
+		"`id`",
+		"$HOME",
+		"${IFS}",
+		"abc\\",
+		"a\\\"b",
+		`x"; touch /tmp/shellquote2-pwned; echo "`,
+		"newline\ninjected",
+		"日本語",
+	}
+	for _, c := range cases {
+		got := shellEcho(t, QuoteDouble(c))
+		if got != c {
+			t.Errorf("QuoteDouble(%q) 求值结果 = %q，不等于原串（可注入或语义改变）", c, got)
+		}
+	}
+}
+
+// TestQuoteDoubleNeutralizesCommandSubstitution 核心阴性用例：命令替换不得执行。
+func TestQuoteDoubleNeutralizesCommandSubstitution(t *testing.T) {
+	if shProbe == nil {
+		t.Skip("no POSIX shell available on this host")
+	}
+	const marker = "/tmp/shellquote-double-pwned"
+	_ = os.Remove(marker)
+	for _, payload := range []string{
+		"$(touch " + marker + ")",
+		"`touch " + marker + "`",
+	} {
+		got := shellEcho(t, QuoteDouble(payload))
+		if got != payload {
+			t.Fatalf("QuoteDouble(%q) 求值被改变：%q", payload, got)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		_ = os.Remove(marker)
+		t.Fatal("命令替换被执行：标记文件被创建")
+	}
+}
+
+// ---------------------------------------------------------------- ValidateName / ValidateQualifiedName
+
+func TestValidateName(t *testing.T) {
+	good := []string{"cf", "Column-Family_1", "user_ops-2026", "a.b", strings.Repeat("a", 128)}
+	bad := []string{
+		"", "a b", "a/b", "$(id)", "a;b", "a'b", `a"b`,
+		"ns:table", strings.Repeat("a", 129), "日本語", "a\\b",
+	}
+	for _, g := range good {
+		if err := ValidateName(g, 128); err != nil {
+			t.Errorf("ValidateName(%q) 误拒: %v", g, err)
+		}
+	}
+	for _, b := range bad {
+		if err := ValidateName(b, 128); err == nil {
+			t.Errorf("ValidateName(%q) 应拒", b)
+		}
+	}
+	// 长度上限按参数生效
+	if err := ValidateName("abcd", 3); err == nil {
+		t.Error("ValidateName(abcd, 3) 应拒")
+	}
+}
+
+func TestValidateQualifiedName(t *testing.T) {
+	good := []string{"table", "ns:table", "a-b.c_d:e-1"}
+	bad := []string{
+		"", ":t", "t:", "a:b:c", "ns:ta ble", "ns:t;x",
+		strings.Repeat("a", 129) + ":t",
+		"t:" + strings.Repeat("a", 129),
+	}
+	for _, g := range good {
+		if err := ValidateQualifiedName(g, 128); err != nil {
+			t.Errorf("ValidateQualifiedName(%q) 误拒: %v", g, err)
+		}
+	}
+	for _, b := range bad {
+		if err := ValidateQualifiedName(b, 128); err == nil {
+			t.Errorf("ValidateQualifiedName(%q) 应拒", b)
+		}
+	}
+}

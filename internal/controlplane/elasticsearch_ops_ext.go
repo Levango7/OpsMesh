@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 var esExtRouteMu sync.Mutex
@@ -42,6 +43,13 @@ func (s *Server) handleElasticsearchNodeDrain(w http.ResponseWriter, r *http.Req
 	case "drain":
 		if node == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
+			return
+		}
+		// 白名单而非转义：node 嵌在 shell 单引号内的 JSON 文本里（`-d '{"...":"%s"}'`），
+		// 加引号会破坏外层、且 JSON 语法还要求转义 " 与 \——那里没有合法转义空间，
+		// 只能限字符集（2026-11-05 修正，原实现裸拼可经 ' 或 $( ) 注入）。
+		if err := shellquote.ValidateName(node, 255); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		script = fmt.Sprintf(`curl -X PUT "http://localhost:9200/_cluster/settings" -d '{"transient":{"cluster.routing.allocation.exclude._name":"%s"}}'`, node)
@@ -107,6 +115,19 @@ func (s *Server) handleElasticsearchShardRelocate(w http.ResponseWriter, r *http
 	case "relocate":
 		if req.Index == "" || from == "" || to == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index, from and to are required"})
+			return
+		}
+		// 同 drain：三值都嵌在 shell 单引号内的 JSON 文本里，只能白名单。
+		if err := shellquote.ValidateName(req.Index, 255); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index: " + err.Error()})
+			return
+		}
+		if err := shellquote.ValidateName(from, 255); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "from: " + err.Error()})
+			return
+		}
+		if err := shellquote.ValidateName(to, 255); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "to: " + err.Error()})
 			return
 		}
 		script = fmt.Sprintf(`curl -X POST "http://localhost:9200/_cluster/reroute" -d '{"commands":[{"move":{"index":"%s","shard":%d,"from_node":"%s","to_node":"%s"}}]}'`, req.Index, req.Shard, from, to)

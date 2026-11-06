@@ -213,7 +213,7 @@ POST /api/v1/k8s/clusters/deploy   →  202
 ⇒ 调用方一律写 `Completed`。而 `web/enterprise/src/views/K8sLifecycleView.vue`
 **真的在调** `upgradeK8sCluster`，用户看到完整进度后以为集群已升级，实际一个字节都没动。
 
-这是比 §1/§3.5 更隐蔽的一类缺陷：**不越权、不注入，但对用户撒谎**。回滚尤其危险——
+这是比 §1/§3.2 更隐蔽的一类缺陷：**不越权、不注入，但对用户撒谎**。回滚尤其危险——
 用户以为集群已回到旧版本而实际没有。
 
 > **⚠️ 本节内容已被上游取代**：origin/main 的 `a554697`（2026-10-31）按裁决单
@@ -242,6 +242,51 @@ POST /api/v1/k8s/clusters/deploy   →  202
 > `EtcdManager.Backup/Restore`、`NodeScaler` 等真执行件，缺的是串成序列 + 护栏
 > （drain、超时、失败即停）+ **真集群验证窗口**。差异不在「有没有底座」，
 > 而在「要不要现在承担改动生产集群的风险」。
+
+## 3.4 附带发现 D：`shellQuote` 自身是坏的（17 文件 / 269 调用点）——已修（第二批 / PR #5）
+
+比 §3.1 点名的两处裸拼**更重**：仓库里早有一个「引号保护」工具，但它转义不全，
+于是所有已用它「保护」过的位置实际全部仍可注入。
+
+修复前 `internal/controlplane/middleware_ops.go` 的实现：
+
+```go
+func shellQuote(s string) string {
+	if s == "" { return `""` }
+	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`   // 只转义 " —— 不够
+}
+```
+
+双引号段内 `$`、反引号与 `\` 仍有特殊语义，因此：
+
+| 输入 | 修前产出 | 后果 |
+|---|---|---|
+| `$(id)` | `"$(id)"` | **命令替换被执行** |
+| `` `id` `` | ``"`id`"`` | 同上 |
+| `$HOME` | `"$HOME"` | 变量展开 |
+| `abc\`（结尾反斜杠） | `"abc\"` | 反斜杠吞掉收尾引号、**配对破坏**，后续任意文本可被拼接 |
+
+**影响面**：该函数被 **17 个文件、269 处调用点**使用——apache 25 / db_misc_ext 43 /
+db_extended 31 / db_ops 11 / db_nosql_ext 10 / rabbitmq 6 / tsdb 5 / storage 4 /
+ssh_trust 4 / olap 3 / mongo 2 / apache_ext 2 / activemq 2 / graph 1 / ansible 1 /
+lb 1。其中 `db_extended_ops.go` 等位置把结果嵌在**既有双引号段内**
+（如 `sqlite3 %s ".backup %s"`），因此修复必须**保持双引号形状**、只补全转义
+（换单引号语义会把字面单引号带进参数、改变取值）。
+
+**修法**：`shellQuote` 改委托 `pkg/shellquote.QuoteDouble`（转义 `\` `"` `$` 与反引号，
+`strings.NewReplacer` 单趟替换、无二次转义）。同一批还收编了：
+
+- `db_cloud_managed_ops.go` 六家云厂商（AWS RDS / gcloud / Azure SQL / PolarDB /
+  GaussDB(DWS) / TDSQL-C）27 处参数引用过引号层；
+- `elasticsearch_ops_ext.go` 的 `node` / `index` / `from` / `to`——它们嵌在 shell
+  单引号内的 JSON 文本里（**无转义空间**），改 `shellquote.ValidateName` 白名单；
+- `db_nosql_ext_ops.go` 的 HBase 内联正则（`hbaseTableRe`/`hbaseCFRe`）迁至
+  `shellquote.ValidateQualifiedName`/`ValidateName`（每段 `[A-Za-z0-9_.-]`、1..128、
+  至多一层 `ns:` 前缀，错误文案与语义逐字等价）——全仓引号/白名单实现收敛为一处。
+
+**验证**：`shellquote_security_test.go` 7 例 + `pkg/shellquote` 真 shell 求值对拍
+（13 个载荷 `sh` 求值 == 原串、命令替换阴性用例）。窄变异两处：
+`shellQuote` 退回旧实现 ⇒ 4 例判红（脚本里落 `"$(id)"`）；拆 ES 校验 ⇒ 7 个载荷全部 202 放行。
 
 ## 4. 受影响面（223 条路径）
 
@@ -287,10 +332,14 @@ POST /api/v1/k8s/clusters/deploy   →  202
 | 注入收编（§3.1） | `internal/controlplane/activemq_ext_ops.go` | 8 处全部收编（host 白名单 / ident 白名单 / Quote） |
 | 注入收编（§3.1） | `internal/controlplane/activemq_ops.go` | deploy 的 version 白名单（wget URL + ln 路径） |
 | 注入收编（§3.1） | `internal/controlplane/cache_ops.go` | deploy(version/mode/port)、cluster(nodes)、sentinel(master/host)、tuning(maxmemory/eviction)、acl(user/rules/password) 全部收编 |
+| **shellQuote 修正（§3.4，第二批）** | `internal/controlplane/middleware_ops.go` | 委托 `shellquote.QuoteDouble`（转义 `\` `"` `$` 与反引号）；形状保持双引号，**269 调用点一次收口** |
+| 云 CLI 收编（§3.4，第二批） | `internal/controlplane/db_cloud_managed_ops.go` | 六厂商 27 处参数过引号层 |
+| ES 收编（§3.4，第二批） | `internal/controlplane/elasticsearch_ops_ext.go` | `node/index/from/to` → `ValidateName` 白名单（JSON-in-single-quote 无转义空间） |
+| HBase 迁移（§3.4，第二批） | `internal/controlplane/db_nosql_ext_ops.go` | 内联正则 → `ValidateQualifiedName`/`ValidateName`（语义等价） |
 
 守卫测试（本分支保留）：`dispatch_authz_test.go`(6) / `k8s_cluster_deploy_authz_test.go`(5) /
 `activemq_ext_injection_test.go`(5) / `cache_injection_test.go`(7) /
-`pkg/shellquote/quote_test.go`(8)，合计 31 个。
+`pkg/shellquote/quote_test.go`(8+5) / `shellquote_security_test.go`(7)，合计 43 个。
 （`fake_success_test.go` 4 个随假成功改动一并丢弃——那部分已由 a554697 覆盖。）
 
 > 诚实边界：`domestic_ops.go` 我原估有注入，逐条复核后确认**全部是静态脚本、无 req 字段

@@ -4,6 +4,47 @@
 
 > 当前最新已发布版本：`v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased-引号收口] — 2026-11-05（shellQuote 修正：17 文件 / 269 调用点；两处裸拼收编 + HBase 白名单迁同包）
+
+- **`shellQuote` 修正（静默失效，影响面最大的一处）**：`internal/controlplane/middleware_ops.go` 的既有实现
+  只转义 `"`，而双引号段内 `$`、反引号与 `\` 仍有特殊语义——`shellQuote("$(id)")` 产出 `"$(id)"`，
+  shell 会**真实执行** `id`；结尾反斜杠还会吞掉收尾引号、破坏引号配对。该函数被 **17 个文件、269 处调用点**
+  使用（apache/db/olap/tsdb/mongo/lb/ansible 等），等于这批「已做引号保护」的位置全部仍可注入。
+  现委托 `pkg/shellquote.QuoteDouble`（转义 反斜杠 / 双引号 / 美元符 / 反引号 四个特殊字符），**输出形状（双引号包裹）保持不变**——一批调用点
+  把结果嵌在既有双引号段内（如 `".backup %s"`），换成单引号语义会改变最终取值（`db_extended_ops.go` 实测）。
+  新代码请直接用 `pkg/shellquote`（`Quote` 单引号 / `QuoteDouble` 双引号段 / 白名单校验器）。
+- **两处裸拼收编**（workbuddy 2026-11-04T22:58Z 致本线 NOTE 点名项）：`db_cloud_managed_ops.go` 六家云厂商
+  （AWS RDS / gcloud / Azure SQL / PolarDB / GaussDB(DWS) / TDSQL-C）参数全部过引号层；
+  `elasticsearch_ops_ext.go` 的 node / index / from / to 嵌在 shell 单引号内的 JSON 文本里（**无转义空间**：
+  加引号破坏外层、JSON 语法还要求转义 `"` 与 `\`），改 `shellquote.ValidateName` 白名单拒绝（原裸拼
+  可经 `'` 或 `$()` 注入）。上块「未修」清单第 ② 项由此结清。
+- **HBase 内联正则迁入同包**：`db_nosql_ext_ops.go` 的 `hbaseTableRe`/`hbaseCFRe` 换成
+  `shellquote.ValidateQualifiedName`/`ValidateName`（每段 `[A-Za-z0-9_.-]`、1..128、至多一层 `ns:` 前缀、
+  错误文案与语义逐字等价）——全仓引号/白名单实现不再有第二份手抄。
+- **新增守卫**：`internal/controlplane/shellquote_security_test.go` 7 例（转义语义 oracle + ES 拒注入 +
+  六厂商脚本转义断言）；`pkg/shellquote` 新增 `QuoteDouble` 真 shell 求值对拍与
+  `ValidateName`/`ValidateQualifiedName` 边界（`$(id)` / 反引号 / 结尾反斜杠全过）。窄变异两处：
+  `shellQuote` 退回旧实现 ⇒ 4 例判红（脚本里落 `"$(id)"`）；拆 ES 校验 ⇒ 7 个载荷全部 202 放行。
+
+## [Unreleased-鉴权收口] — 2026-11-05（派发路径 515 调用点补权限闸 + K8s 部署匿名洞 + K8sClusterDeployer 竞态）
+
+- **派发路径补产品级 RBAC（覆盖面最广）**：`dispatchKafkaTask`（465 调用点 / 50 文件）与
+  `dispatchFastDFSTask`（50 调用点 / 3 文件）此前只调 `requireTenantContext`——校验登录与租户、
+  **从不校验权限**。实测（生产模式 + 真 JWT）：viewer 打 `POST /api/v1/cache/deploy` 得 **202 + taskID**
+  （shell 任务已下发），同一身份打 `POST /api/v1/tasks` 是 403——差异在漏查权限而非认证。现改调
+  `subsystemAuthorize(task:write)`（与正门同闸）；operator 不受影响（`task` 组在 operatorGroups）。
+  `scripts/authz-route-audit.py` 复算「可派发但无 RBAC」**223 → 0**（610 条注册口径，含各线新增路由）。
+  merge commit `e39879d`（PR #4）。
+- **K8s 集群部署路由匿名可调（单点最严重）**：`POST /api/v1/k8s/clusters/deploy` 原先**零鉴权**，
+  body 的 NodeSpec（Host/Port/User/SSHKey/Password）经 `precheckNodes → sshPool.Get` **直连任意主机**
+  执行 kubeadm——控制面等于「用调用方给的凭据 SSH 到任意主机装集群」的代理；实测无任何身份即
+  **202 + deployID**。改 `POST → k8s:write`、`status → k8s:read`。
+- **`K8sClusterDeployer` 数据竞态**：`Deploy`/`GetStatus`/`ListDeployments` 交出内部指针或浅拷贝，
+  后台 goroutine 的 `updateStatus`/`updateNodeStatus` 就地改写——CI `-race` 实测 3 处。改深拷快照
+  （NodeStatus map 一并复制），并加不依赖 `-race` 的结构性别名守卫。
+- **守卫与取证**：`dispatch_authz_test.go`(6) / `k8s_cluster_deploy_authz_test.go`(6)，窄变异逐处判红；
+  PoC、223 条路径明细与复算脚本见 `docs/opsmesh-authz-audit-2026-11-04.md`。
+
 ## [Unreleased] — 2026-11-05（P1-A ops 路由止血 + P2-A trace 端点去匿名 + 未鉴权写路由棘轮门禁）
 
 - **P1-A 止血：17 条运维扩展路由补产品级 RBAC**。`bd06090`/`1f9e481` 带来的 17 条 POST 路由（`db_cloud_managed_ops.go` 6、`db_nosql_ext_ops.go` 5、`apache_ext_ops2.go` 3、`elasticsearch_ops_ext.go` 3）此前只经 `dispatchKafkaTask → requireTenantContext`，**登录即等于可执行**。现按同族惯例（`db_ops.go:169/342/470`、`middleware_ops.go:161/345`）在方法判断之后、参数解码之前补 `s.requireProd(w, r, "system:write")`。

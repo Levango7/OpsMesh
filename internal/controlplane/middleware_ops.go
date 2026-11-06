@@ -26,6 +26,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // 中间件类型白名单。
@@ -221,11 +222,22 @@ func buildMiddlewareDeployScript(req middlewareDeployRequest) string {
 	return b.String()
 }
 
+// shellQuote 把值转成可安全嵌入下发脚本**双引号段**的字面量。
+//
+// 2026-11-05 安全修正（opencode，取证见 docs/opsmesh-authz-audit-2026-11-04.md）：
+// 旧实现只转义 `"`，而双引号段内 `$`、反引号与 `\` 仍有特殊语义——
+// shellQuote("$(id)") 产出 "$(id)"，shell 会**真实执行** id；结尾反斜杠还会
+// 吞掉收尾引号破坏配对。该函数被 17 个文件、269 处调用点使用（apache/db/olap/
+// tsdb/mongo/lb/ansible 等），等于这批「已做引号保护」的位置全部仍可注入。
+//
+// 现委托 pkg/shellquote.QuoteDouble（转义 \ " $ `），输出形状（双引号包裹）
+// 保持不变：一批调用点把结果嵌在既有双引号段内（如 `".backup %s"`），
+// 换单引号语义会改变最终取值，故只能补全转义、不能改形状。
+//
+// 新代码请直接用 pkg/shellquote：Quote（单引号）/ QuoteDouble（双引号段）/
+// ValidateName（嵌在既有引号段、无转义空间时用白名单）。
 func shellQuote(s string) string {
-	if s == "" {
-		return `""`
-	}
-	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	return shellquote.QuoteDouble(s)
 }
 
 // ============================================================================
