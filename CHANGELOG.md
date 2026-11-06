@@ -164,6 +164,27 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-五维排查批 3] — 2026-11-07（后端 P0 + 无确认四视图 + 文档勘误）
+
+- **BA-04（P0，安全）**：`internal/controlplane/abac_ops.go` 把 subject/resource/actionAttr/context 裸拼进
+  `echo '…'` 单引号 JSON——请求体带 `'` 即闭合引号注入任意命令；evaluate 还把「Result: ALLOWED」硬编码
+  进 echo（不查任何引擎的假判定）。改为 **JSON 编码 → shell 单引号字面量**两层编码 + evaluate 显式 501
+  （owner 已裁口径：未实现不造假数据）。测试：形状全等 + **真 shell 对拍**逐字节还原 + 501/400 分支。
+  前端无 abac 调用方（grep 零命中），无破坏。
+- **BB-05**：`knowledge?source=` 分支无上界 → `ListBySource` 加 limit（接口/实现/调用点同步），
+  两条分支同一 1..1000 上界，非法 limit 显式 400（不静默忽略）。
+- **P1-7（qoder 11-05 交接）**：`GET /cost/budget` 响应体补 `enforcement`/`scope` 两键（进程内计数口径
+  显式化），嵌入字段提升、旧键扁平保留，形状非破坏。
+- **无确认收口（批 3b）**：TasksView approve/reject、KnowledgeView 文档删除、UsersView 拒绝用户、
+  AIOpsView 修复计划执行——全部接 ConfirmModal；AIOpsView 4 处原生 `alert()` 换 toast。
+  新增双语键 tasks.confirm_action / knowledge.confirm_delete / users.confirm_reject / aiops.execute_confirm。
+- **BB-08（文档勘误）**：api-specification.md 错误体对象 schema 标注零实现（实测 1994 处扁平
+  `{"error":"<字符串>"}`）、不可实现的 Phase 1 删除、6.2/6.3 过滤与排序标注实测实现状态；
+  api-reference.md 分页信封段对齐实测（两文档互矛盾处收口）。对接方按旧文档写必失败的问题就此止血。
+- 验证：go test（controlplane/knowledge/cost 三包新测试 + gates 全绿、vet/gofmt 清）；前端全量
+  74 文件 / 1377 用例全过；doc_paths 门禁过。
+- 待续（批 4）：九视图在飞态、BB-03/BB-07、D4 全量 store 租户隔离复核。
+
 ## [Unreleased-五维生产力排查] — 2026-11-06（方法论 + 全量矩阵 + 批 1：15 视图写门）
 
 - **方法论与执行记录（活文档）**：`docs/qa-sweep-2026-11-06.md` —— 五维度（后端接口/前端体验/前后端契约/数据流/方法论自身）

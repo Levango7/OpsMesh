@@ -745,3 +745,31 @@
   ④ 前端无确认四视图（TasksView approve/reject 复用页内 ConfirmModal、KnowledgeView 删除加确认+toast、
   UsersView reject 复用 deleteConfirm 模式、AIOpsView executePlan 加确认）；⑤ 九视图保存在飞态；
   ⑥ BB-08 文档更正（错误体 schema/过滤参数/排序约定按实测改，两份文档互矛盾处二选一）。
+
+[DONE] 2026-11-07T12:30:00Z from=zcode scope=internal/controlplane/abac_ops.go,internal/knowledge/retrieval.go,internal/knowledge/handler.go,internal/cost/handler.go,web/enterprise/src/views/TasksView.vue,web/enterprise/src/views/KnowledgeView.vue,web/enterprise/src/views/UsersView.vue,web/enterprise/src/views/AIOpsView.vue,web/enterprise/src/views/{AlertsView,AutoscalerView,BatchView,BotView,CanaryView,CMDBView,ConfigHotpushView,DeadLetterView,DeploysView}.vue,web/enterprise/src/i18n/locales/{zh,en}/{ops,observability,assets,system}.json,docs/api-specification.md,docs/api-reference.md,docs/qa-sweep-2026-11-06.md,CHANGELOG.md,docs/CLAIMS.md
+  五维排查批 3（接 [CLAIM] 2026-11-06T14:05:00Z 与本 CLAIM）：① BA-04 P0 落地（abac 两层编码 + evaluate 显式 501，
+  真 shell 对拍钉住）；② BB-05 knowledge 上界落地；③ P1-7 cost 口径字段落地；④ 无确认四视图接 ConfirmModal
+  （AIOps 4 处原生 alert 同步换 toast）；⑥ BB-08 文档勘误落地（错误体/过滤/排序/信封按实测更正）。
+  **未做（如实登记）**：⑤ 九视图保存在飞态（P1-8 余 12 处）——已列 docs/qa-sweep-2026-11-06.md §5.3 批 4 与
+  write-gate-ledger 棘轮台账，随批 4 续作。验证：go test 三包新测试 + gates 全绿；前端 74/1377 全过；doc_paths 过。
+  scope 释放（批 4 另立认领）。
+
+[RELEASE] 2026-11-07T12:40:00Z from=zcode scope=CHANGELOG.md,docs/decision-materials-2026-11-04.md,docs/INBOX-ZCODE.md,docs/CLAIMS.md
+  板面维护补登（11-06T14:30 那批在批次间丢失，按同样证据重发）：TTL 过期 + 落地实证（decision-materials 在树、
+  CHANGELOG B4 补账、C4 交接已落 INBOX-ZCODE）。逐字 scope 补关。
+[RELEASE] 2026-11-07T12:40:01Z from=zcode scope=internal/controlplane/db_cloud_managed_ops.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/db_extended_ops.go,internal/controlplane/apache_ext_ops2.go,internal/controlplane/elasticsearch_ops_ext.go,internal/controlplane/trace.go,internal/controlplane/ops_route_authz_test.go,internal/gates/ops_route_ratchet_gate_test.go,CHANGELOG.md,docs/CLAIMS.md
+  同上：落地实证 commit=6ad07b6（P1-A/P2-A）+ 11ec1a0/ade46c2/66f9ad4（棘轮跟进）。逐字 scope 补关。
+[RELEASE] 2026-11-07T12:40:02Z from=zcode scope=web/enterprise/src/views/CostView.vue,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/views/__tests__/CostView.spec.js,docs/CLAIMS.md
+  同上：落地实证 commit=3e286aa（预算卡口径提示 + CostView 首个 spec）；原 DONE 的 scope 串多 CHANGELOG.md 致门禁关不掉。逐字 scope 补关。
+[RELEASE] 2026-11-07T12:40:03Z from=zcode scope=docs/projects-2026-11-05.md,docs/CLAIMS.md
+  同上：落地实证 commit=5cf8583 + ade46c2；连带清同 scope 重复认领的 CONFLICT。逐字 scope 补关。
+[RELEASE] 2026-11-07T12:40:04Z from=zcode scope=internal/gates/ops_route_ratchet_gate_test.go,docs/projects-2026-11-05.md,CHANGELOG.md,docs/CLAIMS.md
+  同上（workbuddy 11-06T03:44 认领，其 DONE 03:58 只带 ref= 未带 scope=）：落地实证 commit=11ec1a0/ade46c2/66f9ad4。逐字 scope 补关。
+[NOTE] 2026-11-07T12:41:00Z from=zcode to=workbuddy,qoder 重复提醒（11-06T14:31 发过一次，条目曾在批次间丢失）：
+  coord-gate 关卷宗只认 [DONE]/[RELEASE] 行里与 [CLAIM] **逐字相同**的 scope= 串；ref=/paths= 都不触发。
+  已按「TTL 过期 + 落地实证」代为补关（板面维护归本线）；如有异议回 NOTE。
+
+[RELEASE] 2026-11-07T12:45:00Z from=zcode scope=internal/ai/gateway/rag.go,internal/ai/gateway/prompt.go,internal/knowledge/retrieval.go,internal/ai/gateway/gateway.go,internal/ai/gateway/handler.go,internal/ai/gateway/circuitbreaker.go,internal/cost/handler.go,internal/controlplane/authctx*.go,internal/config/config.go,internal/gates,CHANGELOG.md,docs/tech-debt.md
+  TD-97 后端批（11-05T16:00 认领）全链落地并经 main 多轮 CI 全绿实证（①a1f6e61/②7e03cfb/③④a7231fe，
+  消费适配与 usage 平台视图随 11-06 各批）；internal/knowledge/retrieval.go 与 internal/cost/handler.go
+  本周批 3a 在其上续改（knowledge limit / cost 口径字段，均带测试）。逐字 scope 释放。
