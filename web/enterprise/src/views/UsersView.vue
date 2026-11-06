@@ -29,7 +29,7 @@
         <template #cell-actions="{ row }">
           <div class="row-actions" :data-testid="'users-row-' + (row.id || row.username)">
             <Button variant="primary" size="sm" v-if="row.status === 'pending'" data-testid="btn-row-approve" @click="onApprove(row)"><Icon name="success" :size="13" /> {{ $t('users.approve') }}</Button>
-            <Button variant="danger" size="sm" v-if="row.status === 'pending'" data-testid="btn-row-reject" @click="onReject(row)"><Icon name="delete" :size="13" /> {{ $t('users.reject') }}</Button>
+            <Button variant="danger" size="sm" v-if="row.status === 'pending'" data-testid="btn-row-reject" @click="askReject(row)"><Icon name="delete" :size="13" /> {{ $t('users.reject') }}</Button>
             <Button variant="ghost" size="sm" data-testid="btn-row-edit" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
             <Button variant="danger" size="sm" data-testid="btn-row-delete" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
           </div>
@@ -86,6 +86,14 @@
       :message="$t('users.confirm_delete')"
       @confirm="onDeleteConfirm"
     />
+    <!-- 拒绝确认（替代直达 API） -->
+    <ConfirmModal
+      v-model="rejectConfirm.show"
+      data-testid="users-reject-confirm-modal"
+      :title="$t('users.reject')"
+      :message="$t('users.confirm_reject')"
+      @confirm="onRejectConfirm"
+    />
     <!-- 错误提示（替代 alert） -->
     <ConfirmModal
       v-model="errorConfirm.show"
@@ -122,6 +130,25 @@ const loadErr = ref('')
 const deleteConfirm = reactive({ show: false, row: null })
 // 错误提示弹窗（替代 alert）
 const errorConfirm = reactive({ show: false, message: '' })
+
+// 拒绝确认弹窗（2026-11-06 五维排查批 3）：reject 此前直达 API，与同页删除的交互规范不一致。
+const rejectConfirm = reactive({ show: false, row: null })
+function askReject(row) {
+  rejectConfirm.row = row
+  rejectConfirm.show = true
+}
+async function onRejectConfirm() {
+  const row = rejectConfirm.row
+  rejectConfirm.show = false
+  if (!row) return
+  try {
+    await authApi.rejectUser(row.id)
+    await fetchUsers()
+  } catch (e) {
+    errorConfirm.message = e.j?.error || t('users.reject_failed')
+    errorConfirm.show = true
+  }
+}
 
 const columns = [
   { key: 'username', title: t('users.username'), slot: 'cell-username', sortable: true },
@@ -228,15 +255,6 @@ async function onApprove(row) {
   }
 }
 
-async function onReject(row) {
-  try {
-    await authApi.rejectUser(row.id)
-    await fetchUsers()
-  } catch (e) {
-    errorConfirm.message = e.j?.error || t('users.reject_failed')
-    errorConfirm.show = true
-  }
-}
 
 async function onDelete(row) {
   deleteConfirm.row = row
