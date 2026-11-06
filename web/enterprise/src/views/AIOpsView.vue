@@ -150,7 +150,7 @@
           </ul>
         </div>
 
-        <Button variant="primary" size="sm" @click="executePlan(remediationPlan)" :disabled="!remediationPlan.safety.requiresConfirm && !remediateReq.constraints.autoExecute" data-testid="aiops-execute-plan-btn">
+        <Button variant="primary" size="sm" @click="askExecute(remediationPlan)" :disabled="!remediationPlan.safety.requiresConfirm && !remediateReq.constraints.autoExecute" data-testid="aiops-execute-plan-btn">
           {{ remediationPlan.safety.requiresConfirm ? $t('aiops.execute_with_confirm') : $t('aiops.execute_plan') }}
         </Button>
       </div>
@@ -177,7 +177,7 @@
             <code>{{ c.command }}</code> <span class="muted">[agent={{ c.agentID }}]</span>
           </li>
         </ul>
-        <Button variant="primary" size="sm" @click="executePlan(nlPlan)" data-testid="aiops-execute-nl-btn">{{ $t('aiops.execute_plan') }}</Button>
+        <Button variant="primary" size="sm" @click="askExecute(nlPlan)" data-testid="aiops-execute-nl-btn">{{ $t('aiops.execute_plan') }}</Button>
       </div>
     </div>
 
@@ -247,6 +247,13 @@
         </div>
       </div>
     </div>
+      <ConfirmModal
+      v-model="executeConfirm.show"
+      data-testid="aiops-execute-confirm-modal"
+      :title="$t('aiops.execute_plan')"
+      :message="$t('aiops.execute_confirm')"
+      @confirm="onExecuteConfirm"
+    />
   </PageShell>
 </template>
 
@@ -255,6 +262,8 @@ import { reactive, ref, onMounted } from 'vue'
 import PageShell from '@/components/PageShell.vue'
 import { getAIOpsStatus, analyzeAIOps, generateRemediation, generateRemediationNL, executeRemediation, getAIOpsExecutions } from '@/api/aiops'
 import { t } from '@/i18n'
+import { toast } from '@/utils/toast'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
 import Button from "@/components/ui/Button.vue"
 
@@ -296,6 +305,20 @@ const nlPlan = ref(null)
 const executeResults = reactive([])
 const executeStats = reactive({ dispatched: 0, total: 0 })
 
+// 执行确认（2026-11-06 五维排查批 3）：按钮文案自称「需确认」却零拦截（A1/B1 审计），
+// 修复命令 autoExecute 直达目标设备。改走 ConfirmModal；原生 alert 同步换 toast。
+const executeConfirm = reactive({ show: false, plan: null })
+function askExecute(plan) {
+  executeConfirm.plan = plan
+  executeConfirm.show = true
+}
+async function onExecuteConfirm() {
+  const plan = executeConfirm.plan
+  executeConfirm.show = false
+  if (!plan) return
+  await executePlan(plan)
+}
+
 // 执行历史
 const executionsLoading = ref(false)
 const executions = reactive([])
@@ -332,7 +355,7 @@ async function runAnalyze() {
     const rc = await analyzeAIOps(analyzeReq)
     rootCause.value = rc
   } catch (e) {
-    alert(t('common.error') + ': ' + (e.j?.error || e.s))
+    toast.error((e.j && e.j.error) || t('common.error'))
   } finally {
     analyzeLoading.value = false
   }
@@ -354,7 +377,7 @@ async function runRemediate() {
     const plan = await generateRemediation(remediateReq)
     remediationPlan.value = plan
   } catch (e) {
-    alert(t('common.error') + ': ' + (e.j?.error || e.s))
+    toast.error((e.j && e.j.error) || t('common.error'))
   } finally {
     remediateLoading.value = false
   }
@@ -367,7 +390,7 @@ async function runNL() {
     const plan = await generateRemediationNL({ input: nlInput.value, devices: [] })
     nlPlan.value = plan
   } catch (e) {
-    alert(t('common.error') + ': ' + (e.j?.error || e.s))
+    toast.error((e.j && e.j.error) || t('common.error'))
   } finally {
     nlLoading.value = false
   }
@@ -382,7 +405,7 @@ async function executePlan(plan) {
     executeStats.total = resp.total
     if (activeTab.value !== 'execute') activeTab.value = 'execute'
   } catch (e) {
-    alert(t('common.error') + ': ' + (e.j?.error || e.s))
+    toast.error((e.j && e.j.error) || t('common.error'))
   }
 }
 
