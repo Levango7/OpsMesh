@@ -225,6 +225,7 @@
     "form_required": "Please complete: name / namespace / repo URL",
     "save": "Save",
     "cancel": "Cancel",
+    "write_denied": "flux:write permission missing — sync, edit and delete are disabled for this role.",
     "saved": "Saved",
     "empty": "No Flux apps",
     "save_failed": "Save failed",

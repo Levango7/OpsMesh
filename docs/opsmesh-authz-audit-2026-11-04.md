@@ -327,8 +327,9 @@ agent 端解释器按**目标平台**选择：Windows = `cmd /C`、其他 = `sh 
 | Windows registry（query/set/delete） | 3 | `ValidateCmdQuoted` 拒绝式校验 + `regType` 白名单 |
 | windows-package（detect 行 + 4 条命令 × 3 管理器） | 5 | `mgr` 白名单（auto/winget/choco/scoop）+ `pkg` 12 个拼接位转义 |
 
-这些路由全部**无产品级 RBAC**（在 284 条棘轮台账内），任意登录用户可达，
-故按注入面最高优先级处理。
+这些路由的鉴权已随 PR #4 的派发口收口（`dispatchKafkaTask` → `task:write`；
+棘轮台账口径更正见 CHANGELOG `[Unreleased-门禁]` 块）——注入面属「已授权用户
+越出授权语义在目标机执行任意命令」，故仍按高优先级处理。
 
 ### 3.5.3 残留面盘点（`scripts/shell-injection-audit.py` 复算口径）
 

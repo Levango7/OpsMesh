@@ -6,7 +6,11 @@
     :error="loadErr"
   >
     <div class="btnbar">
-      <Button variant="primary" size="md" @click="openCreate">
+      <Button
+        variant="primary" size="md" :disabled="!canWrite"
+        :title="canWrite ? '' : $t('flux.write_denied')"
+        data-testid="flux-add-btn" @click="openCreate"
+      >
         <Icon name="add" :size="14" />
         {{ $t('flux.add') }}
       </Button>
@@ -15,6 +19,7 @@
         {{ $t('common.refresh') }}
       </Button>
     </div>
+    <div v-if="!canWrite" class="muted" data-testid="flux-write-denied">{{ $t('flux.write_denied') }}</div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
@@ -33,9 +38,21 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <Button variant="ghost" size="sm" :title="$t('flux.sync')" @click="onSync(row)"><Icon name="success" :size="13" /></Button>
-            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
-            <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
+            <Button
+              variant="ghost" size="sm" :disabled="!canWrite"
+              :title="canWrite ? $t('flux.sync') : $t('flux.write_denied')"
+              data-testid="flux-sync-btn" @click="onSync(row)"
+            ><Icon name="success" :size="13" /></Button>
+            <Button
+              variant="ghost" size="sm" :disabled="!canWrite"
+              :title="canWrite ? '' : $t('flux.write_denied')"
+              data-testid="flux-edit-btn" @click="openEdit(row)"
+            ><Icon name="edit" :size="13" /></Button>
+            <Button
+              variant="danger" size="sm" :disabled="!canWrite"
+              :title="canWrite ? '' : $t('flux.write_denied')"
+              data-testid="flux-delete-btn" @click="onDelete(row)"
+            ><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -102,7 +119,7 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { listFluxApps, createFluxApp, updateFluxApp, deleteFluxApp, syncFluxApp } from '@/api/flux'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -111,6 +128,13 @@ import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import Button from "@/components/ui/Button.vue"
+import { useAuthStore } from '@/stores/auth'
+
+// 写操作门（与 InfraConsole 批次同范式）：后端 flux.go 的 5 个 handler 一律
+// requirePermission("flux:read"/"flux:write")——viewer/operator 只读，写按钮
+// 对他们是「点了必 403」。此处显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('flux:write'))
 
 const columns = [
   { key: 'name', title: t('flux.name'), slot: 'cell-name' },

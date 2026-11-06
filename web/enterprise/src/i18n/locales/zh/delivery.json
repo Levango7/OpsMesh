@@ -235,6 +235,7 @@
     "form_required": "请填写完整：应用名 / 命名空间 / 仓库 URL",
     "save": "保存",
     "cancel": "取消",
+    "write_denied": "当前角色无 flux:write 权限，同步/编辑/删除已禁用。",
     "saved": "保存成功",
     "empty": "暂无 Flux 应用",
     "save_failed": "保存失败",

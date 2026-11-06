@@ -9,8 +9,10 @@
 - **`git_unix_ops.go` 28 处收编**（Git 11 / Unix 3 / macOS 2 / 磁盘 2 / RAID 2 /
   注册表 3 / windows-package 5）：token 与回显消息位 → `shellQuote`；registry 的
   `"%s"`（cmd 双引号段）→ `ValidateCmdQuoted` 拒绝式校验；windows-package 的
-  `mgr` → 白名单、`pkg` 的 12 个拼接位 → 转义。这些路由无产品级 RBAC（在 284 条
-  棘轮台账内），任意登录用户可达。
+  `mgr` → 白名单、`pkg` 的 12 个拼接位 → 转义。这些路由的鉴权已随 PR #4 的
+  派发口收口（`dispatchKafkaTask` → `task:write`，棘轮台账口径更正见下方
+  [Unreleased-门禁] 块）——注入面属「已授权用户越出授权语义在目标机执行任意
+  命令」，故仍按高优先级处理。
 - **新校验器 `shellquote.ValidateCmdQuoted`（cmd 语境没有引号内转义语法）**：
   Windows agent 由 `cmd /C` 执行脚本（`internal/agent/agent.go` 的 shellCommand）。
   实测：`\"` 里的 `"` 照样闭合引号（Go 的 exec 转义也救不了）、`%VAR%` 引号内
@@ -27,6 +29,13 @@
 - **验证**：新增守卫 7 例；窄变异 3 处全部判红（拆 git 转义 / 拆 registry 校验 /
   拆 mgr 白名单）；`go test ./internal/controlplane/ ./pkg/shellquote/ ./internal/gates/`
   全 PASS。
+## [Unreleased-门禁] — 2026-11-06（ops 路由棘轮对齐派发口：台账 284→0，408 条写路由全部已鉴权）
+
+- **口径更正（我自己的门禁算错了，不是新需求）**：11-05 落地的 `internal/gates/ops_route_ratchet_gate_test.go` 只跟 `s.handle*` 兄弟转手、**不跟派发口**。而 PR #4/#5 把闸装在 `dispatchKafkaTask` / `dispatchFastDFSTask`（`subsystemAuthorize(task:write)`）上，284 条存量运维写路由正是经此收口的——旧门禁把已还的债继续记成欠账。
+- **改法**：① 授权特征集与 `scripts/authz-route-audit.py` 对齐（`requireProd` / `requirePermission` / `subsystemAuthorize` / `authorizeByRoles` / `authorizeByAPIKey` / `.Authorize`）；② 调用链跟进 `s.dispatch*` 与 `s.createSystemTask`；③ 深度上限 3（与审计脚本一致）。**台账随实清零**（61 文件 / 284 条 → 0 文件），棘轮语义反而更硬：新增写路由既不带权限点、又不经已鉴权派发口，实测 1 > 台账 0 立刻判红。
+- **现测**：门禁扫描面 408 条注册 / **已鉴权写路由 408 条 / 未鉴权 0 条** / handler 未解析 0 条；`scripts/authz-route-audit.py` 独立复算 610 条注册中 RBAC 586 / AUTH_ONLY 5 / ANON 19 / **可派发但无 RBAC 0**。残余 24 条全部不可派发（静态资源、探针、认证入口、`/api/v1/me`、`/api/services`+`/api/traces` 四个只读 GET），不构成"下发脚本"面。
+- **变异反证扩到派发口**：`TestOpsRatchetJudgeSeesMissingGuard` 现在一次抹掉全部授权特征，除 P1-A 四文件必须回落到 6/5/3/3=17 条外，新增 `pulsar_ops.go`（13 条、自身零权限点）**必须全数回落**——证的是"派发口的闸在判据射程内"，而不只是"现在恰好 0"。
+- **文档**：`docs/projects-2026-11-05.md` 新增 §10.0 记录本次口径更新与两个独立口径的对账；§10.1–10.7 保留为 11-05 时点分层数据并标注已被 §10.0 取代；P1-B2 待 owner 裁的问题从 4 个收束为 2 个（operator 是否拿回执行面、只读语义 POST 是否对 viewer 放开）。
 
 ## [Unreleased-引号收口] — 2026-11-05（shellQuote 修正：17 文件 / 269 调用点；两处裸拼收编 + HBase 白名单迁同包）
 
@@ -135,6 +144,13 @@
 - **门禁**：新增「外部出向必须 opt-in」断言（`with` 渲染 + values 默认空 + 剥注释后模板无 `0.0.0.0/0` 字面量）；生产翻 true 的棘轮从「模板有 ipBlock」改为**双条件**——模板提供机制**且**生产 values 真声明 `ipBlock`（纯函数四用例，含两条"缺一即红"负例）。新增变异反证 4 例（机制缺失 / 模板自带公网字面量 / values 默认非空 / 生产删掉 ipBlock）。
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
+
+## [Unreleased-写按钮权限门] — 2026-11-06（FluxView 挂 flux:write + 同类扫描出 15 视图施工图）
+
+- **FluxView 写按钮挂 `flux:write` 门**（按钮级门范式延伸批）：后端 flux.go 的 5 个 handler 一直是 `requirePermission('flux:read'/'flux:write')`——viewer/operator 持 flux:read 可进页但写操作必 403。前端现在显式化：新建/同步/编辑/删除四类按钮无权限时禁用 + title 说明 + 页首常驻提示（对应 workbuddy 11-01 遗留的「flux 页回归，确认不依赖 403 时隐藏按钮的旧行为」——现在依赖的是显式门，不再撞墙）。spec 2 例（无权限全禁用+提示 / 有权限全可用）。
+- **同类扫描（本批的施工图产出）**：全量比对「视图调用写 API × 视图内无 hasPerm」→ 17 个候选；再与后端权限目录交叉（`internal/store/model/perm.go`）核对——**15 个有现成 write 权限点**、2 个无（AdminConsoleView / NotifyChannelsView，属后端目录缺口，跳过）：
+  `APIKeysView(apikey:write) / AutomationView(automation:write) / BillingView(billing:write) / FluxView(flux:write 本批) / GatewayRoutesView(gateway:write) / K8sClusterDeployView + K8sLifecycleView + K8sResourcesView(k8s:write/delete) / SLOsView(slo:write/delete) / SchedulesView(schedule:write) / ScriptsView(script:write) / SecretsView(secrets:write) / SystemOpsView(system:write) / TicketsView(ticket:write) / TrafficPoliciesView(traffic:write) / WebhooksView(webhook:write)`。
+  范式与 InfraConsole/Flux 两批一致：`auth.hasPerm(<域>:write)` → 写按钮 `:disabled` + title + 页首提示。已上板记账，逐批施工。
 
 ## [Unreleased-按钮级禁用] — 2026-11-06（InfraConsole 派发按钮挂 task:write 权限门——数据流侦察结论：284 条台账路由的前端暴露面收敛为单视图）
 

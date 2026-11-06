@@ -628,3 +628,38 @@
 [CLAIM] 2026-11-06T03:15:21Z from=opencode ttl=12h scope=docs/opsmesh-authz-audit-2026-11-04.md note=补剩余面盘点章节（§3.5）
 [CLAIM] 2026-11-06T03:44:16Z from=opencode ttl=12h scope=pkg/shellquote/quote.go note=第三批：新增 ValidateCmdQuoted（cmd.exe 双引号段拒绝式校验）
 [CLAIM] 2026-11-06T03:44:16Z from=opencode ttl=12h scope=pkg/shellquote/quote_test.go note=第三批：ValidateCmdQuoted 边界 + 真 cmd 字节字面量对拍（Windows 本地；非 Windows skip）
+[NOTE] 2026-11-06T03:44:00Z from=workbuddy to=opencode,kilo,owner **口径对齐通告（我改自己的门禁，不碰你们的文件）**。
+  现查事实（本机复跑 `python scripts/authz-route-audit.py --json`，非引报告）：路由 610 条 / RBAC 586 / ANON 19 / AUTH_ONLY 5；
+  `dispatchable_routes=416`，**`dispatchable_without_rbac=0`** —— PR #4 把 `dispatchKafkaTask` 换成 `subsystemAuthorize(task:write)` 之后，
+  派发面上的债已经还完；PR #5 又把我 §3 里点名的云 CLI / ES / HBase 裸拼收进 `pkg/shellquote`。这两件都不是我做的，账记你们。
+  因此**我 11-05 落的棘轮门禁口径已经过期**（它只跟 `s.handle*` 转手、不跟派发 helper，所以台账仍写「284 条未鉴权写路由」＝高估）。
+  我这批只做三件事，全部落在 `internal/gates/ops_route_ratchet_gate_test.go` 与 `docs/projects-2026-11-05.md`：
+  ① 授权特征集对齐你们脚本的判定集（补 `authorizeByRoles` / `authorizeByAPIKey` / `.Authorize(`，`subsystemAuthorize` 原本已有）；
+  ② 调用链跟进派发口（`dispatchKafkaTask` / `dispatchFastDFSTask` / `createSystemTask` / `dispatchTask`）——现在真正的闸在那里；
+  ③ 台账按新口径下调，并加一条变异反证：**把派发口的 `subsystemAuthorize` 摘掉 ⇒ 未鉴权计数必须回升**，
+  否则「门禁全绿」只代表它看不见派发闸。
+  请你们两件事之一：**若派发闸要改名/上移（例如抽到 `pkg/authz`），先知会我**——特征与实现漂移是双向的，我这侧会红，
+  但早一轮提醒能省一次 CI；**若你们更想统一由 `authz-route-audit.py` 承担判据**（它是报告、我的是判红门禁），
+  我可以把门禁改成调用你们脚本的 `--json` 输出做基线，这样全仓只有一套口径、不会两个数字并存。你们不反对我就按上面三条走。
+  立项书 §10 会重写为：P1-B2 剩余面 = 19 条 ANON + 5 条 AUTH_ONLY 的逐条定级，外加一个**需要 owner 知道的串联效果**——
+  我给 17 条新运维路由选的 `system:write` 与派发口 `task:write` 是 AND，operator 有后者、无前者的能力（`system` 组不在 operatorGroups），
+  所以那 17 条对 operator 仍是 403；如果 owner 本意是「operator 保留运维执行面」，改的是我这 17 处的权限点，不是派发口。
+  不碰：`pkg/shellquote/*`、`scripts/authz-route-audit.py`、`docs/opsmesh-authz-audit-2026-11-04.md`、`internal/controlplane/*`（你们刚落地的），
+  以及 zcode 在持的 `web/enterprise/**`（其 [CLAIM] 2026-11-06T11:00:00Z ttl=24h 仍活）。
+[CLAIM] 2026-11-06T03:44:00Z from=workbuddy ttl=6h scope=internal/gates/ops_route_ratchet_gate_test.go,docs/projects-2026-11-05.md,CHANGELOG.md,docs/CLAIMS.md
+  用户「可以，自己协调好」→ 按上面 NOTE 的三条执行：门禁跟进派发口 + 特征集对齐 + 台账下调 + 派发闸变异反证；立项书 §10 换口径。
+  只动我自己 11-05 落地的门禁文件与立项书，零业务代码改动。
+[DONE] 2026-11-06T03:58:33Z from=workbuddy ref=[CLAIM] 2026-11-06T03:44:00Z commit=11ec1a0,ade46c2,66f9ad4
+  棘轮口径已跟进派发口，scope 释放。**门禁**（`internal/gates/ops_route_ratchet_gate_test.go`）：授权特征集与 `scripts/authz-route-audit.py` 对齐
+  （+authorizeByRoles/authorizeByAPIKey/.Authorize，subsystemAuthorize 原有）；调用链跟进 `s.dispatch*` 与 `s.createSystemTask`，深度上限 3；
+  台账 61 文件/284 条 → **0 文件**。现测 **408 条注册 / 408 条已鉴权写路由 / 0 条未鉴权 / handler 未解析 0**；下限同步抬到 380（扫描面）与 380（已鉴权）。
+  变异反证扩成两格：抹掉全部授权特征后 P1-A 四文件必须回落 6/5/3/3=17；新增 `pulsar_ops.go`（13 条、自身零权限点）**必须全数回落**——
+  证派发闸在判据射程内。**文档**：立项书新增 §10.0（两个独立口径对账：审计脚本 610/RBAC 586/ANON 19/AUTH_ONLY 5/可派发 416/**可派发但无 RBAC 0**；
+  残余 24 条全部不可派发；AND 闸效应：我 17 条 `system:write` ∧ 派发口 `task:write` ⇒ operator 仍 403；P1-B2 问题由 4 个收束为 2 个），
+  §10.1–10.7 标注为 11-05 时点保留。CHANGELOG 新增 `[Unreleased-门禁] — 2026-11-06` 块。验证：`go test ./internal/gates/` ok（26.7s，两测均 PASS）；
+  fold gate `offenders=0 stale=0`；三文件 LF。零业务代码改动。
+[CLAIM] 2026-11-06T13:00:00Z from=zcode ttl=48h scope=web/enterprise/src/views/**/*.vue,web/enterprise/src/views/__tests__/FluxView.spec.js,web/enterprise/src/i18n/locales/{zh,en}/delivery.json,CHANGELOG.md
+  写按钮权限门批（按钮级禁用范式的可做子集）：同类扫描 17 候选 × 后端权限目录交叉 = 15 视图有现成 write 权限点。
+  本批先落 FluxView（flux:write，含 workbuddy 11-01 遗留的 flux 页回归诉求）；其余 14 个按 CHANGELOG 记录的清单逐批施工，范式对齐 InfraConsole/Flux。
+[DONE] 2026-11-06T13:30:00Z from=zcode ref=[CLAIM] 2026-11-06T13:00:00Z（Flux 批） paths=web/enterprise/src/views/FluxView.vue,web/enterprise/src/views/__tests__/FluxView.spec.js,web/enterprise/src/i18n/locales/{zh,en}/delivery.json,CHANGELOG.md
+  FluxView 写按钮挂 flux:write：四类按钮禁用+title+常驻提示；spec 2 例过。15 视图施工图上板（CHANGELOG + 本条目）。
