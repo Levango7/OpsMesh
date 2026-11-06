@@ -6,7 +6,7 @@
     :error="loadErr"
   >
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate">
+      <Button variant="primary" size="md" @click="openCreate" data-testid="tickets-opencreate-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <Icon name="add" :size="14" />
         {{ $t('tickets.add') }}
       </Button>
@@ -18,6 +18,7 @@
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <DataTable :columns="columns" :rows="tickets" row-key="id" :empty-text="$t('tickets.empty')">
         <template #cell-title="{ row }"><span class="t-title">{{ row.title }}</span></template>
         <template #cell-status="{ value }">
@@ -32,10 +33,10 @@
           <div class="row-actions">
             <Button
               variant="ghost" size="sm" v-if="row.status !== 'closed' && row.status !== 'resolved'"
-              :title="$t('tickets.close')"
+              :title="canWrite ? ($t('tickets.close')) : $t('common.write_denied')"
               @click="onClose(row)"
-            ><Icon name="close" :size="13" /></Button>
-            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
+             data-testid="tickets-onclose-btn" :disabled="!canWrite"><Icon name="close" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="tickets-openedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -88,7 +89,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('tickets.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="tickets-onsave-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('tickets.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('tickets.cancel') }}</Button>
         </div>
       </form>
@@ -115,6 +116,7 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
+import { useAuthStore } from '@/stores/auth'
 
 // 工单管理页 — 列表 + 创建/编辑 + 关闭工单
 import { ref, computed, reactive, onMounted } from 'vue'
@@ -127,6 +129,11 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 import Button from "@/components/ui/Button.vue"
+
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('ticket:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('ticket:write'))
 
 const tickets = ref([])
 const loading = ref(false)

@@ -164,6 +164,32 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-五维生产力排查] — 2026-11-06（方法论 + 全量矩阵 + 批 1：15 视图写门）
+
+- **方法论与执行记录（活文档）**：`docs/qa-sweep-2026-11-06.md` —— 五维度（后端接口/前端体验/前后端契约/数据流/方法论自身）
+  各给可复算判据表、证据标准（只认当前 HEAD 可复现的证据、静态匹配只是线索、反向证伪优先）、P0/P1/P2 分诊矩阵与批次规则。
+- **三级矩阵脚本**：`scripts/qa-matrix.py`（只读）。路由（控制面 + `services/*-svc` + `svcproxy` 代理表） × 前端 api 函数
+  × infra 动作目录 × 视图 × 权限目录，一次产出 GHOST/METHOD/DEAD/PERM-GAP/WRITE-NOGATE 五类台账。
+  基线实测：**GHOST 0 / METHOD 错配 0 / PERM-GAP 0**（无回归：与 11-02 契约对账结论一致）；
+  DEAD 96 条（未接前端的后端能力面，待产品裁决）；**WRITE-NOGATE 54 视图 → 本批后 39**。
+- **批 1（本批）＝按钮级写权限门 15 视图**：`APIKeysView(apikey:write) / AutomationView(automation:write) / BillingView(billing:write) /
+  GatewayRoutesView(gateway:write) / SLOsView(slo:write) / SchedulesView(schedule:write) / ScriptsView(script:write) /
+  TicketsView(ticket:write) / TrafficPoliciesView(traffic:write) / WebhooksView(webhook:write) / K8sClusterDeployView +
+  K8sLifecycleView + K8sResourcesView(k8s:write) / SystemOpsView(system:write) / secrets/SecretsView(secrets:write)`。
+  范式同 InfraConsole/Flux：`hasPerm` → `canWrite` → 写按钮 `:disabled` + `:title` + `data-testid` → 页首/表前常驻提示；
+  新增共享双语键 **`common.write_denied`**（zh/en）。
+- **新棘轮**：`src/views/__tests__/write-gate-ledger.test.js` —— GATED 掉门判红、PENDING 挂完必须挪出（欠账只许减）、
+  台账文件消失判红、共享键缺一边判红。余 39 视图按台账续作（每视图缺哪些权限点已写在台账里）。
+- **既有 spec 适配**：`K8sResourcesView.spec.js` / `SystemOpsView.spec.js` / `secrets/SecretsView.spec.js` 补 `@/stores/auth`
+  替身（视图 setup 现在取 auth store，无 Pinia 会抛 `[🍍]`）；全量 **74 文件 / 1375 用例全过**。
+- **审计方法论的两处自我修正（已写回脚本）**：①"后端"必须含 `services/**` 与网关代理表（否则 autoscaler/portal/device-svc 出 30 条假幽灵，修后 0）；
+  ②权限点只从**守卫调用实参**里取（函数体内其它 `x:y` 字面量会把 HBase 的 action 名 `ns:table` 误记成权限点）。
+- **去伪（供下一轮省时）**：删除确认已是全站规范（`onDelete`→`ConfirmModal`→`onDeleteConfirm`）；三态由 `DataTable`/`PageShell`
+  共享组件承担（按字面计数会大量误报）；`v-for` 缺 `:key` 与 `v-if`+`v-for` 同元素各 0 条。
+- **批 2（已排期）**：重复提交（`ScriptsView.vue:70,81` 等 9 视图保存按钮无 `:disabled`）、无确认/静默吞错
+  （`TasksView.vue:225`、`KnowledgeView.vue:85,151`、`WorkflowsView.vue:186-218`、`UsersView.vue:231`）、
+  `cost/budget` 响应体补「进程内口径」字段（qoder 11-05 通告，落 `internal/cost/handler.go`）。
+
 ## [Unreleased-写按钮权限门] — 2026-11-06（FluxView 挂 flux:write + 同类扫描出 15 视图施工图）
 
 - **FluxView 写按钮挂 `flux:write` 门**（按钮级门范式延伸批）：后端 flux.go 的 5 个 handler 一直是 `requirePermission('flux:read'/'flux:write')`——viewer/operator 持 flux:read 可进页但写操作必 403。前端现在显式化：新建/同步/编辑/删除四类按钮无权限时禁用 + title 说明 + 页首常驻提示（对应 workbuddy 11-01 遗留的「flux 页回归，确认不依赖 403 时隐藏按钮的旧行为」——现在依赖的是显式门，不再撞墙）。spec 2 例（无权限全禁用+提示 / 有权限全可用）。

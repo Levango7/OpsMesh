@@ -55,7 +55,7 @@
               <input v-model="form.mount" placeholder="secret" />
             </div>
             <div class="btnbar btnbar--bottom">
-              <Button variant="primary" size="md" native-type="submit" :disabled="testing">
+              <Button variant="primary" size="md" native-type="submit" :disabled="testing || !canWrite" data-testid="secrets-ontest-btn" :title="canWrite ? '' : $t('common.write_denied')">
                 {{ testing ? $t('secrets.testing') : $t('secrets.test_connection') }}
               </Button>
             </div>
@@ -71,7 +71,8 @@
             <h3 style="margin: 0;">{{ $t('secrets.keys_title') }}</h3>
             <Button variant="primary" size="md" @click="fetchKeys()">↻ {{ $t('common.refresh') }}</Button>
           </div>
-          <DataTable
+          <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
+      <DataTable
             :columns="keyCols"
             :rows="keys"
             row-key="key"
@@ -82,7 +83,7 @@
               <span class="badge info">{{ value || '—' }}</span>
             </template>
             <template #cell-actions="{ row }">
-              <Button variant="ghost" size="sm" @click="onRotate(row.key)" :disabled="rotating === row.key">
+              <Button variant="ghost" size="sm" @click="onRotate(row.key)" :disabled="rotating === row.key || !canWrite" data-testid="secrets-onrotate-btn" :title="canWrite ? '' : $t('common.write_denied')">
                 {{ rotating === row.key ? $t('secrets.rotating') : $t('secrets.rotate') }}
               </Button>
             </template>
@@ -110,10 +111,10 @@
             </select>
           </div>
           <div class="btnbar btnbar--bottom">
-            <Button variant="primary" size="md" @click="confirmRotate" :disabled="!rotateConfirm.newValue || rotating">
+            <Button variant="primary" size="md" @click="confirmRotate" :disabled="!rotateConfirm.newValue || rotating || !canWrite" data-testid="secrets-confirmrotate-btn" :title="canWrite ? '' : $t('common.write_denied')">
               {{ rotating ? $t('secrets.rotating') : $t('secrets.rotate_confirm') }}
             </Button>
-            <Button variant="ghost" size="md" @click="cancelRotate">{{ $t('common.cancel') }}</Button>
+            <Button variant="ghost" size="md" @click="cancelRotate" data-testid="secrets-cancelrotate-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.cancel') }}</Button>
           </div>
         </Modal>
 
@@ -144,7 +145,8 @@
 //
 // 安全约束：本页面不展示任何密钥值，仅展示 key 名称与来源 provider。
 import PageShell from '@/components/PageShell.vue'
-import { onMounted, reactive, ref } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { getSecretProviderStatus, testSecretProvider, listSecretKeys, rotateSecret } from '@/api/secrets'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -153,6 +155,11 @@ import { Modal } from '@/components/ui'
 import Button from "@/components/ui/Button.vue"
 
 // 提供者状态
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('secrets:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('secrets:write'))
+
 const status = reactive({ provider: '', enabled: false, addr: '', mount: '', file: '' })
 const loading = ref(false)
 const loadError = ref('')

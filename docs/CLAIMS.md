@@ -719,3 +719,21 @@
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell.go note=新增 QuotePowerShellSingle + PowerShellEncodedCommand（UTF-16LE+base64）
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell_test.go note=真 PS 对拍：8 敌意值零执行 + 未转义校准执行（Windows 本地；非 Windows skip）
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=scripts/shell-injection-audit.py note=标记集补 PS 编码/转义 + 格式串降噪；复算 PS 15→1（假阳性）、全仓 616→589
+[RELEASE] 2026-11-06T14:00:00Z from=zcode scope=web/enterprise/src/api/*.js,web/enterprise/src/views/*.vue,web/enterprise/src/stores/auth*.js,web/enterprise/src/router/index.js,web/enterprise/src/composables/*,web/enterprise/src/i18n/locales/{zh,en}/*.json,CHANGELOG.md
+  按钮级权限门批（11-06T11:00 认领）作业面已全部落地并推 origin/main（InfraConsole 派发门 + Flux 门 + 本轮各批）。逐字 scope 释放。
+[RELEASE] 2026-11-06T14:00:01Z from=zcode scope=web/enterprise/src/views/**/*.vue,web/enterprise/src/views/__tests__/FluxView.spec.js,web/enterprise/src/i18n/locales/{zh,en}/delivery.json,CHANGELOG.md
+  Flux 批（11-06T13:00 认领）已落地 origin/main b3ed7e6（FluxView flux:write 门 + spec 2 例）。逐字 scope 释放；15 视图施工图并入下一轮。
+[CLAIM] 2026-11-06T14:05:00Z from=zcode ttl=72h scope=docs/qa-sweep-2026-11-06.md,scripts/qa-matrix.py,web/enterprise/src/**,CHANGELOG.md
+  五维生产力排查（用户直接指派：「设计一套严谨的思路排查，无微不至、事无巨细，找出来并解决」）。
+  交付物：docs/qa-sweep-2026-11-06.md（方法论+执行记录，活文档）+ scripts/qa-matrix.py（路由×端点×视图×权限目录 三级矩阵）。
+  前端面全覆盖（含 15 视图写门批续作）；后端修复（若有）按批以精确路径另立 CLAIM，不占 internal/ 大面，避免与他线漂移。
+
+[NOTE] 2026-11-06T15:30:00Z from=zcode to=all 五维排查（[CLAIM] 2026-11-06T14:05:00Z，仍在持）阶段汇报，**不指派活**：
+  ① 方法论 + 执行记录：docs/qa-sweep-2026-11-06.md（活文档）；② 三级矩阵脚本：scripts/qa-matrix.py（只读，可复算）。
+  ③ 实测：GHOST 0 / METHOD 错配 0 / PERM-GAP 0；DEAD 96（控制面 53 + 微服务上游 43）；WRITE-NOGATE 54 视图 → 本批后 39。
+  ④ 批 1 落地：15 视图写门（范式同 Flux）+ 共享双语键 common.write_denied + 棘轮 spec write-gate-ledger.test.js；
+     全量前端 74 文件 / 1375 用例全过。余 39 视图的「缺哪些权限点」已写进棘轮台账，后续逐批挪 GATED。
+  ⑤ 给其它线的两条口径（避免重复踩）：**「后端」要含 services/** 与 internal/controlplane/svcproxy/proxy.go 的代理表**，
+     只扫 controlplane 会出假幽灵（我实测 30 条，修后 0）；**权限点只认守卫调用实参里的字面量**，
+     函数体里其它 `x:y` 会把 action 名（如 HBase 的 ns:table）误记成权限点缺口。
+  ⑥ 批 2 已排期（重复提交 / 无确认与静默吞错 / cost 口径字段），做完再发 [DONE]（scope 逐字）。

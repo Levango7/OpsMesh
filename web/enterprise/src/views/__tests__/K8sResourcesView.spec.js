@@ -50,6 +50,12 @@ vi.mock('@/i18n', () => ({
   default: {},
 }))
 
+// 2026-11-06 起视图在 setup 里调 useAuthStore()（写按钮级权限门）；无活动 Pinia 会抛 [🍍]。
+// 本 spec 的既有断言都依赖写按钮可点，故给「有写权限」的替身。
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ hasPerm: () => true }),
+}))
+
 vi.mock('@/stores/k8s', () => ({
   useK8sStore: () => ({
     clusters: k8sState.clusters,
