@@ -36,6 +36,7 @@
 - **现测**：门禁扫描面 408 条注册 / **已鉴权写路由 408 条 / 未鉴权 0 条** / handler 未解析 0 条；`scripts/authz-route-audit.py` 独立复算 610 条注册中 RBAC 586 / AUTH_ONLY 5 / ANON 19 / **可派发但无 RBAC 0**。残余 24 条全部不可派发（静态资源、探针、认证入口、`/api/v1/me`、`/api/services`+`/api/traces` 四个只读 GET），不构成"下发脚本"面。
 - **变异反证扩到派发口**：`TestOpsRatchetJudgeSeesMissingGuard` 现在一次抹掉全部授权特征，除 P1-A 四文件必须回落到 6/5/3/3=17 条外，新增 `pulsar_ops.go`（13 条、自身零权限点）**必须全数回落**——证的是"派发口的闸在判据射程内"，而不只是"现在恰好 0"。
 - **文档**：`docs/projects-2026-11-05.md` 新增 §10.0 记录本次口径更新与两个独立口径的对账；§10.1–10.7 保留为 11-05 时点分层数据并标注已被 §10.0 取代；P1-B2 待 owner 裁的问题从 4 个收束为 2 个（operator 是否拿回执行面、只读语义 POST 是否对 viewer 放开）。
+- **owner 裁决落地（2026-11-06）**：原话「运维 当然要 运维执行面啊」「那就这样吧，不要对访客开放，避免信息安全泄露」。P1-A 那 17 条（云托管 DB 6 / NoSQL 5 / Apache 3 / ES 3）的权限点由 `requireProd("system:write")`（admin-only）改为 `requireProd("task:write")`，与其余 284 条经派发口 `subsystemAuthorize(task:write)` 的运维路由同一口径：**operator 恢复执行面，viewer 仍 403，匿名仍 401**。`task:write` 早在 PermSpecs 且 operator 本就持有 ⇒ 零权限目录改动、无"目录先行再接线"风险；只读语义 POST 不向 viewer 放开，只读查询走 GET。测试随之拆成 `TestOpsExtRoutesDenyViewer`（viewer 403）与 `TestOpsExtRoutesAllowOperator`（operator 不被鉴权层拒）两格；棘轮门禁不变（17 条改用自己的 `requireProd` 仍算已鉴权，变异反证 6/5/3/3=17 照旧）。
 
 ## [Unreleased-引号收口] — 2026-11-05（shellQuote 修正：17 文件 / 269 调用点；两处裸拼收编 + HBase 白名单迁同包）
 
