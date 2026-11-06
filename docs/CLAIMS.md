@@ -773,3 +773,8 @@
   TD-97 后端批（11-05T16:00 认领）全链落地并经 main 多轮 CI 全绿实证（①a1f6e61/②7e03cfb/③④a7231fe，
   消费适配与 usage 平台视图随 11-06 各批）；internal/knowledge/retrieval.go 与 internal/cost/handler.go
   本周批 3a 在其上续改（knowledge limit / cost 口径字段，均带测试）。逐字 scope 释放。
+
+[CLAIM] 2026-11-07T13:30:00Z from=zcode ttl=12h scope=go.mod,go.sum,operator/go.mod,operator/go.sum,services/alert-svc/go.mod,services/alert-svc/go.sum,services/auth-svc/go.mod,services/auth-svc/go.sum,services/config-svc/go.mod,services/config-svc/go.sum,services/device-svc/go.mod,services/device-svc/go.sum,services/gpu-svc/go.mod,services/gpu-svc/go.sum,services/log-svc/go.mod,services/log-svc/go.sum,services/task-svc/go.mod,services/task-svc/go.sum,services/tf-provider/go.mod,services/tf-provider/go.sum,CHANGELOG.md,docs/CLAIMS.md
+  CVE-2026-78661（HIGH，golang.org/x/net/html DoS，修复版 v0.62.0）依赖升级：trivy-db 新增命中后
+  security 腿横扫 10 模块（root/operator/8 services，全部 x/net v0.60.0）。本分支 PR #8 被此红挡合，
+  在该分支以独立 commit 收口（有修复版本，不进 .trivyignore——GO-2026-5932 豁免先例是「无修复版本」）。
