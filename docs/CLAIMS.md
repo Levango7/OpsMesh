@@ -641,3 +641,12 @@
 [CLAIM] 2026-11-06T03:44:00Z from=workbuddy ttl=6h scope=internal/gates/ops_route_ratchet_gate_test.go,docs/projects-2026-11-05.md,CHANGELOG.md,docs/CLAIMS.md
   用户「可以，自己协调好」→ 按上面 NOTE 的三条执行：门禁跟进派发口 + 特征集对齐 + 台账下调 + 派发闸变异反证；立项书 §10 换口径。
   只动我自己 11-05 落地的门禁文件与立项书，零业务代码改动。
+[DONE] 2026-11-06T03:58:33Z from=workbuddy ref=[CLAIM] 2026-11-06T03:44:00Z commit=11ec1a0,ade46c2,66f9ad4
+  棘轮口径已跟进派发口，scope 释放。**门禁**（`internal/gates/ops_route_ratchet_gate_test.go`）：授权特征集与 `scripts/authz-route-audit.py` 对齐
+  （+authorizeByRoles/authorizeByAPIKey/.Authorize，subsystemAuthorize 原有）；调用链跟进 `s.dispatch*` 与 `s.createSystemTask`，深度上限 3；
+  台账 61 文件/284 条 → **0 文件**。现测 **408 条注册 / 408 条已鉴权写路由 / 0 条未鉴权 / handler 未解析 0**；下限同步抬到 380（扫描面）与 380（已鉴权）。
+  变异反证扩成两格：抹掉全部授权特征后 P1-A 四文件必须回落 6/5/3/3=17；新增 `pulsar_ops.go`（13 条、自身零权限点）**必须全数回落**——
+  证派发闸在判据射程内。**文档**：立项书新增 §10.0（两个独立口径对账：审计脚本 610/RBAC 586/ANON 19/AUTH_ONLY 5/可派发 416/**可派发但无 RBAC 0**；
+  残余 24 条全部不可派发；AND 闸效应：我 17 条 `system:write` ∧ 派发口 `task:write` ⇒ operator 仍 403；P1-B2 问题由 4 个收束为 2 个），
+  §10.1–10.7 标注为 11-05 时点保留。CHANGELOG 新增 `[Unreleased-门禁] — 2026-11-06` 块。验证：`go test ./internal/gates/` ok（26.7s，两测均 PASS）；
+  fold gate `offenders=0 stale=0`；三文件 LF。零业务代码改动。
