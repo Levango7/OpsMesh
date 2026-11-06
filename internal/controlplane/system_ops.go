@@ -492,9 +492,7 @@ func buildPackageScript(req packageOpRequest) string {
 func (s *Server) createSystemTask(tenantID, agentID, script, action string, approvalRequired ...bool) (*proto.Task, error) {
 	// deviceID 可能是 "dev-<hash>"（前端注册时加前缀），而 agent 注册时用裸 ID。
 	// 剥离前缀，避免 task 与 agent 找不到对齐，任务永远 pending。
-	if strings.HasPrefix(agentID, "dev-") {
-		agentID = strings.TrimPrefix(agentID, "dev-")
-	}
+	agentID = strings.TrimPrefix(agentID, "dev-")
 	task := &proto.Task{
 		AgentID:    agentID,
 		TenantID:   tenantID,
