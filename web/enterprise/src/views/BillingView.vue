@@ -15,7 +15,7 @@
     <!-- ============ 订阅计划 ============ -->
     <template v-if="tab === 'plans'">
       <div class="btnbar btnbar--bottom">
-        <Button variant="primary" size="md" data-testid="billing-add-plan-btn" @click="openPlanCreate">
+        <Button variant="primary" size="md" data-testid="billing-add-plan-btn" @click="openPlanCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
           <Icon name="add" :size="14" />
           {{ $t('billing.add_plan') }}
         </Button>
@@ -25,6 +25,7 @@
         </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <DataTable v-else :columns="planCols" :rows="plans" row-key="id" :empty-text="$t('billing.empty_plans')">
         <template #cell-name="{ value }"><code>{{ value }}</code></template>
         <template #cell-price="{ value }">{{ fmtPrice(value) }}</template>
@@ -33,8 +34,8 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <Button variant="ghost" size="sm" @click="openPlanEdit(row)"><Icon name="edit" :size="13" /></Button>
-            <Button variant="danger" size="sm" @click="onDeletePlan(row)"><Icon name="delete" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openPlanEdit(row)" data-testid="billing-openplanedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDeletePlan(row)" data-testid="billing-ondeleteplan-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -43,7 +44,7 @@
     <!-- ============ 订阅 ============ -->
     <template v-else-if="tab === 'subscriptions'">
       <div class="btnbar btnbar--bottom">
-        <Button variant="primary" size="md" data-testid="billing-add-sub-btn" @click="openSubCreate">
+        <Button variant="primary" size="md" data-testid="billing-add-sub-btn" @click="openSubCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
           <Icon name="add" :size="14" />
           {{ $t('billing.add_sub') }}
         </Button>
@@ -62,8 +63,8 @@
         <template #cell-expiresAt="{ value }">{{ fmtTime(value, '—') }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <Button variant="ghost" size="sm" @click="openSubEdit(row)"><Icon name="edit" :size="13" /></Button>
-            <Button variant="danger" size="sm" @click="onDeleteSub(row)"><Icon name="delete" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openSubEdit(row)" data-testid="billing-opensubedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDeleteSub(row)" data-testid="billing-ondeletesub-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -155,7 +156,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('billing.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="billing-onsaveplan-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('billing.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="planForm = null">{{ $t('billing.cancel') }}</Button>
         </div>
       </form>
@@ -181,7 +182,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('billing.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="billing-onsavesub-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('billing.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="subForm = null">{{ $t('billing.cancel') }}</Button>
         </div>
       </form>
@@ -235,6 +236,7 @@
 // 计费管理页 — tab 分区：订阅计划 / 订阅 / 账单（只读）/ 用量统计（只读）
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import PageShell from '@/components/PageShell.vue'
+import { useAuthStore } from '@/stores/auth'
 import { listPlans, createPlan, updatePlan, deletePlan, listSubscriptions, createSubscription, updateSubscription, deleteSubscription, listInvoices, getUsage } from '@/api/billing'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -245,6 +247,11 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 import Button from "@/components/ui/Button.vue"
+
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('billing:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('billing:write'))
 
 const tab = ref('plans')
 const loading = ref(false)

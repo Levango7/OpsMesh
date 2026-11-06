@@ -1,7 +1,7 @@
 <template>
   <PageShell :title="$t('apikeys.title')" :desc="$t('apikeys.subtitle')" testid="api-keys" :error="loadErr">
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" data-testid="apikeys-add-btn" @click="openCreate">
+      <Button variant="primary" size="md" data-testid="apikeys-add-btn" @click="openCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <Icon name="add" :size="14" />
         {{ $t('apikeys.add') }}
       </Button>
@@ -12,6 +12,7 @@
     </div>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <DataTable
       v-else
       :columns="columns"
@@ -35,11 +36,11 @@
       <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
       <template #cell-actions="{ row }">
         <div class="row-actions">
-          <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
+          <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="apikeys-openedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
           <!-- 启停切换 -->
-          <Button variant="ghost" size="sm" v-if="!row.enabled" @click="onToggle(row, true)">{{ $t('apikeys.enable') }}</Button>
-          <Button variant="ghost" size="sm" v-else @click="onToggle(row, false)">{{ $t('apikeys.disable') }}</Button>
-          <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
+          <Button variant="ghost" size="sm" v-if="!row.enabled" @click="onToggle(row, true)" data-testid="apikeys-ontoggle-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('apikeys.enable') }}</Button>
+          <Button variant="ghost" size="sm" v-else @click="onToggle(row, false)" data-testid="apikeys-ontoggle-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('apikeys.disable') }}</Button>
+          <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="apikeys-ondelete-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
         </div>
       </template>
     </DataTable>
@@ -73,7 +74,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('apikeys.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="apikeys-onsave-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('apikeys.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('apikeys.cancel') }}</Button>
         </div>
       </form>
@@ -110,7 +111,8 @@
 // API Key 管理页 — 列表 + 新增/编辑/删除 + 启停
 // 创建成功后后端返回明文 key（plainKey），仅此一次，用 info 弹窗展示给用户复制。
 import PageShell from '@/components/PageShell.vue'
-import { ref, reactive, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { listAPIKeys, createAPIKey, updateAPIKey, deleteAPIKey, enableAPIKey, disableAPIKey } from '@/api/apikeys'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -148,6 +150,11 @@ const scopeOptions = [
   'gateway:read', 'gateway:write',
   'audit:read'
 ]
+
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('apikey:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('apikey:write'))
 
 const columns = [
   { key: 'name', title: t('apikeys.name'), slot: 'cell-name' },

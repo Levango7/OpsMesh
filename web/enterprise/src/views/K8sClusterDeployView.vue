@@ -10,6 +10,7 @@
       <div class="flowbar">
         <h3 class="card__title">{{ $t('k8sDeploy.spec_title') }}</h3>
       </div>
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <form @submit.prevent="onDeploy">
         <div class="row">
           <div class="field field--fixed">
@@ -66,13 +67,13 @@
         <div class="card" style="background: var(--color-surface-2, #f7f9fc);">
           <div class="flowbar">
             <h3 class="card__title">{{ $t('k8sDeploy.cp_nodes_title') }}</h3>
-            <Button variant="primary" size="sm" @click="addCPNode">{{ $t('k8sDeploy.add_node') }}</Button>
+            <Button variant="primary" size="sm" @click="addCPNode" data-testid="k8sclusterdeploy-addcpnode-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8sDeploy.add_node') }}</Button>
           </div>
           <div v-for="(node, idx) in form.controlPlaneNodes" :key="idx" class="node-row">
             <div class="field field--fixed"><label>Host</label><input v-model="node.host" required placeholder="192.168.1.10" /></div>
             <div class="field field--fixed"><label>User</label><input v-model="node.user" placeholder="root" /></div>
             <div class="field field--fixed"><label>SSH Key</label><textarea v-model="node.sshKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" /></div>
-            <Button variant="danger" size="sm" @click="removeCPNode(idx)">{{ $t('common.delete') }}</Button>
+            <Button variant="danger" size="sm" @click="removeCPNode(idx)" data-testid="k8sclusterdeploy-removecpnode-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
           </div>
         </div>
 
@@ -80,13 +81,13 @@
         <div class="card" style="background: var(--color-surface-2, #f7f9fc);">
           <div class="flowbar">
             <h3 class="card__title">{{ $t('k8sDeploy.worker_nodes_title') }}</h3>
-            <Button variant="primary" size="sm" @click="addWorkerNode">{{ $t('k8sDeploy.add_node') }}</Button>
+            <Button variant="primary" size="sm" @click="addWorkerNode" data-testid="k8sclusterdeploy-addworkernode-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8sDeploy.add_node') }}</Button>
           </div>
           <div v-for="(node, idx) in form.workerNodes" :key="idx" class="node-row">
             <div class="field field--fixed"><label>Host</label><input v-model="node.host" required placeholder="192.168.1.20" /></div>
             <div class="field field--fixed"><label>User</label><input v-model="node.user" placeholder="root" /></div>
             <div class="field field--fixed"><label>SSH Key</label><textarea v-model="node.sshKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" /></div>
-            <Button variant="danger" size="sm" @click="removeWorkerNode(idx)">{{ $t('common.delete') }}</Button>
+            <Button variant="danger" size="sm" @click="removeWorkerNode(idx)" data-testid="k8sclusterdeploy-removeworkernode-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
           </div>
         </div>
 
@@ -108,8 +109,8 @@
         </div>
 
         <div class="btnbar">
-          <Button native-type="submit" variant="primary" :disabled="deploying">{{ $t('k8sDeploy.deploy_btn') }}</Button>
-          <Button variant="ghost" size="sm" @click="resetForm">{{ $t('k8sDeploy.reset') }}</Button>
+          <Button native-type="submit" variant="primary" :disabled="deploying || !canWrite" data-testid="k8sclusterdeploy-ondeploy-btn" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8sDeploy.deploy_btn') }}</Button>
+          <Button variant="ghost" size="sm" @click="resetForm" data-testid="k8sclusterdeploy-resetform-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8sDeploy.reset') }}</Button>
         </div>
         <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
       </form>
@@ -139,12 +140,18 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
+import { useAuthStore } from '@/stores/auth'
 
-import { ref, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useK8sStore } from '@/stores/k8s'
 import { t } from '@/i18n'
 import { deployK8sCluster, getK8sClusterDeployStatus } from '@/api/k8s'
 import { Button } from '@/components/ui'
+
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('k8s:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('k8s:write'))
 
 const store = useK8sStore()
 

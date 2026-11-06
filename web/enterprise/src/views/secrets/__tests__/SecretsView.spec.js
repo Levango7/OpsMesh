@@ -20,6 +20,13 @@ vi.mock('@/api/secrets', () => ({
   listSecretKeys: vi.fn(),
 }))
 
+// mock @/stores/auth：2026-11-06 起视图在 setup 里调 useAuthStore()（写按钮级权限门），
+// 没有活动 Pinia 会直接抛 [🍍] getActivePinia；这里给出「有写权限」的替身，
+// 让写按钮保持可用（本 spec 原有断言都依赖点击可用）。
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ hasPerm: () => true }),
+}))
+
 // mock @/i18n：返回键本身（与 global.mocks.$t 行为一致），便于断言。
 // 有 params 时附加 JSON.stringify(params) 便于断言插值参数被正确传递。
 vi.mock('@/i18n', () => ({
