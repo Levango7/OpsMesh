@@ -689,3 +689,12 @@
   不新建权限族、不动派发口、不动前端、不动权限目录（`task:write` 已在 PermSpecs 且 operator 本就持有）。
   CHANGELOG 由 zcode [CLAIM] 2026-11-06T11:00:00Z ttl=24h 覆盖（仍活），故我只在自己已有的「[Unreleased-门禁] — 2026-11-06」块内追加一条 bullet，
   不新开标题、不占顶部插入点。
+[DONE] 2026-11-06T14:05:52Z from=workbuddy ref=[CLAIM] 2026-11-06T13:56:53Z commit=8b812de,ce313c1,7ab3ced
+  owner 裁决已落地，scope 释放。**代码**：4 个文件的 17 处 `requireProd("system:write")` → `requireProd("task:write")`
+  （`db_cloud_managed_ops.go` 6 / `db_nosql_ext_ops.go` 5 / `apache_ext_ops2.go` 3 / `elasticsearch_ops_ext.go` 3）；
+  `ops_route_authz_test.go` 的角色期望拆成 `TestOpsExtRoutesDenyViewer`（viewer 403）与 `TestOpsExtRoutesAllowOperator`（operator 不被鉴权层拒）。
+  三道身份现测：operator 通行 / viewer 403 / 匿名 401；admin 不变。**零权限目录改动**（`task:write` 早在 PermSpecs，operator 经 `task` 组本就持有）。
+  **门禁**：改后仍 408 条注册 / 408 条已鉴权写路由 / 0 未鉴权；变异反证 P1-A 四文件抹闸后仍 6/5/3/3=17。**文档**：§10.0 记裁决与原话、§1/§5/§8/§10.4 的过时口径就地加注；
+  CHANGELOG 仅在我自己的 `[Unreleased-门禁]` 块追加一条（未新开标题，避让 zcode 在持）。
+  验证（rebase 到 `3196acb` 后重跑）：`go test ./internal/gates/ ./internal/controlplane/` 均 ok（2.6s / 142.3s）；fold gate `offenders=0 stale=0`；改动文件全 LF。
+  未动：派发口、权限目录、前端、`os_ext_ops.go`（opencode 答复里预告的 Windows 批目标，按打招呼口径避开）。
