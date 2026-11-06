@@ -785,32 +785,31 @@ paths:
 
 ### 3.1 统一错误响应格式
 
-所有错误响应统一为如下 JSON 结构（`error` 为对象，包含 `code` / `message` / `detail` / `requestID`）：
+> **⚠️ 实现状态（2026-11-07 勘误，A2 审计 BB-08）**：本节此前描述的错误体对象 schema
+> （`error` 为含 `code/message/detail/requestID` 的对象 + 顶层 `trace_id`）**代码里零实现**——
+> 全仓实测 1994 处错误响应均为扁平 `{"error": "<字符串>"}`（controlplane/paginate 的 WriteJSON/jsonError
+> 口径），`error.code` 与响应体 `trace_id` 无一处产出。原「Phase 1 让 `error` 同时是字符串与对象」
+> 按字面不可实现（同一 JSON 键不能既是字符串又是对象），已删除。
+> **对接以本勘误后的口径为准**：错误体恒为 `{"error": "<人类可读消息>"}`，HTTP 状态码承载错误类别；
+> 需要 `code`/`requestID` 的调用方请走日志系统关联（暂无响应体字段）。§3.2 的错误码表保留为
+> **内部语义对照**（HTTP 状态码 ↔ 错误类别），不承诺出现在响应体里。
+
+所有错误响应统一为如下 JSON 结构（**实测口径**）：
 
 ```json
 {
-  "error": {
-    "code": "INVALID_ARGUMENT",
-    "message": "agent_id is required",
-    "detail": {
-      "field": "agent_id",
-      "rule": "required"
-    },
-    "requestID": "req-9f3a2c1b"
-  }
+  "error": "agent_id is required"
 }
 ```
 
-> **兼容说明**：当前代码（`server_paginate.go` 的 `jsonError`）输出的是 `{"error": "<message>"}` 扁平结构。本规范定义的是目标结构，迁移路径如下：
->
-> 1. **Phase 1**（向后兼容）：handler 同时输出 `error`（字符串）与 `error.code`/`error.message`（对象），客户端按 `typeof error` 判断。
-> 2. **Phase 2**（v2 切换）：v2 仅输出对象结构，v1 冻结。
->
-> 在过渡期，`trace_id` 字段保留为顶层字段（与 `error.requestID` 等价），便于旧客户端关联日志。
+> 目标态（对象 schema，`error.code/message/detail/requestID` + 顶层 `trace_id`）仍是演进方向，
+> 但在落地前按「未实现」对待：任何按对象 schema 生成的客户端都会解析失败。
 
 ### 3.2 错误码列表
 
-错误码采用 `SCREAMING_SNAKE_CASE`，与 gRPC `codes.Code` 名称对齐（便于 HTTP↔gRPC 互转）。
+> **实现状态**：错误码（SCREAMING_SNAKE_CASE）当前只作为内部语义对照，不出现在响应体中。
+
+错误码采用 `SCREAMING_SNAKE_CASE`，与 gRPC `codes.Code` 对齐（便于 HTTP↔gRPC 互转）。
 
 | HTTP | 业务错误码 | 含义 | 典型场景 | 是否可重试 |
 |------|------------|------|----------|------------|
@@ -1024,13 +1023,21 @@ OpsMesh 采用 **URL 路径版本**（`/api/v1`），不使用 Header 版本（`
 
 ### 6.2 过滤
 
+> **⚠️ 实现状态（2026-11-07 勘误，A2 审计 BB-08）**：下表是**设计约定**，并非逐端点已实现。
+> 实测（以 handler 源码为准）：`GET /api/v1/devices` 只识别 `page`/`pageSize`，**不识别**
+> `segment/status/managed`（api-reference.md 曾写"无过滤参数"与之矛盾，已同批对齐）；
+> `GET /api/v1/tasks` 只识别 `status`（`agent_id` 未实现）；`GET /api/v1/alerts` 只识别
+> `page`/`pageSize`。传了未实现参数会被**静默忽略**（BB-02 的风险形态），按表中参数对接的
+> 客户端会拿到"看似成功但口径不同"的结果。下表其余行未逐条实测，同样按"约定优先、
+> 以 handler 源码为准"对接。
+
 过滤参数直接作为查询参数，按字段名命名（不引入 `filter[field]=value` 语法，保持 URL 简洁）。
 
-| 端点 | 过滤参数 | 示例 |
+| 端点 | 过滤参数（**约定**，实测实现状态见上） | 示例 |
 |------|----------|------|
-| `GET /api/v1/tasks` | `status`, `agent_id` | `?status=running&agent_id=a-001` |
-| `GET /api/v1/devices` | `segment`, `status`, `managed` | `?segment=seg-a&status=online&managed=true` |
-| `GET /api/v1/alerts` | `severity`, `status` | `?severity=critical&status=active` |
+| `GET /api/v1/tasks` | `status`（已实现）, `agent_id`（未实现） | `?status=running` |
+| `GET /api/v1/devices` | `segment`, `status`, `managed`（均未实现） | — |
+| `GET /api/v1/alerts` | `severity`, `status`（均未实现） | — |
 | `GET /api/v1/deploys` | `status` | `?status=running` |
 | `GET /api/v1/cmdb/ci` | `type`, `status` | `?type=host&status=active` |
 | `GET /api/v1/audits` | `tenant`, `action`, `from`, `to` | `?action=task:create&from=2026-08-01T00:00:00Z` |
@@ -1040,12 +1047,15 @@ OpsMesh 采用 **URL 路径版本**（`/api/v1`），不使用 Header 版本（`
 
 ### 6.3 排序
 
+**当前实现**（2026-11-07 实测口径，A2 审计 BB-02/BB-08）：全仓 `sort`/`order` 查询参数**零实现**
+（`rg Get("sort|order|orderBy")` 零命中），排序硬编码在 store 层。本节是**未落地的约定**：
+"新端点必须实现"条款当前 0% 落地，对接方不应假设任何列表端点接受排序参数；
+传了会被静默忽略。要改排序，请客户端取全量后自行排序（或等该约定立项落地）。
+
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `sort` | string | 端点自定义（通常 `created_at`） | 排序字段，单字段（多字段排序 v2 支持 `sort=field1,field2`） |
 | `order` | enum | `desc` | `asc` / `desc` |
-
-**当前实现**：大部分列表端点未显式支持 `sort` / `order`，按 store 默认顺序返回（通常按 `created_at` 倒序）。本规范定义统一约定，新端点必须实现，旧端点逐步补齐。
 
 ### 6.4 时间范围
 
