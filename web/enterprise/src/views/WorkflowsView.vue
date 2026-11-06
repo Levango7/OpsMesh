@@ -183,13 +183,15 @@ async function onOpen() {
 }
 async function onSave() {
   try { await store.save(); store.msg = t('workflows.saved_msg', { id: store.current.id }); store.error = '' }
-  catch (e) { console.error('save workflow failed:', e) }
+  // 全局 toast 由 api/request.js 拦截器负责（非 401 都会弹）；这里补**页内**可见错误——
+  // 否则失败后抽屉不关、横幅不动，用户会以为"没反应"（2026-11-06 五维排查批 2）。
+  catch (e) { store.error = (e && e.j && e.j.error) || t('workflows.save_failed') }
 }
 async function onRun() {
   try {
     const r = await store.run()
     store.msg = `[${r.s}] ${JSON.stringify(r.j)}`; store.error = r.s >= 400 ? 'run' : ''
-  } catch (e) { console.error('run workflow failed:', e) }
+  } catch (e) { store.error = (e && e.j && e.j.error) || t('workflows.run_failed') }
 }
 async function onSchedule() {
   cronModal.show = true
@@ -199,7 +201,7 @@ async function onCronConfirm(cron) {
   try {
     const r = await store.schedule(cron)
     store.msg = t('workflows.schedule_set_msg', { cron: r.j.cron || t('workflows.none') }); store.error = ''
-  } catch (e) { console.error('schedule workflow failed:', e) }
+  } catch (e) { store.error = (e && e.j && e.j.error) || t('workflows.schedule_failed') }
 }
 function loadDemo() {
   store.reset()
@@ -215,7 +217,7 @@ function loadDemo() {
 
 onMounted(async () => {
   store.fetchList()
-  try { agents.value = await getAgents() || [] } catch (e) { console.error('fetch agents failed:', e) }
+  try { agents.value = await getAgents() || [] } catch (e) { store.error = (e && e.j && e.j.error) || t('workflows.agents_failed') }
   if (agents.value.length) store.current.agentID = agents.value[0].agentID
 })
 </script>
