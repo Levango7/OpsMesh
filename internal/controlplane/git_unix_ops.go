@@ -427,13 +427,20 @@ func (s *Server) handleWindowsFirewall(w http.ResponseWriter, r *http.Request) {
 		if dir == "" {
 			dir = "in"
 		}
-		script = fmt.Sprintf(`powershell -Command "New-NetFirewallRule -DisplayName '%s' -Direction %s -Protocol %s -LocalPort %s -Action Allow" 2>/dev/null && echo "Firewall rule added" || echo "Failed"`, name, dir, proto, req.Port)
+		script = shellquote.PowerShellEncodedCommand(
+			`New-NetFirewallRule -DisplayName `+shellquote.QuotePowerShellSingle(name)+
+				` -Direction `+shellquote.QuotePowerShellSingle(dir)+
+				` -Protocol `+shellquote.QuotePowerShellSingle(proto)+
+				` -LocalPort `+shellquote.QuotePowerShellSingle(req.Port)+
+				` -Action Allow -ErrorAction Stop; Write-Output 'Firewall rule added'`) + ` 2>nul || echo Failed`
 	case "delete":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`powershell -Command "Remove-NetFirewallRule -DisplayName '%s'" 2>/dev/null && echo "Firewall rule deleted" || echo "Failed"`, req.Name)
+		script = shellquote.PowerShellEncodedCommand(
+			`Remove-NetFirewallRule -DisplayName `+shellquote.QuotePowerShellSingle(req.Name)+
+				` -ErrorAction Stop; Write-Output 'Firewall rule deleted'`) + ` 2>nul || echo Failed`
 	case "list":
 		script = `powershell -Command "Get-NetFirewallRule | Select-Object DisplayName, Direction, Action, Enabled | Format-Table -AutoSize" 2>/dev/null | head -40`
 	case "status":
@@ -482,19 +489,29 @@ func (s *Server) handleWindowsUser(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user and password are required"})
 			return
 		}
-		script = fmt.Sprintf(`powershell -Command "New-LocalUser -Name '%s' -Password (ConvertTo-SecureString '%s' -AsPlainText -Force)" 2>/dev/null && echo "User %s created" || echo "Failed"`, req.User, req.Password, req.User)
+		script = shellquote.PowerShellEncodedCommand(
+			`New-LocalUser -Name `+shellquote.QuotePowerShellSingle(req.User)+
+				` -Password (ConvertTo-SecureString `+shellquote.QuotePowerShellSingle(req.Password)+
+				` -AsPlainText -Force) -ErrorAction Stop; Write-Output `+
+				shellquote.QuotePowerShellSingle("User "+req.User+" created")) + ` 2>nul || echo Failed`
 	case "delete":
 		if req.User == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
 			return
 		}
-		script = fmt.Sprintf(`powershell -Command "Remove-LocalUser -Name '%s'" 2>/dev/null && echo "User %s deleted" || echo "Failed"`, req.User, req.User)
+		script = shellquote.PowerShellEncodedCommand(
+			`Remove-LocalUser -Name `+shellquote.QuotePowerShellSingle(req.User)+
+				` -ErrorAction Stop; Write-Output `+shellquote.QuotePowerShellSingle("User "+req.User+" deleted")) + ` 2>nul || echo Failed`
 	case "add-to-group":
 		if req.User == "" || req.Group == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user and group are required"})
 			return
 		}
-		script = fmt.Sprintf(`powershell -Command "Add-LocalGroupMember -Group '%s' -Member '%s'" 2>/dev/null && echo "User %s added to group %s" || echo "Failed"`, req.Group, req.User, req.User, req.Group)
+		script = shellquote.PowerShellEncodedCommand(
+			`Add-LocalGroupMember -Group `+shellquote.QuotePowerShellSingle(req.Group)+
+				` -Member `+shellquote.QuotePowerShellSingle(req.User)+
+				` -ErrorAction Stop; Write-Output `+
+				shellquote.QuotePowerShellSingle("User "+req.User+" added to group "+req.Group)) + ` 2>nul || echo Failed`
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -506,6 +523,11 @@ func (s *Server) handleWindowsUser(w http.ResponseWriter, r *http.Request) {
 	}
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
 }
+
+// windowsEventLevelRe 是 Get-EventLog -EntryType 的级别名白名单（逗号分隔多个）。
+// 它作为**裸词**进入 PS 脚本（不能加引号，否则枚举数组绑定失效），因此字符集
+// 只允许字母与逗号——含任何 PS 元字符（; | $ 反引号等）都可能成为语句注入。
+var windowsEventLevelRe = regexp.MustCompile(`(?i)^[A-Za-z]+(,[A-Za-z]+)*$`)
 
 // handleWindowsEventLog 处理 POST /api/v1/os/windows-eventlog
 func (s *Server) handleWindowsEventLog(w http.ResponseWriter, r *http.Request) {
@@ -541,7 +563,13 @@ func (s *Server) handleWindowsEventLog(w http.ResponseWriter, r *http.Request) {
 		if level == "" {
 			level = "Error,Warning"
 		}
-		script := fmt.Sprintf(`powershell -Command "Get-EventLog -LogName '%s' -EntryType %s -Newest %d | Select-Object TimeGenerated, EntryType, Source, Message | Format-Table -AutoSize" 2>/dev/null`, logName, level, count)
+		if !windowsEventLevelRe.MatchString(level) {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported level: " + level})
+			return
+		}
+		script := shellquote.PowerShellEncodedCommand(fmt.Sprintf(
+			`Get-EventLog -LogName %s -EntryType %s -Newest %d | Select-Object TimeGenerated, EntryType, Source, Message | Format-Table -AutoSize`,
+			shellquote.QuotePowerShellSingle(logName), level, count)) + ` 2>nul`
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "windows_eventlog_query")
 		if !ok {
 			return
@@ -549,7 +577,9 @@ func (s *Server) handleWindowsEventLog(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "query"})
 
 	case "clear":
-		script := fmt.Sprintf(`powershell -Command "Clear-EventLog -LogName '%s'" 2>/dev/null && echo "Event log %s cleared" || echo "Failed"`, logName, logName)
+		script := shellquote.PowerShellEncodedCommand(
+			`Clear-EventLog -LogName `+shellquote.QuotePowerShellSingle(logName)+
+				` -ErrorAction Stop; Write-Output `+shellquote.QuotePowerShellSingle("Event log "+logName+" cleared")) + ` 2>nul || echo Failed`
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "windows_eventlog_clear")
 		if !ok {
 			return
@@ -557,7 +587,11 @@ func (s *Server) handleWindowsEventLog(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "clear"})
 
 	case "export":
-		script := fmt.Sprintf(`powershell -Command "Get-EventLog -LogName '%s' | Export-Csv -Path C:\temp\%s.csv -NoTypeInformation" 2>/dev/null && echo "Exported to C:\temp\%s.csv" || echo "Failed"`, logName, logName, logName)
+		exportPath := "C:\\temp\\" + logName + ".csv"
+		script := shellquote.PowerShellEncodedCommand(
+			`Get-EventLog -LogName `+shellquote.QuotePowerShellSingle(logName)+
+				` -ErrorAction Stop | Export-Csv -Path `+shellquote.QuotePowerShellSingle(exportPath)+
+				` -NoTypeInformation -ErrorAction Stop; Write-Output `+shellquote.QuotePowerShellSingle("Exported to "+exportPath)) + ` 2>nul || echo Failed`
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "windows_eventlog_export")
 		if !ok {
 			return

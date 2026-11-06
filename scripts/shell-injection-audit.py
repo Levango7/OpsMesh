@@ -16,8 +16,9 @@ shellCommand：Windows=cmd /C、其他=sh -c）。因此每一处 `%s` 裸拼都
 判据（有意保守，宁可多报待人工甄别）：
   A. "Sprintf 型"：行含 `fmt.Sprintf(` 且格式串含 %s/%v；且**本行所在逻辑块**
      （向上到空行、上限 12 行）内没有出现收口标记（shellQuote( / shellquote. /
-     Validate*( / MatchString( / regexp）；且本行不构建 JSON/错误响应
-     （含 WriteJSON / "error 的行不算）。
+     QuotePowerShellSingle( / PowerShellEncodedCommand( / Validate*( /
+     MatchString( / regexp）；且本行不构建 JSON/错误响应（含 WriteJSON /
+     "error 的行不算）；且格式串含空白（"OpsMesh-%s-%s" 一类资源名拼装降噪）。
   B. "拼接型"：行含 `+ <标识符> +` 形态（如 ` + pkg + `）且没有收口标记。
 
   这不是"漏洞清单"：部分字段的合法域天然窄、上游已校验，或值是故意原样透传的
@@ -41,14 +42,32 @@ from collections import Counter
 
 DEFAULT_ROOT = os.path.join("internal", "controlplane")
 
-QUOTE_MARKERS = ("shellQuote(", "shellquote.", "QuoteDouble(", "Quote(")
+QUOTE_MARKERS = (
+    "shellQuote(",
+    "shellquote.",
+    "QuoteDouble(",
+    "Quote(",
+    "QuotePowerShellSingle(",
+    "PowerShellEncodedCommand(",
+)
 VALIDATE_MARKERS = ("Validate", "MatchString(", "regexp.")
 SPRINTF_RE = re.compile(r"fmt\.Sprintf\(")
 FMT_VERB_RE = re.compile(r"%[sv]")
+FMT_LITERAL_RE = re.compile(r'fmt\.Sprintf\(\s*[`"]([^`"]*)[`"]')
 CONCAT_RE = re.compile(r"\+\s+[a-zA-Z_]\w*\s+\+")
 POWERSHELL_RE = re.compile(r"powershell", re.I)
 CMD_RE = re.compile(r"\breg\s|cmd /C|winget|choco|scoop|msiexec|sc\.exe", re.I)
 JSONISH_RE = re.compile(r"WriteJSON|\"error|StatusBadRequest")
+
+
+def fmt_literal_has_space(line: str) -> bool:
+    """格式串里是否有空白：没有空白的多半不是命令行（如资源名拼装 "OpsMesh-%s-%s"），
+    按保守假阳性处理直接跳过——这是有意的降噪，命令行几乎总含空格。"""
+    m = FMT_LITERAL_RE.search(line)
+    if not m:
+        return True  # 解析不出格式串：保守起见不跳过
+    lit = m.group(1)
+    return (" " in lit) or ("\\n" in lit)
 
 
 def classify(line: str) -> str:
@@ -105,6 +124,8 @@ def scan(root: str):
             ctx = classify(line)
             if SPRINTF_RE.search(line) and FMT_VERB_RE.search(line):
                 if has_quote_marker(line) or JSONISH_RE.search(line):
+                    continue
+                if not fmt_literal_has_space(line):
                     continue
                 if has_validate_marker(block_window(lines, i)):
                     continue

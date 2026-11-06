@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleOSProcess 处理 POST /api/v1/os/process
@@ -131,17 +132,30 @@ func (s *Server) handleWindowsService(w http.ResponseWriter, r *http.Request) {
 	case "list":
 		script = `powershell -Command "Get-Service | Select-Object Name, Status, StartType | Format-Table -AutoSize" 2>/dev/null`
 	case "start":
-		script = fmt.Sprintf(`powershell -Command "Start-Service -Name '%s'" 2>/dev/null && echo "Service %s started"`, req.Service, req.Service)
+		script = shellquote.PowerShellEncodedCommand(
+			`Start-Service -Name `+shellquote.QuotePowerShellSingle(req.Service)+
+				` -ErrorAction Stop; Write-Output `+shellquote.QuotePowerShellSingle("Service "+req.Service+" started")) + ` 2>nul`
 	case "stop":
-		script = fmt.Sprintf(`powershell -Command "Stop-Service -Name '%s' -Force" 2>/dev/null && echo "Service %s stopped"`, req.Service, req.Service)
+		script = shellquote.PowerShellEncodedCommand(
+			`Stop-Service -Name `+shellquote.QuotePowerShellSingle(req.Service)+
+				` -Force -ErrorAction Stop; Write-Output `+shellquote.QuotePowerShellSingle("Service "+req.Service+" stopped")) + ` 2>nul`
 	case "restart":
-		script = fmt.Sprintf(`powershell -Command "Restart-Service -Name '%s' -Force" 2>/dev/null && echo "Service %s restarted"`, req.Service, req.Service)
+		script = shellquote.PowerShellEncodedCommand(
+			`Restart-Service -Name `+shellquote.QuotePowerShellSingle(req.Service)+
+				` -Force -ErrorAction Stop; Write-Output `+shellquote.QuotePowerShellSingle("Service "+req.Service+" restarted")) + ` 2>nul`
 	case "create":
-		script = fmt.Sprintf(`powershell -Command "New-Service -Name '%s' -BinaryPathName '%s'" 2>/dev/null && echo "Service %s created"`, req.Service, req.Service, req.Service)
+		script = shellquote.PowerShellEncodedCommand(
+			`New-Service -Name `+shellquote.QuotePowerShellSingle(req.Service)+
+				` -BinaryPathName `+shellquote.QuotePowerShellSingle(req.Service)+
+				` -ErrorAction Stop; Write-Output `+shellquote.QuotePowerShellSingle("Service "+req.Service+" created")) + ` 2>nul`
 	case "delete":
-		script = fmt.Sprintf(`powershell -Command "sc.exe delete %s" 2>/dev/null && echo "Service %s deleted"`, req.Service, req.Service)
+		script = shellquote.PowerShellEncodedCommand(
+			`sc.exe delete `+shellquote.QuotePowerShellSingle(req.Service)+
+				`; if ($LASTEXITCODE -ne 0) { exit 1 }; Write-Output `+shellquote.QuotePowerShellSingle("Service "+req.Service+" deleted")) + ` 2>nul`
 	case "query":
-		script = fmt.Sprintf(`powershell -Command "Get-Service -Name '%s' | Select-Object Name, Status, StartType, DisplayName" 2>/dev/null`, req.Service)
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-Service -Name `+shellquote.QuotePowerShellSingle(req.Service)+
+				` | Select-Object Name, Status, StartType, DisplayName`) + ` 2>nul`
 	default:
 		script = `powershell -Command "Get-Service | Select-Object Name, Status | Format-Table -AutoSize" 2>/dev/null`
 	}

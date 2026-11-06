@@ -10,14 +10,17 @@ package controlplane
 // 只在执行时见分晓。本文件把「转义后无可展开结构」钉成构建期红。
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/store"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 func newShellQuoteServer() *Server {
@@ -476,6 +479,227 @@ func TestWindowsPackageMgrWhitelistAndQuoting(t *testing.T) {
 	} {
 		if !strings.Contains(sc, want) {
 			t.Errorf("windows-package 脚本缺 %q：\n%s", want, sc)
+		}
+	}
+}
+
+// ---------------------------------------------------------------- 第四批：Windows/PS 家族（EncodedCommand）
+
+// decodePSCommand 拆 `powershell -EncodedCommand <b64> [cmd 尾巴]` 并解回 PS 脚本。
+func decodePSCommand(t *testing.T, script string) string {
+	t.Helper()
+	const prefix = "powershell -EncodedCommand "
+	if !strings.HasPrefix(script, prefix) {
+		t.Fatalf("脚本非编码形态：%s", script)
+	}
+	b64 := strings.Fields(strings.TrimPrefix(script, prefix))[0]
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("base64 解码: %v", err)
+	}
+	u := make([]uint16, len(raw)/2)
+	for i := range u {
+		u[i] = uint16(raw[i*2]) | uint16(raw[i*2+1])<<8
+	}
+	return string(utf16.Decode(u))
+}
+
+// assertPSWrapped 断言 wire 形态并返回解码后的 PS 脚本：
+// ① 必须走 -EncodedCommand（cmd 层无引号内转义语法，旧式 -Command "..." 不可用）；
+// ② 不得残留 2>/dev/null（cmd 下整行报废）、必须是 2>nul；
+// ③ 原始载荷不得出现在 wire 形态（只允许在 base64 内）。
+func assertPSWrapped(t *testing.T, script, rawPayload string) string {
+	t.Helper()
+	if !strings.HasPrefix(script, "powershell -EncodedCommand ") {
+		t.Fatalf("未走编码传输：%s", script)
+	}
+	if strings.Contains(script, "2>/dev/null") {
+		t.Fatalf("仍含 cmd 下会整行报废的 2>/dev/null：%s", script)
+	}
+	if !strings.Contains(script, "2>nul") {
+		t.Fatalf("缺 2>nul：%s", script)
+	}
+	if strings.Contains(script, "powershell -Command ") {
+		t.Fatalf("仍含旧式 -Command：%s", script)
+	}
+	if rawPayload != "" && strings.Contains(script, rawPayload) {
+		t.Fatalf("wire 形态泄漏原始载荷（应只存在于 base64 内）：%s", script)
+	}
+	return decodePSCommand(t, script)
+}
+
+func TestWindowsFirewallUserPSEncoding(t *testing.T) {
+	s := newShellQuoteServer()
+	payload := `x'; Write-Output MARKER; '`
+	pq := shellquote.QuotePowerShellSingle
+
+	// firewall add：四个动态值全转义，模板逐字相等
+	rec := sqPost(t, s, s.handleWindowsFirewall, map[string]interface{}{
+		"deviceID": "sq-psfw-1", "action": "add", "port": "80", "protocol": "tcp", "name": payload,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("firewall add 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	sc := sqDispatchScript(t, s, "sq-psfw-1")
+	ps := assertPSWrapped(t, sc, payload)
+	want := `New-NetFirewallRule -DisplayName ` + pq(payload) + ` -Direction 'in' -Protocol 'tcp' -LocalPort '80' -Action Allow -ErrorAction Stop; Write-Output 'Firewall rule added'`
+	if ps != want {
+		t.Errorf("firewall add 脚本不等：\n got=%s\nwant=%s", ps, want)
+	}
+	if !strings.HasSuffix(sc, " 2>nul || echo Failed") {
+		t.Errorf("firewall add 尾巴错误：%s", sc)
+	}
+
+	// firewall delete
+	rec = sqPost(t, s, s.handleWindowsFirewall, map[string]interface{}{
+		"deviceID": "sq-psfw-2", "action": "delete", "name": payload,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("firewall delete 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	ps = assertPSWrapped(t, sqDispatchScript(t, s, "sq-psfw-2"), payload)
+	want = `Remove-NetFirewallRule -DisplayName ` + pq(payload) + ` -ErrorAction Stop; Write-Output 'Firewall rule deleted'`
+	if ps != want {
+		t.Errorf("firewall delete 脚本不等：\n got=%s\nwant=%s", ps, want)
+	}
+
+	// user create：用户名与密码（含单引号）都转义；消息在 PS 内
+	rec = sqPost(t, s, s.handleWindowsUser, map[string]interface{}{
+		"deviceID": "sq-psuser-1", "action": "create", "user": payload, "password": `p'a%ss!`,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("user create 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	ps = assertPSWrapped(t, sqDispatchScript(t, s, "sq-psuser-1"), payload)
+	want = `New-LocalUser -Name ` + pq(payload) + ` -Password (ConvertTo-SecureString ` + pq(`p'a%ss!`) + ` -AsPlainText -Force) -ErrorAction Stop; Write-Output ` + pq("User "+payload+" created")
+	if ps != want {
+		t.Errorf("user create 脚本不等：\n got=%s\nwant=%s", ps, want)
+	}
+
+	// user delete
+	rec = sqPost(t, s, s.handleWindowsUser, map[string]interface{}{
+		"deviceID": "sq-psuser-2", "action": "delete", "user": payload,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("user delete 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	ps = assertPSWrapped(t, sqDispatchScript(t, s, "sq-psuser-2"), payload)
+	want = `Remove-LocalUser -Name ` + pq(payload) + ` -ErrorAction Stop; Write-Output ` + pq("User "+payload+" deleted")
+	if ps != want {
+		t.Errorf("user delete 脚本不等：\n got=%s\nwant=%s", ps, want)
+	}
+
+	// user add-to-group
+	rec = sqPost(t, s, s.handleWindowsUser, map[string]interface{}{
+		"deviceID": "sq-psuser-3", "action": "add-to-group", "user": payload, "group": `grp"x`,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("add-to-group 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	ps = assertPSWrapped(t, sqDispatchScript(t, s, "sq-psuser-3"), payload)
+	want = `Add-LocalGroupMember -Group ` + pq(`grp"x`) + ` -Member ` + pq(payload) + ` -ErrorAction Stop; Write-Output ` + pq("User "+payload+` added to group grp"x`)
+	if ps != want {
+		t.Errorf("add-to-group 脚本不等：\n got=%s\nwant=%s", ps, want)
+	}
+}
+
+func TestWindowsEventlogPSEncodingAndLevelWhitelist(t *testing.T) {
+	s := newShellQuoteServer()
+	pq := shellquote.QuotePowerShellSingle
+	logName := `Sq'Log`
+
+	// query：logName 转义；level 默认 Error,Warning 为裸词；count 默认 50
+	rec := sqPost(t, s, s.handleWindowsEventLog, map[string]interface{}{
+		"deviceID": "sq-pslog-1", "action": "query", "logName": logName,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("eventlog query 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	ps := assertPSWrapped(t, sqDispatchScript(t, s, "sq-pslog-1"), logName)
+	want := `Get-EventLog -LogName ` + pq(logName) + ` -EntryType Error,Warning -Newest 50 | Select-Object TimeGenerated, EntryType, Source, Message | Format-Table -AutoSize`
+	if ps != want {
+		t.Errorf("eventlog query 脚本不等：\n got=%s\nwant=%s", ps, want)
+	}
+
+	// level 注入载荷必须 400（裸词位只允许字母与逗号）
+	for _, bad := range []string{`Error; Write-Output MARKER`, `Error|Write-Output x`, `$x`, "Error\nWarning", `Err'or`} {
+		rec = sqPost(t, s, s.handleWindowsEventLog, map[string]interface{}{
+			"deviceID": "sq-pslog-2", "action": "query", "level": bad,
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("level=%q 应 400，实得 %d：%s", bad, rec.Code, rec.Body.String())
+		}
+	}
+	// 合法级别放行
+	rec = sqPost(t, s, s.handleWindowsEventLog, map[string]interface{}{
+		"deviceID": "sq-pslog-3", "action": "query", "level": "Error,Warning,Critical",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("合法 level 被误拒：%d", rec.Code)
+	}
+
+	// clear
+	rec = sqPost(t, s, s.handleWindowsEventLog, map[string]interface{}{
+		"deviceID": "sq-pslog-4", "action": "clear", "logName": logName,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("eventlog clear 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	ps = assertPSWrapped(t, sqDispatchScript(t, s, "sq-pslog-4"), logName)
+	want = `Clear-EventLog -LogName ` + pq(logName) + ` -ErrorAction Stop; Write-Output ` + pq("Event log "+logName+" cleared")
+	if ps != want {
+		t.Errorf("eventlog clear 脚本不等：\n got=%s\nwant=%s", ps, want)
+	}
+
+	// export：路径在 PS 侧拼接并整体转义
+	rec = sqPost(t, s, s.handleWindowsEventLog, map[string]interface{}{
+		"deviceID": "sq-pslog-5", "action": "export", "logName": logName,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("eventlog export 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	ps = assertPSWrapped(t, sqDispatchScript(t, s, "sq-pslog-5"), logName)
+	exportPath := `C:\temp\` + logName + `.csv`
+	want = `Get-EventLog -LogName ` + pq(logName) + ` -ErrorAction Stop | Export-Csv -Path ` + pq(exportPath) + ` -NoTypeInformation -ErrorAction Stop; Write-Output ` + pq("Exported to "+exportPath)
+	if ps != want {
+		t.Errorf("eventlog export 脚本不等：\n got=%s\nwant=%s", ps, want)
+	}
+}
+
+func TestWindowsServicePSEncoding(t *testing.T) {
+	s := newShellQuoteServer()
+	payload := `svc'; Write-Output MARKER; '`
+	pq := shellquote.QuotePowerShellSingle
+
+	cases := []struct {
+		action string
+		body   map[string]interface{}
+		want   string
+	}{
+		{"start", nil, `Start-Service -Name ` + pq(payload) + ` -ErrorAction Stop; Write-Output ` + pq("Service "+payload+" started")},
+		{"stop", nil, `Stop-Service -Name ` + pq(payload) + ` -Force -ErrorAction Stop; Write-Output ` + pq("Service "+payload+" stopped")},
+		{"restart", nil, `Restart-Service -Name ` + pq(payload) + ` -Force -ErrorAction Stop; Write-Output ` + pq("Service "+payload+" restarted")},
+		{"create", nil, `New-Service -Name ` + pq(payload) + ` -BinaryPathName ` + pq(payload) + ` -ErrorAction Stop; Write-Output ` + pq("Service "+payload+" created")},
+		{"delete", nil, `sc.exe delete ` + pq(payload) + `; if ($LASTEXITCODE -ne 0) { exit 1 }; Write-Output ` + pq("Service "+payload+" deleted")},
+		{"query", nil, `Get-Service -Name ` + pq(payload) + ` | Select-Object Name, Status, StartType, DisplayName`},
+	}
+	for i, c := range cases {
+		body := map[string]interface{}{
+			"deviceID": "sq-pssvc-" + string(rune('a'+i)), "action": c.action, "service": payload,
+		}
+		rec := sqPost(t, s, s.handleWindowsService, body)
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("%s 应受理：%d %s", c.action, rec.Code, rec.Body.String())
+			continue
+		}
+		sc := sqDispatchScript(t, s, "sq-pssvc-"+string(rune('a'+i)))
+		ps := assertPSWrapped(t, sc, payload)
+		if ps != c.want {
+			t.Errorf("%s 脚本不等：\n got=%s\nwant=%s", c.action, ps, c.want)
+		}
+		// 原实现 start/stop/restart/create/delete 无 || Failed 尾巴，query 无尾巴——此处只允许 2>nul
+		if strings.Contains(sc, "echo Failed") {
+			t.Errorf("%s 不应有 Failed 尾巴：%s", c.action, sc)
 		}
 	}
 }
