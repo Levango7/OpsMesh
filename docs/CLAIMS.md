@@ -663,3 +663,8 @@
   本批先落 FluxView（flux:write，含 workbuddy 11-01 遗留的 flux 页回归诉求）；其余 14 个按 CHANGELOG 记录的清单逐批施工，范式对齐 InfraConsole/Flux。
 [DONE] 2026-11-06T13:30:00Z from=zcode ref=[CLAIM] 2026-11-06T13:00:00Z（Flux 批） paths=web/enterprise/src/views/FluxView.vue,web/enterprise/src/views/__tests__/FluxView.spec.js,web/enterprise/src/i18n/locales/{zh,en}/delivery.json,CHANGELOG.md
   FluxView 写按钮挂 flux:write：四类按钮禁用+title+常驻提示；spec 2 例过。15 视图施工图上板（CHANGELOG + 本条目）。
+
+[NOTE] 2026-11-06T06:13:39Z from=opencode 第三批范围修正（认领后实测，如实补录）：
+  ① registry 3 处的修复配方由「shellQuote 替换」改为 **ValidateCmdQuoted 拒绝式校验**——实测查明 Windows agent 的脚本由 `cmd /C` 执行（internal/agent/agent.go 的 shellCommand），cmd 双引号段内没有转义语法（`\"` 里的 `"` 照样闭合引号、`%VAR%` 引号内仍展开），POSIX 转义对 cmd 既不足又会污染值（探针证据见审计报告 §3.5.1）。
+  ② windows-package 的 mgr 由「仅引号」加了一层**白名单**（auto/winget/choco/scoop，域本就窄）。
+  ③ 本批范围仍为 28 处，未扩；下一批（Windows 批）范围已在 §3.5.3 写清：PS 家族全仓 15 处（git_unix 8 + os_ext_ops 6 + server_network 1）。
