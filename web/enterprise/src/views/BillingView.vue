@@ -24,8 +24,8 @@
           {{ $t('common.refresh') }}
         </Button>
       </div>
-      <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
       <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
+      <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
       <DataTable v-else :columns="planCols" :rows="plans" row-key="id" :empty-text="$t('billing.empty_plans')">
         <template #cell-name="{ value }"><code>{{ value }}</code></template>
         <template #cell-price="{ value }">{{ fmtPrice(value) }}</template>

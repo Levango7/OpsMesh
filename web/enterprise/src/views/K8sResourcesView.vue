@@ -45,9 +45,9 @@
         >{{ $t('k8s.' + rt) }}</Button>
       </div>
 
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <div v-if="store.resourcesLoading && !store.resources.length" class="muted">{{ $t('common.loading') }}</div>
       <div v-else-if="!store.currentClusterID" class="muted">{{ $t('k8s.noClusterSelected') }}</div>
-      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <DataTable
         v-else
         :columns="resourceCols"
