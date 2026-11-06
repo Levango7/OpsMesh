@@ -14,7 +14,7 @@ func (s *Server) handleApacheSuperset(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 
@@ -61,7 +61,7 @@ func (s *Server) handleApacheDolphinScheduler(w http.ResponseWriter, r *http.Req
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 
@@ -112,7 +112,7 @@ func (s *Server) handleApacheSeaTunnel(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 

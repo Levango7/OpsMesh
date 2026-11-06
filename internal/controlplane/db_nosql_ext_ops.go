@@ -36,7 +36,7 @@ func (s *Server) handleDBHBase(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	var req struct {
@@ -100,7 +100,7 @@ func (s *Server) handleDBCassandra(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	var req struct {
@@ -150,7 +150,7 @@ func (s *Server) handleDBCouchbase(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	var req struct {
@@ -211,7 +211,7 @@ func (s *Server) handleDBScyllaDB(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	var req struct {
@@ -261,7 +261,7 @@ func (s *Server) handleDBCouchDB(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	var req struct {

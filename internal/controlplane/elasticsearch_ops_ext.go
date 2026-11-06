@@ -18,7 +18,7 @@ func (s *Server) handleElasticsearchNodeDrain(w http.ResponseWriter, r *http.Req
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 
@@ -74,7 +74,7 @@ func (s *Server) handleElasticsearchShardRelocate(w http.ResponseWriter, r *http
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 
@@ -150,7 +150,7 @@ func (s *Server) handleElasticsearchDiagnostic(w http.ResponseWriter, r *http.Re
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if _, ok := s.requireProd(w, r, "system:write"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 

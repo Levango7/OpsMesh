@@ -6,9 +6,14 @@
 //     等价于「登录 = 可执行」：生产 `requireAuth: true` 下 viewer 也能把 shell 脚本下发到设备；
 //   - `GET /api/services`、`GET /api/traces` 四端点此前**无认证**返回 200 空结果。
 //
-// 本用例把三条腿钉住：无凭证 401、viewer/operator 403、admin 不被鉴权层拒；
+// 本用例把三条腿钉住：无凭证 401、viewer 403、operator/admin 不被鉴权层拒；
 // 再钉两件顺序性质——鉴权必须先于参数解析（否则匿名探测能拿到 400，白送路由存在性），
 // 以及 HBase 表名/列族白名单（同文件其余分支用 shellQuote，这两个值进的是单引号段，必须校验）。
+//
+// 2026-11-06 owner 裁决后口径调整（原话「运维 当然要 运维执行面啊」「不要对访客开放，避免信息安全泄露」）：
+// 这 17 条的权限点从 `system:write`（admin-only）改为 `task:write`——与其余 284 条经派发口
+// `subsystemAuthorize(task:write)` 的运维路由同一口径。于是 operator 恢复执行面，viewer 仍 403
+// （`task` 组在 operatorGroups、不在 viewer 的派生集里），匿名仍 401。
 //
 // 身份链复用 g1 的 seeded-role 夹具：真 NewServer + 真 seedRBAC + 真 HS256，
 // 目的是让「权限点从目录走到 role 行再走到这道闸」整条链进断言，而不是只测 handler 会读权限串。
@@ -107,18 +112,29 @@ func TestOpsExtRoutesRejectAnonymous(t *testing.T) {
 	}
 }
 
-func TestOpsExtRoutesDenyNonAdminRoles(t *testing.T) {
+// TestOpsExtRoutesDenyViewer 钉 owner 裁决的另一半：只读身份不得拿到运维执行面。
+// viewer 只派生全部 *:read，权限集里没有 task:write ⇒ 403。
+// 这条与 TestOpsExtRoutesAllowOperator 成对：一个证"没放开访客"，一个证"没砍掉运维"。
+func TestOpsExtRoutesDenyViewer(t *testing.T) {
 	s, mux := newOpsAuthzServer(t)
-	for _, who := range []struct{ id, label string }{
-		{"g1-e2e-viewer", "viewer"},
-		{"g1-e2e-operator", "operator"},
-	} {
-		tok := g1Token(t, s, who.id)
-		for _, p := range opsAuthzRoutes {
-			rec := opsAuthzCall(mux, tok, http.MethodPost, p, opsAuthzBody)
-			if rec.Code != http.StatusForbidden {
-				t.Errorf("%s POST %s = %d, want 403（system:write 不在该角色权限集）；body=%s", who.label, p, rec.Code, rec.Body.String())
-			}
+	tok := g1Token(t, s, "g1-e2e-viewer")
+	for _, p := range opsAuthzRoutes {
+		rec := opsAuthzCall(mux, tok, http.MethodPost, p, opsAuthzBody)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("viewer POST %s = %d, want 403（task:write 不在 viewer 权限集）；body=%s", p, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestOpsExtRoutesAllowOperator 钉 owner 裁决的主半：运维角色必须能执行。
+// 断言只到"鉴权层没拒"——下游会真实建 shell 任务（202 + taskID），那不是本用例的射程。
+func TestOpsExtRoutesAllowOperator(t *testing.T) {
+	s, mux := newOpsAuthzServer(t)
+	tok := g1Token(t, s, "g1-e2e-operator")
+	for _, p := range opsAuthzRoutes {
+		rec := opsAuthzCall(mux, tok, http.MethodPost, p, opsAuthzBody)
+		if rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden {
+			t.Errorf("operator POST %s = %d：task:write 应已在 operator 派生集（运维执行面被砍）；body=%s", p, rec.Code, rec.Body.String())
 		}
 	}
 }
