@@ -364,6 +364,63 @@ PowerShell 语境是"cmd 外层 `"…"` × PS 内层 `'…'`"两层——① PS 
   拆 registry 校验 ⇒ 3 个载荷全部 202 放行（含 `" & echo MARKER & "`）；
   拆 mgr 白名单 ⇒ 4 个载荷（`winget; echo MARKER` 等）全部 202 放行。
 
+## 3.6 附带发现 F：Windows/PS 家族收口（第四批 / PR #7）——`-EncodedCommand` 传输 + PS 单引号转义
+
+### 3.6.1 问题的真形态（三层实测，修正 §3.5.3 的"双层"设计）
+
+§3.5.3 的设计是「PS 单引号层 × 外层引号层」。本批对**生产路径**
+（agent = `exec.Command("cmd","/C",script)`）逐层实测后发现旧形态在三层都不成立：
+
+1. **引号改写**：Go 的 exec 参数转义会把脚本内层引号改写成 `\"`，而 cmd 不把
+   `\"` 当转义——最终 `powershell -Command "..."` 的内层引号退化为 **PS 字符串
+   字面量**：脚本被回显、根本不执行（本机实测，见 powershell_test.go 的注释）；
+2. **重定向报废**：`2>/dev/null` 在 cmd 下是重定向到路径 `/dev/null`——**整行在
+   重定向阶段就失败**（实测输出 "The system cannot find the path specified."），
+   脚本永远到不了 PS；
+3. **cmd 无引号内转义语法**：`"` 照样闭合引号、`%VAR%` 引号内仍展开（§3.5.1 已录）。
+
+⇒ 不是转义写错，是传输形态本身不可修。改用 **`powershell -EncodedCommand <base64>`**：
+载荷字符集仅 `[A-Za-z0-9+/=]`，对 Go exec / cmd / PS 三层都无特殊字符；
+脚本内的值一律 `QuotePowerShellSingle`（PS `'` → `''`，其余字符在 PS 单引号串内
+皆为字面量，含 `$`/反引号/换行/`%`/`!`）。
+
+### 3.6.2 本批修复（14 处真面 + 2 处核查结论）
+
+- `git_unix_ops.go` 8 处：firewall add/delete、user create/delete/add-to-group、
+  eventlog query/clear/export（eventlog 的 `level` 是**裸词位**，另加
+  `windowsEventLevelRe` 白名单：仅字母与逗号）；
+- `os_ext_ops.go` 6 处：服务 start/stop/restart/create/delete/query
+  （delete 走 `sc.exe`，补 `$LASTEXITCODE` 门）；
+- 配套把 `2>/dev/null` 修为 `2>nul`——原样附带的功能修复（原形态在 cmd 下到不了 PS）；
+- **核查结论（不入本批）**：`server_network.go:761` 为盘点器假阳性
+  （`validateNetworkTarget` 白名单在调用侧已覆盖，P0 修复在册）；
+  `script_compile_ops.go` 属「设计即任意执行」端点（Content 任意、权限面），非引号面。
+
+### 3.6.3 验证（探针 + 变异）
+
+- **真 PS 对拍**（Windows 本地实跑、Linux CI 自动 skip）：敌意值 8 例（`'` 逃逸
+  载荷、`%VAR%`、`!`、`$()`、反引号、结尾反斜杠、双引号、密码字符集）经生产同
+  路径往返全部字面量、MARKER 零执行；**校准**：未转义载荷确实执行 MARKER（证明
+  中和用例承重）；
+- **端到端可跑证明**：eventlog query / 服务 query / sc.exe 三条只读命令在生产
+  路径下真实返回结果（原形态全部到不了 PS）；
+- **窄变异 2 处判红后复原**：拆编码传输 ⇒ wire 形态回落为带原始载荷的旧式
+  `-Command "..."`（handler 用例判红）；拆 `QuotePowerShellSingle` ⇒ shape 用例
+  （CI 可捕）与真 PS 用例（本地）双红，逃逸输出即 MARKER 执行；
+- **盘点器复算**：PS 类候选 15 → 1（余 1 = 上述白名单在册假阳性）；全仓候选
+  616 → 589。
+
+### 3.6.4 残留（下一批范围）
+
+- sh 语向 handler 在 Windows agent（cmd 运行时）的跨运行时残面仍在（git/unix
+  等文件语义面向 Unix，见 §3.5.3）；
+- `os_ext_ops.go` 其他段落（进程/日志/launchctl/agent 分发/hdc，共 13 处）与
+  `server_network.go` 的 7 处调用侧白名单形态（盘点器误报）——前者入下一批 sh
+  清扫，后者已在盘点口径备注；
+- 同族的 **11 处静态 PS 命令**（firewall/service 的 list/status/enable 等）未随
+  本批转换（非注入面）；它们在原形态下同样受引号改写与 `2>/dev/null` 影响——
+  如需启用这批功能，建议单独一批做「静态命令传输切换」并逐条验证。
+
 ## 4. 受影响面（223 条路径）
 
 ### 按域汇总
@@ -415,10 +472,13 @@ PowerShell 语境是"cmd 外层 `"…"` × PS 内层 `'…'`"两层——① PS 
 | 注入清扫（§3.5，第三批） | `internal/controlplane/git_unix_ops.go` | 28 处：git/unix/macos/disk/raid → `shellQuote`；registry → `ValidateCmdQuoted`；windows-package → mgr 白名单 + pkg 转义 |
 | cmd 语境校验器（§3.5，第三批） | `pkg/shellquote/quote.go` | 新增 `ValidateCmdQuoted`（拒 `"` `%` `!` CR/LF NUL；真 cmd 对拍） |
 | 注入面盘点器（§3.5，第三批） | `scripts/shell-injection-audit.py` | 全仓候选复算：616（sh 601 / PS 15 / cmd 0） |
+| PS 家族收口（§3.6，第四批） | `internal/controlplane/git_unix_ops.go`、`os_ext_ops.go` | 14 处 → `PowerShellEncodedCommand` + `QuotePowerShellSingle`；`2>/dev/null` → `2>nul`；eventlog level 白名单 |
+| PS 嵌入工具（§3.6，第四批） | `pkg/shellquote/powershell.go` | 新增 `QuotePowerShellSingle` / `PowerShellEncodedCommand`（真 PS 对拍 + 校准） |
 
 守卫测试（本分支保留）：`dispatch_authz_test.go`(6) / `k8s_cluster_deploy_authz_test.go`(6) /
 `activemq_ext_injection_test.go`(5) / `cache_injection_test.go`(7) /
-`pkg/shellquote/quote_test.go`(17) / `shellquote_security_test.go`(11)，合计 52 个。
+`pkg/shellquote/quote_test.go`(17) / `powershell_test.go`(4) /
+`shellquote_security_test.go`(14)，合计 59 个。
 （`fake_success_test.go` 4 个随假成功改动一并丢弃——那部分已由 a554697 覆盖。）
 
 > 诚实边界：`domestic_ops.go` 我原估有注入，逐条复核后确认**全部是静态脚本、无 req 字段

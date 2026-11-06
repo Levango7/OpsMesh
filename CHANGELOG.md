@@ -4,6 +4,24 @@
 
 > 当前最新已发布版本：`v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased-Windows传输] — 2026-11-07（PS 家族 14 处收口：EncodedCommand 传输 + PS 单引号转义）
+
+- **`powershell -Command "..."` 在三层都不成立（本机实测）**：生产路径
+  （Go exec → cmd /C）下 ① 内层引号被改写，命令退化为 PS 字符串字面量
+  （脚本被回显、根本不执行）；② `2>/dev/null` 在 cmd 下整行在重定向阶段失败；
+  ③ cmd 引号内无转义语法（`\"` 不成转义、`%VAR%` 仍展开）。⇒ 改用
+  **`-EncodedCommand`**（base64 载荷对三层无特殊字符）+ 值一律
+  `QuotePowerShellSingle`（`'` → `''`，其余字面量）。
+- **14 处收口**：git_unix（firewall 2 / user 3 / eventlog 3；level 是裸词位，
+  另加只允许字母与逗号的白名单）+ os_ext（服务 6，含 `sc.exe` 的
+  `$LASTEXITCODE` 门）；配套 `2>/dev/null` → `2>nul`（原形态在 cmd 下到不了 PS＝
+  附带功能修复）。
+- **核查（不入本批）**：`server_network.go:761` 为盘点器假阳性（调用侧白名单
+  在册）；`script_compile_ops.go` 属设计即任意执行端点（权限面）。
+- **验证**：真 PS 对拍（8 敌意值零执行 + 未转义载荷校准执行）；eventlog/服务/
+  sc.exe 三条只读命令端到端可跑；窄变异 2 处判红后复原；盘点器 PS 候选
+  15 → 1（假阳性），全仓 616 → 589。
+
 ## [Unreleased-注入清扫] — 2026-11-06（git_unix_ops.go 28 处注入收编 + cmd 语境校验器 + 注入面盘点器）
 
 - **`git_unix_ops.go` 28 处收编**（Git 11 / Unix 3 / macOS 2 / 磁盘 2 / RAID 2 /
