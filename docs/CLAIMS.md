@@ -650,3 +650,8 @@
   残余 24 条全部不可派发；AND 闸效应：我 17 条 `system:write` ∧ 派发口 `task:write` ⇒ operator 仍 403；P1-B2 问题由 4 个收束为 2 个），
   §10.1–10.7 标注为 11-05 时点保留。CHANGELOG 新增 `[Unreleased-门禁] — 2026-11-06` 块。验证：`go test ./internal/gates/` ok（26.7s，两测均 PASS）；
   fold gate `offenders=0 stale=0`；三文件 LF。零业务代码改动。
+[CLAIM] 2026-11-06T13:00:00Z from=zcode ttl=48h scope=web/enterprise/src/views/**/*.vue,web/enterprise/src/views/__tests__/FluxView.spec.js,web/enterprise/src/i18n/locales/{zh,en}/delivery.json,CHANGELOG.md
+  写按钮权限门批（按钮级禁用范式的可做子集）：同类扫描 17 候选 × 后端权限目录交叉 = 15 视图有现成 write 权限点。
+  本批先落 FluxView（flux:write，含 workbuddy 11-01 遗留的 flux 页回归诉求）；其余 14 个按 CHANGELOG 记录的清单逐批施工，范式对齐 InfraConsole/Flux。
+[DONE] 2026-11-06T13:30:00Z from=zcode ref=[CLAIM] 2026-11-06T13:00:00Z（Flux 批） paths=web/enterprise/src/views/FluxView.vue,web/enterprise/src/views/__tests__/FluxView.spec.js,web/enterprise/src/i18n/locales/{zh,en}/delivery.json,CHANGELOG.md
+  FluxView 写按钮挂 flux:write：四类按钮禁用+title+常驻提示；spec 2 例过。15 视图施工图上板（CHANGELOG + 本条目）。

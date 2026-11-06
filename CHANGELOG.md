@@ -120,6 +120,13 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
+## [Unreleased-写按钮权限门] — 2026-11-06（FluxView 挂 flux:write + 同类扫描出 15 视图施工图）
+
+- **FluxView 写按钮挂 `flux:write` 门**（按钮级门范式延伸批）：后端 flux.go 的 5 个 handler 一直是 `requirePermission('flux:read'/'flux:write')`——viewer/operator 持 flux:read 可进页但写操作必 403。前端现在显式化：新建/同步/编辑/删除四类按钮无权限时禁用 + title 说明 + 页首常驻提示（对应 workbuddy 11-01 遗留的「flux 页回归，确认不依赖 403 时隐藏按钮的旧行为」——现在依赖的是显式门，不再撞墙）。spec 2 例（无权限全禁用+提示 / 有权限全可用）。
+- **同类扫描（本批的施工图产出）**：全量比对「视图调用写 API × 视图内无 hasPerm」→ 17 个候选；再与后端权限目录交叉（`internal/store/model/perm.go`）核对——**15 个有现成 write 权限点**、2 个无（AdminConsoleView / NotifyChannelsView，属后端目录缺口，跳过）：
+  `APIKeysView(apikey:write) / AutomationView(automation:write) / BillingView(billing:write) / FluxView(flux:write 本批) / GatewayRoutesView(gateway:write) / K8sClusterDeployView + K8sLifecycleView + K8sResourcesView(k8s:write/delete) / SLOsView(slo:write/delete) / SchedulesView(schedule:write) / ScriptsView(script:write) / SecretsView(secrets:write) / SystemOpsView(system:write) / TicketsView(ticket:write) / TrafficPoliciesView(traffic:write) / WebhooksView(webhook:write)`。
+  范式与 InfraConsole/Flux 两批一致：`auth.hasPerm(<域>:write)` → 写按钮 `:disabled` + title + 页首提示。已上板记账，逐批施工。
+
 ## [Unreleased-按钮级禁用] — 2026-11-06（InfraConsole 派发按钮挂 task:write 权限门——数据流侦察结论：284 条台账路由的前端暴露面收敛为单视图）
 
 > workbuddy 11-04 DONE 指派「前端按钮级禁用归 zcode」的落地。侦察结论值得留档，因为它重裁了批的范围。
