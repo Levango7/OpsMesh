@@ -57,6 +57,11 @@ vi.mock("@/i18n", () => ({
 vi.mock("@/utils/toast", () => ({
   toast: { success: st.toastSuccess, error: vi.fn() },
 }));
+// 2026-11-06 起视图在 setup 里调 useAuthStore()（写按钮级权限门）；无活动 Pinia 会抛 [🍍]。
+// 本 spec 断言行内删除/服务动作可点，故给「有写权限」的替身。
+vi.mock("@/stores/auth", () => ({
+  useAuthStore: () => ({ hasPerm: () => true }),
+}));
 vi.mock("@/stores/device", () => ({
   useDeviceStore: () => ({
     flat: [{ deviceID: "d1", agentID: "a1", hostname: "h1", ip: "10.0.0.1" }],

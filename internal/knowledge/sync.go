@@ -72,7 +72,8 @@ type KnowledgeStore interface {
 	Search(ctx context.Context, query string, topK int, filter map[string]interface{}) ([]KnowledgeDoc, error)
 	Delete(ctx context.Context, ids []string) error
 	Count(ctx context.Context) (int, error)
-	ListBySource(ctx context.Context, source KnowledgeSource) ([]KnowledgeDoc, error)
+	// limit<=0 视为无界（仅内部/测试允许）；HTTP 面必须传正上限（A2 审计 BB-05）。
+	ListBySource(ctx context.Context, source KnowledgeSource, limit int) ([]KnowledgeDoc, error)
 }
 
 // NewSyncEngine 创建同步引擎

@@ -1,7 +1,7 @@
 <template>
   <PageShell :title="$t('traffic.title')" :desc="$t('traffic.subtitle')" testid="traffic-policies" :error="loadErr">
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate">
+      <Button variant="primary" size="md" @click="openCreate" data-testid="trafficpolicies-opencreate-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <Icon name="add" :size="14" />
         {{ $t('traffic.add') }}
       </Button>
@@ -13,6 +13,7 @@
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <DataTable :columns="columns" :rows="policies" row-key="id" :empty-text="$t('traffic.empty')">
         <template #cell-type="{ value }"><code>{{ typeText(value) }}</code></template>
         <template #cell-status="{ value }">
@@ -21,11 +22,11 @@
         <template #cell-actions="{ row }">
           <div class="row-actions">
             <Button
-              variant="ghost" size="sm" :title="row.status === 'active' ? $t('traffic.disable') : $t('traffic.enable')"
+              variant="ghost" size="sm" :title="canWrite ? (row.status === 'active' ? $t('traffic.disable') : $t('traffic.enable')) : $t('common.write_denied')"
               @click="onToggle(row)"
-            ><Icon :name="row.status === 'active' ? 'mute' : 'success'" :size="13" /></Button>
-            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
-            <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
+             data-testid="trafficpolicies-ontoggle-btn" :disabled="!canWrite"><Icon :name="row.status === 'active' ? 'mute' : 'success'" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="trafficpolicies-openedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="trafficpolicies-ondelete-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -70,7 +71,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('traffic.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="trafficpolicies-onsave-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('traffic.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('traffic.cancel') }}</Button>
         </div>
       </form>
@@ -98,6 +99,7 @@
 <script setup>
 // 流量策略管理页 — CRUD + 启用/禁用（灰度/超时/重试/熔断/镜像）
 import PageShell from '@/components/PageShell.vue'
+import { useAuthStore } from '@/stores/auth'
 import { ref, computed, reactive, onMounted } from 'vue'
 import {
   getTrafficPolicies, createTrafficPolicy, updateTrafficPolicy, deleteTrafficPolicy,
@@ -110,6 +112,11 @@ import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import Button from "@/components/ui/Button.vue"
+
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('traffic:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('traffic:write'))
 
 const policies = ref([])
 const loading = ref(false)

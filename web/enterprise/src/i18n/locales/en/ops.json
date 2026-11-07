@@ -168,6 +168,7 @@
     "confirm_service_action": "Run \"{action}\" on service {service}? It will be dispatched via the agent."
   },
   "tasks": {
+    "confirm_action": "This will apply the approval decision to the task. Continue?",
     "title": "Tasks",
     "task_list_title": "Task List",
     "subtitle": "Dispatch shell / file / service tasks to agents, with status filter and cancel.",
@@ -204,6 +205,11 @@
     "empty": "No dead-letter tasks",
     "retry": "Retry",
     "purge": "Purge",
+    "purge_confirm": "This dead letter will be permanently deleted. Continue?",
+    "retry_ok": "Re-queued",
+    "retry_failed": "Retry failed",
+    "purge_ok": "Purged",
+    "purge_failed": "Purge failed",
     "col_task_id": "Task ID",
     "col_agent": "Agent",
     "col_command": "Command",
@@ -747,6 +753,7 @@
     "budget_note": "Budget counters live in-process: they reset when the control plane restarts, and each replica counts separately (effective limit ≈ per-replica limit × replica count). Persistent cross-replica enforcement is not implemented."
   },
   "knowledge": {
+    "confirm_delete": "The knowledge document will be permanently deleted. Continue?",
     "title": "Knowledge Base",
     "desc": "Manage knowledge documents, sync from multiple sources, and search with hybrid retrieval.",
     "total_docs": "Total Documents",

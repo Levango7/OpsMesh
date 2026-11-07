@@ -131,7 +131,7 @@ func TestInMemoryKnowledgeStore(t *testing.T) {
 		t.Errorf("过滤 ci_type=server 应只返回 d1，得到 %+v", filtered)
 	}
 
-	cmdb, _ := s.ListBySource(ctx, SourceCMDB)
+	cmdb, _ := s.ListBySource(ctx, SourceCMDB, 0)
 	if len(cmdb) != 2 {
 		t.Errorf("ListBySource(cmdb) 数量 = %d，期望 2", len(cmdb))
 	}

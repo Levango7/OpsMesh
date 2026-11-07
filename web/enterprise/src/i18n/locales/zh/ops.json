@@ -168,6 +168,7 @@
     "confirm_service_action": "确认对服务 {service} 执行“{action}”？操作将通过 agent 下发。"
   },
   "tasks": {
+    "confirm_action": "将对该任务执行审批动作（批准/拒绝），确认继续？",
     "title": "任务下发",
     "task_list_title": "任务列表",
     "subtitle": "向采集端下发 shell / file / service 任务，支持按状态过滤与取消。",
@@ -204,6 +205,11 @@
     "empty": "暂无死信任务",
     "retry": "重试",
     "purge": "清除",
+    "purge_confirm": "将永久删除这条死信（不可恢复），确认继续？",
+    "retry_ok": "已重新入队",
+    "retry_failed": "重试失败",
+    "purge_ok": "已清除",
+    "purge_failed": "清除失败",
     "col_task_id": "任务ID",
     "col_agent": "采集端",
     "col_command": "命令",
@@ -748,6 +754,7 @@
     "budget_note": "额度为进程内计数：控制面重启即归零；多副本部署时每个副本各自计数，有效额度 ≈ 单副本额度 × 副本数。跨重启、跨副本的持久化硬限尚未实现。"
   },
   "knowledge": {
+    "confirm_delete": "将删除该知识文档（不可恢复），确认继续？",
     "title": "知识库",
     "desc": "管理知识文档，从多源同步，并使用混合检索进行搜索。",
     "total_docs": "文档总数",

@@ -116,14 +116,10 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  internal/controlplane/db_cloud_managed_ops.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/db_extended_ops.go,internal/controlplane/apache_ext_ops2.go,internal/controlplane/elasticsearch_ops_ext.go,internal/controlplane/trace.go,internal/controlplane/ops_route_authz_test.go,internal/gates/ops_route_ratchet_gate_test.go,CHANGELOG.md,docs/CLAIMS.md <- workbuddy  (ttl=8h by workbuddy)
+  docs/qa-sweep-2026-11-06.md,scripts/qa-matrix.py,web/enterprise/src/**,CHANGELOG.md <- zcode  (ttl=72h by zcode)
 
 TASKS:
   (无)
-
-ISSUES:
-  CLAIM 过期未闭环：CHANGELOG.md,docs/decision-materials-2026-11-04.md,docs/INBOX-ZCODE.md,docs/CLAIMS.md（认领人 workbuddy，ttl 6h）
-  CLAIM 过期未闭环：docs/projects-2026-11-05.md,docs/CLAIMS.md（认领人 workbuddy，ttl 6h）
 ```
 
 ---

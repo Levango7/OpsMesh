@@ -74,6 +74,7 @@
     "noHistory": "No command history"
   },
   "aiops": {
+    "execute_confirm": "Commands from the remediation plan will be dispatched to the target agents (autoExecute). Continue?",
     "title": "AIOps Intelligent O&M",
     "desc": "Fault root-cause analysis, intelligent remediation generation, natural-language operations, and automatic task dispatch based on LLM",
     "status_enabled": "AIOps Enabled",

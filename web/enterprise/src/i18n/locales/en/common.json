@@ -339,6 +339,7 @@
     "cancel": "Cancel",
     "close": "Close",
     "confirm": "Confirm",
+    "write_denied": "You lack write permission for this page — create, edit and delete are disabled.",
     "ok": "OK",
     "error": "Error",
     "yes": "Yes",
