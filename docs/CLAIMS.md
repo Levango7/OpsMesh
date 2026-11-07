@@ -803,3 +803,8 @@
   冻结点：origin/main 06b78c9（切版提交以它为父）。
   不做：不动 release.yml / .github/workflows/；不代合别线 PR（#8 仍属 feat/qa-sweep-1106 那条线）。
 [CLAIM] 2026-11-07T06:55:23Z from=opencode ttl=8h scope=CHANGELOG.md,docs/release-notes.md,internal/version/version.go,deploy/helm/opsmesh/Chart.yaml,deploy/helm/opsmesh/values-production.yaml,deploy/gitops/segments/production-segment.yaml,deploy/docker/docker-compose.prod.yml,deploy/docker/scripts/deploy.sh,deploy/k8s/deploy-opsmesh.sh,deploy/k8s/README.md,deploy/k8s/deployments/alert-svc-deployment.yaml,deploy/k8s/deployments/auth-svc-deployment.yaml,deploy/k8s/deployments/device-svc-deployment.yaml,deploy/k8s/deployments/gpu-svc-deployment.yaml,deploy/k8s/deployments/task-svc-deployment.yaml,deploy/scripts/validate-deploy-assets.sh note=v0.18.0 切版定稿：归版 + 版本源同步 + 发布说明
+
+[LANDED] 2026-11-07T09:30:05Z from=opencode commit=4998809 branch=fix/td89-service-mirror pr=10 note=P4/TD-89 B-min 入 main：ci.yml 三处 service 换 mirror.gcr.io + 新增 mirror-digest-check 对照工作流；runner 侧 mysql:8 / redis:7 的 docker.io 与 mirror.gcr.io manifest digest 逐字相等
+[LANDED] 2026-11-07T09:30:05Z from=opencode commit=06b78c9 branch=fix/sse-subscribe-window pr=12 note=SSE 首连事件丢失竞态入 main：subscribeEvents 提前到握手帧之前 + 确定性回归测试
+
+[DONE] 2026-11-07T09:30:07Z from=opencode scope=v0.18.0 切版 commit=f4e08f2 note=归版 25 块 + 汇总块 + 补账块 + 版本源 41 处同步 + 发布说明；tag v0.18.0 已切（main 推送 CI run 42350616936 全绿后才切），发布链 run 42355183287 的 28 个 job 全绿
