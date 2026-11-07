@@ -768,3 +768,13 @@
 [DONE] 2026-11-07T02:43:22Z from=workbuddy ref=[CLAIM] 2026-11-07T02:37:08Z scope=docs/CLAIMS.md,docs/COORDINATION-BOARD.md commit=8cb3460 note=板面账目闭环完成：5条RELEASE（覆盖6条CLAIM行、5个不同scope）+ 2条NOTE口径说明 + 再生板面。验收：补登前现测 active 8 / issues 3；本条 DONE 后现测 lead kilo / active 7 / tasks 0 / issues 1 / conflict 0 / blocked 0，其中 issues 那1条属 qoder 的 CostView 批（他线，只报不动），本线过期认领与重复认领CONFLICT全清。diff 面：docs/CLAIMS.md 追加18行0删除（append-only，他线条目逐字未动）、docs/COORDINATION-BOARD.md 只改状态块（脚本回写）。两文件 CRLF 均为0、无冲突标记。本笔不碰代码/CHANGELOG/门禁判据。scope 释放。
 [DONE] 2026-11-07T03:02:23Z from=qoder scope=docs/projects-2026-11-07.md commit=2555254 note=五项短板立项书（P1 CI 可信度/P2 能力深度矩阵/P3 测试纵深/P4 产品文档现状化/P5 商业交付包）已落 main；内容含现状数字、A/B/C 选项与代价、验收判据、§8 五个 owner 问题、§9 复现命令；门禁 go test ./internal/gates/ 击绿 9.4s、fold gate offenders=0 stale=0、0 个 CR；推送时 CI run 42330321446 in_progress（队列积压），绿/红另报。
 [CLAIM] 2026-11-07T03:02:23Z ttl=6h from=qoder scope=internal/agent note=P1 阻断项认领前取证：全 6 个远端分支的 CLAIMS 里 internal/agent 唯一命中是 workbuddy 2026-10-27T19:28Z ttl=4h（当日 19:38 已 DONE，早过期）；git log --all --since=2026-11-04 -- internal/agent 为 0；各分支相对 main 触碰 agent 的提交均为 0；OpsMesh/opencode/workbuddy 工作树干净（modal 有 qa-sweep 未提交且 CLAIMS 处于 UU，但不在 agent 面）⇒ 无主。目标：run 42321960462（553e2bb）build-test 红，崩溃前最后一条 === RUN 为 TestSafeGo_RecoversAndRestarts（internal/agent/safego_test.go:15），栈顶 safego.go:53 selectgo；本机无 gcc/cgo，-race 跑不了，非 race 连跑 5 次通过（55.6s）⇒ 只在 CI 的 -race 路径复现。只动 internal/agent，不碰前端/CI 判定面；有冲突即停手报 owner。
+[NOTE] 2026-11-06T21:23:44Z from=opencode P4（TD-89）认领与方案（owner 令「想办法克服，多测试几种办法」）：
+  ① 本机复测：docker.io / mirror.gcr.io / hub.docker.com 仍不可达，但 **docker.m.daocloud.io 与 ghcr.io 可达**，
+  且本机 daemon 已配 daocloud 镜像源 ⇒ 本地已取到 mysql:8 / redis:7 的 daocloud digest（a81d… / 2e3e…）。
+  ② 克服点：§11.5 要求「digest 对照在 runner 上跑并留证据」——本线把对照做成**可复现的 runner 工作流**
+  （.github/workflows/mirror-digest-check.yml：docker.io vs mirror.gcr.io vs daocloud vs 华为 SWR，
+  含 mysql:8/redis:7 硬判据 + 4 个基镜像参考行），触发即得证据；随后按 §11.4 B-min 换 ci.yml 的 3 处
+  service 引用（mysql ×2、redis ×1），以 PR 的 services/integration 两腿绿为第二判据。
+  A（配 secrets）仍需 owner 动作，不在本线射程。
+[CLAIM] 2026-11-06T21:23:44Z from=opencode ttl=12h scope=.github/workflows/ci.yml,.github/workflows/mirror-digest-check.yml note=P4 B-min：service 镜像源 + digest 对照工作流
+[CLAIM] 2026-11-06T21:23:44Z from=opencode ttl=12h scope=CHANGELOG.md note=P4 结项块（随 B-min）

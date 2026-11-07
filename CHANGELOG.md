@@ -27,6 +27,21 @@
 - **验证**：10 模块 `go build ./...` / `go vet ./...` 全绿、各模块 `go test ./...`
   全 PASS；x/net 版本全仓复核统一为 v0.62.0。
 
+## [Unreleased-TD89] — 2026-11-07（P4/TD-89 B-min 落地：service containers 换 mirror.gcr.io + digest 对照工作流）
+
+- **runner 侧 digest 对照首证**（新增 `.github/workflows/mirror-digest-check.yml`，
+  可随时复现；同时在 ci.yml 变更时自动复跑作为常驻对照）：`mysql:8` 与 `redis:7` 的
+  `docker.io` 与 `mirror.gcr.io` manifest digest **逐字相等**（`sha256:a81d0439…` /
+  `sha256:2e3eb114…`；daocloud / 华为 SWR 与 4 个基镜像同场打印为参考行）——满足
+  §11.5 判据 1「相等才换」（开发机对 docker.io / mirror.gcr.io 均不可达，故对照
+  必须且已在 runner 上留证）。
+- **换源（B-min）**：`ci.yml` 三处 service 引用（mysql ×2 / redis ×1）→
+  `mirror.gcr.io/library/*`——补 A（配 secrets）唯一够不着的「runner 在 steps 之前
+  预拉 service containers」面；回退路径 = 单行 revert。判据 2（换后 `services` +
+  `integration` 两腿绿）随本 PR 的 CI 留证。
+- A（只读 token）仍需 owner 配 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`（零代码改动，
+  `docker/login-action` 早已在 main 上），本块不阻塞其落地。
+
 ## [Unreleased-OS清扫] — 2026-11-07（os_ext_ops.go 13 行/15 值位 sh 清扫）
 
 - **process / log / macos-service / agent-distribute / harmony-ext 收口**：
