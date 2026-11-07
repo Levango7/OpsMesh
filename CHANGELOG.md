@@ -4,6 +4,29 @@
 
 > 当前最新已发布版本：`v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased-CVE修复] — 2026-11-07（CVE-2026-78661：golang.org/x/net v0.60.0 → v0.62.0，10 个模块）
+
+- **红因定位（仓级，与分支改动无关）**：PR #9（本线 os_ext 清扫）与别线 PR #8 在
+  同一 `security` job 的「Trivy 文件系统扫描」步同时判红；artifact `trivy-fs-report`
+  逐模块点名 `golang.org/x/net v0.60.0` 命中 **CVE-2026-78661**（HIGH，
+  `x/net/html` 构造 HTML 触发的 DoS），**Fixed Version = 0.62.0**；仓内 10 个模块
+  （根 / operator / alert / auth / config / device / gpu / log / task / tf-provider）
+  全部 require v0.60.0 ⇒ 这条红同时挡住 #9 / #8 / #10 的合并与 v0.18.0 切版
+  （切版铁律：main CI 全绿才打 tag）。
+- **处置：升级，不豁免**。仓内 `.trivyignore` 的豁免原则第 1 条明写「无修复版本才可
+  豁免」；本条有修复版本 ⇒ 直接升到 Trivy 点名的 0.62.0。govulncheck 同期结论是
+  「代码不可达（0 reachable）」，但那是可达性结论、不改变 lockfile 命中事实。
+- **连带升级（MVS 最小闭包）**：x/crypto 0.57.0→0.58.0、x/sys 0.48.0→0.49.0、
+  x/term 0.46.0→0.47.0、x/text 0.42.0→0.43.0、x/sync 0.23.0→0.24.0（仅在需要的
+  模块里出现）；每模块 `go mod tidy` 补齐传递依赖哈希（go.sum）。
+- **许可证清单同步重生成**（依赖集变了 ⇒ 清单集合必然变）：`docs/third-party-licenses.md`
+  按 `deploy/scripts/gen-third-party-licenses.sh` 重生成——163 个模块 / 6 种许可证 /
+  直接依赖 25 个 / 需法务确认 24 个；「同一模块存在多个版本」从 8 个降到 2 个；
+  `golang.org/x/tools` 由 v0.50.0 → v0.51.0（tidy 的 MVS 结果）。本地覆盖率 100%
+  （NO-SOURCE = 0，CI 门禁的下限是 90%）。npm 侧清单仅生成时间戳变化（前端依赖未变）。
+- **验证**：10 模块 `go build ./...` / `go vet ./...` 全绿、各模块 `go test ./...`
+  全 PASS；x/net 版本全仓复核统一为 v0.62.0。
+
 ## [Unreleased-Windows传输] — 2026-11-07（PS 家族 14 处收口：EncodedCommand 传输 + PS 单引号转义）
 
 - **`powershell -Command "..."` 在三层都不成立（本机实测）**：生产路径

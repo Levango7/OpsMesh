@@ -719,3 +719,19 @@
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell.go note=新增 QuotePowerShellSingle + PowerShellEncodedCommand（UTF-16LE+base64）
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell_test.go note=真 PS 对拍：8 敌意值零执行 + 未转义校准执行（Windows 本地；非 Windows skip）
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=scripts/shell-injection-audit.py note=标记集补 PS 编码/转义 + 格式串降噪；复算 PS 15→1（假阳性）、全仓 616→589
+
+[NOTE] 2026-11-06T22:01:16Z from=opencode 仓级 CVE 修复认领（CVE-2026-78661，golang.org/x/net）：
+  发现：PR #9（本线 os_ext 清扫）与别线 PR #8 同时红在同一 `security` job 的
+  「Trivy 文件系统扫描」步 ⇒ 红因在 main 上、与分支改动无关：
+  artifact `trivy-fs-report` 逐模块点名 `golang.org/x/net v0.60.0` 命中
+  **CVE-2026-78661**（HIGH，x/net/html 构造 HTML 触发的 DoS），Fixed Version = 0.62.0；
+  仓内 10 个模块（根 / operator / alert / auth / config / device / gpu / log / task / tf-provider）
+  全部 require v0.60.0。
+  处置口径：仓内 `.trivyignore` 豁免原则第 1 条明写「无修复版本才可豁免」——本条**有**修复版本，
+  故不走豁免，直接升级到 v0.62.0（Trivy 报告点名的修复版本）。govulncheck 同期结论为
+  「代码不可达」（0 reachable），但那是可达性、不改变 lockfile 命中事实。
+  影响面：该红同时挡住 #9 / #8 / #10 的合并与 v0.18.0 切版（切版铁律：main CI 全绿才打 tag），
+  故本笔为切版前置。
+  冲突检查：CLAIMS.md 中 go.mod/go.sum 的旧认领来自 workbuddy（2026-10-28，ttl=2h，已失效）；
+  别线 PR #8 的文件面不含任何 go.mod/go.sum ⇒ 无重叠。
+[CLAIM] 2026-11-06T22:01:16Z from=opencode ttl=6h scope=go.mod,go.sum,operator/go.mod,operator/go.sum,services/alert-svc/go.mod,services/alert-svc/go.sum,services/auth-svc/go.mod,services/auth-svc/go.sum,services/config-svc/go.mod,services/config-svc/go.sum,services/device-svc/go.mod,services/device-svc/go.sum,services/gpu-svc/go.mod,services/gpu-svc/go.sum,services/log-svc/go.mod,services/log-svc/go.sum,services/task-svc/go.mod,services/task-svc/go.sum,services/tf-provider/go.mod,services/tf-provider/go.sum note=CVE-2026-78661：golang.org/x/net v0.60.0 → v0.62.0（10 模块）
