@@ -793,3 +793,13 @@
   与 #9（os_ext_ops.go）均无重叠；别线 #8 触 web/enterprise 前端，无重叠。
 [CLAIM] 2026-11-07T02:20:12Z from=opencode ttl=6h scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,CHANGELOG.md note=SSE 首连事件丢失竞态：订阅注册提前到握手帧之前 + 确定性回归测试
 [CLAIM] 2026-11-07T02:41:09Z from=opencode ttl=6h scope=docs/sse-protocol.md note=SSE 协议文档补「订阅先于握手帧注册 ⇒ 首连不丢事件」的顺序保证（对外可见行为的契约化）
+
+[NOTE] 2026-11-07T06:55:23Z from=opencode v0.18.0 切版认领（owner 授权：「changelog 也你来，都做完」，deadline 今日 18:00 前）：
+  范围：CHANGELOG 归版（25 个 [Unreleased…] 块 → [0.18.0]，日期原地保留）+ 本版汇总块 +
+  归版时点补账块；版本源 0.17.1 → 0.18.0（14 个文件 / 41 处字面量）；docs/release-notes.md
+  新增 `## v0.18.0` 小节（发布链 github-release job 的硬门禁要求该节含「破坏性」与「能力降级清单」）。
+  形态：沿用 v0.17.1 / v0.17.0 先例——**单父提交直推 main**（7315622 / ddec516 皆如此），
+  推 main 后等 main CI 全绿再切 tag（切 tag 铁律：让 tag 构建成为 :<sha> 的最后写者）。
+  冻结点：origin/main 06b78c9（切版提交以它为父）。
+  不做：不动 release.yml / .github/workflows/；不代合别线 PR（#8 仍属 feat/qa-sweep-1106 那条线）。
+[CLAIM] 2026-11-07T06:55:23Z from=opencode ttl=8h scope=CHANGELOG.md,docs/release-notes.md,internal/version/version.go,deploy/helm/opsmesh/Chart.yaml,deploy/helm/opsmesh/values-production.yaml,deploy/gitops/segments/production-segment.yaml,deploy/docker/docker-compose.prod.yml,deploy/docker/scripts/deploy.sh,deploy/k8s/deploy-opsmesh.sh,deploy/k8s/README.md,deploy/k8s/deployments/alert-svc-deployment.yaml,deploy/k8s/deployments/auth-svc-deployment.yaml,deploy/k8s/deployments/device-svc-deployment.yaml,deploy/k8s/deployments/gpu-svc-deployment.yaml,deploy/k8s/deployments/task-svc-deployment.yaml,deploy/scripts/validate-deploy-assets.sh note=v0.18.0 切版定稿：归版 + 版本源同步 + 发布说明
