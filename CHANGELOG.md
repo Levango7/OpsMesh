@@ -4,6 +4,43 @@
 
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased-探测面收口] — 2026-11-08（网络诊断/合成监控面：13 处用户字段未转义直插 → `shellquote.Quote`）
+
+- **为什么是真缺陷面**：这 13 处把请求体字段（`req.Target` / `req.URL` / `req.Name`）**裸拼**进
+  要下发到 agent 的 shell 脚本，agent 以 `sh -c` 执行（`internal/agent/agent.go` 的 `shellCommand`）
+  ⇒ `$(id)` / 反引号被**真实执行**。与批次 1~6 修的 shellQuote 静默失效同族但成因不同：
+  那些行走了 shellQuote 却转义不完整，这些行**根本没走**任何转义/校验。
+- **双引号不是防护**：旧形态里 `status-code` 的两处 curl 虽写作 `"%s"`，但 POSIX 双引号内
+  `$` 与反引号**同样会展开** ⇒ `"$(id)"` 一样被执行。本批一并收口。
+- **13 处清单**：`netdiag_ops.go` 8 处（tcpdump `host`、mtr ×2、nmap、dig ×2、host、
+  traceroute ×2、ping、status-code 的 curl URL ×2 —— 计 8 个脚本行）；`synthetic_ops.go` 5 处
+  （create 的 name+url、delete 的 name、http/tcp/icmp 三种探针的 url）。
+- **做法**：全部走既有 `pkg/shellquote.Quote`（POSIX 单引号字面量，语义保证「求值结果恒等于
+  原字面字节序列，不含任何可展开结构」）。选 Quote 而非白名单：target 合法域含 CIDR
+  （tcpdump）、主机名、URL，白名单会误杀合法输入；Quote 不改取值语义。
+- **tcp 探针的内层二次解析**：`/dev/tcp` 是 bash 特性，仍需 `bash -c`，但目标**不能**内嵌在
+  `bash -c` 的命令串里——外层单引号只保护外层 sh，内层 bash 会把 `;` 当命令分隔符重新执行。
+  改用位置参数：`bash -c 'echo > /dev/tcp/"$1"/80' _ <target>`，目标作为 argv 传入、`$1` 不做二次解析。
+- **回归测试**（`internal/controlplane/probe_injection_test.go`，5 个用例）：载荷集
+  `$(id)` / 反引号 / 单双引号闭合 / `;` 串联，断言①载荷只以单引号字面量形态出现（「引号外文本」
+  不含载荷、不含 `$(`、不含反引号）、②不得残留双引号直插形态、③源码级兜底（两个文件里不得再
+  有「`script = fmt.Sprintf(..., req.*, ...)`」形态）、④**语义级证明**：把脚本交给**真 sh**
+  执行一遍，注入载荷不得产生任何副作用（标记文件不得落地）。
+  **变异验证（旧码必红）**：把两个生产文件回退到本批前，5 个用例**全部判红**——其中语义用例
+  实测标记文件**真的落地**（`host x; touch …; echo y` 在旧形态下被 sh 真实执行）。
+  判据设计的一处教训：带未闭合单引号的载荷会让整段脚本变成**语法错误**（sh 拒绝解析整条命令
+  列表 ⇒ 一条都不执行），是 fail-closed，**不构成可执行注入的证明**；故语义用例改用语法合法的
+  `;` 串联载荷。
+- **盘点器新增判据 C（`raw_interp`）**：`scripts/shell-injection-audit.py` 增列「用户字段
+  `req.*` 直接作为 `fmt.Sprintf` 实参插进**命令变量**」的候选口径（与既有 A/B 口径独立计数，
+  A/B 历史数字 575 仍可比）。同口径复算：**全包 raw_interp 333 → 320**（`netdiag_ops.go`
+  8 → 0、`synthetic_ops.go` 5 → 0）；A/B 口径 575 → 563。剩余 320 条散在 50+ 文件，
+  是后续批次的可复算队列。顺带修掉盘点器的跨盘符 bug（Windows 下 `--root` 指向别的盘时
+  `os.path.relpath` 抛错）。
+- **已知残留（如实记账，不在本批范围）**：目标以 `-` 开头时仍可能被下游工具当成**选项**
+  （如 `ping -f`）——这是工具参数注入而非 shell 注入，各工具对 `--` 的支持不一致
+  （busybox/gnu/iputils 差异），需逐工具确认后再统一处理。
+
 ## [Unreleased-PS收尾] — 2026-11-07（PowerShell 家族最后一处收口：13 处 `powershell -Command` → `-EncodedCommand`）
 
 - **为什么不是纯风格改动**（`pkg/shellquote/powershell.go` 头注记了同一形状的本机实测）：

@@ -7,9 +7,14 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleSynthetic 处理 POST /api/v1/synthetic
+//
+// 注入面（批次 7）：name / url 是用户可控字段，一律经 shellquote.Quote 变成 POSIX
+// 单引号字面量后再入脚本。原先的裸拼与双引号拼法都可被 `$(id)` / 反引号执行——
+// 双引号段内 `$` 与反引号同样会展开，故双引号不是防护。
 func (s *Server) handleSynthetic(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -54,7 +59,8 @@ func (s *Server) handleSynthetic(w http.ResponseWriter, r *http.Request) {
 		if expected <= 0 {
 			expected = 200
 		}
-		script = fmt.Sprintf(`echo "Creating synthetic monitor: %s (%s) -> %s (interval=%ds, timeout=%ds, expected=%d)"`, req.Name, probeType, req.URL, interval, timeout, expected)
+		msg := fmt.Sprintf("Creating synthetic monitor: %s (%s) -> %s (interval=%ds, timeout=%ds, expected=%d)", req.Name, probeType, req.URL, interval, timeout, expected)
+		script = fmt.Sprintf("echo %s", shellquote.Quote(msg))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "synthetic_create")
 		if !ok {
 			return
@@ -74,7 +80,7 @@ func (s *Server) handleSynthetic(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Deleting synthetic monitor: %s"`, req.Name)
+		script = fmt.Sprintf("echo %s", shellquote.Quote("Deleting synthetic monitor: "+req.Name))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "synthetic_delete")
 		if !ok {
 			return
@@ -93,11 +99,16 @@ func (s *Server) handleSynthetic(w http.ResponseWriter, r *http.Request) {
 		var script string
 		switch probeType {
 		case "http":
-			script = fmt.Sprintf(`echo "=== HTTP Probe ===" && curl -s -o /dev/null -w "%%{http_code} %%{time_total}s" --max-time 10 "%s" 2>/dev/null || echo "Probe failed"`, req.URL)
+			script = fmt.Sprintf(`echo "=== HTTP Probe ===" && curl -s -o /dev/null -w "%%{http_code} %%{time_total}s" --max-time 10 %s 2>/dev/null || echo "Probe failed"`, shellquote.Quote(req.URL))
 		case "tcp":
-			script = fmt.Sprintf(`echo "=== TCP Probe ===" && (timeout 5 bash -c "echo > /dev/tcp/%s/%s" 2>/dev/null && echo "TCP OK" || echo "TCP FAILED")`, req.URL, "80")
+			// /dev/tcp 是 bash 特性，故仍用 `bash -c`；但目标**不能**内嵌在
+			// bash -c 的命令串里——那会被内层 bash 二次解析（外层单引号只保护
+			// 外层 sh，内层 bash 会把 `;` 当命令分隔符重新执行）。
+			// 改用位置参数：目标作为 bash 的 argv 传入，$1 不做二次解析。
+			inner := `echo > /dev/tcp/"$1"/80`
+			script = fmt.Sprintf(`echo "=== TCP Probe ===" && (timeout 5 bash -c %s _ %s 2>/dev/null && echo "TCP OK" || echo "TCP FAILED")`, shellquote.Quote(inner), shellquote.Quote(req.URL))
 		case "icmp":
-			script = fmt.Sprintf(`echo "=== ICMP Probe ===" && ping -c 1 -W 5 %s 2>/dev/null && echo "ICMP OK" || echo "ICMP FAILED"`, req.URL)
+			script = fmt.Sprintf(`echo "=== ICMP Probe ===" && ping -c 1 -W 5 %s 2>/dev/null && echo "ICMP OK" || echo "ICMP FAILED"`, shellquote.Quote(req.URL))
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "synthetic_run")
 		if !ok {
