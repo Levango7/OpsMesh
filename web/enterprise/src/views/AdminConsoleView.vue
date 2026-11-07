@@ -55,9 +55,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import PageShell from '@/components/PageShell.vue'
-import { getAdminConfig, setLogLevel, getDiagnosticsUrl, downloadDiagnostics, getStoreFailures, getServiceRouting, getServiceTraffic } from '@/api/admin'
+import { getAdminConfig, downloadDiagnostics, getStoreFailures, getServiceRouting, getServiceTraffic } from '@/api/admin'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
@@ -119,22 +119,9 @@ async function handleDownloadDiagnostics() {
   }
 }
 
-async function onLogLevelChange() {
-  try {
-    await setLogLevel({ level: logLevel.value })
-  } catch (error) {
-    console.error('Failed to change log level:', error)
-    loadError.value = t('admin_console.log_level_change_failed')
-  }
-}
-
-onMounted(() => {
-  fetchAll()
-})
 </script>
 
 <style scoped>
 .field-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .field-inline select { padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-
 </style>

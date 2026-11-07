@@ -1141,6 +1141,7 @@
     "log_level": "Log Level",
     "diagnostics_download": "Download Diagnostics",
     "no_data": "No data",
-    "load_failed": "Load failed"
+    "load_failed": "Load failed",
+    "download_failed": "Download failed"
   }
 }

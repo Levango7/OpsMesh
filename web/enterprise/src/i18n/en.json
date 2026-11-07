@@ -2012,5 +2012,20 @@
   },
   "canary_detail": {
     "title": "Canary Detail"
+  },
+  "admin_console": {
+    "title": "Admin Console",
+    "subtitle": "System diagnostics, configuration and TD-60 service routing",
+    "log_level": "Log Level",
+    "diagnostics_download": "Download Diagnostics",
+    "config_title": "Effective Configuration",
+    "store_failures_title": "Store Write Failures",
+    "no_failures": "No failures",
+    "total_failures": "Total Failures",
+    "service_routing_title": "TD-60 Service Routing",
+    "service_traffic_title": "TD-60 Service Traffic",
+    "no_data": "No data",
+    "load_failed": "Load failed",
+    "download_failed": "Download failed"
   }
 }

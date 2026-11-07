@@ -25,5 +25,25 @@ export const adminApi = {
   getDiagnosticsUrl,
   getStoreFailures,
   getServiceRouting,
-  getServiceTraffic
+  getServiceTraffic,
+  downloadDiagnostics
+}
+
+// 诊断包下载
+export const downloadDiagnostics = () => {
+  return fetch(`${getDiagnosticsUrl()}/download`, {
+    method: 'POST'
+  }).then(res => {
+    if (!res.ok) throw new Error(res.statusText)
+    return res.blob()
+  }).then(blob => {
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'opsmesh-diagnostics.tar.gz'
+    document.body.appendChild(a)
+    a.click()
+    window.URL.revokeObjectURL(url)
+    document.body.removeChild(a)
+  })
 }

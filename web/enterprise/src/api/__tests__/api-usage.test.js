@@ -69,6 +69,8 @@ const ALLOW = new Map([
 
   // ── 命名空间聚合对象（成员被单独 import，聚合对象本身无消费方）──
   ['admin.js|adminApi', '聚合命名空间对象：成员被单独 import'],
+  ['admin.js|getDiagnosticsUrl', '被 downloadDiagnostics 在 admin.js 内部调用（getDiagnosticsUrl → /admin/diagnostics），无需 UI 直接消费'],
+  ['admin.js|setLogLevel', '后端端点 POST /admin/loglevel 已有，前端日志级别切换 UI 暂未接线（logLevel select 存在但未接 setLogLevel）'],
   ['agent.js|agentApi', '聚合命名空间对象：成员被单独 import'],
   ['ai.js|aiApi', '聚合命名空间对象：成员被单独 import'],
   ['autoscaler.js|autoscalerApi', '聚合命名空间对象：成员被单独 import'],

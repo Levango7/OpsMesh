@@ -708,7 +708,7 @@
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=pkg/shellquote/powershell.go note=新增 QuotePowerShellSingle + PowerShellEncodedCommand
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=pkg/shellquote/powershell_test.go note=PS 转义/编码守卫 + 真 PS 对拍（Windows 本地；非 Windows skip）
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=internal/controlplane/shellquote_security_test.go note=第四批守卫（PS 家族 handler 级 + 编码解码断言）
-[CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=scripts/shell-injection-audit.py note=标记集补 PowerShell 编码/转义；复算残留面
+[CLAIM] 2026-11-07T02:30:00Z from=kilo ttl=24h scope=web/enterprise/src/views/AdminConsoleView.vue,web/enterprise/src/api/admin.js,web/enterprise/src/i18n/en.json,web/enterprise/src/i18n/locales/en/common.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/i18n/locales/zh/common.json,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/zh.json,web/enterprise/src/api/__tests__/api-usage.test.js note=修复 admin_console 缺失翻译键、清理未使用导入、补充 api-usage.test.js ALLOW 条目
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=docs/opsmesh-authz-audit-2026-11-04.md note=补 §3.6（PS 家族收口取证与残留）
 
 [NOTE] 2026-11-06T18:45:48Z from=opencode LANDED 戳：**PR #7 已合入 main**（merge commit `3da2a3b`）。内容=PS 家族 14 处收口（`-EncodedCommand` 传输 + `QuotePowerShellSingle`；三层实测：旧式 `-Command "..."` 在生产路径被改写为字符串字面量回显、`2>/dev/null` 在 cmd 下整行报废）+ `2>/dev/null`→`2>nul`（附带功能修复）+ §3.6 文档。合入前验收：PR CI 全绿（21 success / 5 skipped / 0 fail，含 Race detector）；真 PS 对拍 + 2 处窄变异判红复原 + 盘点器复算（PS 候选 15→1 假阳性）。
