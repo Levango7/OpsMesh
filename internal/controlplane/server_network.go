@@ -36,6 +36,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -706,8 +707,8 @@ var networkURLRe = regexp.MustCompile(`^[A-Za-z0-9\-._~:/?#\[\]@%+=,]+$`)
 // validateNetworkURL 校验 curl 诊断目标：仅接受 http/https 绝对 URL。
 //
 // 与 validateNetworkTarget 分开是因为 curl 的 target 语义是 URL（含 scheme 与 path），
-// 不能套用 hostname 白名单；但 URL 同样不能带 shell 元字符——引号会截断
-// `powershell -Command "..."` 形式，`&` 是后台分隔符，`$`/反引号是命令替换。
+// 不能套用 hostname 白名单；但 URL 同样不能带 shell 元字符——引号会截断 shell 命令，
+// `&` 是后台分隔符，`$`/反引号是命令替换。
 func validateNetworkURL(raw string) error {
 	if raw == "" {
 		return errors.New("target is required")
@@ -757,8 +758,13 @@ func buildDiagnoseCommand(tool, target string, opts diagnoseOptions, os string) 
 	case "tcping":
 		if os == "windows" {
 			// Windows: PowerShell Test-NetConnection -ComputerName {target} -Port {port}
-			// 注意：PowerShell 命令需经 powershell.exe 执行，此处构造为 powershell -Command "..." 形式。
-			return fmt.Sprintf("powershell -Command \"Test-NetConnection -ComputerName %s -Port %d\"", target, opts.Port), nil
+			// PowerShell 命令经 powershell.exe 执行：**必须走 -EncodedCommand**——Windows agent 用
+			// `cmd /C` 执行脚本，Go 的 exec 参数转义会改写内层引号，`-Command "..."` 形式会让脚本
+			// 被回显而不执行（实测见 pkg/shellquote/powershell.go 头注）。target 走
+			// QuotePowerShellSingle（PS 单引号串内除 ' 外全为字面量），端口走 strconv（纯数字）。
+			return shellquote.PowerShellEncodedCommand(
+				`Test-NetConnection -ComputerName ` + shellquote.QuotePowerShellSingle(target) +
+					` -Port ` + strconv.Itoa(opts.Port)), nil
 		}
 		// Linux: nc -zv -w {timeout} {target} {port}
 		return fmt.Sprintf("nc -zv -w %d %s %d", opts.Timeout, target, opts.Port), nil

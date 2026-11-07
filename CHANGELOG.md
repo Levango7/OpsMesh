@@ -4,6 +4,33 @@
 
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased-PS收尾] — 2026-11-07（PowerShell 家族最后一处收口：13 处 `powershell -Command` → `-EncodedCommand`）
+
+- **为什么不是纯风格改动**（`pkg/shellquote/powershell.go` 头注记了同一形状的本机实测）：
+  Windows agent 用 `cmd /C` 执行脚本（`internal/agent/agent.go` 的 `shellCommand`），Go 的
+  exec 参数转义会改写脚本里的引号 ⇒ `powershell -Command "..."` 形式会让**内层引号退化成
+  PS 字符串字面量，脚本被回显、根本不执行**；同一路径下 cmd 认不出 Unix 的 `2>/dev/null`
+  （整行报废），也认不出 Unix 的 `| head -40`。上一批（14 处收口）已确立口径
+  「必须 `-EncodedCommand` + `2>nul`」，本批把**仓内最后 13 处**补齐。
+- **13 处清单**：`git_unix_ops.go` 10 处（防火墙 list/status/enable/disable、用户 list、
+  主机指标 cpu/memory/disk/network/processes）、`os_ext_ops.go` 2 处（服务 list/status）、
+  `server_network.go` 1 处（tcping on windows，**带 target/port 插值**）。
+- **做法**：全部走既有 `shellquote.PowerShellEncodedCommand`（运行时 UTF-16LE+base64，
+  源码里不落 base64 噪声、可读性保住）；唯一带插值的那处 target 走
+  `QuotePowerShellSingle`（PS 单引号串内除 `'` 外全为字面量）、端口走 `strconv`（纯数字）。
+- **尾巴口径随批修正**：Unix 尾巴 `2>/dev/null` → cmd 的 `2>nul`；Unix 专有的 `| head -40`
+  折进 PS 载荷（`| Select-Object -First 40`）；`&& echo "Firewall enabled"` 的引号在 cmd 下
+  是字面量 ⇒ 去掉引号。
+- **盘点器复算**：注入面盘点器 `scripts/shell-injection-audit.py` 的 **powershell 语境
+  候选位 1 → 0**（全仓 total 576 → 575）——仓内已无 PS 语境候选面。
+- **回归测试**：新增 `TestPSFamilyFinalSweep`（12 个子用例逐条断言 wire 形态走
+  `-EncodedCommand`、无 `2>/dev/null`、有 `2>nul`、**base64 解码回来的载荷逐字相等**）
+  + `TestPSFamilyFinalSweep_TcpingWindows`（带插值那处）+ `TestPSFamilyFinalSweep_NoLegacyCommandForm`
+  （兜底：三个生产文件不得再出现旧式形态）；两处既有断言命令文本的测试改走
+  `decodePSCommand` 读解码后的载荷。
+- **验证**：整包 `go test ./internal/controlplane/` 125s 全绿；`gofmt` / `go vet` 干净；
+  golangci-lint v2.13.2（CI 同版）**0 issues**；`go build ./...` 全绿。
+
 ## [0.18.0] — 2026-11-07（本版汇总：派发口鉴权收口 + 注入面清扫 + AI 预算执法与租户隔离 + 交付链换源与 CVE 修复）
 
 - **鉴权（覆盖面最大）**：派发路径 599 个调用点（去注释口径，冻结点 06b78c9）补 `task:write`

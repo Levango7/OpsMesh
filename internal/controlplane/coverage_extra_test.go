@@ -1941,8 +1941,9 @@ func TestBuildDiagnoseCommand_TcpingWindows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tcping windows: %v", err)
 	}
-	if !strings.Contains(cmd, "Test-NetConnection") {
-		t.Fatalf("unexpected cmd: %s", cmd)
+	// tcping on windows：走 -EncodedCommand ⇒ 先解回 PS 载荷再断言内容。
+	if ps := decodePSCommand(t, cmd); ps != "Test-NetConnection -ComputerName '1.2.3.4' -Port 80" {
+		t.Fatalf("unexpected payload: %s", ps)
 	}
 }
 

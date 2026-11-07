@@ -211,10 +211,14 @@ func TestBuildDiagnoseCommand(t *testing.T) {
 	if err != nil || !strings.Contains(cmd, "nc") {
 		t.Fatalf("tcping linux = %q, %v", cmd, err)
 	}
-	// tcping windows
+	// tcping windows：命令走 -EncodedCommand（cmd /C 下 -Command "..." 不可用），
+	// 断言前先解回 PS 载荷再看内容。
 	cmd, err = buildDiagnoseCommand("tcping", "10.0.0.1", opts, "windows")
-	if err != nil || !strings.Contains(cmd, "Test-NetConnection") {
+	if err != nil {
 		t.Fatalf("tcping windows = %q, %v", cmd, err)
+	}
+	if ps := decodePSCommand(t, cmd); ps != "Test-NetConnection -ComputerName '10.0.0.1' -Port 80" {
+		t.Fatalf("tcping windows 载荷不对：%q", ps)
 	}
 	// nslookup
 	cmd, err = buildDiagnoseCommand("nslookup", "example.com", opts, "linux")
