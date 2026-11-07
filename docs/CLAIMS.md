@@ -720,6 +720,17 @@
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell_test.go note=真 PS 对拍：8 敌意值零执行 + 未转义校准执行（Windows 本地；非 Windows skip）
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=scripts/shell-injection-audit.py note=标记集补 PS 编码/转义 + 格式串降噪；复算 PS 15→1（假阳性）、全仓 616→589
 
+[NOTE] 2026-11-06T20:44:27Z from=opencode 第五批认领（os_ext_ops.go sh 清扫，承接 §3.6.4 挂账的 13 处）：
+  真面 = handleOSProcess 2（list 的 grep filter、kill 的 signal）、handleOSLog 1（journalctl 的 unit/since）、
+  handleMacOSService 5（launchctl load/unload/start/stop/status）、handleAgentDistribute 2（echo 消息）、
+  handleHarmonyOSExt 3（hdc install/uninstall/file send）。全部 sh 语境 → shellQuote + 信号名白名单 + 消息重建。
+  另：本线随后将做 **v0.18.0 切版定稿（owner 授权：changelog/tag 均由本线执行，deadline 今日 18:00 前）**，
+  版本源/发布说明的认领将在清扫合入后单独追加。
+[CLAIM] 2026-11-06T20:44:27Z from=opencode ttl=12h scope=internal/controlplane/os_ext_ops.go note=第五批：sh 清扫 13 行/15 值位（shellQuote + 信号白名单）
+[CLAIM] 2026-11-06T20:44:27Z from=opencode ttl=12h scope=internal/controlplane/shellquote_security_test.go note=第五批守卫（os_ext 三段 handler 级）
+[CLAIM] 2026-11-06T20:44:27Z from=opencode ttl=12h scope=docs/opsmesh-authz-audit-2026-11-04.md note=补 §3.7（os_ext 清扫）+ 切版前口径
+
+
 [NOTE] 2026-11-06T22:01:16Z from=opencode 仓级 CVE 修复认领（CVE-2026-78661，golang.org/x/net）：
   发现：PR #9（本线 os_ext 清扫）与别线 PR #8 同时红在同一 `security` job 的
   「Trivy 文件系统扫描」步 ⇒ 红因在 main 上、与分支改动无关：
