@@ -42,6 +42,15 @@
 - A（只读 token）仍需 owner 配 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`（零代码改动，
   `docker/login-action` 早已在 main 上），本块不阻塞其落地。
 
+## [Unreleased-OS清扫] — 2026-11-07（os_ext_ops.go 13 行/15 值位 sh 清扫）
+
+- **process / log / macos-service / agent-distribute / harmony-ext 收口**：
+  `ps grep filter`、`journalctl` 的 unit/since、`launchctl ×5`、agent 分发消息、
+  `hdc ×3` 全部过 `shellQuote`（消息段重建为完整字面量）；`kill -SIGNAL` 的信号名
+  改白名单（裸词位，仅字母数字）。修前均可经 `$(id)` 类载荷注入。
+- 守卫 3 例 + 窄变异 2 处（拆转义 / 拆白名单判红后复原）；盘点器复算 os_ext
+  13 → 0、全仓 589 → 576。
+
 ## [Unreleased-Windows传输] — 2026-11-07（PS 家族 14 处收口：EncodedCommand 传输 + PS 单引号转义）
 
 - **`powershell -Command "..."` 在三层都不成立（本机实测）**：生产路径

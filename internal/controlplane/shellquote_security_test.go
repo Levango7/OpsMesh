@@ -703,3 +703,145 @@ func TestWindowsServicePSEncoding(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------- 第五批：os_ext_ops.go sh 清扫
+
+// TestOSProcessLogInjectionQuoted 钉 handleOSProcess/handleOSLog：
+// list 的 grep filter、kill 的信号名、journalctl 的 unit/since。
+func TestOSProcessLogInjectionQuoted(t *testing.T) {
+	s := newShellQuoteServer()
+	payload := `$(id)`
+
+	// process list
+	rec := sqPost(t, s, s.handleOSProcess, map[string]interface{}{
+		"deviceID": "sq-os-1", "action": "list", "filter": payload,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("process list 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	sc := sqDispatchScript(t, s, "sq-os-1")
+	if !strings.Contains(sc, `grep -i "\$(id)"`) {
+		t.Errorf("filter 未转义：\n%s", sc)
+	}
+	if strings.Contains(sc, `grep -i $(id)`) {
+		t.Errorf("filter 含未转义形态：\n%s", sc)
+	}
+
+	// kill：恶意信号名 400；合法信号名放行
+	for _, bad := range []string{`TERM; reboot`, `$(id)`, `SIG-9`, `TERM|x`} {
+		rec = sqPost(t, s, s.handleOSProcess, map[string]interface{}{
+			"deviceID": "sq-os-2", "action": "kill", "pid": 1, "signal": bad,
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("signal=%q 应 400，实得 %d", bad, rec.Code)
+		}
+	}
+	rec = sqPost(t, s, s.handleOSProcess, map[string]interface{}{
+		"deviceID": "sq-os-3", "action": "kill", "pid": 1, "signal": "TERM",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("合法 signal 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	sc = sqDispatchScript(t, s, "sq-os-3")
+	if !strings.Contains(sc, `kill -TERM 1`) {
+		t.Errorf("kill 脚本形态被改：\n%s", sc)
+	}
+
+	// journal-query：unit 与 since 都转义
+	rec = sqPost(t, s, s.handleOSLog, map[string]interface{}{
+		"deviceID": "sq-os-4", "action": "journal-query", "unit": payload, "since": `y"$(id)`,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("journal-query 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	sc = sqDispatchScript(t, s, "sq-os-4")
+	if !strings.Contains(sc, `-u "\$(id)"`) {
+		t.Errorf("unit 未转义：\n%s", sc)
+	}
+	if !strings.Contains(sc, `--since "y\"\$(id)"`) {
+		t.Errorf("since 未转义（含引号载荷）：\n%s", sc)
+	}
+}
+
+// TestMacOSLaunchctlInjectionQuoted 钉 handleMacOSService 的 5 个动作。
+func TestMacOSLaunchctlInjectionQuoted(t *testing.T) {
+	s := newShellQuoteServer()
+	payload := `$(id)`
+
+	rec := sqPost(t, s, s.handleMacOSService, map[string]interface{}{
+		"deviceID": "sq-mac-svc-1", "action": "load", "plist": payload,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("load 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	sc := sqDispatchScript(t, s, "sq-mac-svc-1")
+	if !strings.Contains(sc, `launchctl load "\$(id)" 2>&1 && echo "Loaded \$(id)"`) {
+		t.Errorf("load 未转义：\n%s", sc)
+	}
+
+	svc := `com.x; reboot`
+	rec = sqPost(t, s, s.handleMacOSService, map[string]interface{}{
+		"deviceID": "sq-mac-svc-2", "action": "status", "service": svc,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	sc = sqDispatchScript(t, s, "sq-mac-svc-2")
+	if !strings.Contains(sc, `launchctl list "com.x; reboot" 2>/dev/null || echo "Service com.x; reboot not found"`) {
+		t.Errorf("status 未转义：\n%s", sc)
+	}
+	if strings.Contains(sc, `list com.x; reboot`) {
+		t.Errorf("status 含裸分号分隔：\n%s", sc)
+	}
+
+	// stop：另一个动作抽验
+	rec = sqPost(t, s, s.handleMacOSService, map[string]interface{}{
+		"deviceID": "sq-mac-svc-3", "action": "stop", "service": payload,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("stop 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	sc = sqDispatchScript(t, s, "sq-mac-svc-3")
+	if !strings.Contains(sc, `launchctl stop "\$(id)" 2>&1 && echo "Stopped \$(id)"`) {
+		t.Errorf("stop 未转义：\n%s", sc)
+	}
+}
+
+// TestAgentDistributeHarmonyInjectionQuoted 钉 handleAgentDistribute 消息与 hdc 三动作。
+func TestAgentDistributeHarmonyInjectionQuoted(t *testing.T) {
+	s := newShellQuoteServer()
+	payload := `$(id)`
+
+	rec := sqPost(t, s, s.handleAgentDistribute, map[string]interface{}{
+		"deviceID": "sq-ad-1", "action": "download", "version": payload, "os": "linux", "arch": "amd64",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("download 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	sc := sqDispatchScript(t, s, "sq-ad-1")
+	if !strings.Contains(sc, `echo "Downloading agent \$(id) for linux/amd64"`) {
+		t.Errorf("download 消息未转义：\n%s", sc)
+	}
+
+	rec = sqPost(t, s, s.handleHarmonyOSExt, map[string]interface{}{
+		"deviceID": "sq-hm-1", "action": "install-app", "appPath": payload,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("hdc install 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	sc = sqDispatchScript(t, s, "sq-hm-1")
+	if !strings.Contains(sc, `hdc install "\$(id)" 2>&1 && echo "Installed \$(id)"`) {
+		t.Errorf("hdc install 未转义：\n%s", sc)
+	}
+
+	rec = sqPost(t, s, s.handleHarmonyOSExt, map[string]interface{}{
+		"deviceID": "sq-hm-2", "action": "transfer-file", "localPath": payload, "remotePath": `r"; x`,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("hdc transfer 应受理：%d %s", rec.Code, rec.Body.String())
+	}
+	sc = sqDispatchScript(t, s, "sq-hm-2")
+	if !strings.Contains(sc, `hdc file send "\$(id)" "r\"; x" 2>&1 && echo "Transferred \$(id) -> r\"; x"`) {
+		t.Errorf("hdc transfer 未转义：\n%s", sc)
+	}
+}
