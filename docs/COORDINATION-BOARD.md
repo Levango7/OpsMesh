@@ -117,6 +117,7 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 LEAD: kilo
 ACTIVE CLAIMS:
   docs/opsmesh-authz-audit-2026-11-04.md         <- opencode  (ttl=12h by opencode)
+  docs/projects-2026-11-07.md                    <- qoder  (ttl=4h by qoder)
   go.mod,go.sum,operator/go.mod,operator/go.sum,services/alert-svc/go.mod,services/alert-svc/go.sum,services/auth-svc/go.mod,services/auth-svc/go.sum,services/config-svc/go.mod,services/config-svc/go.sum,services/device-svc/go.mod,services/device-svc/go.sum,services/gpu-svc/go.mod,services/gpu-svc/go.sum,services/log-svc/go.mod,services/log-svc/go.sum,services/task-svc/go.mod,services/task-svc/go.sum,services/tf-provider/go.mod,services/tf-provider/go.sum <- opencode  (ttl=6h by opencode)
   internal/ai/gateway/rag.go,internal/ai/gateway/prompt.go,internal/knowledge/retrieval.go,internal/ai/gateway/gateway.go,internal/ai/gateway/handler.go,internal/ai/gateway/circuitbreaker.go,internal/cost/handler.go,internal/controlplane/authctx*.go,internal/config/config.go,internal/gates,CHANGELOG.md,docs/tech-debt.md <- zcode  (ttl=48h by zcode)
   internal/controlplane/os_ext_ops.go            <- opencode  (ttl=12h by opencode)
