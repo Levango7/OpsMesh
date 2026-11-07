@@ -2,10 +2,12 @@ package controlplane
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -472,5 +474,102 @@ func TestSSE_EventNoTraceIDWhenNoSpan(t *testing.T) {
 		if !strings.Contains(frame, `"traceID":""`) {
 			t.Fatalf("无 span 时 SSE 事件不应携带非空 trace_id: %q", frame)
 		}
+	}
+}
+
+// sseGateWriter 是可控的 ResponseWriter：**在写 hello 握手帧处卡住**，
+// 让测试可以在「服务端已写 hello、尚未进入事件循环」的窗口内精确发布事件。
+// 用于确定性地守住「订阅注册必须早于握手帧」这条顺序约束。
+type sseGateWriter struct {
+	mu      sync.Mutex
+	header  http.Header
+	code    int
+	body    bytes.Buffer
+	gate    chan struct{} // 放行闸
+	gateHit chan struct{} // 已到达握手帧写入点
+	once    sync.Once
+}
+
+func (w *sseGateWriter) Header() http.Header { return w.header }
+
+func (w *sseGateWriter) WriteHeader(code int) { w.code = code }
+
+func (w *sseGateWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("event: hello")) {
+		w.once.Do(func() {
+			close(w.gateHit)
+			<-w.gate
+		})
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.body.Write(p)
+}
+
+// Flush 实现 http.Flusher（handler 需要它才走流式分支）。
+func (w *sseGateWriter) Flush() {}
+
+func (w *sseGateWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.body.String()
+}
+
+// TestSSE_SubscribeBeforeHello_NoFirstEventLoss 守住「订阅注册早于握手帧」这条顺序约束。
+//
+// 为什么需要这个用例：handleEventsStream 若**先写 hello 再注册订阅**，客户端收到
+// hello 后立刻 publish 的事件会落在「尚未入册」的窗口里，被 publishEvent 的
+// 「无订阅者快速返回」静默丢弃 ⇒ 客户可见行为是「刚连上的客户端丢掉第一条事件」。
+// 该缺陷在整包测试下必现（TestSSE_TenantIsolation 整包跑红、隔离跑不一定复现），
+// 靠时序窗口的常规断言抓不住 ⇒ 用可控 ResponseWriter 把窗口**确定性**撑开：
+// 服务端写 hello 时卡住，测试在卡住期间发布事件。
+//   - 订阅先于握手（正确）：事件进有缓冲 chan ⇒ 随后必被写出；
+//   - 握手先于订阅（缺陷）：此刻无订阅者 ⇒ publishEvent 直接丢弃 ⇒ 事件永不到达。
+func TestSSE_SubscribeBeforeHello_NoFirstEventLoss(t *testing.T) {
+	s := newSSETestServer()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events/stream", nil).WithContext(ctx)
+	req.Header.Set("X-Tenant-ID", "tenantA")
+
+	w := &sseGateWriter{
+		header:  make(http.Header),
+		gate:    make(chan struct{}),
+		gateHit: make(chan struct{}),
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleEventsStream(w, req)
+	}()
+
+	select {
+	case <-w.gateHit:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("服务端未到达握手帧写入点")
+	}
+
+	// 此刻服务端已写 hello、尚未写出后续帧；订阅是否已入册完全由顺序决定。
+	s.publishEvent(ctx, "task_status", "tenantA", map[string]string{
+		"taskID": "task-a",
+		"status": "running",
+	})
+	close(w.gate)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(w.String(), `"taskID":"task-a"`) {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("首连事件被丢弃：握手后发布的事件未出现在流里（已写出内容=%q）", w.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler 未在取消后退出")
 	}
 }
