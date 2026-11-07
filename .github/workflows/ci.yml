@@ -297,7 +297,7 @@ jobs:
     # 没有它，services 的 SQL 路径测试在 CI 全部 skip——「有测试」不等于「被测过」。
     services:
       mysql:
-        image: mysql:8
+        image: mirror.gcr.io/library/mysql:8
         env:
           MYSQL_ROOT_PASSWORD: rootpass
           MYSQL_ROOT_HOST: "%"
@@ -394,7 +394,7 @@ jobs:
     needs: build-test
     services:
       mysql:
-        image: mysql:8
+        image: mirror.gcr.io/library/mysql:8
         env:
           MYSQL_ROOT_PASSWORD: rootpass
           # root 允许任意 host 连接（默认仅容器内 localhost，runner 的 127.0.0.1 TCP 会被拒）。
@@ -408,7 +408,7 @@ jobs:
           --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass"
           --health-interval=10s --health-timeout=5s --health-retries=10
       redis:
-        image: redis:7
+        image: mirror.gcr.io/library/redis:7
         ports:
           - 6379:6379
         options: >-
