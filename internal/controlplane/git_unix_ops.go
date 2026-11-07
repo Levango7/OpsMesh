@@ -442,13 +442,17 @@ func (s *Server) handleWindowsFirewall(w http.ResponseWriter, r *http.Request) {
 			`Remove-NetFirewallRule -DisplayName `+shellquote.QuotePowerShellSingle(req.Name)+
 				` -ErrorAction Stop; Write-Output 'Firewall rule deleted'`) + ` 2>nul || echo Failed`
 	case "list":
-		script = `powershell -Command "Get-NetFirewallRule | Select-Object DisplayName, Direction, Action, Enabled | Format-Table -AutoSize" 2>/dev/null | head -40`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-NetFirewallRule | Select-Object DisplayName, Direction, Action, Enabled | Format-Table -AutoSize | Select-Object -First 40`) + ` 2>nul`
 	case "status":
-		script = `powershell -Command "Get-NetFirewallProfile | Select-Object Name, Enabled" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-NetFirewallProfile | Select-Object Name, Enabled`) + ` 2>nul`
 	case "enable":
-		script = `powershell -Command "Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True" 2>/dev/null && echo "Firewall enabled"`
+		script = shellquote.PowerShellEncodedCommand(
+			`Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True`) + ` 2>nul && echo Firewall enabled`
 	case "disable":
-		script = `powershell -Command "Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False" 2>/dev/null && echo "Firewall disabled"`
+		script = shellquote.PowerShellEncodedCommand(
+			`Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False`) + ` 2>nul && echo Firewall disabled`
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -483,7 +487,8 @@ func (s *Server) handleWindowsUser(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch req.Action {
 	case "list":
-		script = `powershell -Command "Get-LocalUser | Select-Object Name, Enabled, LastLogon | Format-Table -AutoSize" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-LocalUser | Select-Object Name, Enabled, LastLogon | Format-Table -AutoSize`) + ` 2>nul`
 	case "create":
 		if req.User == "" || req.Password == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user and password are required"})
@@ -711,15 +716,20 @@ func (s *Server) handleWindowsPerf(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch req.Action {
 	case "cpu":
-		script = `powershell -Command "Get-Counter '\Processor(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 3 | Select-Object -ExpandProperty CounterSamples | Select-Object CookedValue" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-Counter '\Processor(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 3 | Select-Object -ExpandProperty CounterSamples | Select-Object CookedValue`) + ` 2>nul`
 	case "memory":
-		script = `powershell -Command "Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize, FreePhysicalMemory, TotalVirtualMemorySize, FreeVirtualMemory" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize, FreePhysicalMemory, TotalVirtualMemorySize, FreeVirtualMemory`) + ` 2>nul`
 	case "disk":
-		script = `powershell -Command "Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free, @{N='Total';E={$_.Used+$_.Free}}" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free, @{N='Total';E={$_.Used+$_.Free}}`) + ` 2>nul`
 	case "network":
-		script = `powershell -Command "Get-NetAdapterStatistics | Select-Object Name, ReceivedBytes, SentBytes" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-NetAdapterStatistics | Select-Object Name, ReceivedBytes, SentBytes`) + ` 2>nul`
 	case "processes":
-		script = `powershell -Command "Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 Name, CPU, WorkingSet, Id | Format-Table -AutoSize" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 Name, CPU, WorkingSet, Id | Format-Table -AutoSize`) + ` 2>nul`
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

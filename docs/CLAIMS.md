@@ -808,3 +808,25 @@
 [LANDED] 2026-11-07T09:30:05Z from=opencode commit=06b78c9 branch=fix/sse-subscribe-window pr=12 note=SSE 首连事件丢失竞态入 main：subscribeEvents 提前到握手帧之前 + 确定性回归测试
 
 [DONE] 2026-11-07T09:30:07Z from=opencode scope=v0.18.0 切版 commit=f4e08f2 note=归版 25 块 + 汇总块 + 补账块 + 版本源 41 处同步 + 发布说明；tag v0.18.0 已切（main 推送 CI run 42350616936 全绿后才切），发布链 run 42355183287 的 28 个 job 全绿
+
+[NOTE] 2026-11-07T09:41:21Z from=opencode 批次 6 认领：PowerShell 家族最后一处收口（仓内剩余 13 处
+  `powershell -Command "..."` 全部改 `-EncodedCommand`）。
+  清单：internal/controlplane/git_unix_ops.go 10 处（防火墙 list/status/enable/disable、
+  用户 list、主机指标 5 条）、os_ext_ops.go 2 处（服务 list/status）、server_network.go 1 处
+  （tcping on windows，带 target/port 插值）。
+  为什么不是纯风格问题（pkg/shellquote/powershell.go 头注已记同一形状的实测）：
+  ① Windows agent 走 `cmd /C` 执行（internal/agent/agent.go 的 shellCommand），Go 的 exec
+     参数转义会改写脚本里的引号 ⇒ `powershell -Command "..."` 的内层引号退化成 PS 字符串
+     字面量（脚本被回显、根本不执行）；
+  ② 这 13 处还有 Unix 尾巴 `2>/dev/null` ⇒ cmd 下整行报废（cmd 认不出 /dev/null），
+     必须改成 `2>nul`——这正是上一批（#7，14 处收口）已确立的口径，仓库里已有
+     `assertPSWrapped` 测试助手钉住「必须 -EncodedCommand + 2>nul + 不得残留 -Command」。
+  ③ server_network.go 那处带 target/port 插值 ⇒ 一并改 QuotePowerShellSingle + 端口数字化。
+  做法：全部走既有 `shellquote.PowerShellEncodedCommand`（运行时 UTF-16LE+base64，源码里
+  不落 base64 噪声、可读性保住）；动态值仍走 `QuotePowerShellSingle`。
+  配套：扩 `assertPSWrapped` 覆盖这 13 处（解码后逐字比对 + 尾巴口径），并更新两处
+  断言命令文本的既有测试（改走 decodePSCommand 读解码后的 PS 脚本）。
+  冲突检查：文件面 git_unix_ops.go / os_ext_ops.go / server_network.go + 两个测试文件，
+  与 #9（os_ext_ops.go 第五批，已并入）、#10、#12 均无重叠（同文件不同行，#9 已合入且
+  其改动只在本分支基线里）。
+[CLAIM] 2026-11-07T09:41:21Z from=opencode ttl=6h scope=internal/controlplane/git_unix_ops.go,internal/controlplane/os_ext_ops.go,internal/controlplane/server_network.go,internal/controlplane/shellquote_security_test.go,internal/controlplane/server_network_extra_test.go,internal/controlplane/coverage_extra_test.go,CHANGELOG.md note=PS 家族最后一处收口：13 处 powershell -Command 改 -EncodedCommand + 2>/dev/null 改 2>nul

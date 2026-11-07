@@ -139,7 +139,8 @@ func (s *Server) handleWindowsService(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch req.Action {
 	case "list":
-		script = `powershell -Command "Get-Service | Select-Object Name, Status, StartType | Format-Table -AutoSize" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-Service | Select-Object Name, Status, StartType | Format-Table -AutoSize`) + ` 2>nul`
 	case "start":
 		script = shellquote.PowerShellEncodedCommand(
 			`Start-Service -Name `+shellquote.QuotePowerShellSingle(req.Service)+
@@ -166,7 +167,8 @@ func (s *Server) handleWindowsService(w http.ResponseWriter, r *http.Request) {
 			`Get-Service -Name `+shellquote.QuotePowerShellSingle(req.Service)+
 				` | Select-Object Name, Status, StartType, DisplayName`) + ` 2>nul`
 	default:
-		script = `powershell -Command "Get-Service | Select-Object Name, Status | Format-Table -AutoSize" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-Service | Select-Object Name, Status | Format-Table -AutoSize`) + ` 2>nul`
 	}
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "windows_service_"+req.Action)
 	if !ok {
