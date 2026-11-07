@@ -558,10 +558,7 @@ func TestSSE_SubscribeBeforeHello_NoFirstEventLoss(t *testing.T) {
 	close(w.gate)
 
 	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if strings.Contains(w.String(), `"taskID":"task-a"`) {
-			break
-		}
+	for !strings.Contains(w.String(), `"taskID":"task-a"`) {
 		if time.Now().After(deadline) {
 			cancel()
 			t.Fatalf("首连事件被丢弃：握手后发布的事件未出现在流里（已写出内容=%q）", w.String())
