@@ -746,3 +746,4 @@
   冲突检查：CLAIMS.md 中 go.mod/go.sum 的旧认领来自 workbuddy（2026-10-28，ttl=2h，已失效）；
   别线 PR #8 的文件面不含任何 go.mod/go.sum ⇒ 无重叠。
 [CLAIM] 2026-11-06T22:01:16Z from=opencode ttl=6h scope=go.mod,go.sum,operator/go.mod,operator/go.sum,services/alert-svc/go.mod,services/alert-svc/go.sum,services/auth-svc/go.mod,services/auth-svc/go.sum,services/config-svc/go.mod,services/config-svc/go.sum,services/device-svc/go.mod,services/device-svc/go.sum,services/gpu-svc/go.mod,services/gpu-svc/go.sum,services/log-svc/go.mod,services/log-svc/go.sum,services/task-svc/go.mod,services/task-svc/go.sum,services/tf-provider/go.mod,services/tf-provider/go.sum note=CVE-2026-78661：golang.org/x/net v0.60.0 → v0.62.0（10 模块）
+[CLAIM] 2026-11-07T02:34:38Z ttl=4h from=qoder scope=docs/projects-2026-11-07.md note=全系统五项短板立项书（只读取证+规划，不改代码）：P1 CI 可信度 / P2 能力深度矩阵 / P3 测试纵深 / P4 产品文档现状化 / P5 商业交付包（owner 决策项）。基线 origin/main 1590488；单文件新增，不动他人 scope。
