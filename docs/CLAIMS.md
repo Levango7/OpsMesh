@@ -834,3 +834,33 @@
 [LANDED] 2026-11-07T11:30:15Z from=opencode commit=773bacc branch=fix/ps-family-final pr=13 note=PowerShell 家族最后一处收口入 main：13 处 `powershell -Command "..."` → `-EncodedCommand`（git_unix_ops.go 10 + os_ext_ops.go 2 + server_network.go 1 带插值）；cmd 尾巴 `2>/dev/null`→`2>nul`、Unix 的 `| head -40` 折进 PS 载荷；注入面盘点器 powershell 语境候选位 1→0（全仓 576→575）；新增 TestPSFamilyFinalSweep（12 子用例：wire 形态 + 尾巴口径 + 解码载荷逐字相等）。**本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），CHANGELOG 已带 [Unreleased-PS收尾] 块，随下一版归版。
 
 [RELEASE] 2026-11-07T17:40:50Z from=qoder ref=[CLAIM] 2026-11-07T03:02:23Z scope=internal/agent commit=none-reverted note=owner 拍板 option A（截断用例改 64KB 小缓冲 + 新增 TestMaxOutputBytes 锁 10MB 常量）实测证伪，未推送。容器整包 -race（golang:1.26.10，无 -skip，最终树 6fe6435+编辑）复跑 2/2 仍 FAIL 于 TestExecute_OutputTruncation：TSan failed to allocate 0x3f000（258048B，errno:12），失败分配仅 252KB 而非 21MB，地址随 ASLR 漂移（run1 2180005b1000 / run2 2180007b9000）⇒ 触发点不是缓冲大小，缩缓冲无效。根因坐实：容器内核 6.6.87.2-microsoft-standard-WSL2 + vm.mmap_rnd_bits=32 破坏 TSan shadow-memory 映射＝WSL2 本地环境伪影，非数据竞争、非 agent 逻辑缺陷。且此容器失败不等于 CI flake：CI 553e2bb（run 42321960462）是裸 SIGSEGV@TestSafeGo_RecoversAndRestarts（safego.go:53 selectgo）、0 个 TSan 签名，同份 agent 代码在 a08c693/2555254/be3b771 三次绿 ⇒ runner 级间歇 flake。处置：本地编辑已 git restore 回退（security_test.go 恢复 origin/main 原状，gofmt/vet 曾干净，工作树干净）。internal/agent 面无可修真实缺陷，释放认领（前认领 03:02:23Z ttl=6h 已过期；main 全程未碰 agent 包、无他线认领 ⇒ 无主）。CI flake 去向交 owner：option B（CI 侧 runner/ASLR 调参）属禁区我不碰；或据同代码三次绿接受为 flake。取证日志（仓外）：F:/Agent/Qoder/workspace/race-agent-optionA.log 与 race-agent-optionA-run2.log。
+[NOTE] 2026-11-07T23:09:43Z from=opencode 批次 8 认领：容器/存储运维面「req.* 未转义直插」收口（docker_ops.go + container_ops.go + distfs_ops.go，盘点器 raw_interp 51 处）。
+  范围（批次 7 新增的盘点器判据 C「raw_interp」队列头部三文件）：
+    docker_ops.go 24（compose 7 + network 6 + volume 3 + debug 7 + registry 4）；
+    container_ops.go 13（inspect/start/stop/restart/rm/logs/pull/push/build/trivy/sign/tag/rmi）；
+    distfs_ops.go 14（ceph pool/fs/rbd、gluster volume/peer/mount、hdfs、weed）。
+  为什么要单列一批（沿用批次 7 的判据）：这 51 处把请求体字段裸拼进要下发到 agent 的
+  shell 脚本，agent 以 sh -c 执行 ⇒ `$(id)` / 反引号 / 分号被真实执行。鉴权面无缺口
+  （均经 dispatchKafkaTask → subsystemAuthorize 的 task:write 闸），是**已授权调用者
+  可直接打到 agent 的 RCE**。
+  做法（分两类，不搞一刀切）：
+  ① **单 token 字段**（name/container/driver/alias/subnet/gateway/image/tag/source/dest/
+     registry/username/password/project/file/service/pool/volume/host/path/remote…）
+     → 一律 shellquote.Quote（POSIX 单引号字面量，取值语义不变）。
+     注意 docker network create/connect 的选项串是**字符串拼接**出来的
+     （`opts += " --subnet " + req.Subnet`、`alias = " --alias " + req.Alias`），
+     盘点器按 Sprintf 实参抓不到，但同样是注入面——本批一并改（拼装处直接放 Quote 结果）。
+  ② **自由参数/命令串**（docker compose 的 req.Args、docker debug exec 的 req.Command）
+     → 新增 pkg/shellquote.ValidateArgList：白名单校验「一整串自由参数」是否可安全原样
+     拼接（只允许字母数字与 - _ . , : / = + @ 与空格；任何 shell 元字符一律拒绝）。
+     为什么不能用 Quote：Quote 会把 `--scale web=3` 压成**一个**词，改变语义。
+     为什么必须收：`docker exec web; rm -rf /` 的注入落在 **agent 宿主**上（越出容器边界）。
+     exec 的命令串收窄后仍是「在容器内执行命令」的原语义（容器内 shell 语义不变），
+     但宿主级逃逸被堵死——这是本批的**能力降级点**，需在 CHANGELOG 如实登记。
+  配套：① pkg/shellquote 新增 ValidateArgList + 单元测试（payload 集 + 真 shell 语义证明）；
+  ② internal/controlplane 新增容器/存储面注入守卫测试（沿用批次 7 的「引号外文本」判据 +
+     真 sh 语义级证明 + 源码级兜底）；③ 盘点器复算 raw_interp 320 → 269（-51）。
+  冲突检查：文件面 docker_ops.go / container_ops.go / distfs_ops.go / pkg/shellquote/quote.go
+  （+ 新测试）/ CHANGELOG，与 #5~#14 均无重叠；qoder/workbuddy 两条线当前未动这三个文件
+  （板面近月仅见 2026-10-30 qoder 的一条 docker_ops.go gofmt 格式修复，已早合入）。
+[CLAIM] 2026-11-07T23:09:43Z from=opencode ttl=8h scope=internal/controlplane/docker_ops.go,internal/controlplane/container_ops.go,internal/controlplane/distfs_ops.go,pkg/shellquote/quote.go,internal/controlplane/container_injection_test.go,pkg/shellquote/quote_test.go,CHANGELOG.md note=批次 8：容器/存储运维面 req.* 未转义直插收口（51 处：单 token → shellquote.Quote；自由参数/命令串 → 新增 ValidateArgList）+ 注入守卫测试
