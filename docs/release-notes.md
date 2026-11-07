@@ -4,6 +4,93 @@
 
 ---
 
+## v0.18.0 — 2026-11-07 派发口鉴权收口（408 条写路由全绿）+ 注入面清扫（616→576）+ AI 预算真执法与租户隔离 + CI 镜像源换源（TD-89）+ CVE-2026-78661
+
+本版是 v0.17.1（tag `v0.17.1`→`7315622`，2026-11-03）之后 main 上的 **110 个提交**归版（口径：`git rev-list --count v0.17.1..06b78c9`，含各 PR 的合并提交与分支提交，不含本切版提交自身；冻结点 `06b78c9`）。四条主线：
+
+1. **派发路径的鉴权空洞收口**——`dispatchKafkaTask` / `dispatchFastDFSTask` 此前**只校验登录与租户、从不校验权限**，实测 viewer 能拿到 `202 + taskID` 且脚本确实下发；本版把这条面补成 `task:write`，并把棘轮门禁的统计口径跟到派发口（台账 284 → 0，已鉴权写路由 408/408）。按去注释后的调用点计，冻结点口径为 **599 个调用点 / 68 个文件**（各 CHANGELOG 块记的是该批时点口径，数字随其他线后续合入而变）。
+2. **命令注入面清扫**——`shellQuote` 此前**只转义 `"`**，`$(id)` 会被 shell 真实执行；本版修掉这个静默失效（17 文件 / 269 调用点是该批时点口径，冻结点去注释后为 **374 处出现 / 20 个文件**），并把 cmd 语境、PowerShell 语境、Unix 语境分别落到可证的语义上（拒绝式校验 `ValidateCmdQuoted` 18 处 / `-EncodedCommand` + `QuotePowerShellSingle` / `QuoteDouble`），另配可复算的注入面盘点器。
+3. **TD-97 AI 域**——预算从「只读展示」变成**真执法**；RAG / 提示词 / 知识库三处共享存储**租户化**；`/api/v1/ai/usage` 口径分租户 + 平台全量双门。
+4. **交付链**——CI service containers 换公共镜像源（TD-89 B-min，runner 侧 digest 逐字对照相等）、`golang.org/x/net` 升到 CVE-2026-78661 的修复版本（10 个模块，许可证清单同步重生成）、kind 真集群冒烟与微服务探针回归门禁落地。
+5. **SSE 首连丢事件修复**——`handleEventsStream` 此前**先写 hello 握手帧、后注册订阅**，客户端连上后立刻发布的事件会落在「尚未入册」的窗口里被 `publishEvent` 静默丢弃（客户可见：首连丢第一条事件）；本版把订阅注册提前到握手帧之前，并补一条**确定性**回归测试（修复前 2/2 必红、修复后通过）。
+
+> **发布物由本提交切 `v0.18.0` 生成**：`internal/version.Version`、`Chart.yaml version/appVersion`、
+> `values-production.yaml` 全部镜像 tag、`production-segment.yaml`、5 份 K8s 样例、
+> `deploy-opsmesh.sh`、compose/`deploy.sh` 示例值、compose 渲染夹具、部署资产门禁夹具
+> 已全部 = `0.18.0`（共 41 处字面量、14 个文件），由 `deploy/scripts/validate-deploy-assets.sh`
+> 第 1 节与第 20 节对账；`release.yml` 的「标签 == appVersion」硬门禁保证 `v0.18.0`
+> 只能压在与 `appVersion` 一致的提交上。
+> **切 tag 顺序**：沿用 v0.17.1 的铁律——**等 main 推送 CI 全绿后才切 tag**，让 tag 构建成为
+> `:<sha>` 的最后写者，避免「同一提交被 main 与 tag 各构建一次、后完成者覆盖」造成的假红。
+
+### 破坏性 / 行为变更（升级前必读）
+
+- **派发路径现在要求 `task:write` 权限**（覆盖面最大的一条）：`dispatchKafkaTask`
+  （该批时点口径 465 调用点 / 50 文件）与 `dispatchFastDFSTask`（50 调用点 / 3 文件）此前只调
+  `requireTenantContext`——校验登录与租户、**从不校验权限**；冻结点去注释后两族合计
+  599 个调用点 / 68 个文件。实测（生产模式 + 真 JWT）：
+  viewer `POST /api/v1/cache/deploy` 得 **202 + taskID**，响应体里的 taskID 对应的脚本确实下发。
+  现改为 `requireProd(w, r, "task:write")` ⇒ **只登录、不持该权限的账号一律 403**。
+  owner 裁决（2026-11-06）：**operator 保留运维执行面，viewer 不放开**。
+- **17 条运维扩展路由的权限点统一为 `task:write`**（云托管 DB 6 / NoSQL·半结构化 5 /
+  Apache 3 / Elasticsearch 3）：此前是任意已登录用户可调，现按上一条口径收口；
+  这 17 条**无前端调用方**，属后端 API 面。
+- **AI 预算从「展示」变成「执法」**：`internal/ai/gateway/gateway.go` 的 `Complete` 入口
+  （路由后、限流前）按 ctx 租户判定越限即拒，错误文案
+  `budget exceeded for tenant <id> (daily/monthly token limit reached)`；**provider 不会被调用、
+  钱不花**。此前预算只是前端卡片上的数字。
+- **`GET /api/v1/ai/usage` 默认口径改为本租户**：`?scope=all` 需同时满足①平台租户
+  ②持 `platform:readall` 权限点，否则**静默降回本租户口径**（不报错，避免向非平台调用方
+  确认「存在全量口径」这一事实本身）。依赖旧行为（任何持 `ai:read` 的人都能看到平台总量）
+  的调用方会看到数据变少。
+- **RAG / 提示词 / 知识库三处共享存储租户化**：键由裸 ID 改为 `tenant + \x1f + id`，
+  增删改查与出口全部按租户收窄 ⇒ **跨租户可见的数据不再可见**。三处均为**进程内内存存储**
+  （无持久化），旧的无租户前缀键数据不再可见，**升级或重启即清空**（不是数据迁移问题）。
+- **命令注入面收口带来的输入收紧**（对调用方可见的行为变化）：
+  - `windows-package` 的 `manager` 只允许 `auto/winget/choco/scoop`，其余一律 **400**；
+  - `kill -SIGNAL` 的信号名只允许字母数字（≤16 字符），其余 **400**；
+  - Windows 事件日志的 `level` 只允许字母与逗号；
+  - `shellQuote` 现在真正转义 `$` / 反引号 / `\` ⇒ 此前含引号或元字符的过滤类参数
+    （如 `ps` 的 grep filter）会被 shell 真实执行，**现在按字面量匹配**；
+  - Windows 语境改为**拒绝式校验**（cmd 没有引号内转义语法），命中 `"` `%` `!` CR/LF NUL
+    即拒，不再尝试拼转义。
+- **CI service containers 换镜像源**：`mysql:8` / `redis:7` → `mirror.gcr.io/library/*`
+  （两个 tag 的 manifest digest 已在 runner 侧与 Docker Hub **逐字对照相等**）。
+  只影响本仓 CI 流水线，**不改客户镜像引用**，交付物的镜像名与 tag 口径不变。
+
+### 能力降级清单（如实标注；按能力表验收时跳过或先确认前置）
+
+- **AI 预算是「进程内口径」**：重启归零、多副本各自计数 ⇒ 有效额度 ≈ 单副本额度 × 副本数，
+  **不是全局硬上限**。本版未引入分布式配额。
+- **RAG / 提示词 / 知识库三存储是进程内内存存储**：租户化后仍**不跨副本一致、不持久化**；
+  重启即丢。
+- **TD-89 的 A 项（Docker Hub 只读 token）仍未配置**：匿名拉取配额的**根因未消除**；
+  本版只把 CI 的 service containers 换到 `mirror.gcr.io`，Dockerfile 基镜像预热仍走
+  TD-94 的有界重试。owner 配 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` 即可进一步收窄
+  （代码接线早已在 main 上，零改动）。
+- **digest 对照只能在 runner 上做**：开发机对 `docker.io` / `mirror.gcr.io` 均不可达，
+  **本机无法复核 digest**；可复现入口是新增的 `mirror-digest-check` 工作流
+  （`workflow_dispatch` 随时可跑，`ci.yml` 变更时自动复跑）。
+- **kind 真集群冒烟需要 kind 环境**：无 kind 时只跑静态门禁；12 条断言覆盖 helm 渲染 /
+  rollout / 探针 / 安装面，**未覆盖生产 CNI、HA 多控制面与非 443 端点依赖**。
+- **微服务探针门禁查的是「注册面」**：12 个服务必须注册 `/health` 与 `/ready`
+  （main.go 或 handler 层任一），**不等于运行期探针行为已验证**。
+- **注入面盘点器是正则静态清单**：它给的是「候选面 + 语境分类（sh / cmd / powershell）」，
+  **不构成「无注入」的证明**；本版复算残余 576 条候选中，绝大多数是已归编的正常
+  `fmt.Sprintf` 拼接位，另有 2 条已备注的假阳性（Go 侧路径拼装行、调用侧白名单行）。
+- **v0.17.0 的两批代拟账**（`a6c587c` / `632d29b` 的 41 条运维域路由）仍只有脚本下发证据，
+  **没有真机 smoke**——本版未改变该状态。
+- **K8s 生命周期三条动作仍是 501**（沿用 v0.17.0 / v0.17.1，真实现见立项书 M1–M3），
+  本版无变化。
+
+### 本版归版明细
+
+- 归版块：25 个 `[Unreleased…]` 块（`[Unreleased-主题]` 变体一并折入），
+  日期原地保留，标题统一标注 `[0.18.0]`。
+- 归版时点补账：3 笔产品面 + 55 笔板面记账 笔「已进 main 但此前无 CHANGELOG 条目」的提交，按提交与代码事实
+  代拟补记（块首明写是代拟；要更正请新开块）。
+- 归版门禁（`deploy/scripts/changelog-fold-gate.py`）：`offenders=0 stale=0`。
+
 ## v0.17.1 — 2026-11-03 生产 NetworkPolicy 翻 true（外部出向显式 opt-in）+ 前端能力缺口第三批 + 发布链门禁两处修复
 
 本版是 v0.17.0（tag `v0.17.0`→`ddec516`，2026-11-02）之后 main 上的 **22 个提交**归版。三件事：

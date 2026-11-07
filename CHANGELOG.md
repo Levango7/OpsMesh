@@ -4,7 +4,48 @@
 
 > 当前最新已发布版本：`v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
-## [Unreleased-CVE修复] — 2026-11-07（CVE-2026-78661：golang.org/x/net v0.60.0 → v0.62.0，10 个模块）
+## [0.18.0] — 2026-11-07（本版汇总：派发口鉴权收口 + 注入面清扫 + AI 预算执法与租户隔离 + 交付链换源与 CVE 修复）
+
+- **鉴权（覆盖面最大）**：派发路径 599 个调用点（去注释口径，冻结点 06b78c9）补 `task:write`
+  权限闸（此前只校验登录与租户、**从不校验权限**）；17 条运维扩展路由按 owner 裁决统一为
+  `task:write`（operator 保留执行面、viewer 不放开）；ops 路由棘轮门禁跟进派发口
+  （台账 284 → 0，已鉴权写路由 408/408）。
+- **注入面**：`shellQuote` 静默失效修正（该批 17 文件 / 269 调用点；冻结点去注释后 374 处出现 /
+  20 文件；`$(id)` 此前会被真实执行）；`git_unix_ops.go` 28 处、PowerShell 家族 14 处、
+  `os_ext_ops.go` 13 行/15 值位三批清扫；cmd 语境改拒绝式校验（`ValidateCmdQuoted`）；
+  新增可复算盘点器 `scripts/shell-injection-audit.py`（全仓 616 → 576）。
+- **AI 域（TD-97）**：预算从只读展示变真执法（越限即拒、provider 不被调用）；RAG / 提示词 /
+  知识库三处共享存储租户化；`/api/v1/ai/usage` 改本租户口径 + 平台全量双门
+  （`platform:readall`）；前端消费侧同步（超限 UX / 用量徽标 / 平台全量入口）。
+- **交付链**：CI service containers 换 `mirror.gcr.io`（TD-89 B-min，runner 侧 digest 逐字
+  对照相等）+ 新增 `mirror-digest-check` 对照工作流；`golang.org/x/net` 升 v0.62.0
+  （CVE-2026-78661，10 个模块，许可证清单同步重生成）；kind 真集群冒烟（12 断言）与微服务
+  探针回归门禁落地；SSE 首连事件丢失竞态修复（订阅注册提前到握手帧之前）。
+- **对外说明**：本版破坏性变更与能力降级清单见 `docs/release-notes.md` 的 `## v0.18.0` 小节
+  （发布链 `github-release` job 直接取该节作为 Release 正文）。
+
+## [0.18.0] — 2026-11-07（补账：归版时点扫出的未登账提交，按提交与代码事实代拟）
+
+> 本块是**代拟补账**：下列提交已在 main 上（`git merge-base --is-ancestor` 确认属 v0.17.1
+> 之后的谱系），但 CHANGELOG 无对应条目。作者归属未在板面留痕，按提交与代码事实代拟；
+> 深度口径以代码与测试为准，要更正请新开块。
+
+- **`99e2e36`（2026-11-04）**：AgentView 工具卡片显示实现状态——`implemented === false`
+  的工具置灰并显示「未实现」徽标与 `notImplementedReason` 提示；执行时捕获 501 `notWired`
+  响应并列出未接线工具清单；i18n 补 `tool_implemented` / `tool_not_implemented` /
+  `tool_not_implemented_hint` / `not_wired_title` 四键（en/zh）。
+- **`702fb2d`（2026-11-05）**：删掉 `dispatch_authz_test.go` 里的空 `recover` 兜底
+  （staticcheck SA9003 empty branch 判红，CI build-test 抓到）——本用例要的正是
+  「派发成功且落库」这一事实，handler 若 panic 就该**响亮失败**而不是被吞掉；
+  已用 CI 同款 golangci-lint v2.13.2 复验 0 issues。
+- **`d7a705b`（2026-11-05）**：TD-97 两处 lint 红点止血（当时 main 自身红、阻塞所有线合入）——
+  ① `budget_enforce_test.go` 的 S1009 多余 nil 比较（语义不变）；② `rag_tenant_test.go` 的
+  SA9003 空分支改为**真断言**（B 应能删除自己的 t1，租户命名空间独立在行为层有验收）。
+- **板面与文档记账类提交（55 笔）**：`chore(coord)` 的 CLAIM/DONE/RELEASE 戳与
+  `docs(...)` 的过程留痕（含 2026-11-07 五项短板立项书），**无产品面变更**，
+  按板面原样并入本版账，不逐笔罗列（板面原件：`docs/CLAIMS.md`）。
+
+## [0.18.0] — 2026-11-07（CVE-2026-78661：golang.org/x/net v0.60.0 → v0.62.0，10 个模块）
 
 - **红因定位（仓级，与分支改动无关）**：PR #9（本线 os_ext 清扫）与别线 PR #8 在
   同一 `security` job 的「Trivy 文件系统扫描」步同时判红；artifact `trivy-fs-report`
@@ -27,7 +68,7 @@
 - **验证**：10 模块 `go build ./...` / `go vet ./...` 全绿、各模块 `go test ./...`
   全 PASS；x/net 版本全仓复核统一为 v0.62.0。
 
-## [Unreleased-TD89] — 2026-11-07（P4/TD-89 B-min 落地：service containers 换 mirror.gcr.io + digest 对照工作流）
+## [0.18.0] — 2026-11-07（P4/TD-89 B-min 落地：service containers 换 mirror.gcr.io + digest 对照工作流）
 
 - **runner 侧 digest 对照首证**（新增 `.github/workflows/mirror-digest-check.yml`，
   可随时复现；同时在 ci.yml 变更时自动复跑作为常驻对照）：`mysql:8` 与 `redis:7` 的
@@ -42,7 +83,7 @@
 - A（只读 token）仍需 owner 配 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`（零代码改动，
   `docker/login-action` 早已在 main 上），本块不阻塞其落地。
 
-## [Unreleased-OS清扫] — 2026-11-07（os_ext_ops.go 13 行/15 值位 sh 清扫）
+## [0.18.0] — 2026-11-07（os_ext_ops.go 13 行/15 值位 sh 清扫）
 
 - **process / log / macos-service / agent-distribute / harmony-ext 收口**：
   `ps grep filter`、`journalctl` 的 unit/since、`launchctl ×5`、agent 分发消息、
@@ -51,7 +92,7 @@
 - 守卫 3 例 + 窄变异 2 处（拆转义 / 拆白名单判红后复原）；盘点器复算 os_ext
   13 → 0、全仓 589 → 576。
 
-## [Unreleased-SSE竞态] — 2026-11-07（handleEventsStream 订阅注册提前到握手帧之前：修「首连丢第一条事件」）
+## [0.18.0] — 2026-11-07（handleEventsStream 订阅注册提前到握手帧之前：修「首连丢第一条事件」）
 
 - **真缺陷，不是测试抖动**：`internal/controlplane` **整包**测试连续 2 次红在
   `TestSSE_TenantIsolation`（`sse_test.go:329`：期望 task-a，实得 `": ping\n\n"`），
@@ -68,7 +109,7 @@
   197s 全绿（修复前同命令连续 2 次红）。
 - **协议文档同步**：`docs/sse-protocol.md` 的「握手与心跳」补上这条顺序保证（对外可见行为的契约化）。
 
-## [Unreleased-Windows传输] — 2026-11-07（PS 家族 14 处收口：EncodedCommand 传输 + PS 单引号转义）
+## [0.18.0] — 2026-11-07（PS 家族 14 处收口：EncodedCommand 传输 + PS 单引号转义）
 
 - **`powershell -Command "..."` 在三层都不成立（本机实测）**：生产路径
   （Go exec → cmd /C）下 ① 内层引号被改写，命令退化为 PS 字符串字面量
@@ -86,7 +127,7 @@
   sc.exe 三条只读命令端到端可跑；窄变异 2 处判红后复原；盘点器 PS 候选
   15 → 1（假阳性），全仓 616 → 589。
 
-## [Unreleased-注入清扫] — 2026-11-06（git_unix_ops.go 28 处注入收编 + cmd 语境校验器 + 注入面盘点器）
+## [0.18.0] — 2026-11-06（git_unix_ops.go 28 处注入收编 + cmd 语境校验器 + 注入面盘点器）
 
 - **`git_unix_ops.go` 28 处收编**（Git 11 / Unix 3 / macOS 2 / 磁盘 2 / RAID 2 /
   注册表 3 / windows-package 5）：token 与回显消息位 → `shellQuote`；registry 的
@@ -111,7 +152,7 @@
 - **验证**：新增守卫 7 例；窄变异 3 处全部判红（拆 git 转义 / 拆 registry 校验 /
   拆 mgr 白名单）；`go test ./internal/controlplane/ ./pkg/shellquote/ ./internal/gates/`
   全 PASS。
-## [Unreleased-门禁] — 2026-11-06（ops 路由棘轮对齐派发口：台账 284→0，408 条写路由全部已鉴权）
+## [0.18.0] — 2026-11-06（ops 路由棘轮对齐派发口：台账 284→0，408 条写路由全部已鉴权）
 
 - **口径更正（我自己的门禁算错了，不是新需求）**：11-05 落地的 `internal/gates/ops_route_ratchet_gate_test.go` 只跟 `s.handle*` 兄弟转手、**不跟派发口**。而 PR #4/#5 把闸装在 `dispatchKafkaTask` / `dispatchFastDFSTask`（`subsystemAuthorize(task:write)`）上，284 条存量运维写路由正是经此收口的——旧门禁把已还的债继续记成欠账。
 - **改法**：① 授权特征集与 `scripts/authz-route-audit.py` 对齐（`requireProd` / `requirePermission` / `subsystemAuthorize` / `authorizeByRoles` / `authorizeByAPIKey` / `.Authorize`）；② 调用链跟进 `s.dispatch*` 与 `s.createSystemTask`；③ 深度上限 3（与审计脚本一致）。**台账随实清零**（61 文件 / 284 条 → 0 文件），棘轮语义反而更硬：新增写路由既不带权限点、又不经已鉴权派发口，实测 1 > 台账 0 立刻判红。
@@ -120,7 +161,7 @@
 - **文档**：`docs/projects-2026-11-05.md` 新增 §10.0 记录本次口径更新与两个独立口径的对账；§10.1–10.7 保留为 11-05 时点分层数据并标注已被 §10.0 取代；P1-B2 待 owner 裁的问题从 4 个收束为 2 个（operator 是否拿回执行面、只读语义 POST 是否对 viewer 放开）。
 - **owner 裁决落地（2026-11-06）**：原话「运维 当然要 运维执行面啊」「那就这样吧，不要对访客开放，避免信息安全泄露」。P1-A 那 17 条（云托管 DB 6 / NoSQL 5 / Apache 3 / ES 3）的权限点由 `requireProd("system:write")`（admin-only）改为 `requireProd("task:write")`，与其余 284 条经派发口 `subsystemAuthorize(task:write)` 的运维路由同一口径：**operator 恢复执行面，viewer 仍 403，匿名仍 401**。`task:write` 早在 PermSpecs 且 operator 本就持有 ⇒ 零权限目录改动、无"目录先行再接线"风险；只读语义 POST 不向 viewer 放开，只读查询走 GET。测试随之拆成 `TestOpsExtRoutesDenyViewer`（viewer 403）与 `TestOpsExtRoutesAllowOperator`（operator 不被鉴权层拒）两格；棘轮门禁不变（17 条改用自己的 `requireProd` 仍算已鉴权，变异反证 6/5/3/3=17 照旧）。
 
-## [Unreleased-引号收口] — 2026-11-05（shellQuote 修正：17 文件 / 269 调用点；两处裸拼收编 + HBase 白名单迁同包）
+## [0.18.0] — 2026-11-05（shellQuote 修正：17 文件 / 269 调用点；两处裸拼收编 + HBase 白名单迁同包）
 
 - **`shellQuote` 修正（静默失效，影响面最大的一处）**：`internal/controlplane/middleware_ops.go` 的既有实现
   只转义 `"`，而双引号段内 `$`、反引号与 `\` 仍有特殊语义——`shellQuote("$(id)")` 产出 `"$(id)"`，
@@ -142,7 +183,7 @@
   `ValidateName`/`ValidateQualifiedName` 边界（`$(id)` / 反引号 / 结尾反斜杠全过）。窄变异两处：
   `shellQuote` 退回旧实现 ⇒ 4 例判红（脚本里落 `"$(id)"`）；拆 ES 校验 ⇒ 7 个载荷全部 202 放行。
 
-## [Unreleased-鉴权收口] — 2026-11-05（派发路径 515 调用点补权限闸 + K8s 部署匿名洞 + K8sClusterDeployer 竞态）
+## [0.18.0] — 2026-11-05（派发路径 515 调用点补权限闸 + K8s 部署匿名洞 + K8sClusterDeployer 竞态）
 
 - **派发路径补产品级 RBAC（覆盖面最广）**：`dispatchKafkaTask`（465 调用点 / 50 文件）与
   `dispatchFastDFSTask`（50 调用点 / 3 文件）此前只调 `requireTenantContext`——校验登录与租户、
@@ -161,7 +202,7 @@
 - **守卫与取证**：`dispatch_authz_test.go`(6) / `k8s_cluster_deploy_authz_test.go`(6)，窄变异逐处判红；
   PoC、223 条路径明细与复算脚本见 `docs/opsmesh-authz-audit-2026-11-04.md`。
 
-## [Unreleased] — 2026-11-05（P1-A ops 路由止血 + P2-A trace 端点去匿名 + 未鉴权写路由棘轮门禁）
+## [0.18.0] — 2026-11-05（P1-A ops 路由止血 + P2-A trace 端点去匿名 + 未鉴权写路由棘轮门禁）
 
 - **P1-A 止血：17 条运维扩展路由补产品级 RBAC**。`bd06090`/`1f9e481` 带来的 17 条 POST 路由（`db_cloud_managed_ops.go` 6、`db_nosql_ext_ops.go` 5、`apache_ext_ops2.go` 3、`elasticsearch_ops_ext.go` 3）此前只经 `dispatchKafkaTask → requireTenantContext`，**登录即等于可执行**。现按同族惯例（`db_ops.go:169/342/470`、`middleware_ops.go:161/345`）在方法判断之后、参数解码之前补 `s.requireProd(w, r, "system:write")`。
   **改前实测**（变异反证，`internal/controlplane/ops_route_authz_test.go`）：摘掉 `handleDBAurora` 的闸 ⇒ `viewer POST /api/v1/db/aurora = 202`，响应体里就是真实 `taskID`——脚本确实下发到了设备；补回后同一条 = 403。匿名侧原本就被租户闸挡在 401，所以缺的是**角色校验**而非认证，这点与 `docs/decision-materials-2026-11-04.md` §3 的口径一致。
@@ -174,7 +215,7 @@
 - **口径更正（不改写旧块）**：上一块写的「69 个文件 / 301 条」中，69 含 2 个 `_test.go`；精确口径是 **94 个非测试 `*ops*.go` 中 67 个 0 权限检查、合计 301 条注册**。
 - **未修（如实记账）**：① 其余 284 条未鉴权写路由留在台账里，收口要 P1-B2 的按域权限矩阵（owner）；② `db_cloud_managed_ops.go` 的云 CLI 参数（`db_cloud_managed_ops.go:78-88/131-141/202-212/259-263/314-322/367-373`）与 `elasticsearch_ops_ext.go:47/112` 的 node/index 同样是裸 `%s` 拼进 shell，本批只把它们的**入口收成 admin-only**（admin 本就可用任务下发任意脚本，不构成越权升级），逐参数校验属后续；③ 前端按钮级禁用归 zcode，本批不动 `web/enterprise`。
 
-## [Unreleased] — 2026-11-05（代拟补账：两笔后端运维扩展提交未登账 + 附带发现 ops 路由 RBAC 缺口）
+## [0.18.0] — 2026-11-05（代拟补账：两笔后端运维扩展提交未登账 + 附带发现 ops 路由 RBAC 缺口）
 
 > 本块是**代拟补账**：`bd06090`、`1f9e481` 已在 main 上（`git merge-base --is-ancestor` 确认**不在** `v0.17.1` 谱系，属后续版本），但板面无作者 DONE、CHANGELOG 无对应条目。作者归属未在板面留痕，按提交与代码事实代拟；作者补充原始说明时以作者为准。
 
@@ -182,7 +223,7 @@
 - **`bd06090`（2026-11-03）**：Elasticsearch 扩展运维 3 条（node drain/undrain/status、shard relocate/suggest、diagnostic bundle/health-check/shard-allocation-explain）；新增 `internal/controlplane/elasticsearch_ops_ext.go`（166 行）并挂到 `registerELKExtendedRoutes`，无新增测试。
 - **附带发现（重要，未修）**：上述 17 条新路由与现有同族一样**没有任何权限校验**——`*ops*.go` 中 69 个文件 / 301 条 `mux.HandleFunc` 的 `requireProd`/`requirePermission` 命中为 0，`dispatchKafkaTask` 只校验租户上下文（`kafka_ops.go:29-40`）。生产 `requireAuth: true` 下等价于“任意已登录用户可执行系统运维脚本”；`requireAuth: false` 下带 `X-Tenant-ID` 头即可。材料与建议（先止血 17 条 + 加“未覆盖只许减不许增”的棘轮门禁 + 按域补权限）见 `docs/decision-materials-2026-11-04.md` §3。**本批只记账，不改代码。**
 
-## [Unreleased-门禁] — 2026-11-05（归版判据认得 `[Unreleased-主题]` 变体标题：切版会静默漏归版的盲区已堵）
+## [0.18.0] — 2026-11-05（归版判据认得 `[Unreleased-主题]` 变体标题：切版会静默漏归版的盲区已堵）
 
 - **缺陷（`9513ebc` 修）**：`deploy/scripts/changelog-fold-gate.py` 的标题判据只认 `## [Unreleased]` 与 `## [Unreleased] — ` 两种形态，而并行线一直在写 `## [Unreleased-前端-裁决批] — 日期（…）` 这类**变体标题**（本文件现有 4 个）。判据看不见它们：修前对同一份 CHANGELOG 现测 `SUMMARY … unreleased=0 offenders=0`、CI 全绿——下轮切版会把这些块静默留在 Unreleased 里发出去，而客户按 Keep-a-Changelog 读这份账，会把已交付的东西当成欠账。
 - **修法**：判据换成正则 `^## \[Unreleased[^\]]*\]( — |$)`，认得任意 `[Unreleased-主题]` 变体；同时仍**不把正文里的散文行当标题**（例如「把 `## [Unreleased]` 一次性改成 `## [0.12.0]`」——`]` 后紧跟反引号，不匹配 `( — |$)`）。修后对 main 现测 `released_max=2026-11-03 released_blocks=187 unreleased=6 offenders=0 stale=0` rc=0（含本条；命令 `python deploy/scripts/changelog-fold-gate.py CHANGELOG.md`）。
@@ -228,14 +269,14 @@
 - 验证：`go test ./internal/gates -count=1` 全绿；`helm lint` 默认与生产 values 均 0 失败；`validate-deploy-assets.sh` PASS=87 FAIL=0 SKIP=1；fold gate offenders=0；`git diff --check` 干净。
 - 安装方仍需核对（写进 values 注释）：私网 IP 或非 443 端点的外部依赖要自行补规则；微服务 `/metrics` 抓取要显式配 `metricsFrom`。
 
-## [Unreleased-写按钮权限门] — 2026-11-06（FluxView 挂 flux:write + 同类扫描出 15 视图施工图）
+## [0.18.0] — 2026-11-06（FluxView 挂 flux:write + 同类扫描出 15 视图施工图）
 
 - **FluxView 写按钮挂 `flux:write` 门**（按钮级门范式延伸批）：后端 flux.go 的 5 个 handler 一直是 `requirePermission('flux:read'/'flux:write')`——viewer/operator 持 flux:read 可进页但写操作必 403。前端现在显式化：新建/同步/编辑/删除四类按钮无权限时禁用 + title 说明 + 页首常驻提示（对应 workbuddy 11-01 遗留的「flux 页回归，确认不依赖 403 时隐藏按钮的旧行为」——现在依赖的是显式门，不再撞墙）。spec 2 例（无权限全禁用+提示 / 有权限全可用）。
 - **同类扫描（本批的施工图产出）**：全量比对「视图调用写 API × 视图内无 hasPerm」→ 17 个候选；再与后端权限目录交叉（`internal/store/model/perm.go`）核对——**15 个有现成 write 权限点**、2 个无（AdminConsoleView / NotifyChannelsView，属后端目录缺口，跳过）：
   `APIKeysView(apikey:write) / AutomationView(automation:write) / BillingView(billing:write) / FluxView(flux:write 本批) / GatewayRoutesView(gateway:write) / K8sClusterDeployView + K8sLifecycleView + K8sResourcesView(k8s:write/delete) / SLOsView(slo:write/delete) / SchedulesView(schedule:write) / ScriptsView(script:write) / SecretsView(secrets:write) / SystemOpsView(system:write) / TicketsView(ticket:write) / TrafficPoliciesView(traffic:write) / WebhooksView(webhook:write)`。
   范式与 InfraConsole/Flux 两批一致：`auth.hasPerm(<域>:write)` → 写按钮 `:disabled` + title + 页首提示。已上板记账，逐批施工。
 
-## [Unreleased-按钮级禁用] — 2026-11-06（InfraConsole 派发按钮挂 task:write 权限门——数据流侦察结论：284 条台账路由的前端暴露面收敛为单视图）
+## [0.18.0] — 2026-11-06（InfraConsole 派发按钮挂 task:write 权限门——数据流侦察结论：284 条台账路由的前端暴露面收敛为单视图）
 
 > workbuddy 11-04 DONE 指派「前端按钮级禁用归 zcode」的落地。侦察结论值得留档，因为它重裁了批的范围。
 
@@ -247,7 +288,7 @@
 - **测试**：`InfraConsoleView.spec.js` 增 2 例门行为（无权限禁用+提示 / 有权限可用无提示），mock 改造为可切换 perms；原 10 例不回归。全量 vitest 72 文件 / 1369 过。
 - 未做（如实记账）：单路由级细粒度门（如按 button↔具体路由的权限映射）——后端这些路由本身没有声明权限点（这是 284 的含义），前端无从得知，只有等后端按域收口后按域细化；届时每个域一个权限点，批量改造此视图即可。
 
-## [Unreleased-AI前端消费] — 2026-11-06（TD-97 前端消费适配：预算超限 UX + 用量口径徽标 + 平台全量入口）
+## [0.18.0] — 2026-11-06（TD-97 前端消费适配：预算超限 UX + 用量口径徽标 + 平台全量入口）
 
 > TD-97 后端三批（② 7e03cfb / ① a1f6e61 / ③④ a7231fe）的前端消费侧闭环，本批补齐。
 
@@ -256,7 +297,7 @@
 - **i18n**：ops.json 的 aiChat 域新增 5 键双语（scope_own/scope_all/view_platform/view_own/budget_exceeded）；naked-keys 守卫 2/2 过。
 - **验证**：stores 全量 737 过、api-usage 双向棘轮绿、eslint 0。后端零改动（纯消费侧）。
 
-## [Unreleased-AI平台视图] — 2026-11-05（TD-97 ③④：/ai/usage 本租户口径 + 平台全量双门 + 新权限点）
+## [0.18.0] — 2026-11-05（TD-97 ③④：/ai/usage 本租户口径 + 平台全量双门 + 新权限点）
 
 - **③ `/api/v1/ai/usage` 默认返回本租户用量**（`handler.go` 的 HandleTokenUsage）：此前是网关级累计，任何持 `ai:read` 的人都能看到平台总量。TokenUsageTracker 的 `Record` 带租户、`Report(tenant)` 按租户过滤（空=平台全量），报表回显 `scope`（own/all）让调用方不必猜口径。
 - **④ 平台全量双门**：`?scope=all` 仅在「default 租户 + `platform:readall` 权限点」同时满足时返回。判定顺序有意为之——先判租户（纯读 actx、不写响应），**只有平台租户才发起第二次鉴权**：业务租户永远不被问到这个权限点（不泄露「存在全量口径」这一事实），且规避了「authorize 失败时回调已把 403 写进同一 ResponseWriter、继续写 200 只得半截响应」的坑（实测捕获，设计据此修正）。平台租户被问而没权限 ⇒ 明确 403。
@@ -264,7 +305,7 @@
 - **GatewaySecret 生产必配——核实后不做字面执行**：调查发现 roles/tenant 头的信任开关是 `TrustGatewayHeaders`（`config.go:940-942` **生产强制 false**，身份必须走 Bearer token/联邦验签/mTLS），与 authctx 的 GatewaySecret（网关头注入模式的 HMAC 加固）是两层；生产默认形态下 `platform:readall` 只可能由密码学验证过的 token 账号持有，不存在头伪造路径。故不新增「生产必须配 GatewaySecret」的硬校验（那会误伤合法的 JWT/API Key 部署——那种部署 GatewaySecret 本就应为空）。此核实结论记入板面 NOTE。
 - **测试**：`handler_usage_scope_test.go` 3 例（默认 own 且不问平台权限 / default+权限给全量 300 / 业务租户持权限也只给自己 150 / 平台租户无权限 403）；`go test ./internal/...` 全绿、gofmt/vet 干净。
 
-## [Unreleased-AI预算执法] — 2026-11-05（TD-97 ①：预算从只读展示变为真执法·A 方案）
+## [0.18.0] — 2026-11-05（TD-97 ①：预算从只读展示变为真执法·A 方案）
 
 - **`internal/ai/gateway/gateway.go`**：`Complete` 入口（路由后、限流前）按 ctx 租户 `IsOverBudget` 判定，越限即拒——明确错误、不静默降级，且钱没花（provider 未被调用）；出口按租户 `RecordUsage(prompt+completion)`，语义缓存命中不重复计量。此前 `RecordUsage`/`IsOverBudget` 在生产代码零调用方（TD-97 ① 原始状态）。
 - **`BudgetEnforcer` 接口 + `SetBudgets` 注入**：`nil`=不执法（独立使用/单测向后兼容路径，与 handler 的 Authorize 回调同一模式）；编译期断言 `*cost.BudgetManager` 满足接口。
@@ -273,14 +314,14 @@
 - **进程内口径写进契约**（A 方案的前提）：重启归零、多副本各自计数（有效额度 ≈ 单副本额度 × 副本数）。持久化硬限（B：用量表+启动加载+DB 原子 upsert）排 v0.19。
 - **测试**：`budget_enforce_test.go` 5 例——越限先拦且不花钱、按租户各自计量、无租户记账 default 且与 default 租户 ctx 同空间、缓存命中不双计、nil 关闭执法。`go test ./internal/...` 全绿、gofmt/vet 干净。
 
-## [Unreleased-docs-成本族契约] — 2026-11-05（cost 族八条端点首次有对外契约文档）
+## [0.18.0] — 2026-11-05（cost 族八条端点首次有对外契约文档）
 
 - **缺口（先实测再补）**：`docs/api-reference.md` 对 `/api/v1/cost/*` 的覆盖为 **0**——`grep '/api/v1/cost'`、`cost/budget`、`成本控制` 三种措辞全 0，`docs/api-specification.md` 同样 0。八条端点从没有对外契约，接入方只能读 Go 代码；而这一族恰好集中了最容易误判的语义（额度何时真生效、`tenantId` 谁说了算、未知 `taskType` 会不会回 null）。
 - **补法**：新增 `## 成本控制 API` 小节（插在计费与网关之间，目录同步加条目），八条端点逐条写权限点、参数、响应与错误码；口径全部从代码取（`internal/cost/handler.go` 的注册与 handler 体、`internal/store/model/perm.go` 的权限目录），不引用行号以免随重构腐烂。
 - **四条对外必须说清的口径**：① `GET /cost/budget` 对**未登记租户返出厂默认额度而非 404**，首次消耗也按该默认建档；② `POST /cost/route` 对**未知 `taskType` 回落默认规则**（medium/openai/gpt-4o-mini/2048），不回 null，要区分「命中」与「回落」得自己跟 `GET /cost/routes` 比对；③ `GET /cost/report` 的 `since` 非法**明确 400**，不静默忽略过滤条件；④ `tenantId` 以已验签上下文为准，自报值仅在未启用鉴权时生效。另把 TD-97 ① 的「额度是进程内计数（重启归零、多副本×副本数）、语义缓存命中不重复计量、`daily/monthly=0` 是不设上限而非额度为 0」写进族级说明——与 P1 刚补到 UI 的是同一条口径。
 - **验证**：文档端点集合与代码注册集合逐条对账 `diff` 为空（8 == 8，方法也一致）；`go test ./internal/gates/` 整包绿（含守本文件的 `TestDocPathsExist`）；**该门对新增段有射程**经探针反证——在段内插入不存在的 `internal/cost/nonexistent_probe.go` 即 FAIL 并点名该路径，还原后按 sha256 逐字节核对一致并复绿。
 
-## [Unreleased-前端-预算口径] — 2026-11-05（TD-97 ① 的用户面补口：预算卡显示「进程内口径」+ CostView 首个 spec）
+## [0.18.0] — 2026-11-05（TD-97 ① 的用户面补口：预算卡显示「进程内口径」+ CostView 首个 spec）
 
 - **补的是哪半口**：执法已落 main（`a1f6e61`），但 A 方案的前提——「进程内口径：重启归零、多副本各自计数 ⇒ 有效额度 ≈ 单副本额度 × 副本数」——只写在 `internal/ai/gateway/gateway.go:187` 的 `Complete` 契约注释里。用户面一个字没有：`web/enterprise/src/views/CostView.vue` 只摆「用量 / 额度」两个裸数字（改前 grep `进程|重启|副本` 在该视图命中 **0**），客户会把这条边界当成不存在，越限被拒时也无从解释。
 - **修法**：`web/enterprise/src/i18n/locales/{zh,en}/ops.json` 的 `cost` 段各加一个 `budget_note` 双语键；预算设置卡渲染 `data-testid="cost-budget-note"` 的提示，且**不挂在 `v-if="store.budget"` 之后**——额度数据没加载时口径照样要看得见。
@@ -288,7 +329,7 @@
 - **射程自证（本机变异两轮，红绿样本都有）**：变异 A 删模板里的提示行 ⇒ 例①②转红；变异 B 删 `en/ops.json` 的 `budget_note` ⇒ 例③④转红；两文件还原后按 sha256 逐字节核对一致并复跑 4/4 转绿。`eslint` 对 `CostView.vue` + 新 spec 退出码 0（CI 前端腿同条命令）；`src/i18n/naked-keys.test.js` 双语棘轮同步通过——新键若漏任一侧即红。
 - **如实登记一处本批未改**：`CostView.vue:173/178/199-201` 硬编码 `'default'` 租户。生产鉴权下它被 `internal/cost/handler.go:586` 的 `scopedTenant`（已验签上下文优先）忽略，无越权路径；`--require-auth=false` 的单机形态下该页读写恒落 `default` 租户，属既有单机口径。要改成「前端不带租户」需先定前端是否该自报租户，另议——本批只补口径、不动语义。
 
-## [Unreleased-AI租户隔离] — 2026-11-05（TD-97 ②：RAG/提示词/知识库三共享存储租户化）
+## [0.18.0] — 2026-11-05（TD-97 ②：RAG/提示词/知识库三共享存储租户化）
 
 - **`internal/ai/gateway/rag.go`**：`InMemoryVectorStore` 的 docs 键从裸 ID 改为租户隔离键（`tenant + \x1f + id`）——Upsert/Search/Delete/Count 全部按租户收窄，出口还原裸 ID。此前 A 租户写入的文档会出现在 B 租户的检索结果里（跨租户数据泄露）。
 - **`internal/ai/gateway/prompt.go`**：`PromptTemplateStore` 五个 method（Create/Get/List/Update/Delete）加 `ctx` 参数、键同步租户化；List 只列本租户（提示词模板此前全平台共用）。
@@ -299,7 +340,7 @@
 - **测试**：`rag_tenant_test.go`（向量库隔离+跨租户同 ID 不互覆盖+default 归并）与 `retrieval_tenant_test.go`（知识库同套语义）共 2 个新契约用例；既有 `ai/gateway`、`knowledge`、`controlplane` 全量回归绿。
 - 部署影响：仅进程内 InMemory store（多副本/持久化存储本就不在此形态）；DB/契约零变更。TD-97 ② 闭环，① 预算执法与 ③④ 平台视图按序后续。
 
-## [Unreleased-部署冒烟] — 2026-11-05（kind 真集群冒烟落地：首次运行即抓出默认安装必炸的缺陷）
+## [0.18.0] — 2026-11-05（kind 真集群冒烟落地：首次运行即抓出默认安装必炸的缺陷）
 
 > 置于 [Unreleased-服务治理] 之上；归版时按需合并。
 
@@ -312,7 +353,7 @@
 - **实证**：kind 冒烟本机全跑通——`PASS=12 FAIL=0`（渲染 4 → 集群 → install → rollout → pod 2/2 → 端点 4×200 → 自动清理）；静态门禁 `PASS=88 FAIL=0`；TD-77-P6 变异反证绿。
 - 部署流程教训（CHANGELOG 留痕）：默认口令/密钥类生成器必须逐字符类校验，不能只看长度；「值随机的资产问题只有真渲染/真安装能暴露」。
 
-## [Unreleased-服务治理] — 2026-11-05（微服务探针回归门禁：把 TD-77 既有事实变成构建期红）
+## [0.18.0] — 2026-11-05（微服务探针回归门禁：把 TD-77 既有事实变成构建期红）
 
 > 置于 [Unreleased-前端-裁决批] 之上；归版时按需合并。
 
@@ -322,7 +363,7 @@
 - **范围修正记录**（docs/CLAIMS.md [NOTE] 2026-11-05T09:40）：本批最初误判「runbook/autoscaler 零探针、incident 缺 health」——实为只扫了 main.go 一层路由（它们的探针注册在 `internal/handler.RegisterRoutes`），两渠道合并后 12/12 达标。已连同误判根因上板，第六批因此从「补缺口」改为「固化为门禁」。
 - 验证：`go test ./internal/gates -count=1` 全包绿（含新用例与变异反证 4 组）。
 
-## [Unreleased-前端-裁决批] — 2026-11-04（三条待裁项终态裁决 + RAG 元数据最小版）
+## [0.18.0] — 2026-11-04（三条待裁项终态裁决 + RAG 元数据最小版）
 
 > 置于 [Unreleased-前端-K8s命名空间] 之上；裁决由用户授权（「那就裁决一下」），记录见 docs/CLAIMS.md [RULING] 2026-11-04 条目。
 
@@ -331,7 +372,7 @@
 - **门禁**：`ai-rag.test.js` 增 metadata 透传/缺省 2 例；`AIRagView.spec.js` 增合法透传+清空、非法拦截、数组拦截 3 例（并修既有入库断言适配新签名）；api-usage 棘轮无变化（无新导出、无销账）。
 - 至此 api-usage ALLOW 47 条全部处于终态（接通销账 / 裁决不接留档 / 结构豁免），无「待裁」残留；「后端有、前端无」能力缺口专项至此**全部收口**。
 
-## [Unreleased-前端-K8s命名空间] — 2026-11-03（K8s 命名空间建删 UI + 两个潜伏组件缺陷修复）
+## [0.18.0] — 2026-11-03（K8s 命名空间建删 UI + 两个潜伏组件缺陷修复）
 
 > 置于 [Unreleased-前端-系统运维] 之前，与 NetworkPolicy 块并列；发布时按需归并。
 
@@ -341,7 +382,7 @@
 - **门禁**：`K8sResourcesView.spec.js` 新增 4 例（打开刷新列表/创建下发参数/删除确认链路/未选集群禁用），存量 18 例不回归；api-usage 双向棘轮销账 2 条。
 - 验证：`npx vitest run src/views/__tests__/K8sResourcesView.spec.js src/views/__tests__/SystemOpsView.spec.js src/api/__tests__/api-usage.test.js` 9 例全绿；后续跑全套 + eslint + build。
 
-## [Unreleased-前端-系统运维] — 2026-11-03（SystemOpsView 四表行内操作入口补齐 + 两个写操作接通）
+## [0.18.0] — 2026-11-03（SystemOpsView 四表行内操作入口补齐 + 两个写操作接通）
 
 > 置于 [Unreleased] 与 [0.17.0] 之间，与 NetworkPolicy 块并列；发布时按需归并。
 
