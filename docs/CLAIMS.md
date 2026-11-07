@@ -830,3 +830,5 @@
   与 #9（os_ext_ops.go 第五批，已并入）、#10、#12 均无重叠（同文件不同行，#9 已合入且
   其改动只在本分支基线里）。
 [CLAIM] 2026-11-07T09:41:21Z from=opencode ttl=6h scope=internal/controlplane/git_unix_ops.go,internal/controlplane/os_ext_ops.go,internal/controlplane/server_network.go,internal/controlplane/shellquote_security_test.go,internal/controlplane/server_network_extra_test.go,internal/controlplane/coverage_extra_test.go,CHANGELOG.md note=PS 家族最后一处收口：13 处 powershell -Command 改 -EncodedCommand + 2>/dev/null 改 2>nul
+
+[LANDED] 2026-11-07T11:30:15Z from=opencode commit=773bacc branch=fix/ps-family-final pr=13 note=PowerShell 家族最后一处收口入 main：13 处 `powershell -Command "..."` → `-EncodedCommand`（git_unix_ops.go 10 + os_ext_ops.go 2 + server_network.go 1 带插值）；cmd 尾巴 `2>/dev/null`→`2>nul`、Unix 的 `| head -40` 折进 PS 载荷；注入面盘点器 powershell 语境候选位 1→0（全仓 576→575）；新增 TestPSFamilyFinalSweep（12 子用例：wire 形态 + 尾巴口径 + 解码载荷逐字相等）。**本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），CHANGELOG 已带 [Unreleased-PS收尾] 块，随下一版归版。
