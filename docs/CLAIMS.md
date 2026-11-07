@@ -746,3 +746,19 @@
   冲突检查：CLAIMS.md 中 go.mod/go.sum 的旧认领来自 workbuddy（2026-10-28，ttl=2h，已失效）；
   别线 PR #8 的文件面不含任何 go.mod/go.sum ⇒ 无重叠。
 [CLAIM] 2026-11-06T22:01:16Z from=opencode ttl=6h scope=go.mod,go.sum,operator/go.mod,operator/go.sum,services/alert-svc/go.mod,services/alert-svc/go.sum,services/auth-svc/go.mod,services/auth-svc/go.sum,services/config-svc/go.mod,services/config-svc/go.sum,services/device-svc/go.mod,services/device-svc/go.sum,services/gpu-svc/go.mod,services/gpu-svc/go.sum,services/log-svc/go.mod,services/log-svc/go.sum,services/task-svc/go.mod,services/task-svc/go.sum,services/tf-provider/go.mod,services/tf-provider/go.sum note=CVE-2026-78661：golang.org/x/net v0.60.0 → v0.62.0（10 模块）
+
+[NOTE] 2026-11-07T02:20:12Z from=opencode SSE 首连事件丢失竞态（真缺陷，非测试抖动）：
+  现象：`internal/controlplane` 整包测试连续 2 次红在 `TestSSE_TenantIsolation`
+  （sse_test.go:329：期望 task-a，实得 ": ping\n\n"）；该用例隔离跑 -count=10 全过，
+  整包跑必红 ⇒ 依赖调度压力。
+  根因（sse.go handleEventsStream）：**先写 hello 握手帧、后注册订阅**（L137 写帧 → L140
+  subscribeEvents）。客户端收到 hello 后会立刻 publish 事件；这个窗口内服务端尚未入册，
+  publishEvent 走「无订阅者快速返回」（L215-217）⇒ **该事件被静默丢弃**。
+  ⇒ 这不是测试写法问题，是「刚连上的客户端会丢掉第一条事件」的服务端真缺陷（客户可见面）。
+  处置：把 subscribeEvents() 提到握手帧之前（订阅先于握手 ⇒ 客户端拿到 hello 时订阅必已在册，
+  事件进有缓冲 chan，不丢）；配套确定性回归测试（自定义 ResponseWriter 在 hello 写入处卡住
+  服务端，此刻发布事件：修复前必丢、修复后必收）。
+  冲突检查：文件面 internal/controlplane/sse.go + sse_test.go，与 #10（TD-89 工作流 + ci.yml）
+  与 #9（os_ext_ops.go）均无重叠；别线 #8 触 web/enterprise 前端，无重叠。
+[CLAIM] 2026-11-07T02:20:12Z from=opencode ttl=6h scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,CHANGELOG.md note=SSE 首连事件丢失竞态：订阅注册提前到握手帧之前 + 确定性回归测试
+[CLAIM] 2026-11-07T02:41:09Z from=opencode ttl=6h scope=docs/sse-protocol.md note=SSE 协议文档补「订阅先于握手帧注册 ⇒ 首连不丢事件」的顺序保证（对外可见行为的契约化）

@@ -90,6 +90,10 @@ const sseDefaultTenant = "default"
 //
 // 租户过滤：收到的事件若 TenantID 非空且与当前订阅者租户不匹配则丢弃，
 // 不跨租户广播（防止 A 租户订阅者收到 B 租户的任务/告警事件）。
+//
+// 顺序约束（2026-11-07 修复）：**subscribeEvents 必须在写 hello 握手帧之前**。
+// 客户端收到 hello 后会立刻 publish 事件；握手先于订阅时，那些事件落在
+// 「尚未入册」的窗口里被 publishEvent 静默丢弃（首连丢第一条事件）。
 func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -133,12 +137,17 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no") // nginx 透传不缓冲（否则 flush 无效）
 	w.WriteHeader(http.StatusOK)
 
+	// 订阅必须**先于握手帧**注册（顺序即语义）：
+	// 客户端收到 hello 后通常立刻 publish 事件；若订阅在握手之后才注册，
+	// 那个窗口内发布的事件会命中 publishEvent 的「无订阅者快速返回」而被静默丢弃
+	// ⇒ 表现为「刚连上的客户端丢掉第一条事件」（整包测试下必现，见
+	// TestSSE_SubscribeBeforeHello_NoFirstEventLoss）。订阅先注册则事件进有缓冲 chan，不会丢。
+	ch := s.subscribeEvents()
+	defer s.unsubscribeEvents(ch)
+
 	// 握手帧：让客户端确认连接已建立（event: hello，data 为空对象）
 	fmt.Fprint(w, "event: hello\ndata: {}\n\n")
 	flusher.Flush()
-
-	ch := s.subscribeEvents()
-	defer s.unsubscribeEvents(ch)
 
 	ctx := r.Context()
 	heartbeat := time.NewTicker(sseHeartbeatInterval)

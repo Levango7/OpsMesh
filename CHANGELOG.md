@@ -36,6 +36,23 @@
 - 守卫 3 例 + 窄变异 2 处（拆转义 / 拆白名单判红后复原）；盘点器复算 os_ext
   13 → 0、全仓 589 → 576。
 
+## [Unreleased-SSE竞态] — 2026-11-07（handleEventsStream 订阅注册提前到握手帧之前：修「首连丢第一条事件」）
+
+- **真缺陷，不是测试抖动**：`internal/controlplane` **整包**测试连续 2 次红在
+  `TestSSE_TenantIsolation`（`sse_test.go:329`：期望 task-a，实得 `": ping\n\n"`），
+  而该用例**隔离跑 `-count=10` 全过** ⇒ 竞态窗口依赖调度压力。
+- **根因（`sse.go` handleEventsStream）**：**先写 hello 握手帧、后注册订阅**（写帧 → 下一行才
+  `subscribeEvents()`）。客户端收到 hello 后通常立刻 publish 事件；该窗口内服务端尚未入册，
+  `publishEvent` 命中「无订阅者快速返回」⇒ **事件被静默丢弃** ⇒ 客户可见行为是
+  「刚连上的客户端丢掉第一条事件」（SSE 首帧丢失）。
+- **修复**：把 `subscribeEvents()` 提到握手帧**之前**（订阅先于握手）——客户端拿到 hello 时
+  订阅必已在册，事件进有缓冲 chan（cap 16）不会丢；租户过滤与事件格式一字未改。
+- **确定性回归测试**：新增 `TestSSE_SubscribeBeforeHello_NoFirstEventLoss`——用可控
+  ResponseWriter 在 hello 帧写入处卡住服务端，在卡住期间发布事件：修复前 **2/2 确定性失败**
+  （已实测：报「首连事件被丢弃」），修复后通过；整包 `go test ./internal/controlplane/`
+  197s 全绿（修复前同命令连续 2 次红）。
+- **协议文档同步**：`docs/sse-protocol.md` 的「握手与心跳」补上这条顺序保证（对外可见行为的契约化）。
+
 ## [Unreleased-Windows传输] — 2026-11-07（PS 家族 14 处收口：EncodedCommand 传输 + PS 单引号转义）
 
 - **`powershell -Command "..."` 在三层都不成立（本机实测）**：生产路径
