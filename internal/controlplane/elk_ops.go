@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -49,11 +50,16 @@ func (s *Server) handleElasticsearchDeploy(w http.ResponseWriter, r *http.Reques
 		memLimit = "512m"
 	}
 
+	// 注入面（批次 9）：version / memLimit 是用户可控字段。
+	// - ES_JAVA_OPTS 的值旧形态在**双引号段**内 ⇒ 直接塞 Quote 结果会让单引号变字面量
+	//   （双引号内单引号是字面量），故整个 env 值在 Go 层拼好后整体 Quote。
+	// - 镜像 tag 与回显文本同样要防：裸拼可被执行；回显的双引号段内 $ / 反引号会展开。
+	javaOpts := fmt.Sprintf("ES_JAVA_OPTS=-Xms%s -Xmx%s", memLimit, memLimit)
 	var script string
 	if mode == "cluster" {
-		script = fmt.Sprintf(`docker run -d --name elasticsearch -p %d:9200 -p 9300:9300 -e "discovery.type=zen" -e "ES_JAVA_OPTS=-Xms%s -Xmx%s" -e "xpack.security.enabled=false" docker.elastic.co/elasticsearch/elasticsearch:%s 2>/dev/null && echo "Elasticsearch %s deployed (cluster mode)"`, port, memLimit, memLimit, version, version)
+		script = fmt.Sprintf(`docker run -d --name elasticsearch -p %d:9200 -p 9300:9300 -e "discovery.type=zen" -e %s -e "xpack.security.enabled=false" docker.elastic.co/elasticsearch/elasticsearch:%s 2>/dev/null && %s`, port, shellquote.Quote(javaOpts), shellquote.Quote(version), esEcho("Elasticsearch "+version+" deployed (cluster mode)"))
 	} else {
-		script = fmt.Sprintf(`docker run -d --name elasticsearch -p %d:9200 -e "discovery.type=single-node" -e "ES_JAVA_OPTS=-Xms%s -Xmx%s" -e "xpack.security.enabled=false" docker.elastic.co/elasticsearch/elasticsearch:%s 2>/dev/null && echo "Elasticsearch %s deployed (single mode)"`, port, memLimit, memLimit, version, version)
+		script = fmt.Sprintf(`docker run -d --name elasticsearch -p %d:9200 -e "discovery.type=single-node" -e %s -e "xpack.security.enabled=false" docker.elastic.co/elasticsearch/elasticsearch:%s 2>/dev/null && %s`, port, shellquote.Quote(javaOpts), shellquote.Quote(version), esEcho("Elasticsearch "+version+" deployed (single mode)"))
 	}
 
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "elasticsearch_deploy")
@@ -180,25 +186,33 @@ func (s *Server) handleElasticsearchIndex(w http.ResponseWriter, r *http.Request
 		if body == "" {
 			body = "{}"
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/%s" -H "Content-Type: application/json" -d '%s' 2>/dev/null`, req.Index, body)
+		// 注入面（批次 9）：URL 整体 Quote（不能把 Quote 结果塞回双引号段——双引号内
+		// 单引号是字面量，URL 会带上 %27）；payload 是用户 JSON，先校验合法性再整体 Quote
+		// （旧形态 -d '%s' 遇单引号即破段 ⇒ 可执行注入）。
+		payload, err := esQuoteJSONText(body)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X PUT %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL(req.Index), payload)
 	case "delete":
 		if req.Index == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X DELETE "http://localhost:9200/%s" 2>/dev/null`, req.Index)
+		script = fmt.Sprintf(`curl -s -X DELETE %s 2>/dev/null`, esAPIURL(req.Index))
 	case "mapping":
 		if req.Index == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s "http://localhost:9200/%s/_mapping?pretty" 2>/dev/null`, req.Index)
+		script = fmt.Sprintf(`curl -s %s 2>/dev/null`, esAPIURL(req.Index+"/_mapping?pretty"))
 	case "settings":
 		if req.Index == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s "http://localhost:9200/%s/_settings?pretty" 2>/dev/null`, req.Index)
+		script = fmt.Sprintf(`curl -s %s 2>/dev/null`, esAPIURL(req.Index+"/_settings?pretty"))
 	case "aliases":
 		script = `curl -s http://localhost:9200/_aliases?pretty 2>/dev/null || echo "ES not available"`
 	default:
@@ -244,19 +258,24 @@ func (s *Server) handleElasticsearchILM(w http.ResponseWriter, r *http.Request) 
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "policy is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s http://localhost:9200/_ilm/policy/%s?pretty 2>/dev/null`, req.Policy)
+		script = fmt.Sprintf(`curl -s %s 2>/dev/null`, esAPIURL("_ilm/policy/"+req.Policy+"?pretty"))
 	case "create":
 		if req.Policy == "" || req.Body == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "policy and body are required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_ilm/policy/%s" -H "Content-Type: application/json" -d '%s' 2>/dev/null`, req.Policy, req.Body)
+		payload, err := esQuoteJSONText(req.Body)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X PUT %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_ilm/policy/"+req.Policy), payload)
 	case "delete":
 		if req.Policy == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "policy is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X DELETE "http://localhost:9200/_ilm/policy/%s" 2>/dev/null`, req.Policy)
+		script = fmt.Sprintf(`curl -s -X DELETE %s 2>/dev/null`, esAPIURL("_ilm/policy/"+req.Policy))
 	case "explain":
 		if req.Policy == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "policy is required"})
@@ -306,7 +325,16 @@ func (s *Server) handleElasticsearchSnapshot(w http.ResponseWriter, r *http.Requ
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "repo and location are required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_snapshot/%s" -H "Content-Type: application/json" -d '{"type":"fs","settings":{"location":"%s"}}' 2>/dev/null`, req.Repo, req.Location)
+		// location 嵌在 JSON 里：改由 Go 层构造（JSON 转义交给标准库），再整体 Quote。
+		payload, err := esJSONPayload(map[string]any{
+			"type":     "fs",
+			"settings": map[string]any{"location": req.Location},
+		})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid location: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X PUT %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_snapshot/"+req.Repo), payload)
 	case "create-snapshot":
 		if req.Repo == "" || req.Snapshot == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "repo and snapshot are required"})
@@ -316,25 +344,30 @@ func (s *Server) handleElasticsearchSnapshot(w http.ResponseWriter, r *http.Requ
 		if indices == "" {
 			indices = "*"
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_snapshot/%s/%s?wait_for_completion=true" -H "Content-Type: application/json" -d '{"indices":"%s"}' 2>/dev/null`, req.Repo, req.Snapshot, indices)
+		payload, err := esJSONPayload(map[string]any{"indices": indices})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid indices: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X PUT %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_snapshot/"+req.Repo+"/"+req.Snapshot+"?wait_for_completion=true"), payload)
 	case "restore":
 		if req.Repo == "" || req.Snapshot == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "repo and snapshot are required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/_snapshot/%s/%s/_restore" 2>/dev/null`, req.Repo, req.Snapshot)
+		script = fmt.Sprintf(`curl -s -X POST %s 2>/dev/null`, esAPIURL("_snapshot/"+req.Repo+"/"+req.Snapshot+"/_restore"))
 	case "list":
 		if req.Repo == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "repo is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s "http://localhost:9200/_snapshot/%s/_all?pretty" 2>/dev/null`, req.Repo)
+		script = fmt.Sprintf(`curl -s %s 2>/dev/null`, esAPIURL("_snapshot/"+req.Repo+"/_all?pretty"))
 	case "delete":
 		if req.Repo == "" || req.Snapshot == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "repo and snapshot are required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X DELETE "http://localhost:9200/_snapshot/%s/%s" 2>/dev/null`, req.Repo, req.Snapshot)
+		script = fmt.Sprintf(`curl -s -X DELETE %s 2>/dev/null`, esAPIURL("_snapshot/"+req.Repo+"/"+req.Snapshot))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -373,7 +406,15 @@ func (s *Server) handleElasticsearchReindex(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	script := fmt.Sprintf(`curl -s -X POST "http://localhost:9200/_reindex" -H "Content-Type: application/json" -d '{"source":{"index":"%s"},"dest":{"index":"%s"}}' 2>/dev/null`, req.Source, req.Dest)
+	payload, err := esJSONPayload(map[string]any{
+		"source": map[string]any{"index": req.Source},
+		"dest":   map[string]any{"index": req.Dest},
+	})
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid reindex: " + err.Error()})
+		return
+	}
+	script := fmt.Sprintf(`curl -s -X POST %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_reindex"), payload)
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "elasticsearch_reindex")
 	if !ok {
 		return
@@ -418,13 +459,27 @@ func (s *Server) handleElasticsearchSecurity(w http.ResponseWriter, r *http.Requ
 		if roles == "" {
 			roles = "[]"
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/_security/user/%s" -H "Content-Type: application/json" -d '{"password":"%s","roles":%s}' 2>/dev/null`, req.User, req.Password, roles)
+		// roles 是 JSON 数组文本：先校验合法性（非法 ⇒ 400），再作为 RawMessage 原样嵌入
+		// （旧形态是裸插进 JSON 字面量，用户给个 `"` 就能破坏 JSON 结构）。
+		if !json.Valid([]byte(roles)) {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid roles: not valid JSON"})
+			return
+		}
+		payload, err := esJSONPayload(map[string]any{
+			"password": req.Password,
+			"roles":    json.RawMessage(roles),
+		})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid user payload: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X POST %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_security/user/"+req.User), payload)
 	case "delete-user":
 		if req.User == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X DELETE "http://localhost:9200/_security/user/%s" 2>/dev/null`, req.User)
+		script = fmt.Sprintf(`curl -s -X DELETE %s 2>/dev/null`, esAPIURL("_security/user/"+req.User))
 	case "list-roles":
 		script = `curl -s http://localhost:9200/_security/role?pretty 2>/dev/null || echo "Security not enabled"`
 	case "create-role":
@@ -432,7 +487,8 @@ func (s *Server) handleElasticsearchSecurity(w http.ResponseWriter, r *http.Requ
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "role is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/_security/role/%s" -H "Content-Type: application/json" -d '{"cluster":["all"],"indices":[{"names":["*"],"privileges":["all"]}]}' 2>/dev/null`, req.Role)
+		// 载荷是固定字面量（不含用户字段），只有 URL 需要 Quote。
+		script = fmt.Sprintf(`curl -s -X POST %s -H "Content-Type: application/json" -d '{"cluster":["all"],"indices":[{"names":["*"],"privileges":["all"]}]}' 2>/dev/null`, esAPIURL("_security/role/"+req.Role))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -475,7 +531,7 @@ func (s *Server) handleElasticsearchUpgrade(w http.ResponseWriter, r *http.Reque
 		if version == "" {
 			version = "8.13.0"
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_cluster/settings" -H "Content-Type: application/json" -d '{"transient":{"cluster.routing.allocation.enable":"none"}}' 2>/dev/null && docker stop elasticsearch && docker rm elasticsearch && docker run -d --name elasticsearch -p 9200:9200 -e "discovery.type=single-node" docker.elastic.co/elasticsearch/elasticsearch:%s && echo "Upgraded to %s"`, version, version)
+		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_cluster/settings" -H "Content-Type: application/json" -d '{"transient":{"cluster.routing.allocation.enable":"none"}}' 2>/dev/null && docker stop elasticsearch && docker rm elasticsearch && docker run -d --name elasticsearch -p 9200:9200 -e "discovery.type=single-node" docker.elastic.co/elasticsearch/elasticsearch:%s && %s`, shellquote.Quote(version), esEcho("Upgraded to "+version))
 	case "rollback":
 		script = `docker stop elasticsearch && docker rm elasticsearch && docker run -d --name elasticsearch -p 9200:9200 -e "discovery.type=single-node" docker.elastic.co/elasticsearch/elasticsearch:8.12.0 && echo "Rollback complete"`
 	case "version":
@@ -522,7 +578,7 @@ func (s *Server) handleLogstash(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "8.13.0"
 		}
-		script := fmt.Sprintf(`docker run -d --name logstash -p 5044:5044 -p 9600:9600 -v /etc/logstash:/usr/share/logstash/config docker.elastic.co/logstash/logstash:%s 2>/dev/null && echo "Logstash %s deployed"`, version, version)
+		script := fmt.Sprintf(`docker run -d --name logstash -p 5044:5044 -p 9600:9600 -v /etc/logstash:/usr/share/logstash/config docker.elastic.co/logstash/logstash:%s 2>/dev/null && %s`, shellquote.Quote(version), esEcho("Logstash "+version+" deployed"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "logstash_deploy")
 		if !ok {
 			return
@@ -542,7 +598,10 @@ func (s *Server) handleLogstash(w http.ResponseWriter, r *http.Request) {
 		if config == "" {
 			config = "input { beats { port => 5044 } } output { elasticsearch { hosts => [\"localhost:9200\"] } }"
 		}
-		script := fmt.Sprintf(`echo '%s' > /etc/logstash/conf.d/%s.conf && echo "Pipeline %s created"`, config, req.Name, req.Name)
+		// config 是 logstash 配置文本（不是 JSON）：只能整体 Quote（Quote 会正确处理其中的
+		// 单引号——旧形态 `echo '%s'` 遇单引号即破段 ⇒ 可执行注入）。
+		// 文件名路径段同样 Quote（shell 剥引号后路径不变）。
+		script := fmt.Sprintf(`%s > /etc/logstash/conf.d/%s.conf && %s`, esEcho(config), shellquote.Quote(req.Name), esEcho("Pipeline "+req.Name+" created"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "logstash_pipeline")
 		if !ok {
 			return
@@ -603,7 +662,8 @@ func (s *Server) handleKibana(w http.ResponseWriter, r *http.Request) {
 		if esURL == "" {
 			esURL = "http://localhost:9200"
 		}
-		script := fmt.Sprintf(`docker run -d --name kibana -p 5601:5601 -e "ELASTICSEARCH_HOSTS=%s" docker.elastic.co/kibana/kibana:%s 2>/dev/null && echo "Kibana %s deployed"`, esURL, version, version)
+		// ELASTICSEARCH_HOSTS 的值旧形态在双引号段内 ⇒ 整个 env 值整体 Quote。
+		script := fmt.Sprintf(`docker run -d --name kibana -p 5601:5601 -e %s docker.elastic.co/kibana/kibana:%s 2>/dev/null && %s`, shellquote.Quote("ELASTICSEARCH_HOSTS="+esURL), shellquote.Quote(version), esEcho("Kibana "+version+" deployed"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "kibana_deploy")
 		if !ok {
 			return
@@ -677,7 +737,7 @@ func (s *Server) handleFilebeat(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "8.13.0"
 		}
-		script := fmt.Sprintf(`docker run -d --name filebeat --user=root -v /var/log:/var/log:ro -v /etc/filebeat:/usr/share/filebeat docker.elastic.co/beats/filebeat:%s 2>/dev/null && echo "Filebeat %s deployed"`, version, version)
+		script := fmt.Sprintf(`docker run -d --name filebeat --user=root -v /var/log:/var/log:ro -v /etc/filebeat:/usr/share/filebeat docker.elastic.co/beats/filebeat:%s 2>/dev/null && %s`, shellquote.Quote(version), esEcho("Filebeat "+version+" deployed"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "filebeat_deploy")
 		if !ok {
 			return
@@ -742,7 +802,7 @@ func (s *Server) handleOpenSearch(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "2.13.0"
 		}
-		script := fmt.Sprintf(`docker run -d --name opensearch -p 9200:9200 -p 9600:9600 -e "discovery.type=single-node" -e "OPENSEARCH_INITIAL_ADMIN_PASSWORD=admin" opensearchproject/opensearch:%s 2>/dev/null && echo "OpenSearch %s deployed"`, version, version)
+		script := fmt.Sprintf(`docker run -d --name opensearch -p 9200:9200 -p 9600:9600 -e "discovery.type=single-node" -e "OPENSEARCH_INITIAL_ADMIN_PASSWORD=admin" opensearchproject/opensearch:%s 2>/dev/null && %s`, shellquote.Quote(version), esEcho("OpenSearch "+version+" deployed"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "opensearch_deploy")
 		if !ok {
 			return
@@ -765,7 +825,7 @@ func (s *Server) handleOpenSearch(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index is required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/%s" 2>/dev/null && echo "Index %s created"`, req.Index, req.Index)
+		script := fmt.Sprintf(`curl -s -X PUT %s 2>/dev/null && %s`, esAPIURL(req.Index), esEcho("Index "+req.Index+" created"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "opensearch_index")
 		if !ok {
 			return

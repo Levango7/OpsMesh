@@ -45,25 +45,37 @@ func (s *Server) handleElasticsearchPipeline(w http.ResponseWriter, r *http.Requ
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s http://localhost:9200/_ingest/pipeline/%s?pretty 2>/dev/null`, req.Name)
+		script = fmt.Sprintf(`curl -s %s 2>/dev/null`, esAPIURL("_ingest/pipeline/"+req.Name+"?pretty"))
 	case "create":
 		if req.Name == "" || req.Body == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name and body are required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_ingest/pipeline/%s" -H "Content-Type: application/json" -d '%s' 2>/dev/null`, req.Name, req.Body)
+		// 注入面（批次 9）：URL 整体 Quote；payload 是用户 JSON，校验后整体 Quote
+		// （旧形态 -d '%s' 遇单引号即破段 ⇒ 可执行注入）。
+		payload, err := esQuoteJSONText(req.Body)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X PUT %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_ingest/pipeline/"+req.Name), payload)
 	case "delete":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X DELETE "http://localhost:9200/_ingest/pipeline/%s" 2>/dev/null`, req.Name)
+		script = fmt.Sprintf(`curl -s -X DELETE %s 2>/dev/null`, esAPIURL("_ingest/pipeline/"+req.Name))
 	case "simulate":
 		if req.Body == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "body is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/_ingest/pipeline/_simulate" -H "Content-Type: application/json" -d '%s' 2>/dev/null`, req.Body)
+		payload, err := esQuoteJSONText(req.Body)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X POST %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_ingest/pipeline/_simulate"), payload)
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -107,19 +119,24 @@ func (s *Server) handleElasticsearchTemplate(w http.ResponseWriter, r *http.Requ
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s http://localhost:9200/_index_template/%s?pretty 2>/dev/null`, req.Name)
+		script = fmt.Sprintf(`curl -s %s 2>/dev/null`, esAPIURL("_index_template/"+req.Name+"?pretty"))
 	case "create":
 		if req.Name == "" || req.Body == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name and body are required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_index_template/%s" -H "Content-Type: application/json" -d '%s' 2>/dev/null`, req.Name, req.Body)
+		payload, err := esQuoteJSONText(req.Body)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X PUT %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_index_template/"+req.Name), payload)
 	case "delete":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X DELETE "http://localhost:9200/_index_template/%s" 2>/dev/null`, req.Name)
+		script = fmt.Sprintf(`curl -s -X DELETE %s 2>/dev/null`, esAPIURL("_index_template/"+req.Name))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -163,13 +180,28 @@ func (s *Server) handleElasticsearchAlias(w http.ResponseWriter, r *http.Request
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "alias and index are required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/_aliases" -H "Content-Type: application/json" -d '{"actions":[{"add":{"index":"%s","alias":"%s"}}]}' 2>/dev/null`, req.Index, req.Alias)
+		// index / alias 嵌在 JSON 里：Go 层构造（JSON 转义交给标准库）后整体 Quote。
+		payload, err := esJSONPayload(map[string]any{
+			"actions": []any{map[string]any{"add": map[string]any{"index": req.Index, "alias": req.Alias}}},
+		})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid alias: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X POST %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_aliases"), payload)
 	case "remove":
 		if req.Alias == "" || req.Index == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "alias and index are required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/_aliases" -H "Content-Type: application/json" -d '{"actions":[{"remove":{"index":"%s","alias":"%s"}}]}' 2>/dev/null`, req.Index, req.Alias)
+		payload, err := esJSONPayload(map[string]any{
+			"actions": []any{map[string]any{"remove": map[string]any{"index": req.Index, "alias": req.Alias}}},
+		})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid alias: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X POST %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_aliases"), payload)
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -212,19 +244,19 @@ func (s *Server) handleElasticsearchDataStream(w http.ResponseWriter, r *http.Re
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_data_stream/%s" 2>/dev/null`, req.Name)
+		script = fmt.Sprintf(`curl -s -X PUT %s 2>/dev/null`, esAPIURL("_data_stream/"+req.Name))
 	case "delete":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X DELETE "http://localhost:9200/_data_stream/%s" 2>/dev/null`, req.Name)
+		script = fmt.Sprintf(`curl -s -X DELETE %s 2>/dev/null`, esAPIURL("_data_stream/"+req.Name))
 	case "rollover":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/%s/_rollover" 2>/dev/null`, req.Name)
+		script = fmt.Sprintf(`curl -s -X POST %s 2>/dev/null`, esAPIURL(req.Name+"/_rollover"))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -271,25 +303,25 @@ func (s *Server) handleElasticsearchMaintenance(w http.ResponseWriter, r *http.R
 		if segments <= 0 {
 			segments = 1
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/%s/_forcemerge?max_num_segments=%d" 2>/dev/null`, index, segments)
+		script = fmt.Sprintf(`curl -s -X POST %s 2>/dev/null`, esAPIURL(fmt.Sprintf("%s/_forcemerge?max_num_segments=%d", index, segments)))
 	case "clear-cache":
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/%s/_cache/clear" 2>/dev/null`, index)
+		script = fmt.Sprintf(`curl -s -X POST %s 2>/dev/null`, esAPIURL(index+"/_cache/clear"))
 	case "flush":
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/%s/_flush" 2>/dev/null`, index)
+		script = fmt.Sprintf(`curl -s -X POST %s 2>/dev/null`, esAPIURL(index+"/_flush"))
 	case "refresh":
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/%s/_refresh" 2>/dev/null`, index)
+		script = fmt.Sprintf(`curl -s -X POST %s 2>/dev/null`, esAPIURL(index+"/_refresh"))
 	case "shrink":
 		if index == "_all" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index is required for shrink"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/%s/_shrink/%s_shrunk" 2>/dev/null`, index, index)
+		script = fmt.Sprintf(`curl -s -X POST %s 2>/dev/null`, esAPIURL(index+"/_shrink/"+index+"_shrunk"))
 	case "split":
 		if index == "_all" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index is required for split"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/%s/_split/%s_split" 2>/dev/null`, index, index)
+		script = fmt.Sprintf(`curl -s -X POST %s 2>/dev/null`, esAPIURL(index+"/_split/"+index+"_split"))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -332,7 +364,12 @@ func (s *Server) handleElasticsearchClusterSettings(w http.ResponseWriter, r *ht
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "body is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_cluster/settings" -H "Content-Type: application/json" -d '%s' 2>/dev/null`, req.Body)
+		payload, err := esQuoteJSONText(req.Body)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X PUT %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_cluster/settings"), payload)
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -375,7 +412,16 @@ func (s *Server) handleElasticsearchCCR(w http.ResponseWriter, r *http.Request) 
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index and leader are required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/%s/_ccr/follow?wait_for_active_shards=1" -H "Content-Type: application/json" -d '{"remote_cluster":"%s","leader_index":"%s"}' 2>/dev/null`, req.Index, req.Remote, req.Leader)
+		// remote / leader 嵌在 JSON 里：Go 层构造后整体 Quote。
+		payload, err := esJSONPayload(map[string]any{
+			"remote_cluster": req.Remote,
+			"leader_index":   req.Leader,
+		})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid ccr: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X PUT %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL(req.Index+"/_ccr/follow?wait_for_active_shards=1"), payload)
 	case "list":
 		script = `curl -s http://localhost:9200/_ccr/stats?pretty 2>/dev/null || echo "CCR not available"`
 	case "pause":
@@ -383,13 +429,13 @@ func (s *Server) handleElasticsearchCCR(w http.ResponseWriter, r *http.Request) 
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/%s/_ccr/pause_follow" 2>/dev/null`, req.Index)
+		script = fmt.Sprintf(`curl -s -X POST %s 2>/dev/null`, esAPIURL(req.Index+"/_ccr/pause_follow"))
 	case "resume":
 		if req.Index == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:9200/%s/_ccr/resume_follow" 2>/dev/null`, req.Index)
+		script = fmt.Sprintf(`curl -s -X POST %s 2>/dev/null`, esAPIURL(req.Index+"/_ccr/resume_follow"))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -433,31 +479,36 @@ func (s *Server) handleElasticsearchWatcher(w http.ResponseWriter, r *http.Reque
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "watchId is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s http://localhost:9200/_watcher/watch/%s?pretty 2>/dev/null`, req.WatchID)
+		script = fmt.Sprintf(`curl -s %s 2>/dev/null`, esAPIURL("_watcher/watch/"+req.WatchID+"?pretty"))
 	case "create":
 		if req.WatchID == "" || req.Body == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "watchId and body are required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_watcher/watch/%s" -H "Content-Type: application/json" -d '%s' 2>/dev/null`, req.WatchID, req.Body)
+		payload, err := esQuoteJSONText(req.Body)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X PUT %s -H "Content-Type: application/json" -d %s 2>/dev/null`, esAPIURL("_watcher/watch/"+req.WatchID), payload)
 	case "delete":
 		if req.WatchID == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "watchId is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X DELETE "http://localhost:9200/_watcher/watch/%s" 2>/dev/null`, req.WatchID)
+		script = fmt.Sprintf(`curl -s -X DELETE %s 2>/dev/null`, esAPIURL("_watcher/watch/"+req.WatchID))
 	case "activate":
 		if req.WatchID == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "watchId is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_watcher/watch/%s/_activate" 2>/dev/null`, req.WatchID)
+		script = fmt.Sprintf(`curl -s -X PUT %s 2>/dev/null`, esAPIURL("_watcher/watch/"+req.WatchID+"/_activate"))
 	case "deactivate":
 		if req.WatchID == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "watchId is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X PUT "http://localhost:9200/_watcher/watch/%s/_deactivate" 2>/dev/null`, req.WatchID)
+		script = fmt.Sprintf(`curl -s -X PUT %s 2>/dev/null`, esAPIURL("_watcher/watch/"+req.WatchID+"/_deactivate"))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
