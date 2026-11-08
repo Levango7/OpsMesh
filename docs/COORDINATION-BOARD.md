@@ -116,8 +116,7 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  internal/ai/gateway/rag.go,internal/ai/gateway/prompt.go,internal/knowledge/retrieval.go,internal/ai/gateway/gateway.go,internal/ai/gateway/handler.go,internal/ai/gateway/circuitbreaker.go,internal/cost/handler.go,internal/controlplane/authctx*.go,internal/config/config.go,internal/gates,CHANGELOG.md,docs/tech-debt.md <- zcode  (ttl=48h by zcode)
-  web/enterprise/src/api/*.js,web/enterprise/src/views/*.vue,web/enterprise/src/stores/auth*.js,web/enterprise/src/router/index.js,web/enterprise/src/composables/*,web/enterprise/src/i18n/locales/{zh,en}/*.json,CHANGELOG.md <- zcode  (ttl=24h by zcode)
+  internal/agent/agent.go,internal/automation/engine.go,internal/cmdb/handler.go,internal/cmdb/sql.go,internal/controlplane/auth.go,internal/controlplane/tenant.go,internal/controlplane/git_unix_ops.go <- kilo  (ttl=24h by kilo)
   web/enterprise/src/views/**/*.vue,web/enterprise/src/views/__tests__/FluxView.spec.js,web/enterprise/src/i18n/locales/{zh,en}/delivery.json,CHANGELOG.md <- zcode  (ttl=48h by zcode)
 
 TASKS:
@@ -126,9 +125,12 @@ TASKS:
 ISSUES:
   CLAIM 过期未闭环：CHANGELOG.md,docs/decision-materials-2026-11-04.md,docs/INBOX-ZCODE.md,docs/CLAIMS.md（认领人 workbuddy，ttl 6h）
   CLAIM 过期未闭环：docs/projects-2026-11-05.md,docs/CLAIMS.md（认领人 workbuddy，ttl 4h）
+  CLAIM 过期未闭环：internal/ai/gateway/rag.go,internal/ai/gateway/prompt.go,internal/knowledge/retrieval.go,internal/ai/gateway/gateway.go,internal/ai/gateway/handler.go,internal/ai/gateway/circuitbreaker.go,internal/cost/handler.go,internal/controlplane/authctx*.go,internal/config/config.go,internal/gates,CHANGELOG.md,docs/tech-debt.md（认领人 zcode，ttl 48h）
   CLAIM 过期未闭环：internal/controlplane/db_cloud_managed_ops.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/apache_ext_ops2.go,internal/controlplane/elasticsearch_ops_ext.go,internal/controlplane/ops_route_authz_test.go,docs/projects-2026-11-05.md,CHANGELOG.md,docs/CLAIMS.md（认领人 workbuddy，ttl 6h）
   CLAIM 过期未闭环：internal/controlplane/db_cloud_managed_ops.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/db_extended_ops.go,internal/controlplane/apache_ext_ops2.go,internal/controlplane/elasticsearch_ops_ext.go,internal/controlplane/trace.go,internal/controlplane/ops_route_authz_test.go,internal/gates/ops_route_ratchet_gate_test.go,CHANGELOG.md,docs/CLAIMS.md（认领人 workbuddy，ttl 8h）
   CLAIM 过期未闭环：internal/gates/ops_route_ratchet_gate_test.go,docs/projects-2026-11-05.md,CHANGELOG.md,docs/CLAIMS.md（认领人 workbuddy，ttl 6h）
+  CLAIM 过期未闭环：web/enterprise/src/api/*.js,web/enterprise/src/views/*.vue,web/enterprise/src/stores/auth*.js,web/enterprise/src/router/index.js,web/enterprise/src/composables/*,web/enterprise/src/i18n/locales/{zh,en}/*.json,CHANGELOG.md（认领人 zcode，ttl 24h）
+  CLAIM 过期未闭环：web/enterprise/src/views/AdminConsoleView.vue,web/enterprise/src/api/admin.js,web/enterprise/src/i18n/en.json,web/enterprise/src/i18n/locales/en/common.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/i18n/locales/zh/common.json,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/zh.json,web/enterprise/src/api/__tests__/api-usage.test.js（认领人 kilo，ttl 24h）
   CLAIM 过期未闭环：web/enterprise/src/views/CostView.vue,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/views/__tests__/CostView.spec.js,docs/CLAIMS.md（认领人 qoder，ttl 4h）
 
 CONFLICT: 同 scope 重复认领：docs/projects-2026-11-05.md,docs/CLAIMS.md
