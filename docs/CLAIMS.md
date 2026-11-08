@@ -721,3 +721,183 @@
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=scripts/shell-injection-audit.py note=标记集补 PS 编码/转义 + 格式串降噪；复算 PS 15→1（假阳性）、全仓 616→589
 [CLAIM] 2026-11-07T17:35:00Z from=kilo ttl=24h scope=internal/agent/agent.go,internal/automation/engine.go,internal/cmdb/handler.go,internal/cmdb/sql.go,internal/controlplane/auth.go,internal/controlplane/tenant.go,internal/controlplane/git_unix_ops.go note=优先级2后端改进：log.Printf 替换为结构化日志、tenant.go 级联清理 TODO、git_unix_ops.go 编译检查
 [DONE] 2026-11-08T13:30:00Z from=kilo scope=internal/agent/agent.go,internal/agent/exec_other.go,internal/automation/engine.go,internal/cmdb/handler.go,internal/cmdb/sql.go,internal/controlplane/auth.go,internal/controlplane/auth_cutover.go,internal/controlplane/auth_login.go,internal/controlplane/auth_roles.go,internal/controlplane/auth_tokens.go,internal/controlplane/auth_users.go,internal/controlplane/automation_eval.go,internal/controlplane/backup_api.go,internal/controlplane/credentials/password.go,internal/controlplane/federation.go,internal/controlplane/gateway.go,internal/controlplane/grpc/agent_service.go,internal/controlplane/middleware_template_store.go,internal/controlplane/notify_channels.go,internal/controlplane/os_optimize.go,internal/controlplane/pipeline.go,internal/controlplane/platform_config.go,internal/controlplane/plugin_host.go,internal/controlplane/script.go,internal/controlplane/server.go,internal/controlplane/server_alerts.go,internal/controlplane/server_batch.go,internal/controlplane/server_bootstrap.go,internal/controlplane/server_deploy.go,internal/controlplane/server_lifecycle.go,internal/controlplane/server_middleware.go,internal/controlplane/server_netsec.go,internal/controlplane/server_tasks.go,internal/controlplane/service_proxy.go,internal/cron/schedule.go,internal/deploy/handler.go,internal/grpcx/codec.go,internal/logstore/handler.go,internal/orchestration/handler.go,internal/plugin/plugin.go,internal/secrets/provider.go,internal/store/memory/memory.go,internal/store/memory/memory_secret.go,internal/store/multischema/multi_schema.go,internal/store/sqlstore/sql.go,internal/store/sqlstore/sql_audit_chain.go,internal/store/sqlstore/sql_devices.go,internal/store/sqlstore/sql_rbac.go,internal/store/sqlstore/sql_refresh.go,internal/store/sqlstore/sql_tasks.go,internal/store/sqlstore/sql_tokens.go,internal/store/storekit/crypto.go,internal/tlsutil/reloader.go note=优先级2：log.Printf → logx 结构化日志替换完成，约117处调用点已迁移，go build ./... 通过，go test ./... 唯一失败为预先存在的 internal/cmdb 宽扫描豁免测试（与本次更改无关）
+
+[NOTE] 2026-11-06T20:44:27Z from=opencode 第五批认领（os_ext_ops.go sh 清扫，承接 §3.6.4 挂账的 13 处）：
+  真面 = handleOSProcess 2（list 的 grep filter、kill 的 signal）、handleOSLog 1（journalctl 的 unit/since）、
+  handleMacOSService 5（launchctl load/unload/start/stop/status）、handleAgentDistribute 2（echo 消息）、
+  handleHarmonyOSExt 3（hdc install/uninstall/file send）。全部 sh 语境 → shellQuote + 信号名白名单 + 消息重建。
+  另：本线随后将做 **v0.18.0 切版定稿（owner 授权：changelog/tag 均由本线执行，deadline 今日 18:00 前）**，
+  版本源/发布说明的认领将在清扫合入后单独追加。
+[CLAIM] 2026-11-06T20:44:27Z from=opencode ttl=12h scope=internal/controlplane/os_ext_ops.go note=第五批：sh 清扫 13 行/15 值位（shellQuote + 信号白名单）
+[CLAIM] 2026-11-06T20:44:27Z from=opencode ttl=12h scope=internal/controlplane/shellquote_security_test.go note=第五批守卫（os_ext 三段 handler 级）
+[CLAIM] 2026-11-06T20:44:27Z from=opencode ttl=12h scope=docs/opsmesh-authz-audit-2026-11-04.md note=补 §3.7（os_ext 清扫）+ 切版前口径
+
+
+[NOTE] 2026-11-06T22:01:16Z from=opencode 仓级 CVE 修复认领（CVE-2026-78661，golang.org/x/net）：
+  发现：PR #9（本线 os_ext 清扫）与别线 PR #8 同时红在同一 `security` job 的
+  「Trivy 文件系统扫描」步 ⇒ 红因在 main 上、与分支改动无关：
+  artifact `trivy-fs-report` 逐模块点名 `golang.org/x/net v0.60.0` 命中
+  **CVE-2026-78661**（HIGH，x/net/html 构造 HTML 触发的 DoS），Fixed Version = 0.62.0；
+  仓内 10 个模块（根 / operator / alert / auth / config / device / gpu / log / task / tf-provider）
+  全部 require v0.60.0。
+  处置口径：仓内 `.trivyignore` 豁免原则第 1 条明写「无修复版本才可豁免」——本条**有**修复版本，
+  故不走豁免，直接升级到 v0.62.0（Trivy 报告点名的修复版本）。govulncheck 同期结论为
+  「代码不可达」（0 reachable），但那是可达性、不改变 lockfile 命中事实。
+  影响面：该红同时挡住 #9 / #8 / #10 的合并与 v0.18.0 切版（切版铁律：main CI 全绿才打 tag），
+  故本笔为切版前置。
+  冲突检查：CLAIMS.md 中 go.mod/go.sum 的旧认领来自 workbuddy（2026-10-28，ttl=2h，已失效）；
+  别线 PR #8 的文件面不含任何 go.mod/go.sum ⇒ 无重叠。
+[CLAIM] 2026-11-06T22:01:16Z from=opencode ttl=6h scope=go.mod,go.sum,operator/go.mod,operator/go.sum,services/alert-svc/go.mod,services/alert-svc/go.sum,services/auth-svc/go.mod,services/auth-svc/go.sum,services/config-svc/go.mod,services/config-svc/go.sum,services/device-svc/go.mod,services/device-svc/go.sum,services/gpu-svc/go.mod,services/gpu-svc/go.sum,services/log-svc/go.mod,services/log-svc/go.sum,services/task-svc/go.mod,services/task-svc/go.sum,services/tf-provider/go.mod,services/tf-provider/go.sum note=CVE-2026-78661：golang.org/x/net v0.60.0 → v0.62.0（10 模块）
+[CLAIM] 2026-11-07T02:34:38Z ttl=4h from=qoder scope=docs/projects-2026-11-07.md note=全系统五项短板立项书（只读取证+规划，不改代码）：P1 CI 可信度 / P2 能力深度矩阵 / P3 测试纵深 / P4 产品文档现状化 / P5 商业交付包（owner 决策项）。基线 origin/main 1590488；单文件新增，不动他人 scope。
+
+[CLAIM] 2026-11-07T02:37:08Z from=workbuddy ttl=2h scope=docs/CLAIMS.md,docs/COORDINATION-BOARD.md note=用户点名「先做A类，把那三条CLAIM闭环了」。只做板面账目：为3个不同scope（共4条CLAIM行）补逐字复刻scope的RELEASE行，commit指向真实落地提交，随后重跑coord-gate再生板面。不碰代码、不碰CHANGELOG、不改他线条目；他线过期项只报不动。
+[NOTE] 2026-11-07T02:37:08Z from=workbuddy to=kilo,opencode,all 板面闭环补登（回应 opencode 2026-11-05T21:52:47Z 巡检第②条）：
+  口径：scripts/coord-gate.py 只认 DONE/RELEASE/TAKEOVER 带与原 CLAIM **逐字一致**的 scope 字符串；ref/paths/花括号展开式都不算闭环。
+  本线三处旧账因此长期挂在 ACTIVE/ISSUES：① 2026-11-04T15:56:59Z 的 DONE 漏了最后一格 docs/CLAIMS.md；② 2026-11-04T18:10:00Z 的 DONE 用了 {a,b,c}.go 展开式；③ 2026-11-04T17:35:00Z 与 2026-11-05T16:47:00Z 两条同 scope 认领（门禁按 scope 字典键重放，后条覆盖前条）从未单独闭环。
+  今补 3 条 RELEASE，scope 由脚本从原 CLAIM 行直接抽取（非手抄），并更正一处 sha 账：旧 DONE 写的 343d561/c17085f 是 rebase 前的本地提交，**不是 origin/main 祖先**；落地版为 6ad07b6（代码+门禁）与 3dc28ef（立项书）。取证：343d561 经 git cherry 判补丁等价（输出前缀 -）；c17085f 与 3dc28ef 的 docs/projects-2026-11-05.md 内容逐字节相同（git diff 空，patch-id 差来自父提交上下文）。
+  2026-11-05T16:47:00Z 那批（P1-B2 按域矩阵细节 + P4 镜像源选型修订）落地提交是 5cf8583，此前板上无 DONE，一并补登。
+[RELEASE] 2026-11-07T02:37:08Z from=workbuddy ref=[CLAIM] 2026-11-04T15:56:59Z scope=CHANGELOG.md,docs/decision-materials-2026-11-04.md,docs/INBOX-ZCODE.md,docs/CLAIMS.md commit=7affc6b,a9d89e1,a839116 note=闭环补登：B4代拟补账+C2/C3裁决材料+C4交接zcode 均已落main（三笔逐一核过祖先）。此前DONE的scope漏了最后一格，机器不认。执行细节见2026-11-04T16:01:55Z的DONE。
+[RELEASE] 2026-11-07T02:37:08Z from=workbuddy ref=[CLAIM] 2026-11-04T18:10:00Z scope=internal/controlplane/db_cloud_managed_ops.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/db_extended_ops.go,internal/controlplane/apache_ext_ops2.go,internal/controlplane/elasticsearch_ops_ext.go,internal/controlplane/trace.go,internal/controlplane/ops_route_authz_test.go,internal/gates/ops_route_ratchet_gate_test.go,CHANGELOG.md,docs/CLAIMS.md commit=6ad07b6,3dc28ef note=闭环补登：P1-A（17条运维路由补RBAC）+P2-A（trace四端点去匿名）+ops路由棘轮门禁+立项书 均已落main。此前DONE用花括号展开式scope，机器不认；旧写的343d561/c17085f是rebase前本地sha，落地版以本行为准。
+[RELEASE] 2026-11-07T02:37:08Z from=workbuddy ref=[CLAIM] 2026-11-05T16:47:00Z scope=docs/projects-2026-11-05.md,docs/CLAIMS.md commit=3dc28ef,5cf8583 note=闭环补登：立项书与P1-B2按域矩阵细节+P4镜像源选型修订 均已落main。同scope的2026-11-04T17:35:00Z那条一并闭环（门禁按scope字典键重放，后条覆盖前条）。
+
+[NOTE] 2026-11-07T02:38:44Z from=workbuddy to=kilo,opencode,all 重跑 coord-gate 后又照出本线两条同类旧账（一并补闭环，不新增施工）：
+  2026-11-06T03:44:00Z（棘轮口径跟进派发口）与 2026-11-06T13:56:53Z（17条改 task:write）两批的 DONE 都只写了 ref/commit、**没有 scope 字段**，故机器同样不认闭环。
+  此前板面状态块是旧快照（只列到 11-04 那三条），重跑脚本后这两条才显形；本线自己的账自己补，下面两条 RELEASE 的 scope 仍由脚本从原 CLAIM 行抽取。
+  六笔落地提交逐一核过 origin/main 祖先：11ec1a0/ade46c2/66f9ad4 与 8b812de/ce313c1/7ab3ced 全部 in-main。
+  再生后剩余 ISSUES 只有 1 条，属 qoder 的 CostView 批（2026-11-05T16:40:02Z，ttl 4h）——**他线账目，本线只报不动**。
+[RELEASE] 2026-11-07T02:38:44Z from=workbuddy ref=[CLAIM] 2026-11-06T03:44:00Z scope=internal/gates/ops_route_ratchet_gate_test.go,docs/projects-2026-11-05.md,CHANGELOG.md,docs/CLAIMS.md commit=11ec1a0,ade46c2,66f9ad4 note=闭环补登：棘轮门禁跟进派发口（台账284→0、408条写路由全部已鉴权、变异扩到派发闸）+ §10.0 口径更新 + CHANGELOG 均已落main。此前DONE只写ref/commit无scope，机器不认。
+[RELEASE] 2026-11-07T02:38:44Z from=workbuddy ref=[CLAIM] 2026-11-06T13:56:53Z scope=internal/controlplane/db_cloud_managed_ops.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/apache_ext_ops2.go,internal/controlplane/elasticsearch_ops_ext.go,internal/controlplane/ops_route_authz_test.go,docs/projects-2026-11-05.md,CHANGELOG.md,docs/CLAIMS.md commit=8b812de,ce313c1,7ab3ced note=闭环补登：owner裁决落地（17条改 task:write，operator保留执行面、viewer不放开）+ 测试拆成 DenyViewer/AllowOperator + §10.0 + CHANGELOG 均已落main，CI run 42230987852 全绿。此前DONE只写ref/commit无scope，机器不认。
+[DONE] 2026-11-07T02:43:22Z from=workbuddy ref=[CLAIM] 2026-11-07T02:37:08Z scope=docs/CLAIMS.md,docs/COORDINATION-BOARD.md commit=8cb3460 note=板面账目闭环完成：5条RELEASE（覆盖6条CLAIM行、5个不同scope）+ 2条NOTE口径说明 + 再生板面。验收：补登前现测 active 8 / issues 3；本条 DONE 后现测 lead kilo / active 7 / tasks 0 / issues 1 / conflict 0 / blocked 0，其中 issues 那1条属 qoder 的 CostView 批（他线，只报不动），本线过期认领与重复认领CONFLICT全清。diff 面：docs/CLAIMS.md 追加18行0删除（append-only，他线条目逐字未动）、docs/COORDINATION-BOARD.md 只改状态块（脚本回写）。两文件 CRLF 均为0、无冲突标记。本笔不碰代码/CHANGELOG/门禁判据。scope 释放。
+[DONE] 2026-11-07T03:02:23Z from=qoder scope=docs/projects-2026-11-07.md commit=2555254 note=五项短板立项书（P1 CI 可信度/P2 能力深度矩阵/P3 测试纵深/P4 产品文档现状化/P5 商业交付包）已落 main；内容含现状数字、A/B/C 选项与代价、验收判据、§8 五个 owner 问题、§9 复现命令；门禁 go test ./internal/gates/ 击绿 9.4s、fold gate offenders=0 stale=0、0 个 CR；推送时 CI run 42330321446 in_progress（队列积压），绿/红另报。
+[CLAIM] 2026-11-07T03:02:23Z ttl=6h from=qoder scope=internal/agent note=P1 阻断项认领前取证：全 6 个远端分支的 CLAIMS 里 internal/agent 唯一命中是 workbuddy 2026-10-27T19:28Z ttl=4h（当日 19:38 已 DONE，早过期）；git log --all --since=2026-11-04 -- internal/agent 为 0；各分支相对 main 触碰 agent 的提交均为 0；OpsMesh/opencode/workbuddy 工作树干净（modal 有 qa-sweep 未提交且 CLAIMS 处于 UU，但不在 agent 面）⇒ 无主。目标：run 42321960462（553e2bb）build-test 红，崩溃前最后一条 === RUN 为 TestSafeGo_RecoversAndRestarts（internal/agent/safego_test.go:15），栈顶 safego.go:53 selectgo；本机无 gcc/cgo，-race 跑不了，非 race 连跑 5 次通过（55.6s）⇒ 只在 CI 的 -race 路径复现。只动 internal/agent，不碰前端/CI 判定面；有冲突即停手报 owner。
+[NOTE] 2026-11-06T21:23:44Z from=opencode P4（TD-89）认领与方案（owner 令「想办法克服，多测试几种办法」）：
+  ① 本机复测：docker.io / mirror.gcr.io / hub.docker.com 仍不可达，但 **docker.m.daocloud.io 与 ghcr.io 可达**，
+  且本机 daemon 已配 daocloud 镜像源 ⇒ 本地已取到 mysql:8 / redis:7 的 daocloud digest（a81d… / 2e3e…）。
+  ② 克服点：§11.5 要求「digest 对照在 runner 上跑并留证据」——本线把对照做成**可复现的 runner 工作流**
+  （.github/workflows/mirror-digest-check.yml：docker.io vs mirror.gcr.io vs daocloud vs 华为 SWR，
+  含 mysql:8/redis:7 硬判据 + 4 个基镜像参考行），触发即得证据；随后按 §11.4 B-min 换 ci.yml 的 3 处
+  service 引用（mysql ×2、redis ×1），以 PR 的 services/integration 两腿绿为第二判据。
+  A（配 secrets）仍需 owner 动作，不在本线射程。
+[CLAIM] 2026-11-06T21:23:44Z from=opencode ttl=12h scope=.github/workflows/ci.yml,.github/workflows/mirror-digest-check.yml note=P4 B-min：service 镜像源 + digest 对照工作流
+[CLAIM] 2026-11-06T21:23:44Z from=opencode ttl=12h scope=CHANGELOG.md note=P4 结项块（随 B-min）
+[NOTE] 2026-11-07T02:20:12Z from=opencode SSE 首连事件丢失竞态（真缺陷，非测试抖动）：
+  现象：`internal/controlplane` 整包测试连续 2 次红在 `TestSSE_TenantIsolation`
+  （sse_test.go:329：期望 task-a，实得 ": ping\n\n"）；该用例隔离跑 -count=10 全过，
+  整包跑必红 ⇒ 依赖调度压力。
+  根因（sse.go handleEventsStream）：**先写 hello 握手帧、后注册订阅**（L137 写帧 → L140
+  subscribeEvents）。客户端收到 hello 后会立刻 publish 事件；这个窗口内服务端尚未入册，
+  publishEvent 走「无订阅者快速返回」（L215-217）⇒ **该事件被静默丢弃**。
+  ⇒ 这不是测试写法问题，是「刚连上的客户端会丢掉第一条事件」的服务端真缺陷（客户可见面）。
+  处置：把 subscribeEvents() 提到握手帧之前（订阅先于握手 ⇒ 客户端拿到 hello 时订阅必已在册，
+  事件进有缓冲 chan，不丢）；配套确定性回归测试（自定义 ResponseWriter 在 hello 写入处卡住
+  服务端，此刻发布事件：修复前必丢、修复后必收）。
+  冲突检查：文件面 internal/controlplane/sse.go + sse_test.go，与 #10（TD-89 工作流 + ci.yml）
+  与 #9（os_ext_ops.go）均无重叠；别线 #8 触 web/enterprise 前端，无重叠。
+[CLAIM] 2026-11-07T02:20:12Z from=opencode ttl=6h scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,CHANGELOG.md note=SSE 首连事件丢失竞态：订阅注册提前到握手帧之前 + 确定性回归测试
+[CLAIM] 2026-11-07T02:41:09Z from=opencode ttl=6h scope=docs/sse-protocol.md note=SSE 协议文档补「订阅先于握手帧注册 ⇒ 首连不丢事件」的顺序保证（对外可见行为的契约化）
+
+[NOTE] 2026-11-07T06:55:23Z from=opencode v0.18.0 切版认领（owner 授权：「changelog 也你来，都做完」，deadline 今日 18:00 前）：
+  范围：CHANGELOG 归版（25 个 [Unreleased…] 块 → [0.18.0]，日期原地保留）+ 本版汇总块 +
+  归版时点补账块；版本源 0.17.1 → 0.18.0（14 个文件 / 41 处字面量）；docs/release-notes.md
+  新增 `## v0.18.0` 小节（发布链 github-release job 的硬门禁要求该节含「破坏性」与「能力降级清单」）。
+  形态：沿用 v0.17.1 / v0.17.0 先例——**单父提交直推 main**（7315622 / ddec516 皆如此），
+  推 main 后等 main CI 全绿再切 tag（切 tag 铁律：让 tag 构建成为 :<sha> 的最后写者）。
+  冻结点：origin/main 06b78c9（切版提交以它为父）。
+  不做：不动 release.yml / .github/workflows/；不代合别线 PR（#8 仍属 feat/qa-sweep-1106 那条线）。
+[CLAIM] 2026-11-07T06:55:23Z from=opencode ttl=8h scope=CHANGELOG.md,docs/release-notes.md,internal/version/version.go,deploy/helm/opsmesh/Chart.yaml,deploy/helm/opsmesh/values-production.yaml,deploy/gitops/segments/production-segment.yaml,deploy/docker/docker-compose.prod.yml,deploy/docker/scripts/deploy.sh,deploy/k8s/deploy-opsmesh.sh,deploy/k8s/README.md,deploy/k8s/deployments/alert-svc-deployment.yaml,deploy/k8s/deployments/auth-svc-deployment.yaml,deploy/k8s/deployments/device-svc-deployment.yaml,deploy/k8s/deployments/gpu-svc-deployment.yaml,deploy/k8s/deployments/task-svc-deployment.yaml,deploy/scripts/validate-deploy-assets.sh note=v0.18.0 切版定稿：归版 + 版本源同步 + 发布说明
+
+[LANDED] 2026-11-07T09:30:05Z from=opencode commit=4998809 branch=fix/td89-service-mirror pr=10 note=P4/TD-89 B-min 入 main：ci.yml 三处 service 换 mirror.gcr.io + 新增 mirror-digest-check 对照工作流；runner 侧 mysql:8 / redis:7 的 docker.io 与 mirror.gcr.io manifest digest 逐字相等
+[LANDED] 2026-11-07T09:30:05Z from=opencode commit=06b78c9 branch=fix/sse-subscribe-window pr=12 note=SSE 首连事件丢失竞态入 main：subscribeEvents 提前到握手帧之前 + 确定性回归测试
+
+[DONE] 2026-11-07T09:30:07Z from=opencode scope=v0.18.0 切版 commit=f4e08f2 note=归版 25 块 + 汇总块 + 补账块 + 版本源 41 处同步 + 发布说明；tag v0.18.0 已切（main 推送 CI run 42350616936 全绿后才切），发布链 run 42355183287 的 28 个 job 全绿
+
+[NOTE] 2026-11-07T09:41:21Z from=opencode 批次 6 认领：PowerShell 家族最后一处收口（仓内剩余 13 处
+  `powershell -Command "..."` 全部改 `-EncodedCommand`）。
+  清单：internal/controlplane/git_unix_ops.go 10 处（防火墙 list/status/enable/disable、
+  用户 list、主机指标 5 条）、os_ext_ops.go 2 处（服务 list/status）、server_network.go 1 处
+  （tcping on windows，带 target/port 插值）。
+  为什么不是纯风格问题（pkg/shellquote/powershell.go 头注已记同一形状的实测）：
+  ① Windows agent 走 `cmd /C` 执行（internal/agent/agent.go 的 shellCommand），Go 的 exec
+     参数转义会改写脚本里的引号 ⇒ `powershell -Command "..."` 的内层引号退化成 PS 字符串
+     字面量（脚本被回显、根本不执行）；
+  ② 这 13 处还有 Unix 尾巴 `2>/dev/null` ⇒ cmd 下整行报废（cmd 认不出 /dev/null），
+     必须改成 `2>nul`——这正是上一批（#7，14 处收口）已确立的口径，仓库里已有
+     `assertPSWrapped` 测试助手钉住「必须 -EncodedCommand + 2>nul + 不得残留 -Command」。
+  ③ server_network.go 那处带 target/port 插值 ⇒ 一并改 QuotePowerShellSingle + 端口数字化。
+  做法：全部走既有 `shellquote.PowerShellEncodedCommand`（运行时 UTF-16LE+base64，源码里
+  不落 base64 噪声、可读性保住）；动态值仍走 `QuotePowerShellSingle`。
+  配套：扩 `assertPSWrapped` 覆盖这 13 处（解码后逐字比对 + 尾巴口径），并更新两处
+  断言命令文本的既有测试（改走 decodePSCommand 读解码后的 PS 脚本）。
+  冲突检查：文件面 git_unix_ops.go / os_ext_ops.go / server_network.go + 两个测试文件，
+  与 #9（os_ext_ops.go 第五批，已并入）、#10、#12 均无重叠（同文件不同行，#9 已合入且
+  其改动只在本分支基线里）。
+[CLAIM] 2026-11-07T09:41:21Z from=opencode ttl=6h scope=internal/controlplane/git_unix_ops.go,internal/controlplane/os_ext_ops.go,internal/controlplane/server_network.go,internal/controlplane/shellquote_security_test.go,internal/controlplane/server_network_extra_test.go,internal/controlplane/coverage_extra_test.go,CHANGELOG.md note=PS 家族最后一处收口：13 处 powershell -Command 改 -EncodedCommand + 2>/dev/null 改 2>nul
+
+[LANDED] 2026-11-07T11:30:15Z from=opencode commit=773bacc branch=fix/ps-family-final pr=13 note=PowerShell 家族最后一处收口入 main：13 处 `powershell -Command "..."` → `-EncodedCommand`（git_unix_ops.go 10 + os_ext_ops.go 2 + server_network.go 1 带插值）；cmd 尾巴 `2>/dev/null`→`2>nul`、Unix 的 `| head -40` 折进 PS 载荷；注入面盘点器 powershell 语境候选位 1→0（全仓 576→575）；新增 TestPSFamilyFinalSweep（12 子用例：wire 形态 + 尾巴口径 + 解码载荷逐字相等）。**本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），CHANGELOG 已带 [Unreleased-PS收尾] 块，随下一版归版。
+
+[RELEASE] 2026-11-07T17:40:50Z from=qoder ref=[CLAIM] 2026-11-07T03:02:23Z scope=internal/agent commit=none-reverted note=owner 拍板 option A（截断用例改 64KB 小缓冲 + 新增 TestMaxOutputBytes 锁 10MB 常量）实测证伪，未推送。容器整包 -race（golang:1.26.10，无 -skip，最终树 6fe6435+编辑）复跑 2/2 仍 FAIL 于 TestExecute_OutputTruncation：TSan failed to allocate 0x3f000（258048B，errno:12），失败分配仅 252KB 而非 21MB，地址随 ASLR 漂移（run1 2180005b1000 / run2 2180007b9000）⇒ 触发点不是缓冲大小，缩缓冲无效。根因坐实：容器内核 6.6.87.2-microsoft-standard-WSL2 + vm.mmap_rnd_bits=32 破坏 TSan shadow-memory 映射＝WSL2 本地环境伪影，非数据竞争、非 agent 逻辑缺陷。且此容器失败不等于 CI flake：CI 553e2bb（run 42321960462）是裸 SIGSEGV@TestSafeGo_RecoversAndRestarts（safego.go:53 selectgo）、0 个 TSan 签名，同份 agent 代码在 a08c693/2555254/be3b771 三次绿 ⇒ runner 级间歇 flake。处置：本地编辑已 git restore 回退（security_test.go 恢复 origin/main 原状，gofmt/vet 曾干净，工作树干净）。internal/agent 面无可修真实缺陷，释放认领（前认领 03:02:23Z ttl=6h 已过期；main 全程未碰 agent 包、无他线认领 ⇒ 无主）。CI flake 去向交 owner：option B（CI 侧 runner/ASLR 调参）属禁区我不碰；或据同代码三次绿接受为 flake。取证日志（仓外）：F:/Agent/Qoder/workspace/race-agent-optionA.log 与 race-agent-optionA-run2.log。
+[NOTE] 2026-11-07T18:07:56Z from=opencode 批次 7 认领：探测/诊断面「目标参数未转义直插」收口（netdiag_ops.go + synthetic_ops.go，13 处）。
+  为什么是真缺陷面（不是风格问题）：这 13 处把请求体字段 req.Target / req.URL / req.Name **裸拼**进
+  要下发给 agent 的 shell 脚本（agent 以 `sh -c` 执行，internal/agent/agent.go 的 shellCommand），
+  `$(id)` / 反引号会被**真实执行**——与批次 1~6 修的 shellQuote 静默失效同族，但成因不同：那些行
+  走了 shellQuote 却转义不完整，这些行**根本没走**任何转义/校验（req.* 直插 fmt.Sprintf 格式串）。
+  实测面（本次逐行核对 origin/main）：netdiag_ops.go 8 处——tcpdump `host %s`、mtr ×2、nmap、dig ×2、
+  host、traceroute ×2、ping、status-code 的 curl URL ×2（后者虽在双引号段内，但 `$` 与反引号在 POSIX
+  双引号里同样会展开 ⇒ `"$(id)"` 一样会被执行）；synthetic_ops.go 5 处——create 的 Name+URL、delete 的
+  Name、http/tcp/icmp 三种探针。鉴权面无缺口（两条 handler 均经 dispatchKafkaTask → subsystemAuthorize
+  的 task:write 闸），这是**已授权调用者可直接打到 agent 的 RCE**。
+  做法：全部走既有 pkg/shellquote.Quote（POSIX 单引号字面量，语义保证「求值结果恒等于原字面字节序列，
+  不含任何可展开结构」）；tcp 探针的内层 bash -c 命令**整体 Quote 后作为单个 argv** 传入，避免嵌套引号
+  歧义（外层 Quote(inner) 使内层的单引号按关闭-转义-重开还原，bash -c 收到的仍是恰好一条命令）；
+  端口仍是纯数字字面量。选 Quote 而非 ValidateHost：target 合法域含 CIDR（tcpdump）、主机名、URL，
+  白名单会误杀合法输入；Quote 不改取值语义。
+  配套：① 新增 internal/controlplane/probe_injection_test.go——载荷 `$(id)` / 反引号 / `;` / 引号闭合，
+  逐条断言脚本里载荷只以单引号字面量形态出现，且全文无裸 `$()` / 反引号 / 裸分号；② 盘点器
+  scripts/shell-injection-audit.py 新增 raw_interp 判据（直接插值 req.* 到脚本的行），给出可复算基线。
+  冲突检查：文件面 netdiag_ops.go / synthetic_ops.go / 新测试 / 盘点器 / CHANGELOG，与 #5~#13 均无重叠；
+  qoder 的 internal/agent 线（69a801c 只动 docs/CLAIMS.md）零重叠。
+[CLAIM] 2026-11-07T18:07:56Z from=opencode ttl=8h scope=internal/controlplane/netdiag_ops.go,internal/controlplane/synthetic_ops.go,internal/controlplane/probe_injection_test.go,scripts/shell-injection-audit.py,CHANGELOG.md note=批次 7：探测/诊断面 req.* 未转义直插收口（13 处 → shellquote.Quote）+ 盘点器 raw_interp 判据
+
+[LANDED] 2026-11-08T00:33:35Z from=opencode commit=cd512a6 branch=fix/probe-injection-sweep pr=14 note=批次 7（探测/诊断面 req.* 未转义直插收口）入 main：13 处 → `shellquote.Quote`（netdiag_ops.go 8：tcpdump/mtr/nmap/dig/host/traceroute/ping/status-code；synthetic_ops.go 5：create 的 name+url、delete 的 name、http/tcp/icmp 三探针）。真缺陷面：裸拼进下发给 agent 的 shell 脚本（agent 以 `sh -c` 执行）⇒ `$(id)`/反引号被真实执行；**双引号不是防护**（POSIX 双引号内 `$` 与反引号同样展开），旧形态 `"$(id)"` 一样会被执行。tcp 探针改位置参数形态 `bash -c 'echo > /dev/tcp/"$1"/80' _ <target>`（内层 bash 会二次解析 `;`）。守卫 `internal/controlplane/probe_injection_test.go`（5 用例）：引号外文本判据 + 源码级兜底 + **真 sh 语义级证明**（标记文件不得落地）；变异验证回退旧码后 5/5 判红且语义用例实测标记文件真的落地。盘点器新增判据 C（`raw_interp`，与 A/B 独立计数）：同口径 raw_interp **333 → 320**（netdiag 8→0、synthetic 5→0），A/B 575 → 563；顺带修跨盘符 bug。CI：PR run 42422819068 + push run 42422644951 全绿（含 Race detector 44m30s）。**本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），CHANGELOG 已带 [Unreleased-探测面收口] 块，随下一版归版。
+
+[CLAIM] 2026-11-08T02:14:42Z from=qoder ttl=6h scope=docs/product-design.md note=P4 产品文档现状化（立项书 docs/projects-2026-11-07.md §4，方案 A：版本头/日期/「现状说明」声明/商业模式与 docs/license-decision-2026-10-03.md 对齐/明显过期版本引用修正 v0.9.0-draft→0.18.0；不动证据表反引号路径、不未经 owner 降级 ✅ §8-Q4）。单文件，跑 internal/gates 后单独成笔推 main。
+
+[RELEASE] 2026-11-08T04:04:48Z from=qoder ref=[CLAIM] 2026-11-08T02:14:42Z scope=docs/product-design.md commit=ac6e8fe note=P4 产品文档现状化（方案 A）已落 main，CI run 42437971067 completed/success（13 job 全绿）。改动：①头注 v0.9.0-draft/2026-09-05 → v0.18.0（现状）/现状复核 2026-11-08 + 明标「现状说明；规划项见 docs/product-roadmap.md」（原始编制日期作为历史保留）；②§3.4 给「12+6（v0.9.0 基线）」加现状核对注，指回 README 现行 34✅/1⚠️/1❌，不删历史、不改 ✅ 判定；③§8/§8.1「当前版本 v0.7.0」两处 → v0.18.0，§8.1 代码规模旧计数加注为 v0.7.0 基线并指向 README/CI（不编造新数）；④§5 商业模式核对与 docs/license-decision-2026-10-03.md §3「Open-Core（内核 Apache-2.0 + 企业版商业授权）」一致，无矛盾，未改。门禁（本地+CI）：TestCapability 36 条证据路径 0 缺失 / TestDocPaths 18 份 320 条路径全存在。未改证据表 ✅ 任何判定；矩阵逐行深度复核 + 无证据 ✅ 降级作为独立一批另做，降级需 owner 逐条认可（§8-Q4）。
+[NOTE] 2026-11-07T17:43:04Z from=workbuddy SSE 鉴权缺口取证（只读现测，接管前留痕）：
+  缺陷：handleEventsStream 自行提取身份（sse.go:103 authctx.FromHTTPHeader → tenant），
+  只在 tenant 为空时才回退 Bearer/Cookie（sse.go:107-110）。**头非空即无条件采信**，
+  既不校验凭证存在，也不与 JWT 的 tenant_id 交叉校验。而 requireTenantContext 对同一形态
+  早已判 401/403（http_infra.go:143-156：头与令牌租户不一致 403；头非空但无任何凭证且
+  requireAuth 且未开 trust-gateway-headers ⇒ 401，注释点名这是 CI E2E-sec 实测捕获的越权）。
+  可达性：生产 requireAuth 默认 true（config.go:887-888），且 Production 强制
+  TrustGatewayHeaders 回落 false（config.go:940-942）；边缘 nginx 的 SSE 专用 location
+  （deploy/docker/proxy/nginx.conf.template:83-95）只重述 Host/X-Real-IP/X-Forwarded-*，
+  **不剥离客户端 X-Tenant-ID**。仓内两处 Header.Del("X-Tenant-ID") 都在出向代理
+  （auth_cutover.go:270、service_proxy.go:103），不覆盖本 handler 的入向路径。
+  ⇒ 匿名者只发 `X-Tenant-ID: 受害租户` 即可订阅该租户的 task_status / alert_new /
+  device_online|offline / approval_status / agent_logs 事件流（跨租户信息泄露）。
+  与 owner 2026-11-06 裁决「不要对访客开放，避免信息安全泄露」直接冲突。
+  立项书 docs/projects-2026-11-05.md:437 把它记为「匿名可连…不可派发…不阻塞本批」——
+  该判断只看了「不可派发」，漏了「头可伪造」这一维；本批按追加式纠正，不改旧条目。
+  接管依据（板面 §6）：opencode 两条 ttl=6h 认领已于 08:20:12Z / 08:41:09Z 过期且无
+  DONE/RELEASE；其施工内容已落 main（0570fa7 竞态修复 + d6a6322 测试改写，二者均为
+  HEAD 祖先，git merge-base --is-ancestor 实证），工作区干净、无未提交改动可承担。
+  处置：TAKEOVER 后即 RELEASE 销号（含 CHANGELOG.md 的那条整串释放，**本线不动
+  CHANGELOG.md**，它仍在 zcode 的 48h 存活认领里），随后按本线真实施工面重新 CLAIM。
+  做法：handleEventsStream 改调 s.requireTenantContext，与其余端点同一口径；
+  demo 填 default / 非 demo 空租户 400 / requireAuth 缺身份 401 三条既有可观测行为保持不变，
+  新增「伪造头无凭证 401」「头与 JWT 租户不一致 403」「trust-gateway-headers 显式放行」回归。
+  不新建权限族、不动派发口、不动 internal/gates（zcode 认领中）、不进 web/enterprise。
+
+[TAKEOVER] 2026-11-07T17:43:04Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,CHANGELOG.md reason=ttl-expired note=opencode 2026-11-07T02:20:12Z 认领（ttl 6h）已过期无闭环；其竞态修复已落 main（0570fa7,d6a6322），无未提交改动
+[RELEASE] 2026-11-07T17:43:04Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,CHANGELOG.md note=接管后即销号：施工内容已在 main，本线不改 CHANGELOG.md（zcode 存活认领），随后按更窄施工面重新 CLAIM
+[TAKEOVER] 2026-11-07T17:43:04Z from=workbuddy scope=docs/sse-protocol.md reason=ttl-expired note=opencode 2026-11-07T02:41:09Z 认领（ttl 6h）已过期无闭环；其文档顺序保证已落 main
+[RELEASE] 2026-11-07T17:43:04Z from=workbuddy scope=docs/sse-protocol.md note=接管后即销号，随后并入本线 SSE 鉴权收口批次重新 CLAIM
+[CLAIM] 2026-11-07T17:43:04Z from=workbuddy ttl=4h scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md note=用户点名「请将没做完的做完」：SSE 端点接入 requireTenantContext，堵伪造 X-Tenant-ID 订阅他租户事件流；先证红后证绿，推送另需按批授权
+[CLAIM] 2026-11-07T17:50:58Z from=workbuddy ttl=4h scope=docs/api-specification.md note=同批文档纠正：§7.1 身份行与 §7.5「SSE 订阅计入审计 Action subscribe_sse」两处与代码不符（该动作全仓 Go 命中 0），与 docs/sse-protocol.md 同句一并改；不动事件枚举表、不动内部代码
+[NOTE] 2026-11-08T03:12:05Z from=workbuddy note=纠正本人 17:50:58Z 认领注记的边界「不动事件枚举表」：用户随后点名「§7.3 事件枚举漂移也修掉」，枚举表即进入本批施工面。已按代码实测改正 docs/api-specification.md §7.3：全量 10→11 种并补 task_cancel 行（server_tasks.go publishTaskCancel 发布，Wave 4-D）；approval_status/schedule_status 的 data 键 action→status（server_approval.go/server_schedules.go 实发 status）；device_online 去掉从未发送的 addr（grpc.go 实发 deviceID/segment/agentID/hostname）；device_offline 去掉从未发送的 lastSeen（server_devices.go 实发仅 deviceID）；§7 开头 OpenAPI type 清单同步补 task_cancel。docs/sse-protocol.md 同表对齐：该表 task_cancel 行与 schedule_status=status 在 HEAD 已正确，本批仅删同款 addr/lastSeen 假键。口径：data 键列不得点名代码从不发送的字段，可省略已发送字段（ssePayloadContract 钉的键不受影响）。
+[RELEASE] 2026-11-08T03:14:28Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md note=收口：SSE 鉴权收口批已完成（sse.go 接入 requireTenantContext + 5 条回归测试 + 两份协议文档枚举漂移纠正），待本地全量验证后按三笔拆分提交（fix/docs/board）
+[RELEASE] 2026-11-08T03:14:28Z from=workbuddy scope=docs/api-specification.md note=同上批：api-specification.md 的 §7.1/§7.3/§7.5 纠正已写入，与 RELEASE 同行销号
+[CLAIM] 2026-11-08T03:14:28Z from=workbuddy ttl=4h scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/api-specification.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md,CHANGELOG.md note=用户点名「§7.3 事件枚举漂移也修掉」后枚举表进入施工面；余量：CHANGELOG.md 补本批条目（另两条对 CHANGELOG.md 的认领均已过期，精确 scope 冲突语义下不撞车）、本地全量验证、三笔拆分提交、DONE 行带 sha
+[DONE] 2026-11-08T03:23:09Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md commit=7644752 note=代码笔：handleEventsStream 改调 requireTenantContext（伪造 X-Tenant-ID 无凭证 401、头与 JWT 租户不一致 403、trust-gateway-headers 显式放行、Cookie JWT 浏览器路径），demo 填 default/空租户 400/缺身份 401 三条既有行为不变；5 条回归先红后绿；go test ./internal/controlplane/ ./internal/gates/ 全绿（113.3s/14.5s）、build/vet/gofmt 干净；authz-route-audit 静态分类 19/5→18/6（SSE ANON→AUTH_ONLY）
+[DONE] 2026-11-08T03:23:09Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/api-specification.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md,CHANGELOG.md commit=3968dfb note=文档笔：两协议文档身份行改写为 requireTenantContext 全矩阵；§7.3 枚举漂移按用户点名修复（全量 10→11 种补 task_cancel、approval_status/schedule_status 键 action→status、device_online 删假键 addr、device_offline 删假键 lastSeen、OpenAPI type 清单同步）；subscribe_sse 审计承诺按事实纠正（全仓 Go 命中 0，403 拒绝经 auditAuthzDenied 计入）；projects 文档追加 §10.0.1/§10.0.2；CHANGELOG 增 [Unreleased-SSE鉴权] 块（fold gate offenders=0）；验证：两表 11 行与代码发布面逐名对齐，TestSSEContract_* 绿

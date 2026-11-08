@@ -123,17 +123,19 @@ TASKS:
   (无)
 
 ISSUES:
-  CLAIM 过期未闭环：CHANGELOG.md,docs/decision-materials-2026-11-04.md,docs/INBOX-ZCODE.md,docs/CLAIMS.md（认领人 workbuddy，ttl 6h）
-  CLAIM 过期未闭环：docs/projects-2026-11-05.md,docs/CLAIMS.md（认领人 workbuddy，ttl 4h）
+  CLAIM 过期未闭环：.github/workflows/ci.yml,.github/workflows/mirror-digest-check.yml（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：CHANGELOG.md（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：CHANGELOG.md,docs/release-notes.md,internal/version/version.go,deploy/helm/opsmesh/Chart.yaml,deploy/helm/opsmesh/values-production.yaml,deploy/gitops/segments/production-segment.yaml,deploy/docker/docker-compose.prod.yml,deploy/docker/scripts/deploy.sh,deploy/k8s/deploy-opsmesh.sh,deploy/k8s/README.md,deploy/k8s/deployments/alert-svc-deployment.yaml,deploy/k8s/deployments/auth-svc-deployment.yaml,deploy/k8s/deployments/device-svc-deployment.yaml,deploy/k8s/deployments/gpu-svc-deployment.yaml,deploy/k8s/deployments/task-svc-deployment.yaml,deploy/scripts/validate-deploy-assets.sh（认领人 opencode，ttl 8h）
+  CLAIM 过期未闭环：docs/opsmesh-authz-audit-2026-11-04.md（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：go.mod,go.sum,operator/go.mod,operator/go.sum,services/alert-svc/go.mod,services/alert-svc/go.sum,services/auth-svc/go.mod,services/auth-svc/go.sum,services/config-svc/go.mod,services/config-svc/go.sum,services/device-svc/go.mod,services/device-svc/go.sum,services/gpu-svc/go.mod,services/gpu-svc/go.sum,services/log-svc/go.mod,services/log-svc/go.sum,services/task-svc/go.mod,services/task-svc/go.sum,services/tf-provider/go.mod,services/tf-provider/go.sum（认领人 opencode，ttl 6h）
   CLAIM 过期未闭环：internal/ai/gateway/rag.go,internal/ai/gateway/prompt.go,internal/knowledge/retrieval.go,internal/ai/gateway/gateway.go,internal/ai/gateway/handler.go,internal/ai/gateway/circuitbreaker.go,internal/cost/handler.go,internal/controlplane/authctx*.go,internal/config/config.go,internal/gates,CHANGELOG.md,docs/tech-debt.md（认领人 zcode，ttl 48h）
-  CLAIM 过期未闭环：internal/controlplane/db_cloud_managed_ops.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/apache_ext_ops2.go,internal/controlplane/elasticsearch_ops_ext.go,internal/controlplane/ops_route_authz_test.go,docs/projects-2026-11-05.md,CHANGELOG.md,docs/CLAIMS.md（认领人 workbuddy，ttl 6h）
-  CLAIM 过期未闭环：internal/controlplane/db_cloud_managed_ops.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/db_extended_ops.go,internal/controlplane/apache_ext_ops2.go,internal/controlplane/elasticsearch_ops_ext.go,internal/controlplane/trace.go,internal/controlplane/ops_route_authz_test.go,internal/gates/ops_route_ratchet_gate_test.go,CHANGELOG.md,docs/CLAIMS.md（认领人 workbuddy，ttl 8h）
-  CLAIM 过期未闭环：internal/gates/ops_route_ratchet_gate_test.go,docs/projects-2026-11-05.md,CHANGELOG.md,docs/CLAIMS.md（认领人 workbuddy，ttl 6h）
+  CLAIM 过期未闭环：internal/controlplane/git_unix_ops.go,internal/controlplane/os_ext_ops.go,internal/controlplane/server_network.go,internal/controlplane/shellquote_security_test.go,internal/controlplane/server_network_extra_test.go,internal/controlplane/coverage_extra_test.go,CHANGELOG.md（认领人 opencode，ttl 6h）
+  CLAIM 过期未闭环：internal/controlplane/netdiag_ops.go,internal/controlplane/synthetic_ops.go,internal/controlplane/probe_injection_test.go,scripts/shell-injection-audit.py,CHANGELOG.md（认领人 opencode，ttl 8h）
+  CLAIM 过期未闭环：internal/controlplane/os_ext_ops.go（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：internal/controlplane/shellquote_security_test.go（认领人 opencode，ttl 12h）
   CLAIM 过期未闭环：web/enterprise/src/api/*.js,web/enterprise/src/views/*.vue,web/enterprise/src/stores/auth*.js,web/enterprise/src/router/index.js,web/enterprise/src/composables/*,web/enterprise/src/i18n/locales/{zh,en}/*.json,CHANGELOG.md（认领人 zcode，ttl 24h）
   CLAIM 过期未闭环：web/enterprise/src/views/AdminConsoleView.vue,web/enterprise/src/api/admin.js,web/enterprise/src/i18n/en.json,web/enterprise/src/i18n/locales/en/common.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/i18n/locales/zh/common.json,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/zh.json,web/enterprise/src/api/__tests__/api-usage.test.js（认领人 kilo，ttl 24h）
   CLAIM 过期未闭环：web/enterprise/src/views/CostView.vue,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/views/__tests__/CostView.spec.js,docs/CLAIMS.md（认领人 qoder，ttl 4h）
-
-CONFLICT: 同 scope 重复认领：docs/projects-2026-11-05.md,docs/CLAIMS.md
 ```
 
 ---

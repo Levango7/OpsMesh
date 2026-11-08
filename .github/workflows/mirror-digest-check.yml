@@ -1,0 +1,64 @@
+# mirror-digest-check.yml —— TD-89 / P4：镜像源 digest 对照（唯一可信环境 = runner）。
+#
+# 背景：本仓 CI 的 429/5xx 来自 Docker Hub 匿名限流（TD-89）。B-min 方案要把
+# ci.yml 的 service containers（mysql:8 / redis:7）换到公共镜像源，验收硬判据是
+# 「每个 tag 在 Docker Hub 与镜像源的 manifest digest 相等」
+# （docs/projects-2026-11-05.md §11.5）。开发机对 docker.io / mirror.gcr.io 均不可达，
+# digest 对照只能在 runner 上做——本工作流把该对照变成随时可复现的一步，并作为
+# ci.yml 变更时的常驻对照（paths 同时监听 ci.yml）。
+#
+# 判据：
+#   - mysql:8 / redis:7：docker.io 的 digest 必须取到，且与 mirror.gcr.io 相等
+#     （不等 ⇒ 判红：镜像源滞后或字节不同，换源会把交付物置于未验证状态）；
+#   - daocloud / 华为 SWR 与 4 个基镜像：打印为参考行，不判红（B-full 未选）。
+name: mirror-digest-check
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/mirror-digest-check.yml
+      - .github/workflows/ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  digests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v4
+      - name: 对照 digest（docker.io vs 镜像源）
+        run: |
+          set -euo pipefail
+          # 前两个是 B-min 的硬判据对象；后四个基镜像是参考行（B-full 未选，先攒数据）。
+          refs=(mysql:8 redis:7 node:22-alpine golang:1.26-bookworm debian:bookworm-slim alpine:3.23)
+          dig() { # $1=完整 ref → digest 或 MISS
+            docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$1" 2>/dev/null || echo MISS
+          }
+          fail=0
+          {
+            echo "| ref | docker.io | mirror.gcr.io | daocloud | huawei-swr |"
+            echo "| --- | --- | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for ref in "${refs[@]}"; do
+            hub=$(dig "docker.io/library/${ref}")
+            gcr=$(dig "mirror.gcr.io/library/${ref}")
+            dao=$(dig "docker.m.daocloud.io/library/${ref}")
+            swr=$(dig "swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/${ref}")
+            printf 'REF %s | docker.io=%s | mirror.gcr.io=%s | daocloud=%s | huawei-swr=%s\n' \
+              "$ref" "$hub" "$gcr" "$dao" "$swr"
+            echo "| ${ref} | ${hub} | ${gcr} | ${dao} | ${swr} |" >> "$GITHUB_STEP_SUMMARY"
+            case "$ref" in
+              mysql:8|redis:7)
+                if [ "$hub" = "MISS" ] || [ "$gcr" = "MISS" ] || [ "$hub" != "$gcr" ]; then
+                  echo "::error::B-min 硬判据未过：${ref} docker.io=${hub} mirror.gcr.io=${gcr}"
+                  fail=1
+                fi
+                ;;
+            esac
+          done
+          if [ "$fail" != "0" ]; then
+            exit 1
+          fi
+          echo "B-min 硬判据通过：mysql:8 / redis:7 的 docker.io 与 mirror.gcr.io digest 相等"

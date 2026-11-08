@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
+
+// procSignalRe 是 kill -SIGNAL 的信号名白名单（TERM/KILL/9/USR1…）：
+// 字符集仅字母数字、上限 16 字符——它作为裸词进入命令，含任何 shell 元字符都可能注入。
+var procSignalRe = regexp.MustCompile(`^[A-Za-z0-9]{1,16}$`)
 
 // handleOSProcess 处理 POST /api/v1/os/process
 func (s *Server) handleOSProcess(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +37,7 @@ func (s *Server) handleOSProcess(w http.ResponseWriter, r *http.Request) {
 	switch req.Action {
 	case "list":
 		if req.Filter != "" {
-			script = fmt.Sprintf(`ps aux | grep -i %s | grep -v grep | head -50`, req.Filter)
+			script = fmt.Sprintf(`ps aux | grep -i %s | grep -v grep | head -50`, shellQuote(req.Filter))
 		} else {
 			script = `ps aux | head -50`
 		}
@@ -42,6 +47,10 @@ func (s *Server) handleOSProcess(w http.ResponseWriter, r *http.Request) {
 		sig := req.Signal
 		if sig == "" {
 			sig = "TERM"
+		}
+		if !procSignalRe.MatchString(sig) {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported signal: " + sig})
+			return
 		}
 		script = fmt.Sprintf(`kill -%s %d 2>&1 && echo "Killed %d"`, sig, req.PID, req.PID)
 	case "nice":
@@ -87,13 +96,13 @@ func (s *Server) handleOSLog(w http.ResponseWriter, r *http.Request) {
 		if unit == "" {
 			unit = "--system"
 		} else {
-			unit = "-u " + unit
+			unit = "-u " + shellQuote(unit)
 		}
 		since := req.Since
 		if since == "" {
 			since = "1h ago"
 		}
-		script = fmt.Sprintf(`journalctl %s --since "%s" -n %d --no-pager 2>/dev/null || echo "journalctl unavailable"`, unit, since, req.Lines)
+		script = fmt.Sprintf(`journalctl %s --since %s -n %d --no-pager 2>/dev/null || echo "journalctl unavailable"`, unit, shellQuote(since), req.Lines)
 	case "journal-vacuum":
 		script = `journalctl --vacuum-time=7d 2>/dev/null && echo "Vacuum complete"`
 	case "logrotate":
@@ -130,7 +139,8 @@ func (s *Server) handleWindowsService(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch req.Action {
 	case "list":
-		script = `powershell -Command "Get-Service | Select-Object Name, Status, StartType | Format-Table -AutoSize" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-Service | Select-Object Name, Status, StartType | Format-Table -AutoSize`) + ` 2>nul`
 	case "start":
 		script = shellquote.PowerShellEncodedCommand(
 			`Start-Service -Name `+shellquote.QuotePowerShellSingle(req.Service)+
@@ -157,7 +167,8 @@ func (s *Server) handleWindowsService(w http.ResponseWriter, r *http.Request) {
 			`Get-Service -Name `+shellquote.QuotePowerShellSingle(req.Service)+
 				` | Select-Object Name, Status, StartType, DisplayName`) + ` 2>nul`
 	default:
-		script = `powershell -Command "Get-Service | Select-Object Name, Status | Format-Table -AutoSize" 2>/dev/null`
+		script = shellquote.PowerShellEncodedCommand(
+			`Get-Service | Select-Object Name, Status | Format-Table -AutoSize`) + ` 2>nul`
 	}
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "windows_service_"+req.Action)
 	if !ok {
@@ -187,15 +198,15 @@ func (s *Server) handleMacOSService(w http.ResponseWriter, r *http.Request) {
 	case "list":
 		script = `launchctl list 2>/dev/null | head -40`
 	case "load":
-		script = fmt.Sprintf(`launchctl load %s 2>&1 && echo "Loaded %s"`, req.Plist, req.Plist)
+		script = fmt.Sprintf(`launchctl load %s 2>&1 && echo %s`, shellQuote(req.Plist), shellQuote("Loaded "+req.Plist))
 	case "unload":
-		script = fmt.Sprintf(`launchctl unload %s 2>&1 && echo "Unloaded %s"`, req.Plist, req.Plist)
+		script = fmt.Sprintf(`launchctl unload %s 2>&1 && echo %s`, shellQuote(req.Plist), shellQuote("Unloaded "+req.Plist))
 	case "start":
-		script = fmt.Sprintf(`launchctl start %s 2>&1 && echo "Started %s"`, req.Service, req.Service)
+		script = fmt.Sprintf(`launchctl start %s 2>&1 && echo %s`, shellQuote(req.Service), shellQuote("Started "+req.Service))
 	case "stop":
-		script = fmt.Sprintf(`launchctl stop %s 2>&1 && echo "Stopped %s"`, req.Service, req.Service)
+		script = fmt.Sprintf(`launchctl stop %s 2>&1 && echo %s`, shellQuote(req.Service), shellQuote("Stopped "+req.Service))
 	case "status":
-		script = fmt.Sprintf(`launchctl list %s 2>/dev/null || echo "Service %s not found"`, req.Service, req.Service)
+		script = fmt.Sprintf(`launchctl list %s 2>/dev/null || echo %s`, shellQuote(req.Service), shellQuote("Service "+req.Service+" not found"))
 	default:
 		script = `launchctl list 2>/dev/null | head -40`
 	}
@@ -237,9 +248,9 @@ func (s *Server) handleAgentDistribute(w http.ResponseWriter, r *http.Request) {
 	case "detect":
 		script = `uname -s && uname -m && cat /etc/os-release 2>/dev/null | head -5`
 	case "download":
-		script = fmt.Sprintf(`echo "Downloading agent %s for %s/%s"`, req.Version, req.OS, req.Arch)
+		script = fmt.Sprintf(`echo %s`, shellQuote("Downloading agent "+req.Version+" for "+req.OS+"/"+req.Arch))
 	case "install":
-		script = fmt.Sprintf(`echo "Installing agent %s for %s/%s"`, req.Version, req.OS, req.Arch)
+		script = fmt.Sprintf(`echo %s`, shellQuote("Installing agent "+req.Version+" for "+req.OS+"/"+req.Arch))
 	default:
 		script = `uname -s && uname -m`
 	}
@@ -273,13 +284,13 @@ func (s *Server) handleHarmonyOSExt(w http.ResponseWriter, r *http.Request) {
 	case "info":
 		script = `echo "HarmonyOS device info"; hdc shell "cat /proc/version" 2>/dev/null || echo "hdc unavailable"`
 	case "install-app":
-		script = fmt.Sprintf(`hdc install %s 2>&1 && echo "Installed %s"`, req.AppPath, req.AppPath)
+		script = fmt.Sprintf(`hdc install %s 2>&1 && echo %s`, shellQuote(req.AppPath), shellQuote("Installed "+req.AppPath))
 	case "uninstall-app":
-		script = fmt.Sprintf(`hdc uninstall %s 2>&1 && echo "Uninstalled %s"`, req.AppName, req.AppName)
+		script = fmt.Sprintf(`hdc uninstall %s 2>&1 && echo %s`, shellQuote(req.AppName), shellQuote("Uninstalled "+req.AppName))
 	case "list-apps":
 		script = `hdc shell "bm dump -a" 2>/dev/null | head -40 || echo "hdc unavailable"`
 	case "transfer-file":
-		script = fmt.Sprintf(`hdc file send %s %s 2>&1 && echo "Transferred %s -> %s"`, req.LocalPath, req.RemotePath, req.LocalPath, req.RemotePath)
+		script = fmt.Sprintf(`hdc file send %s %s 2>&1 && echo %s`, shellQuote(req.LocalPath), shellQuote(req.RemotePath), shellQuote("Transferred "+req.LocalPath+" -> "+req.RemotePath))
 	default:
 		script = `echo "HarmonyOS ext: unknown action"`
 	}

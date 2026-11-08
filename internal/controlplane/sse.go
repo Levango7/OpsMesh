@@ -27,10 +27,12 @@
 // 连接保活：每 15s 发送 SSE 注释帧 ": ping\n\n"（不触发客户端 message 事件，仅保活）。
 // 客户端断开（ctx.Done）时 unsubscribe 并 close chan，防止泄漏。
 //
-// 安全（H6 SSE 租户隔离）：handler 入口提取网关注入的身份上下文（X-Tenant-ID /
-// Authorization Bearer），requireAuth 时缺失身份 → 401；demo 模式下缺失 → 填充
-// "default" 租户便于本地体验。publishEvent 携带 tenantID 标记事件归属，handler
-// 仅下发与本租户匹配的事件，跨租户事件在 SSE 通道被丢弃（不广播给他人）。
+// 安全（H6 SSE 租户隔离）：handler 入口复用 requireTenantContext 提取并**校验**身份
+// （X-Tenant-ID 头 / Authorization Bearer / HttpOnly Cookie JWT），与其余业务端点同一口径：
+// 头与令牌租户不一致 → 403，头非空但无凭证且 requireAuth → 401，两者均无身份时
+// requireAuth → 401、demo → 填充 "default" 租户便于本地体验、其余 → 400。
+// publishEvent 携带 tenantID 标记事件归属，handler 仅下发与本租户匹配的事件，
+// 跨租户事件在 SSE 通道被丢弃（不广播给他人）。
 package controlplane
 
 import (
@@ -40,9 +42,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
-
-	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 )
 
@@ -72,54 +71,35 @@ const sseSubscriberBuf = 16
 // 防止中间代理（nginx / envoy）因空闲超时关闭连接。
 const sseHeartbeatInterval = 15 * time.Second
 
-// sseDefaultTenant 是 demo 模式下未携带身份头时填充的默认租户。
-// 仅在 cfg.Demo=true 且 requireAuth=false 时启用，便于本地一键体验；
-// 生产环境（requireAuth=true）必须由网关注入真实租户，不会走该降级路径。
-const sseDefaultTenant = "default"
-
 // handleEventsStream 处理 GET /api/v1/events/stream：SSE 长连接。
 // 设置标准 SSE 响应头，订阅事件总线，循环写事件帧 + flush。
 // 客户端断开（r.Context().Done()）时自动取消订阅并释放资源。
 //
-// 鉴权（H6 SSE 租户隔离 + Cookie JWT 对齐）：
-//   - 优先从 X-Tenant-ID 头提取租户；
-//   - 头缺失时回退到 Authorization Bearer / HttpOnly Cookie JWT（与 requireTenantContext 一致）；
-//   - requireAuth=true：两种来源均无租户 → 401；
-//   - requireAuth=false 且 demo=true：均无身份 → 填充 "default" 租户（本地体验）；
-//   - requireAuth=false 且 demo=false：均无身份 → 400 拒绝订阅（G1：不允许空租户全量订阅所有租户事件）。
+// 鉴权：复用 requireTenantContext（矩阵语义见 http_infra.go），与其余业务端点同一口径。
+// 此前 handler 自行提取身份、**头非空即无条件采信**，只在头为空时才回退令牌 ⇒
+// 匿名者伪造 X-Tenant-ID 即可订阅他租户事件流（边缘 nginx 不剥离该头）。
+//   - 头与令牌租户不一致 → 403；X-User-Id 与令牌 user 不一致 → 403；
+//   - 头非空但无任何凭证：requireAuth 且未开 --trust-gateway-headers → 401，否则放行；
+//   - 头空 → 回退 Bearer / HttpOnly Cookie JWT（浏览器 EventSource 设不了自定义头，走这条）；
+//   - 两者均空：requireAuth → 401；demo → 填 "default"；其余 → 400（G1：不允许空租户全量订阅）。
 //
 // 租户过滤：收到的事件若 TenantID 非空且与当前订阅者租户不匹配则丢弃，
 // 不跨租户广播（防止 A 租户订阅者收到 B 租户的任务/告警事件）。
+//
+// 顺序约束（2026-11-07 修复）：**subscribeEvents 必须在写 hello 握手帧之前**。
+// 客户端收到 hello 后会立刻 publish 事件；握手先于订阅时，那些事件落在
+// 「尚未入册」的窗口里被 publishEvent 静默丢弃（首连丢第一条事件）。
 func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// 提取网关注入的身份上下文（X-Tenant-ID / Authorization Bearer）。
-	actx := authctx.FromHTTPHeader(r.Header)
+	// 身份提取 + 防伪校验统一走 requireTenantContext；ok=false 时响应已写入。
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
 	tenant := actx.TenantID
-	// SSE 鉴权对齐 Cookie JWT：头缺失时回退到 Bearer/Cookie JWT 提取租户
-	// （与 requireTenantContext 一致，支持用户中心登录后浏览器经 Cookie 直连 SSE）。
-	if tenant == "" {
-		tokenTenant, _, _ := s.tenantFromBearer(r)
-		tenant = tokenTenant
-	}
-	if s.requireAuth && tenant == "" {
-		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing identity context (gateway auth required); " + sessionExpiredHint})
-		return
-	}
-	// demo 模式放宽：未携带身份头时填充默认租户，便于本地一键体验。
-	// 仅在非 requireAuth 时启用（requireAuth 已在上面拦截）。
-	if tenant == "" && s.cfg != nil && s.cfg.Demo {
-		tenant = sseDefaultTenant
-	}
-	// G1 鉴权修复：非 demo 且仍无租户 → 400 拒绝订阅。
-	// 不允许空租户全量订阅所有租户事件（原实现空租户订阅者可收到全部租户的
-	// 任务/告警/设备事件，构成跨租户信息泄露）。demo 模式已在上方填充 sseDefaultTenant。
-	if tenant == "" {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing tenant context (X-Tenant-ID header or bearer token required)"})
-		return
-	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -133,12 +113,17 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no") // nginx 透传不缓冲（否则 flush 无效）
 	w.WriteHeader(http.StatusOK)
 
+	// 订阅必须**先于握手帧**注册（顺序即语义）：
+	// 客户端收到 hello 后通常立刻 publish 事件；若订阅在握手之后才注册，
+	// 那个窗口内发布的事件会命中 publishEvent 的「无订阅者快速返回」而被静默丢弃
+	// ⇒ 表现为「刚连上的客户端丢掉第一条事件」（整包测试下必现，见
+	// TestSSE_SubscribeBeforeHello_NoFirstEventLoss）。订阅先注册则事件进有缓冲 chan，不会丢。
+	ch := s.subscribeEvents()
+	defer s.unsubscribeEvents(ch)
+
 	// 握手帧：让客户端确认连接已建立（event: hello，data 为空对象）
 	fmt.Fprint(w, "event: hello\ndata: {}\n\n")
 	flusher.Flush()
-
-	ch := s.subscribeEvents()
-	defer s.unsubscribeEvents(ch)
 
 	ctx := r.Context()
 	heartbeat := time.NewTicker(sseHeartbeatInterval)
