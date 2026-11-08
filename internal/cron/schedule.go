@@ -37,7 +37,7 @@ func NewScheduler(store TaskStore) *Scheduler {
 // Start 在后台 goroutine 中启动调度循环。
 func (s *Scheduler) Start() {
 	go s.loop()
-	 logx.Info(context.Background(), "scheduler: 启动定时任务调度", "interval", "60s")
+	logx.Info(context.Background(), "scheduler: 启动定时任务调度", "interval", "60s")
 }
 
 // Stop 停止调度循环。

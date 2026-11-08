@@ -17,8 +17,8 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/cron"
 	"github.com/Levango7/OpsMesh/internal/dag"
-	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
 )
