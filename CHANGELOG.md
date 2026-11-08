@@ -4,6 +4,88 @@
 
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased-ELK面收口] — 2026-11-08（ELK/Elasticsearch 运维面：39 处用户字段未转义直插 → URL/JSON/回显三类整体 Quote）
+
+- **为什么是真缺陷面**：这 39 处把请求体字段**裸拼**进要下发到 agent 的 shell 脚本，
+  agent 以 `sh -c` 执行（`internal/agent/agent.go` 的 `shellCommand`）⇒ `$(id)` / 反引号 /
+  分号被**真实执行**。鉴权面无缺口（均经 `dispatchKafkaTask` → `subsystemAuthorize` 的
+  `task:write` 闸）⇒ 这是**已授权调用者可直接打到 agent 的 RCE**。
+- **范围（39 处）**：`elk_ops.go` 18（index 5 / ilm 3 / snapshot 5 / reindex 1 / security 3 /
+  upgrade 1 / logstash pipeline 1 / opensearch index 1 —— 含派生局部变量
+  `body`/`indices`/`roles`/`index`/`version`/`config` 的溯源收口）；
+  `elk_ext_ops.go` 21（pipeline 4 / template 3 / alias 2 / datastream 3 / maintenance 6 /
+  cluster-settings 1 / ccr 3 / watcher 5）。
+- **做法分三类（不能一刀切）**：
+  ① **URL path 段插值**（index/name/policy/repo/snapshot/watchId/alias/leader/remote…）→
+     在 **Go 层**拼出**完整 URL**，再对**整个 URL** 做 `shellquote.Quote`。
+     **为什么不能把 Quote 结果塞回原处**：旧形态 URL 在**双引号段**内（`"http://…/%s"`），
+     而**双引号内单引号是字面量**——Quote 产出的 `'x'` 会变成 URL 里的 %27 ⇒ 请求必然 404。
+     整体 Quote 后 shell 剥掉外层单引号，curl 收到的 URL 与旧形态**逐字相同** ⇒ 取值语义不变。
+     另有旧形态的 URL **根本没有引号**（如 `_ilm/policy/%s?pretty`），`&`（后台执行符）与空格
+     会被 shell 直接解释 ⇒ 同样是可执行注入。
+  ② **JSON 载荷插值**（`req.Body` / `req.Config` / 嵌在 JSON 字面量里的
+     index/alias/location/indices/source/dest/password/roles）→ 分两种：
+     - 用户提供的**自由 JSON 文本**（`req.Body`、roles）：先用 `json.Valid` 校验
+       （不合法 ⇒ **400 拒收**），再**整体 Quote**（保留用户 JSON 原字节，不重排）。
+       旧形态 `-d '%s'` 在单引号段内，payload 里出现单引号即**破段** ⇒ 可执行注入。
+     - **内嵌 JSON 的字段值**：改由 Go 层 `map` + `json.Marshal` 构造 JSON，再整体 Quote。
+       JSON 转义交给标准库（顺带修掉旧形态 `"` 破坏 JSON 结构的问题）。
+  ③ **回显段**（`echo "…%s…"`）→ 整体 Quote 整条消息（**双引号内 `$` 与反引号照样展开**，
+     `echo "Upgraded to $(id)"` 一样被执行）。Quote 后 shell 剥引号，输出不变。
+- **新增 `internal/controlplane/elk_script.go`**：`esAPIURL`（拼完整 URL 并整体 Quote）/
+  `esQuoteJSONText`（校验 + 整体 Quote）/ `esJSONPayload`（Go 构造 JSON 并整体 Quote）/
+  `esEcho`（整体 Quote 回显消息）四个小助手，避免 39 处各写一遍。
+- **⚠️ 能力降级清单（如实登记）**：
+  - **新增 400**：用户提供的 JSON body / roles **非法 JSON 时在控制面拒收**（旧形态是把垃圾
+    原样发给 ES，由 ES 自己报错）。合法 JSON 的行为与旧形态一致（含字节与键序）。
+  - **内嵌 JSON 的键序改由 Go `json.Marshal` 决定**（ES API 不关心键序，语义等价）。
+  - 其余取值语义与回显输出**均不变**。
+- **回归测试**（`internal/controlplane/elk_injection_test.go`，5 个用例，**68 个**
+  handler×字段组合，载荷×用例共 **270 条断言**（59×4 + 8×4 + 1×2））：
+  ①载荷只以单引号字面量形态出现（「引号外文本」不含载荷 / `$(` / 反引号）；
+  ②自由 JSON 字段非法 ⇒ 400 拒收、合法仍受理（能力不误伤）；
+  ③**真 sh 语义级证明**——把脚本交给真 shell 执行一遍，注入载荷不得产生
+  任何副作用（标记文件不得落地）；④**URL 整体 Quote 的语义等价证明**——交给真 shell 求值后
+  URL 与原 URL **逐字相同**（这一条专治「把 Quote 结果塞回双引号段」的做错方式：文本断言
+  看不出来，因为引号是配对的，但 URL 会带 %27 而必然 404）；
+  ⑤**源码级兜底**——两个文件里不得再有未经 `shellquote.Quote`/`esAPIURL`/
+  `esQuoteJSONText`/`esJSONPayload`/`esEcho` 的用户字段直插脚本。
+  **变异验证（旧码必红）**：把两个生产文件回退到本批前，**4 个用例判红**（第 4 条不依赖
+  这两个文件故仍绿）；其中语义用例实测标记文件**真的落地**
+  （`curl -s "http://localhost:9200/$(touch …)/_mapping?pretty"` 在旧形态下被 sh 真实执行）
+  ——这是可执行注入的证明，不是文本比对。
+- **守卫判据从「行级」升级为「AST 级污点传播」**（本批修正的一个真漏洞）：
+  ⑤原先是**行级**判据（「整行含任意收口 marker 即放过」），有两个漏判口子：
+  ① 同一行里既有已收口的 `req.A`、又有未收口的 `req.B` 时整行被放过；
+  ② **派生局部变量**（`body := req.Body` 之后的 `body`/`version`/`index`/`payload`…）
+     完全不在判据内——而真正的注入点恰恰常是这些派生变量。
+  改为 AST 级污点传播：污点源 = 请求结构体里**字符串类型**字段，传播 = 局部变量赋值 /
+  字符串拼接 / Sprintf 实参，净化 = 收口助手返回值；断言脚本赋值的**每个**实参都不得
+  携带未净化的污点。int 字段（`port`/`maxSegments`）不构成注入面（JSON 解码阶段即 400）。
+  变异验证：旧码下该用例判红并**逐个点名**未收口实参（含 `memLimit`/`version`/`body`
+  等派生变量）；新码下 5/5 绿。
+- **盘点器复算（判据 C `raw_interp`，与 A/B 独立计数）**：本批在判据 C 的 `QUOTE_MARKERS`
+  增列 `esAPIURL(` / `esQuoteJSONText(` / `esJSONPayload(` / `esEcho(` 四个收口助手。
+  这四个名字**只在收口后的代码里出现**（旧代码没有它们）⇒ **不改变历史口径**，
+  批次 7/8 的 333 / 320 / 269 仍可比。同口径复算（批次 8 基线树）：
+  **raw_interp 269 → 230（-39）**，两个 elk 文件全部归零（elk_ops 18 → 0、elk_ext_ops 21 → 0）；
+  A/B 口径 505 → 454（-51）。剩余 230 条散在 50+ 文件，是后续批次的可复算队列。
+- **盘点器新增判据 D（`derived_interp`，派生局部变量形态）**：本批收口过程中发现判据 C 的
+  盲区——C 只抓「`req.*` 字面量**直接**作为 Sprintf 实参」，而真实代码里更常见的是
+  `body := req.Body` 之后再用 `body` 的**派生局部变量**形态（批次 8/9 都要求逐处溯源到
+  派生变量才能确认覆盖完整）。新增判据 D：污点源 = `x := req.Field`，
+  作用域 = **按 Go 函数（handler）边界切块**（避免纯文件级扫描把 A handler 的变量配到
+  B handler 的脚本行），净化 = Quote marker 与 Validate marker 均算已处理，
+  **独立计数** ⇒ A/B 的历史口径（575→563→505）与判据 C 的 333/320/269 **均不受影响**。
+  实测（批次 8 基线树）：**derived_interp 286**，其中 elk_ops 25 + elk_ext_ops 9 = **34 处**
+  为本批待收口面，批次 9 收口后两个文件在 **C 与 D 两个判据下均归零**；
+  批次 8 已收口的 `docker_ops`/`container_ops`/`distfs_ops` 三文件在 D 下亦**归零**（无误报）。
+- **批次拆分说明**：raw_interp 剩余队列的头部六文件共 94 处，其中 **Graph 面的 `req.Type` 是
+  命令名**（要当二进制执行 ⇒ **命令注入**，比 shell 注入更严重，必须枚举白名单），与
+  Kafka/GPU 的 token-Quote 不是同一类改动，混在一批会让 PR 语义模糊。故本批只做 ELK 面 39 处，
+  Kafka/Graph/GPU 另起批次 10（实测口径：判据 C 71 处 = kafka 45 / graph 16 / gpu 10）。
+- **本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），随下一版归版。
+
 ## [Unreleased-容器存储面收口] — 2026-11-08（容器/存储运维面：51 处用户字段未转义直插 → `shellquote.Quote` + 新增 `ValidateArgList`）
 
 - **为什么是真缺陷面**：这 51 处把请求体字段**裸拼**进要下发到 agent 的 shell 脚本，

@@ -20,10 +20,11 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/Levango7/OpsMesh/internal/logx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 
 	"github.com/Levango7/OpsMesh/internal/egress"
 	"github.com/Levango7/OpsMesh/internal/grpcx"

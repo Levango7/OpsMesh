@@ -55,6 +55,18 @@ QUOTE_MARKERS = (
     "Quote(",
     "QuotePowerShellSingle(",
     "PowerShellEncodedCommand(",
+    # 批次 9 新增的收口助手（internal/controlplane/elk_script.go）：
+    # esAPIURL        —— ES URL 在 Go 层拼完整后整体 Quote（不能把 Quote 结果塞回
+    #                   双引号段：双引号内单引号是字面量，URL 会带上 %27）
+    # esQuoteJSONText —— 用户自由 JSON：校验合法性后整体 Quote
+    # esJSONPayload   —— Go 层 map + json.Marshal 构造 JSON 后整体 Quote
+    # esEcho          —— 回显消息整体 Quote（双引号段内 $ / 反引号会展开）
+    # 这四个名字只在**收口后的**代码里出现（旧代码没有它们），故扩充 marker 集合
+    # **不改变历史口径**：批次 7/8 的 raw_interp 数字（333 / 320 / 269）仍可比。
+    "esAPIURL(",
+    "esQuoteJSONText(",
+    "esJSONPayload(",
+    "esEcho(",
 )
 VALIDATE_MARKERS = ("Validate", "MatchString(", "regexp.")
 SPRINTF_RE = re.compile(r"fmt\.Sprintf\(")
@@ -65,6 +77,124 @@ POWERSHELL_RE = re.compile(r"powershell", re.I)
 CMD_RE = re.compile(r"\breg\s|cmd /C|winget|choco|scoop|msiexec|sc\.exe", re.I)
 JSONISH_RE = re.compile(r"WriteJSON|\"error|StatusBadRequest")
 REQ_FIELD_RE = re.compile(r"\breq\.[A-Za-z_]\w*")
+
+# ---- 判据 D（derived_interp）：派生局部变量形态 ----
+#
+# 为什么需要判据 D：判据 C 只抓「req.* 字面量**直接**作为 Sprintf 实参」，
+# 但真实代码里更常见的是**派生局部变量**形态：
+#
+#     body := req.Body            // ← 污点源
+#     ...
+#     script = fmt.Sprintf(`... -d '%s' ...`, body)   // ← 注入点（判据 C 抓不到）
+#
+# 批次 8/9 的收口过程里，正是这种形态最容易被漏掉（收口时要逐处**溯源**到
+# 派生变量才能确认覆盖完整）。
+#
+# 作用域：按 Go **函数（handler）边界**切块，变量表在块内维护 ⇒ 不会把 A handler
+# 的派生变量配到 B handler 的脚本行（这是纯文件级扫描必然出现的误配）。
+FUNC_RE = re.compile(r"^func\s")
+DERIVE_RE = re.compile(r"^\s*(\w+)\s*:?=\s*req\.([A-Za-z_]\w*)\s*$")
+CMD_ASSIGN_RE = re.compile(r"^\s*(?:script|cmd|command|args|argv)\s*:?=\s*fmt\.Sprintf\(")
+
+
+def split_sprintf_args(text: str) -> list:
+    """粗切 fmt.Sprintf( 的实参列表。
+
+    只做**实参边界**切分，不解析字符串字面量内部的逗号——本判据只关心
+    「实参是不是一个派生变量名」，内部逗号不影响结论（派生变量名是单个词）。
+    """
+    start = text.find("fmt.Sprintf(")
+    if start < 0:
+        return []
+    rest = text[start + len("fmt.Sprintf("):]
+    # 跳过格式串字面量
+    if rest.startswith("`"):
+        end = rest.find("`", 1)
+        if end < 0:
+            return []
+        rest = rest[end + 1:]
+    elif rest.startswith('"'):
+        end = 1
+        while end < len(rest):
+            if rest[end] == "\\":
+                end += 2
+                continue
+            if rest[end] == '"':
+                break
+            end += 1
+        rest = rest[end + 1:]
+    out, depth, cur = [], 0, ""
+    for ch in rest:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+            continue
+        cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def is_plain_var(arg: str, var: str) -> bool:
+    """实参是否**就是**该派生变量（裸传），而不是被 Quote/校验包过。
+
+    `shellquote.Quote(body)`、`ValidateName(body, 255)` 这类都**不算**裸传——
+    前者是收口、后者是白名单校验，两者都消除了注入面。
+    """
+    a = arg.strip()
+    if not re.match(r"^[A-Za-z_]\w*$", a):
+        return False
+    if a != var:
+        return False
+    return True
+
+
+def derived_findings(rel: str, lines: list) -> list:
+    """判据 D：在**单个 handler 作用域**内找派生变量裸传入脚本的候选行。"""
+    out = []
+    bounds = [i for i, ln in enumerate(lines) if FUNC_RE.match(ln)]
+    bounds.append(len(lines))
+    for bi in range(len(bounds) - 1):
+        start, end = bounds[bi], bounds[bi + 1]
+        derived = {}  # 变量名 -> 源字段
+        for i in range(start, end):
+            line = lines[i]
+            stripped = line.strip()
+            if stripped.startswith("//"):
+                continue
+            m = DERIVE_RE.match(line)
+            if m:
+                derived[m.group(1)] = m.group(2)
+                continue
+            if not CMD_ASSIGN_RE.match(line):
+                continue
+            # 已在同一行收口/校验过的实参不算（Quote marker / Validate marker）
+            if has_quote_marker(line):
+                continue
+            if has_validate_marker(block_window(lines, i)):
+                continue
+            for arg in split_sprintf_args(line):
+                for var in derived:
+                    if is_plain_var(arg, var):
+                        out.append(
+                            {
+                                "file": rel,
+                                "line": i + 1,
+                                "kind": "derived_interp",
+                                "ctx": classify(line),
+                                "text": stripped[:200],
+                                "var": var,
+                                "source_field": derived[var],
+                            }
+                        )
+                        break
+    return out
 # 命令变量的构造行：`script := fmt.Sprintf(` / `cmd = fmt.Sprintf(` …
 # 为什么要限定"命令变量"：判据 C 看的是**实参**是不是 req.<Field>，但实参进的是
 # 不是命令串，取决于这个 Sprintf 的结果被拿去干什么。只认命令变量可排除
@@ -158,6 +288,7 @@ def scan(root: str):
         sys.exit("not a directory: %s" % root)
     findings = []
     raw_findings = []
+    derived_findings_list = []
     files = []
     for dirpath, _dirnames, filenames in os.walk(root):
         for fn in sorted(filenames):
@@ -203,7 +334,10 @@ def scan(root: str):
                 findings.append(
                     {"file": rel, "line": i + 1, "kind": "concat", "ctx": ctx, "text": stripped[:200]}
                 )
-    return findings, raw_findings
+        # 判据 D（derived_interp）：派生局部变量形态（按 handler 作用域）。
+        # 与 A/B/C **独立计数**——A/B 的历史口径与 C 的 333/320/269 均不受影响。
+        derived_findings_list.extend(derived_findings(rel, lines))
+    return findings, raw_findings, derived_findings_list
 
 
 def main() -> int:
@@ -212,7 +346,7 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="机器可读输出")
     args = ap.parse_args()
 
-    findings, raw_findings = scan(args.root)
+    findings, raw_findings, derived_findings_list = scan(args.root)
 
     if args.json:
         print(
@@ -226,6 +360,11 @@ def main() -> int:
                     "raw_interp_total": len(raw_findings),
                     "raw_interp_by_file": dict(Counter(f["file"] for f in raw_findings)),
                     "raw_interp": raw_findings,
+                    "derived_interp_total": len(derived_findings_list),
+                    "derived_interp_by_file": dict(
+                        Counter(f["file"] for f in derived_findings_list)
+                    ),
+                    "derived_interp": derived_findings_list,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -257,6 +396,26 @@ def main() -> int:
     print()
     for f in raw_findings:
         print("  %s:%d [%s/%s] %s" % (f["file"], f["line"], f["kind"], f["ctx"], f["text"]))
+    print()
+    print("=" * 72)
+    print("判据 D（derived_interp，派生局部变量形态）合计: %d" % len(derived_findings_list))
+    der_by_file = Counter(f["file"] for f in derived_findings_list)
+    for fn, n in der_by_file.most_common(25):
+        print("  %-52s %d" % (fn, n))
+    print()
+    for f in derived_findings_list:
+        print(
+            "  %s:%d [%s/%s] var=%s <- req.%s | %s"
+            % (
+                f["file"],
+                f["line"],
+                f["kind"],
+                f["ctx"],
+                f["var"],
+                f["source_field"],
+                f["text"],
+            )
+        )
     return 0
 
 
