@@ -68,6 +68,35 @@
 - **验证**：整包 `go test ./internal/controlplane/` 125s 全绿；`gofmt` / `go vet` 干净；
   golangci-lint v2.13.2（CI 同版）**0 issues**；`go build ./...` 全绿。
 
+## [Unreleased-SSE鉴权] — 2026-11-08（SSE 端点接入 requireTenantContext + 事件枚举文档漂移修复）
+
+- **漏洞**：`handleEventsStream` 原自行提取身份且**头非空即无条件采信** `X-Tenant-ID`，只在头为空时
+  才回退 Bearer/Cookie JWT ⇒ 匿名者伪造 `X-Tenant-ID: 受害租户` 即可订阅该租户的 task_status /
+  task_cancel / alert_new / device_online|offline / approval_status / schedule_status / agent_logs
+  事件流（跨租户信息泄露）。生产 `requireAuth=true` 且 Production 强制 `TrustGatewayHeaders=false`，
+  边缘 nginx 的 SSE location 不剥离客户端头 ⇒ 真实可达，与 owner 2026-11-06 裁决「不要对访客开放，
+  避免信息安全泄露」直接冲突。
+- **修复**：handler 改调 `requireTenantContext`（`internal/controlplane/http_infra.go`），与其余业务端点
+  同一身份矩阵：头与 JWT 租户不一致 403、`X-User-Id` 与令牌用户不一致 403、头非空但无凭证且未开
+  `--trust-gateway-headers` 401、显式信任网关头时放行、头缺失回退 Bearer/Cookie JWT（浏览器
+  EventSource 设不了自定义头）、全空时 requireAuth 401 / demo 注 default / 其余 400。demo 填 default、
+  非 demo 空租户 400、requireAuth 缺身份 401 三条既有可观测行为不变。
+- **回归测试**：5 条新用例（`TestSSE_ForgedTenantHeaderWithoutCredentialRejected`、
+  `TestSSE_TenantHeaderMismatchJWTRejected`、`TestSSE_HeaderAndMatchingJWTAllowed`、
+  `TestSSE_TrustGatewayHeadersAllowsHeaderOnly`、`TestSSE_CookieJWTSubscriberGetsOwnTenantEvents`），
+  前两条在收口前实测返回 200 + 握手帧（先红后绿）。`scripts/authz-route-audit.py` 静态分类
+  SSE 由 ANON 移入 AUTH_ONLY（19/5 → 18/6）。
+- **文档纠偏（同批）**：`docs/api-specification.md` §7.3 与 `docs/sse-protocol.md` 事件枚举表按代码
+  实测对齐：全量 10→11 种并补 `task_cancel` 行（`server_tasks.go` publishTaskCancel，Wave 4-D）；
+  `approval_status`/`schedule_status` 的 data 键 `action`→`status`（代码实发 status）；
+  `device_online` 删从未发送的 `addr`、`device_offline` 删从未发送的 `lastSeen`；
+  api-spec §7 OpenAPI type 清单同步补 `task_cancel`。另纠正两文档「SSE 订阅计入审计
+  Action=subscribe_sse」：该动作全仓 Go 命中 0，订阅成功本就不写审计（403 拒绝经
+  `auditAuthzDenied` 计入）。
+- **验证**：`go test ./internal/controlplane/ ./internal/gates/` 全绿（SSE 契约测试
+  TestSSEContract_* 守代码↔文档事件名双向对齐）；`go build ./...` / `go vet` / `gofmt` 干净。
+- **前端缺口（只报告，不在本批修）**：`web/enterprise/src/api/sse.js` 的 EVENT_CONTRACT 未含
+  `task_cancel`，ALLOWED_TYPES 会静默丢弃该帧——web/enterprise 为 zcode 只读域，随收口报告一并提示。
 ## [0.18.0] — 2026-11-07（本版汇总：派发口鉴权收口 + 注入面清扫 + AI 预算执法与租户隔离 + 交付链换源与 CVE 修复）
 
 - **鉴权（覆盖面最大）**：派发路径 599 个调用点（去注释口径，冻结点 06b78c9）补 `task:write`

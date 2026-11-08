@@ -375,7 +375,7 @@ components:
       properties:
         type:
           type: string
-          description: 事件类型枚举（hello/task_status/alert_new/device_online/device_offline/approval_status/schedule_status/os_template_changed/mw_template_changed/agent_logs）
+          description: 事件类型枚举（hello/task_status/task_cancel/alert_new/device_online/device_offline/approval_status/schedule_status/os_template_changed/mw_template_changed/agent_logs）
         tenantID:
           type: string
           description: 事件归属租户；hello 等全局事件为空
@@ -1067,7 +1067,7 @@ GET /api/v1/audits?from=2026-08-01T00:00:00Z&to=2026-08-07T23:59:59Z
 |----|----|
 | 端点 | `GET /api/v1/events/stream` |
 | Content-Type | `text/event-stream` |
-| 身份 | require-auth=true 时缺失 `X-Tenant-ID` / `Authorization: Bearer` → 401；demo 模式缺失则注入 `default` 租户 |
+| 身份 | 由 `requireTenantContext` 校验，与其余业务端点同一口径：头与 JWT 租户不一致 → 403；头非空但无凭证且 require-auth=true 且未开 `--trust-gateway-headers` → 401；头缺失回退 Bearer / HttpOnly Cookie JWT；两者均无时 require-auth → 401、demo → 注入 `default`、其余 → 400。完整矩阵见 [`docs/sse-protocol.md`](./sse-protocol.md) |
 | 握手 | 连接建立后立即下发 `event: hello` + `data: {}` |
 | 心跳 | 每 15s 发送注释帧 `: ping\n\n`（不触发浏览器 message 事件，仅防代理空闲断连） |
 | 重连 | **不支持 Last-Event-ID 断点续传**（事件为易失态快照，重连重新订阅即可）；历史回溯走各资源查询 API |
@@ -1095,17 +1095,18 @@ GET /api/v1/audits?from=2026-08-01T00:00:00Z&to=2026-08-07T23:59:59Z
 
 > **字段命名注意**：信封字段名为 Go 结构体 tag 直出（`tenantID`/`traceID`/`taskID`），**非下划线式**，与 REST API 部分端点的命名习惯不同——以本表为准。
 
-### 7.3 事件类型枚举（全量 10 种）
+### 7.3 事件类型枚举（全量 11 种）
 
 | type | 触发点 | data 关键字段 |
 |------|--------|--------------|
 | `hello` | 连接建立握手 | `{}` |
 | `task_status` | 任务创建 / 领取 / 取消 / 上报结果 | `taskID`、`status`、`agentID` |
+| `task_cancel` | 任务取消信号下发给 agent（Wave 4-D） | `taskID`、`agentID` |
 | `alert_new` | 新告警产生 / ack / silence（列表变更即触发） | `alertID`、`severity`、`ruleID` |
-| `device_online` | agent Register 上线 | `deviceID`、`segment`、`addr` |
-| `device_offline` | 设备退役 / 离线归档 | `deviceID`、`lastSeen` |
-| `approval_status` | 作业审批通过/拒绝 | `requestID`、`action` |
-| `schedule_status` | 定时任务触发/暂停/恢复 | `scheduleID`、`action` |
+| `device_online` | agent Register 上线 | `deviceID`、`segment` |
+| `device_offline` | 设备退役 / 离线归档 | `deviceID` |
+| `approval_status` | 作业审批通过/拒绝 | `requestID`、`status` |
+| `schedule_status` | 定时任务触发/暂停/恢复 | `scheduleID`、`status` |
 | `os_template_changed` | OS 优化模板增删改 | `templateID`、`action` |
 | `mw_template_changed` | 中间件模板增删改 | `templateID`、`action` |
 | `agent_logs` | agent 日志上报到达 | `agentID`、`logName`、`lines` |
@@ -1122,7 +1123,8 @@ GET /api/v1/audits?from=2026-08-01T00:00:00Z&to=2026-08-07T23:59:59Z
 ### 7.5 安全
 
 - 跨租户事件在 SSE 通道强制过滤（`publishEvent` 携带 tenantID，handler 只放行匹配项）。
-- SSE 订阅计入审计（`Action=subscribe_sse`，见 `sse.go`）。
+- 身份校验拒绝（头与令牌租户/用户不一致的 403）经 `auditAuthzDenied` 计入审计。
+- **订阅成功本身不写审计**：本节旧版曾承诺 `Action=subscribe_sse`，但代码中从无该动作（2026-11-07 现测：全仓 `*.go` 命中 0，仅文档两处），按事实纠正，与 [`docs/sse-protocol.md`](./sse-protocol.md) §安全 同口径。
 
 ---
 
