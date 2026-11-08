@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 	"github.com/Levango7/OpsMesh/internal/store"
@@ -26,12 +27,13 @@ import (
 //   - 连接关闭时清理订阅（防泄漏）
 //   - POST 方法拒绝（405）
 //   - publishEvent 无订阅者时快速返回
+//   - 鉴权矩阵：伪造租户头无凭证 401 / 头与 JWT 租户不一致 403 / 合法路径不回归
 //
 // 测试模式：用 httptest.Server 启动真实 HTTP server（支持 Flusher + 流式 Body），
 // http.Get 获取流式 resp.Body，bufio.Reader 逐帧读取（帧以空行 \n 结束）。
 
 // newSSETestServer 构造最小测试控制面（仅 SSE 相关字段初始化）。
-// Demo=true：空租户连接自动填充 sseDefaultTenant（"default"），
+// Demo=true：空租户连接由 requireTenantContext 自动填充 "default"，
 // 使底层 SSE 机制测试（响应头/握手/广播等）聚焦功能而非鉴权；
 // 空租户拒绝路径由 TestSSE_EmptyTenantRejected 单独覆盖。
 func newSSETestServer() *Server {
@@ -571,5 +573,139 @@ func TestSSE_SubscribeBeforeHello_NoFirstEventLoss(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("handler 未在取消后退出")
+	}
+}
+
+// ============================================================================
+// SSE 鉴权收口：与 requireTenantContext 同一口径（2026-11-07）
+// ============================================================================
+//
+// 缺陷形态：handler 此前自行提取身份，**X-Tenant-ID 头非空即无条件采信**，
+// 只在头为空时才回退 Bearer/Cookie。于是 requireAuth=true 的生产形态下，
+// 匿名者只发 `X-Tenant-ID: 受害租户` 就能订阅该租户的任务/告警/设备/审批事件流。
+// 边缘 nginx 的 SSE location 不剥离该头（deploy/docker/proxy/nginx.conf.template），
+// 仓内两处 Header.Del 都在出向代理，不覆盖本入向路径 ⇒ 缺口从边缘可达。
+// requireTenantContext 对同一形态早已判 401/403（CI E2E-sec 实测捕获的那条越权），
+// 本组用例把 SSE 钉到同一口径，并守住三条不能被收紧紧掉的合法路径。
+
+// sseAuthzFixture 构造生产形态控制面（requireAuth=true、非 demo）+ 一枚 t9 租户有效令牌。
+func sseAuthzFixture(t *testing.T) (*Server, string) {
+	t.Helper()
+	secret := []byte("test-jwt-secret-for-sse-authz-32bytes!")
+	s := newSSETestServer()
+	s.cfg = &config.Config{Demo: false}
+	s.requireAuth = true
+	s.jwtSecret = secret
+	tok, err := authctx.SignJWT(authctx.JWTClaims{
+		UserID: "u-sse", Username: "sse-user", Roles: []string{"role-operator"},
+		TenantID: "t9", ExpiresAt: time.Now().Add(time.Hour),
+	}, secret)
+	if err != nil {
+		t.Fatalf("签 token: %v", err)
+	}
+	return s, tok
+}
+
+// callSSEAuthz 用**已取消**的请求上下文调用 handler：拒绝路径立即返回；
+// 若被放行则写完握手帧后随即由 ctx.Done 退出流循环（不挂测试），响应码仍可断言。
+func callSSEAuthz(s *Server, decorate func(*http.Request)) *httptest.ResponseRecorder {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events/stream", nil).WithContext(ctx)
+	if decorate != nil {
+		decorate(req)
+	}
+	rec := httptest.NewRecorder()
+	s.handleEventsStream(rec, req)
+	return rec
+}
+
+// TestSSE_ForgedTenantHeaderWithoutCredentialRejected 伪造租户头且无任何凭证 ⇒ 401。
+func TestSSE_ForgedTenantHeaderWithoutCredentialRejected(t *testing.T) {
+	s, _ := sseAuthzFixture(t)
+	rec := callSSEAuthz(s, func(r *http.Request) { r.Header.Set("X-Tenant-ID", "victim") })
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("伪造 X-Tenant-ID 且无凭证 = %d, want 401（body: %s）", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "event: hello") {
+		t.Fatal("拒绝路径不得写出 SSE 握手帧")
+	}
+}
+
+// TestSSE_TenantHeaderMismatchJWTRejected 头与令牌租户不一致 ⇒ 403（防越租户订阅）。
+func TestSSE_TenantHeaderMismatchJWTRejected(t *testing.T) {
+	s, tok := sseAuthzFixture(t)
+	rec := callSSEAuthz(s, func(r *http.Request) {
+		r.Header.Set("X-Tenant-ID", "victim")
+		r.Header.Set("Authorization", "Bearer "+tok)
+	})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("X-Tenant-ID 与 JWT 租户不一致 = %d, want 403（body: %s）", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSSE_HeaderAndMatchingJWTAllowed 头与令牌同租户（网关注入 + 凭证并存）⇒ 放行。
+func TestSSE_HeaderAndMatchingJWTAllowed(t *testing.T) {
+	s, tok := sseAuthzFixture(t)
+	rec := callSSEAuthz(s, func(r *http.Request) {
+		r.Header.Set("X-Tenant-ID", "t9")
+		r.Header.Set("Authorization", "Bearer "+tok)
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("头与令牌同租户 = %d, want 200（body: %s）", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "event: hello") {
+		t.Fatalf("放行路径应写出握手帧，实得 %q", rec.Body.String())
+	}
+}
+
+// TestSSE_TrustGatewayHeadersAllowsHeaderOnly 显式 --trust-gateway-headers（README IAM 路径 B：
+// 可信网关认证后剥离凭证只留头转发）⇒ 头单独放行。收紧不得把这条部署形态一并判死。
+func TestSSE_TrustGatewayHeadersAllowsHeaderOnly(t *testing.T) {
+	s, _ := sseAuthzFixture(t)
+	s.cfg.TrustGatewayHeaders = true
+	rec := callSSEAuthz(s, func(r *http.Request) { r.Header.Set("X-Tenant-ID", "t9") })
+	if rec.Code != http.StatusOK {
+		t.Fatalf("trust-gateway-headers 下仅带租户头 = %d, want 200（body: %s）", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSSE_CookieJWTSubscriberGetsOwnTenantEvents 浏览器 EventSource 路径（无法设自定义头，
+// 只带 HttpOnly Cookie）⇒ 租户取自令牌，且只收本租户事件。收口不得把主线前端打断。
+func TestSSE_CookieJWTSubscriberGetsOwnTenantEvents(t *testing.T) {
+	s, tok := sseAuthzFixture(t)
+	ts := httptest.NewServer(http.HandlerFunc(s.handleEventsStream))
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: accessTokenCookieName, Value: tok})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET SSE（Cookie JWT）: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Cookie JWT 订阅 = %d, want 200", resp.StatusCode)
+	}
+
+	br := bufio.NewReader(resp.Body)
+	if _, err := readSSEFrame(br); err != nil {
+		t.Fatalf("读 hello 帧: %v", err)
+	}
+	// 订阅已入册（hello 之前注册），两条事件都进缓冲 chan，非本租户那条被过滤。
+	s.publishEvent(context.Background(), "task_status", "t9", map[string]string{"taskID": "task-own"})
+	s.publishEvent(context.Background(), "task_status", "other", map[string]string{"taskID": "task-other"})
+	frame, err := readSSEFrame(br)
+	if err != nil {
+		t.Fatalf("读事件帧: %v", err)
+	}
+	if !strings.Contains(frame, `"taskID":"task-own"`) {
+		t.Fatalf("Cookie 订阅者未收到本租户（t9）事件，实得 %q", frame)
+	}
+	if strings.Contains(frame, `"taskID":"task-other"`) {
+		t.Fatalf("Cookie 订阅者收到他租户事件（跨租户泄露）：%q", frame)
 	}
 }
