@@ -857,3 +857,45 @@
 [CLAIM] 2026-11-07T18:07:56Z from=opencode ttl=8h scope=internal/controlplane/netdiag_ops.go,internal/controlplane/synthetic_ops.go,internal/controlplane/probe_injection_test.go,scripts/shell-injection-audit.py,CHANGELOG.md note=批次 7：探测/诊断面 req.* 未转义直插收口（13 处 → shellquote.Quote）+ 盘点器 raw_interp 判据
 
 [LANDED] 2026-11-08T00:33:35Z from=opencode commit=cd512a6 branch=fix/probe-injection-sweep pr=14 note=批次 7（探测/诊断面 req.* 未转义直插收口）入 main：13 处 → `shellquote.Quote`（netdiag_ops.go 8：tcpdump/mtr/nmap/dig/host/traceroute/ping/status-code；synthetic_ops.go 5：create 的 name+url、delete 的 name、http/tcp/icmp 三探针）。真缺陷面：裸拼进下发给 agent 的 shell 脚本（agent 以 `sh -c` 执行）⇒ `$(id)`/反引号被真实执行；**双引号不是防护**（POSIX 双引号内 `$` 与反引号同样展开），旧形态 `"$(id)"` 一样会被执行。tcp 探针改位置参数形态 `bash -c 'echo > /dev/tcp/"$1"/80' _ <target>`（内层 bash 会二次解析 `;`）。守卫 `internal/controlplane/probe_injection_test.go`（5 用例）：引号外文本判据 + 源码级兜底 + **真 sh 语义级证明**（标记文件不得落地）；变异验证回退旧码后 5/5 判红且语义用例实测标记文件真的落地。盘点器新增判据 C（`raw_interp`，与 A/B 独立计数）：同口径 raw_interp **333 → 320**（netdiag 8→0、synthetic 5→0），A/B 575 → 563；顺带修跨盘符 bug。CI：PR run 42422819068 + push run 42422644951 全绿（含 Race detector 44m30s）。**本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），CHANGELOG 已带 [Unreleased-探测面收口] 块，随下一版归版。
+[NOTE] 2026-11-08T02:00:43Z from=opencode 批次 9 认领：ELK/Elasticsearch 运维面「req.* 未转义直插」收口（elk_ops.go + elk_ext_ops.go，盘点器 raw_interp 39 处）。
+  范围（批次 8 之后盘点器判据 C「raw_interp」队列头部两文件）：
+    elk_ops.go 18（index 5 / ilm 3 / snapshot 5 / reindex 1 / security 3 / upgrade 1 / logstash pipeline 1 / opensearch index 1 —— 含派生局部变量 body/indices/roles/index/version/config 的溯源收口）；
+    elk_ext_ops.go 21（pipeline 4 / template 3 / alias 2 / datastream 3 / maintenance 6 / cluster-settings 1 / ccr 3 / watcher 5）。
+  为什么是真缺陷面：这些 handler 把请求体字段裸拼进下发给 agent 的 shell 脚本，agent 以 sh -c 执行
+  ⇒ `$(id)`/反引号/分号被真实执行。鉴权面无缺口（均经 dispatchKafkaTask → subsystemAuthorize 的
+  task:write 闸），是**已授权调用者可直接打到 agent 的 RCE**。
+  本批的形态比前几批复杂——不能一律 Quote，按三类分别处理：
+  ① **URL path 段插值**（index/name/policy/repo/snapshot/watchId/alias/leader/remote…）→ 在 Go 层
+     拼出**完整 URL**，再对**整个 URL** 做 shellquote.Quote。
+     为什么不能把 Quote 结果塞回原处：旧形态 URL 在**双引号段**内（`"http://localhost:9200/%s"`），
+     双引号内单引号是**字面量**——`Quote` 产出的 `'x'` 会变成 URL 里的 %27 ⇒ 请求必然 404。
+     整体 Quote 后 shell 剥掉外层单引号，curl 收到的 URL 与旧形态逐字相同 ⇒ 取值语义不变。
+     另注：旧形态有几处 URL 根本**没有引号**（如 `_ilm/policy/%s?pretty`），`&`/空格会直接被 shell
+     解释（`&` 是后台执行符）⇒ 同样是可执行注入。
+  ② **JSON 载荷插值**（req.Body / req.Config / 嵌在 JSON 字面量里的 index/alias/location/indices/
+     source/dest/password/roles）→ 分两种：
+     - 用户提供的**自由 JSON 文本**（req.Body、roles）：先用 json.Valid 校验（不合法 ⇒ 400 拒收），
+       再**整体 Quote**（保留用户 JSON 原字节，不重排）。旧形态 `-d '%s'` 在单引号段内，payload 里
+       出现单引号即**破段** ⇒ 可执行注入。
+     - **内嵌 JSON 的字段值**（alias 的 index/alias、snapshot 的 location/indices、reindex 的
+       source/dest、CCR 的 remote/leader、create-user 的 password/roles）：改由 Go 层 map +
+       json.Marshal 构造 JSON，再整体 Quote。JSON 转义交给标准库（顺带修掉旧形态 `"` 破坏
+       JSON 的问题）。
+  ③ **回显段**（`echo "…%s…"`）→ 整体 Quote 整条消息（双引号段内 `$` 与反引号同样会展开 ⇒
+     `echo "Upgraded to $(id)"` 一样被执行）。Quote 后 shell 剥引号，输出不变。
+  配套：① 新增 internal/controlplane/elk_script.go——esAPIURL（拼完整 URL 并整体 Quote）/
+     esQuoteJSONText（校验 + 整体 Quote）/ esJSONPayload（Go 构造 JSON 并整体 Quote）/
+     esEcho（整体 Quote 回显消息）四个小助手，避免 39 处各写一遍；
+     ② 新增 internal/controlplane/elk_injection_test.go 守卫测试（沿用批次 7/8 的「引号外文本」
+     判据 + 真 sh 语义级证明 + 源码级兜底 + 自由 JSON 非法 ⇒ 400 的判据）；
+     ③ 盘点器复算 raw_interp 269 → 230（-39）。
+  能力影响（如实登记）：**新增 400**——用户提供的 JSON body/roles 非法 JSON 时拒收（旧形态是把
+  垃圾原样发给 ES，由 ES 自己报错）；内嵌 JSON 的键序改由 Go json.Marshal 决定（ES API 不关心
+  键序，语义等价）；其余取值语义与回显输出均不变。
+  批次拆分说明：raw_interp 剩余 269 条的头部六文件共 94 处，其中 Graph 面的 req.Type 是**命令名**
+  （要当二进制执行 ⇒ 命令注入，比 shell 注入更严重，必须枚举白名单），与 Kafka/GPU 的 token-Quote
+  不是同一类改动，混在一批会让 PR 语义模糊。故本批只做 ELK 面 39 处，Kafka/Graph/GPU 55 处另起
+  批次 10。
+  冲突检查：文件面 elk_ops.go / elk_ext_ops.go / 新增 elk_script.go + elk_injection_test.go /
+  CHANGELOG，与 #5~#15 均无重叠；qoder/workbuddy 两条线近月未动这两个文件。
+[CLAIM] 2026-11-08T02:00:43Z from=opencode ttl=8h scope=internal/controlplane/elk_ops.go,internal/controlplane/elk_ext_ops.go,internal/controlplane/elk_script.go,internal/controlplane/elk_injection_test.go,CHANGELOG.md note=批次 9：ELK/Elasticsearch 面 req.* 未转义直插收口（39 处：URL 整体 Quote + JSON 载荷整体 Quote/json.Marshal + 回显整体 Quote）+ 注入守卫测试
