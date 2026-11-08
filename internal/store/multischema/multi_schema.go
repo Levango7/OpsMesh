@@ -23,13 +23,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
@@ -576,7 +576,7 @@ func (m *MultiSchemaStore) SubmitResult(res *proto.TaskResult) {
 		tenant = m.lookupAgentTenant(res.AgentID)
 	}
 	if tenant == "" {
-		log.Printf("[multi-schema] SubmitResult 无法定位租户 taskID=%s agentID=%s，丢弃", res.TaskID, res.AgentID)
+		logx.Warn(context.Background(), "multi-schema: SubmitResult 无法定位租户，丢弃", "taskID", res.TaskID, "agentID", res.AgentID)
 		return
 	}
 	s, err := m.storeFor(tenant)

@@ -4,6 +4,52 @@
 
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+## [Unreleased-容器存储面收口] — 2026-11-08（容器/存储运维面：51 处用户字段未转义直插 → `shellquote.Quote` + 新增 `ValidateArgList`）
+
+- **为什么是真缺陷面**：这 51 处把请求体字段**裸拼**进要下发到 agent 的 shell 脚本，
+  agent 以 `sh -c` 执行（`internal/agent/agent.go` 的 `shellCommand`）⇒ `$(id)` / 反引号 /
+  分号被**真实执行**。鉴权面无缺口（均经 `dispatchKafkaTask` / `dispatchFastDFSTask` →
+  `subsystemAuthorize` 的 `task:write` 闸）⇒ 这是**已授权调用者可直接打到 agent 的 RCE**。
+- **范围（51 处）**：`docker_ops.go` 24（compose 7 + network 6 + volume 3 + debug 7 + registry 4）、
+  `container_ops.go` 13（inspect/start/stop/restart/rm/logs/pull/push/build/trivy/sign/tag/rmi）、
+  `distfs_ops.go` 14（ceph pool/fs/rbd、gluster volume/peer/mount、hdfs、seaweedfs）。
+- **做法分两类（不搞一刀切）**：
+  ① **单 token 字段**（name / container / driver / alias / subnet / gateway / image / tag /
+     source / dest / registry / username / password / project / file / service / pool / volume /
+     host / path / remote / version …）→ 一律 `shellquote.Quote`（POSIX 单引号字面量，取值语义不变）。
+     另含 6 处**字符串拼接**面（`opts += " --subnet " + req.Subnet`、`alias = " --alias " + req.Alias`
+     等）——盘点器按 `Sprintf` 实参抓不到，但同样是注入面，本批一并收口。
+  ② **多词形态**字段（docker compose 的 `args`、docker debug exec 的 `command`、gluster 的
+     `mode`「replica 3」与 `bricks`「srv1:/v1 srv2:/v2」）→ 新增 `pkg/shellquote.ValidateArgList`
+     白名单校验（只允许字母数字与 `- _ . , : / = + @` 及空格，**任何 shell 元字符一律 400 拒收**）。
+     为什么不能用 `Quote`：`Quote` 会把 `--scale web=3` 压成**一个**词，改变命令语义。
+- **⚠️ 能力降级清单（如实登记）**：
+  - `POST /api/v1/docker/debug` 的 `action=exec`：`command` 命令串经白名单校验，**含引号 /
+    管道 / 重定向的命令串会被 400 拒收**（如 `sh -c "df -h | head"`）。这是有意收窄——命令串
+    若原样裸拼，注入会落在 **agent 宿主**上（越出容器边界）；容器内执行命令的原语义不变，
+    复杂命令请改走「先落脚本文件、再执行文件」。
+  - `POST /api/v1/docker/compose` 的 `args`：同样只接受白名单内的参数串。
+  - `POST /api/v1/storage/distfs`（glusterfs `create-volume`）的 `mode` / `bricks`：同样白名单化。
+- **新增 `pkg/shellquote.ValidateArgList`**：白名单而非黑名单——没进白名单的字节一律拒绝，
+  新出现的 shell 语法（`$(...)`、反引号、`<(...)`、brace expansion）不会被漏网。
+  语义边界：通过校验的参数串**仍按原样**拼接（不改写、不加引号），故空格分隔的多个参数词
+  仍被 shell 正常拆分——这正是「自由参数串」形态的语义要求。单元测试含真 shell 对拍
+  （放行集保持词拆分、拒绝集确实拦得住会执行的载荷、且反证裸拼确实会执行）。
+- **回归测试**（`internal/controlplane/container_injection_test.go`，4 个用例，覆盖 67 个
+  handler × 字段组合 × 4 个载荷 = 268 条断言）：①载荷只以单引号字面量形态出现（「引号外文本」
+  不含载荷 / `$(` / 反引号）；
+  ②多词形态字段含元字符 ⇒ 400 拒收，合法值仍受理（能力不误伤）；③**真 sh 语义级证明**——
+  把脚本交给真 shell 执行一遍，注入载荷不得产生任何副作用（标记文件不得落地）；
+  ④源码级兜底——三个文件里不得再有未经 `Quote`/`ValidateArgList` 的
+  「`script = fmt.Sprintf(..., req.*, ...)`」形态。
+  **变异验证（旧码必红）**：把三个生产文件回退到本批前，**4 个用例全部判红**；其中语义用例
+  实测标记文件**真的落地**（`docker volume inspect v1; touch …; echo y` 在旧形态下被 sh
+  真实执行）——这是可执行注入的证明，不是文本比对。
+- **盘点器复算（判据 C `raw_interp`，与 A/B 独立计数）**：同口径
+  **raw_interp 320 → 269（-51）**，三个文件全部归零（docker 24 / container 13 / distfs 14 → 0）；
+  A/B 口径 563 → 505。剩余 269 条散在 50+ 文件，是后续批次的可复算队列。
+- **本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），随下一版归版。
+
 ## [Unreleased-探测面收口] — 2026-11-08（网络诊断/合成监控面：13 处用户字段未转义直插 → `shellquote.Quote`）
 
 - **为什么是真缺陷面**：这 13 处把请求体字段（`req.Target` / `req.URL` / `req.Name`）**裸拼**进
@@ -68,6 +114,35 @@
 - **验证**：整包 `go test ./internal/controlplane/` 125s 全绿；`gofmt` / `go vet` 干净；
   golangci-lint v2.13.2（CI 同版）**0 issues**；`go build ./...` 全绿。
 
+## [Unreleased-SSE鉴权] — 2026-11-08（SSE 端点接入 requireTenantContext + 事件枚举文档漂移修复）
+
+- **漏洞**：`handleEventsStream` 原自行提取身份且**头非空即无条件采信** `X-Tenant-ID`，只在头为空时
+  才回退 Bearer/Cookie JWT ⇒ 匿名者伪造 `X-Tenant-ID: 受害租户` 即可订阅该租户的 task_status /
+  task_cancel / alert_new / device_online|offline / approval_status / schedule_status / agent_logs
+  事件流（跨租户信息泄露）。生产 `requireAuth=true` 且 Production 强制 `TrustGatewayHeaders=false`，
+  边缘 nginx 的 SSE location 不剥离客户端头 ⇒ 真实可达，与 owner 2026-11-06 裁决「不要对访客开放，
+  避免信息安全泄露」直接冲突。
+- **修复**：handler 改调 `requireTenantContext`（`internal/controlplane/http_infra.go`），与其余业务端点
+  同一身份矩阵：头与 JWT 租户不一致 403、`X-User-Id` 与令牌用户不一致 403、头非空但无凭证且未开
+  `--trust-gateway-headers` 401、显式信任网关头时放行、头缺失回退 Bearer/Cookie JWT（浏览器
+  EventSource 设不了自定义头）、全空时 requireAuth 401 / demo 注 default / 其余 400。demo 填 default、
+  非 demo 空租户 400、requireAuth 缺身份 401 三条既有可观测行为不变。
+- **回归测试**：5 条新用例（`TestSSE_ForgedTenantHeaderWithoutCredentialRejected`、
+  `TestSSE_TenantHeaderMismatchJWTRejected`、`TestSSE_HeaderAndMatchingJWTAllowed`、
+  `TestSSE_TrustGatewayHeadersAllowsHeaderOnly`、`TestSSE_CookieJWTSubscriberGetsOwnTenantEvents`），
+  前两条在收口前实测返回 200 + 握手帧（先红后绿）。`scripts/authz-route-audit.py` 静态分类
+  SSE 由 ANON 移入 AUTH_ONLY（19/5 → 18/6）。
+- **文档纠偏（同批）**：`docs/api-specification.md` §7.3 与 `docs/sse-protocol.md` 事件枚举表按代码
+  实测对齐：全量 10→11 种并补 `task_cancel` 行（`server_tasks.go` publishTaskCancel，Wave 4-D）；
+  `approval_status`/`schedule_status` 的 data 键 `action`→`status`（代码实发 status）；
+  `device_online` 删从未发送的 `addr`、`device_offline` 删从未发送的 `lastSeen`；
+  api-spec §7 OpenAPI type 清单同步补 `task_cancel`。另纠正两文档「SSE 订阅计入审计
+  Action=subscribe_sse」：该动作全仓 Go 命中 0，订阅成功本就不写审计（403 拒绝经
+  `auditAuthzDenied` 计入）。
+- **验证**：`go test ./internal/controlplane/ ./internal/gates/` 全绿（SSE 契约测试
+  TestSSEContract_* 守代码↔文档事件名双向对齐）；`go build ./...` / `go vet` / `gofmt` 干净。
+- **前端缺口（只报告，不在本批修）**：`web/enterprise/src/api/sse.js` 的 EVENT_CONTRACT 未含
+  `task_cancel`，ALLOWED_TYPES 会静默丢弃该帧——web/enterprise 为 zcode 只读域，随收口报告一并提示。
 ## [0.18.0] — 2026-11-07（本版汇总：派发口鉴权收口 + 注入面清扫 + AI 预算执法与租户隔离 + 交付链换源与 CVE 修复）
 
 - **鉴权（覆盖面最大）**：派发路径 599 个调用点（去注释口径，冻结点 06b78c9）补 `task:write`

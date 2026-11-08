@@ -10,12 +10,13 @@ package controlplane
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/aiops"
 	"github.com/Levango7/OpsMesh/internal/automation"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
@@ -52,7 +53,7 @@ func (s *Server) startAutomationEvalLoop(ctx context.Context, interval time.Dura
 func (s *Server) processAutomationRules() {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("controlplane: automation eval loop panic recovered: %v", r)
+			logx.Error(context.Background(), "controlplane: automation eval loop panic recovered", fmt.Errorf("%v", r))
 		}
 	}()
 	if s.store == nil {
@@ -251,7 +252,7 @@ func (s *Server) executeRemediationPlan(tenantID string, plan *aiops.Remediation
 			task.MaxRetries = 3
 		}
 		if _, err := s.store.CreateTask(task); err != nil {
-			log.Printf("controlplane: aiops remediation dispatch failed for agent %s: %v", cmd.AgentID, err)
+			logx.Error(context.Background(), "controlplane: aiops remediation dispatch failed", err, "agentID", cmd.AgentID)
 		}
 	}
 }

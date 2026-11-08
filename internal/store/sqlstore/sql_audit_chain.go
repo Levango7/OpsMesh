@@ -21,11 +21,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
@@ -556,10 +556,10 @@ func (s *SQLStore) auditArchiveCommit(ctx context.Context, ids []int64, boundary
 	if err != nil {
 		// 行数读不到不改变「已删除」的事实：如实告警后继续推进边界，
 		// 否则本轮归档会被判失败，下轮再取同批超龄行时它们已不在在线表。
-		log.Printf("[store] 审计归档删除后无法读取影响行数：%v（本批已从在线表删除，跳过数量核对）", err)
+		logx.Warn(ctx, "store: 审计归档删除后无法读取影响行数", err)
 	} else if int(deleted) != len(ids) {
 		// 并发追加不会影响这些超龄行；数量不符说明有别的写者在动审计表 → 明确告警。
-		log.Printf("[store] 审计归档删除行数不符：期望 %d 实际 %d（可能有外部写者直接操作 audit_log）", len(ids), deleted)
+		logx.Warn(ctx, "store: 审计归档删除行数不符", "expected", len(ids), "actual", deleted)
 	}
 	// 推进边界（archived_through_id 取本批最大 id）。
 	maxID := ids[len(ids)-1]

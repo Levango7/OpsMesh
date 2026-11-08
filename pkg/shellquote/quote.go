@@ -284,6 +284,44 @@ func ValidatePath(p string) error {
 	return nil
 }
 
+// ValidateArgList 校验「一整串自由参数」能否安全地原样拼进 shell 命令行。
+//
+// 为什么需要它（与 Quote 的分工）：
+//   - Quote 适用于**单个**词：它把整个字符串变成一个 shell 字面量，于是
+//     `--scale web=3` 这种「本来就是多个词」的参数串会被压成一个词，语义被改变；
+//   - 但自由参数串又不能原样裸拼：`--foo; rm -rf /` 会闭合命令。
+//
+// 判据：只允许「参数词」能出现的字节——字母数字与 `- _ . , : / = + @` 以及空格
+// （空格用于分隔多个参数词）。**任何 shell 元字符都不允许**：
+// `; & | < > ( ) $ ` \ " ' * ? [ ] { } ! # ~ %` 以及换行/回车/NUL 一律拒绝。
+//
+// 这是**白名单**而非黑名单：没进白名单的字节一律拒绝，新出现的 shell 语法
+// （`$(...)`、反引号、`<(...)`、brace expansion、ANSI-C quoting）不会被漏网。
+//
+// 语义边界（重要）：通过校验的参数串**仍按原样**拼进命令行（本函数不改写、
+// 不加引号），故空格分隔的多个参数词仍会被 shell 正常拆分——这正是「自由参数串」
+// 这一形态的语义要求。若调用点需要「整体作为一个词」，应该用 Quote 而不是本函数。
+//
+// 已知代价：含引号/管道的参数串（如 `sh -c "df -h | head"`）会被拒绝——
+// 这是有意的收窄（把「命令串」误当「参数串」是注入面），需要复杂命令时
+// 应改用「先落脚本文件、再执行文件」的方式。
+func ValidateArgList(s string, maxLen int) error {
+	if len(s) > maxLen {
+		return fmt.Errorf("arg list too long (%d > %d)", len(s), maxLen)
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '-' || c == '_' || c == '.' || c == ',' || c == ':' || c == '/' || c == '=' || c == '+' || c == '@':
+		case c == ' ':
+		default:
+			return fmt.Errorf("arg list contains char %q not allowed", string(c))
+		}
+	}
+	return nil
+}
+
 func isAlnumDash(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]

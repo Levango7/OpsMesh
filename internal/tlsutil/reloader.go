@@ -13,11 +13,13 @@
 package tlsutil
 
 import (
+	"context"
 	"crypto/tls"
-	"log"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -89,7 +91,7 @@ func NewCertificateReloader(certFile, keyFile string) (*CertificateReloader, err
 		if dir := filepath.Dir(p); dir != "" && dir != "." {
 			// 目录监听失败不致命（可能权限不足），仅记日志跳过；文件本身监听已覆盖原地写入。
 			if err := watcher.Add(dir); err != nil {
-				log.Printf("tlsutil: 监听证书父目录失败（跳过 rename 场景监听）: %v", err)
+				logx.Warn(context.Background(), "tlsutil: 监听证书父目录失败（跳过 rename 场景监听）", err)
 			}
 		}
 	}
@@ -150,7 +152,7 @@ func (r *CertificateReloader) watchLoop() {
 			}
 			// watcher 错误通常为底层 OS 错误（路径删除/权限变更），打日志后继续；
 			// 不退出循环，避免瞬时错误导致热重载永久失效。
-			log.Printf("tlsutil: watcher 错误（继续监听）: %v", err)
+			logx.Warn(context.Background(), "tlsutil: watcher 错误（继续监听）", err)
 		case <-timerC:
 			// 计时器到期：执行一次 reload，重置 debounce 状态。
 			debounce = nil
@@ -187,13 +189,13 @@ func (r *CertificateReloader) reload() {
 	cert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)
 	if err != nil {
 		// reload 失败：保持旧证书，仅打日志。避免半成品文件导致服务不可用。
-		log.Printf("tlsutil: 证书热重载失败，保持旧证书: %v", err)
+		logx.Error(context.Background(), "tlsutil: 证书热重载失败，保持旧证书", err)
 		return
 	}
 	r.mu.Lock()
 	r.cert = cert
 	r.mu.Unlock()
-	log.Printf("tlsutil: 证书热重载成功")
+	logx.Info(context.Background(), "tlsutil: 证书热重载成功")
 }
 
 // ReloadAttempts 返回自构造以来 reload 的尝试次数（含失败）。

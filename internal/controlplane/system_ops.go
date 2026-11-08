@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -491,6 +490,9 @@ func buildPackageScript(req packageOpRequest) string {
 // createSystemTask 下发 shell 任务到指定 agent（复用 store.CreateTask）。
 // approvalRequired 为 true 时任务下发前需管理员审批（进入 pending_approval 状态）。
 func (s *Server) createSystemTask(tenantID, agentID, script, action string, approvalRequired ...bool) (*proto.Task, error) {
+	// deviceID 可能是 "dev-<hash>"（前端注册时加前缀），而 agent 注册时用裸 ID。
+	// 剥离前缀，避免 task 与 agent 找不到对齐，任务永远 pending。
+	agentID = strings.TrimPrefix(agentID, "dev-")
 	task := &proto.Task{
 		AgentID:    agentID,
 		TenantID:   tenantID,
@@ -506,6 +508,3 @@ func (s *Server) createSystemTask(tenantID, agentID, script, action string, appr
 	}
 	return s.store.CreateTask(task)
 }
-
-// _ 确保 strconv 被使用（预留：未来端口数值校验）。
-var _ = strconv.Atoi

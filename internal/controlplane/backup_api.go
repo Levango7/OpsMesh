@@ -22,10 +22,10 @@ package controlplane
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -115,7 +116,7 @@ func (s *Server) handleBackupCreate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runBackupAsync(tenantID string, rec *store.BackupRecord) {
 	defer func() {
 		if p := recover(); p != nil {
-			log.Printf("controlplane: backup async panic recovered (id=%s): %v", rec.ID, p)
+			logx.Error(context.Background(), "controlplane: backup async panic recovered", fmt.Errorf("%v", p), "backupID", rec.ID)
 			rec.Status = "failed"
 			rec.Path = ""
 			s.store.UpdateBackup(tenantID, rec)
@@ -124,7 +125,7 @@ func (s *Server) runBackupAsync(tenantID string, rec *store.BackupRecord) {
 	snap := s.buildBackupSnapshot(tenantID, rec)
 	path, size, err := writeBackupArchive(snap, s.effectiveBackupDir(), rec.ID)
 	if err != nil {
-		log.Printf("controlplane: backup archive failed (id=%s): %v", rec.ID, err)
+		logx.Error(context.Background(), "controlplane: backup archive failed", err, "backupID", rec.ID)
 		rec.Status = "failed"
 		s.store.UpdateBackup(tenantID, rec)
 		return

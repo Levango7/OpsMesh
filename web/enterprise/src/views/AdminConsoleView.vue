@@ -13,7 +13,7 @@
             <option value="error">error</option>
           </select>
         </label>
-        <Button variant="ghost" size="sm" @click="window.open(getDiagnosticsUrl(), '_blank')" data-testid="admin-diagnostics-link">
+        <Button variant="ghost" size="sm" @click="handleDownloadDiagnostics" data-testid="admin-diagnostics-link">
           <Icon name="download" :size="14" /> {{ t('admin_console.diagnostics_download') }}
         </Button>
         <Button variant="ghost" size="sm" @click="fetchAll">
@@ -55,9 +55,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import PageShell from '@/components/PageShell.vue'
-import { getAdminConfig, setLogLevel, getDiagnosticsUrl, getStoreFailures, getServiceRouting, getServiceTraffic } from '@/api/admin'
+import { getAdminConfig, downloadDiagnostics, getStoreFailures, getServiceRouting, getServiceTraffic } from '@/api/admin'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
@@ -105,27 +105,23 @@ async function fetchAll() {
     serviceRouting.value = sr || { domains: [] }
     serviceTraffic.value = st || { domains: [], window: '' }
   } catch (e) {
-    loadError.value = e.j?.error || t('admin_console.load_failed')
+    loadError.value = e?.message || t('admin_console.load_failed')
   } finally {
     loading.value = false
   }
 }
 
-async function onLogLevelChange() {
+async function handleDownloadDiagnostics() {
   try {
-    await setLogLevel({ level: logLevel.value })
-  } catch {
-    // ignore
+    await downloadDiagnostics()
+  } catch (e) {
+    loadError.value = e?.message || t('admin_console.download_failed')
   }
 }
 
-onMounted(() => {
-  fetchAll()
-})
 </script>
 
 <style scoped>
 .field-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .field-inline select { padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-
 </style>

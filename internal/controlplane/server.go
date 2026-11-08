@@ -12,7 +12,6 @@ import (
 	cryptoRand "crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"path/filepath"
 	"sync"
 	"time"
@@ -303,7 +302,7 @@ func (s *Server) shutdownOTel() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := s.otelShutdown(ctx); err != nil {
-		log.Printf("controlplane: OTel shutdown 失败: %v", err)
+		logx.Error(ctx, "controlplane: OTel shutdown 失败", err)
 	}
 }
 
@@ -315,7 +314,7 @@ func (s *Server) shutdownTLSReloader() {
 		return
 	}
 	if err := s.tlsReloader.Close(); err != nil {
-		log.Printf("controlplane: TLS reloader 关闭失败: %v", err)
+		logx.Error(context.Background(), "controlplane: TLS reloader 关闭失败", err)
 	}
 }
 
@@ -556,7 +555,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		}
 		for _, r := range defaultAlertRules {
 			if err := s.alertEngine.AddRule(&r); err != nil {
-				log.Printf("controlplane: register default alert rule %s failed: %v", r.ID, err)
+				logx.Error(context.Background(), "controlplane: register default alert rule failed", err, "ruleID", r.ID)
 			}
 		}
 	}

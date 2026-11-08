@@ -5,13 +5,13 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
@@ -83,7 +83,7 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("[cmdb] writeJSON 编码失败: %v", err)
+		logx.Error(context.Background(), "cmdb: writeJSON 编码失败", err)
 	}
 }
 
@@ -98,7 +98,7 @@ const internalErrorBody = "internal server error"
 //
 // op 用于日志定位（哪一步失败了），不进响应体。
 func writeInternalError(w http.ResponseWriter, op string, err error) {
-	log.Printf("[cmdb] %s 失败: %v", op, err)
+	logx.Error(context.Background(), "cmdb: 操作失败", err, "op", op)
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": internalErrorBody})
 }
 
@@ -293,7 +293,7 @@ func (h *Handler) writeCICSV(w http.ResponseWriter, items []CiItem) {
 	cw.Flush()
 	// 单行 Write 的错误由 Flush 后的 Error() 汇总返回（csv.Writer 语义）。
 	if flushErr := cw.Error(); flushErr != nil {
-		log.Printf("[cmdb] CI CSV 导出写响应失败: %v", flushErr)
+		logx.Error(context.Background(), "cmdb: CI CSV 导出写响应失败", flushErr)
 	}
 }
 
@@ -584,12 +584,12 @@ func (h *Handler) HandleReport(ctx context.Context, agentID string, report *prot
 		ci.CreatedAt = now
 		ci.UpdatedAt = now
 		if err := h.store.CreateCI(ctx, ci); err != nil {
-			log.Printf("[cmdb] HandleReport CreateCI 失败: %v", err)
+			logx.Error(ctx, "cmdb: HandleReport CreateCI 失败", err)
 			return
 		}
 	} else {
 		if err := h.store.UpdateCI(ctx, ci); err != nil {
-			log.Printf("[cmdb] HandleReport UpdateCI 失败: %v", err)
+			logx.Error(ctx, "cmdb: HandleReport UpdateCI 失败", err)
 			return
 		}
 	}

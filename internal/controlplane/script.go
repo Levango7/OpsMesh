@@ -23,13 +23,13 @@ package controlplane
 import (
 	"errors"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -283,7 +283,7 @@ func (s *Server) handleScriptExecute(w http.ResponseWriter, r *http.Request, id 
 	// 请求体可选（GET 也允许，但 POST 推荐 JSON 体）：解析失败不 4xx 拒绝，
 	// body 保持零值继续（后续 DeviceID 校验兜底），但畸形请求体必须留痕。
 	if err := decodeJSONBody(w, r, &body); err != nil && !errors.Is(err, io.EOF) {
-		log.Printf("[controlplane] execute script: 可选请求体解析失败（按空体继续）: %v", err)
+		logx.Warn(r.Context(), "controlplane: execute script: 可选请求体解析失败（按空体继续）", err)
 	}
 	if body.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/notify"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/secrets"
@@ -185,7 +185,7 @@ func (s *Server) testNotifyChannel(w http.ResponseWriter, r *http.Request, id st
 		Body  string `json:"body"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil && err != io.EOF {
-		log.Printf("controlplane: testNotifyChannel 解析请求体失败: %v", err)
+		logx.Warn(r.Context(), "controlplane: testNotifyChannel 解析请求体失败", err)
 	}
 	if body.Title == "" {
 		body.Title = "OpsMesh 测试通知"

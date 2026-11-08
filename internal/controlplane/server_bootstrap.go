@@ -6,7 +6,6 @@ import (
 	"crypto/hmac"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -66,7 +65,7 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte(provision.InstallScript(s.cfg.AdvertiseAddr, version.Version))); err != nil {
-		log.Printf("controlplane: handleInstallSh 写安装脚本失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleInstallSh 写安装脚本失败", err)
 	}
 }
 
@@ -109,7 +108,7 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, f); err != nil {
-		log.Printf("controlplane: handleServeAgent 写 agent 二进制失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleServeAgent 写 agent 二进制失败", err)
 	}
 }
 
@@ -217,7 +216,7 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 			if s.cfg.ProvisionCIDRWhitelist != "" {
 				allowedCIDRs := strings.Split(s.cfg.ProvisionCIDRWhitelist, ",")
 				if err := ValidateCIDR(s.cfg.SegmentCIDR, allowedCIDRs); err != nil {
-					log.Printf("controlplane: autoProvisionLoop CIDR 白名单校验失败，跳过本轮: %v", err)
+					logx.Warn(ctx, "controlplane: autoProvisionLoop CIDR 白名单校验失败，跳过本轮", err)
 				} else {
 					if _, err := provision.AutoProvision(ctx, provision.DeviceDeps{
 						UpsertDevice: func(deviceID, ip, cidr, tenantID string) {
@@ -240,7 +239,7 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 						ProvisionSSHKP:         s.cfg.ProvisionSSHKP,
 						ProvisionSSHKnownHosts: s.cfg.ProvisionSSHKnownHosts,
 					}, []string{s.cfg.SegmentCIDR}, ""); err != nil {
-						log.Printf("controlplane: autoProvisionLoop 自动纳管失败: %v", err)
+						logx.Error(ctx, "controlplane: autoProvisionLoop 自动纳管失败", err)
 					}
 				}
 			} else {
@@ -265,7 +264,7 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 					ProvisionSSHKP:         s.cfg.ProvisionSSHKP,
 					ProvisionSSHKnownHosts: s.cfg.ProvisionSSHKnownHosts,
 				}, []string{s.cfg.SegmentCIDR}, ""); err != nil {
-					log.Printf("controlplane: autoProvisionLoop 自动纳管失败: %v", err)
+					logx.Error(ctx, "controlplane: autoProvisionLoop 自动纳管失败", err)
 				}
 			}
 		}

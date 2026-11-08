@@ -6,13 +6,14 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/presets"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
@@ -152,7 +153,7 @@ func (s *Server) seedPresetMiddlewareTemplates() {
 						if cfg, err := json.Marshal(t); err == nil {
 							existing.Config = string(cfg)
 							if err := s.store.SaveMiddlewareTemplate(existing); err != nil {
-								log.Printf("[controlplane] seed 合并 versions 到 %s 失败: %v", tpl.ID, err)
+								logx.Warn(context.Background(), "controlplane: seed 合并 versions 失败", "templateID", tpl.ID, "err", err)
 							}
 						}
 					}
@@ -162,7 +163,7 @@ func (s *Server) seedPresetMiddlewareTemplates() {
 		}
 		st := middlewareTemplateToStore(tpl, "default")
 		if err := s.store.SaveMiddlewareTemplate(st); err != nil {
-			log.Printf("[controlplane] seed 预置中间件模板 %s 失败: %v", tpl.ID, err)
+			logx.Warn(context.Background(), "controlplane: seed 预置中间件模板失败", "templateID", tpl.ID, "err", err)
 		}
 	}
 }

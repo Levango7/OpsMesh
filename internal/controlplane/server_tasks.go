@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -859,7 +858,7 @@ func (s *Server) handleRejectTask(w http.ResponseWriter, r *http.Request, id str
 		Reason string `json:"reason"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil && err != io.EOF {
-		log.Printf("controlplane: handleRejectTask 解析请求体失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleRejectTask 解析请求体失败", err)
 	}
 	if !s.store.RejectTask(id, actx.TenantID, actx.UserID) {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "task not found, not pending_approval, or tenant mismatch"})

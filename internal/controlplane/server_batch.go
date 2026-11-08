@@ -18,7 +18,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -193,7 +192,7 @@ func genBatchID(prefix string) string {
 	// crypto/rand 失败仅见于系统熵源故障的极端环境：占位 ID 保持非空可用，
 	// 冲突由 store 侧主键/覆盖语义兜底，此处留痕即可。
 	if _, err := rand.Read(b[:]); err != nil {
-		log.Printf("[controlplane] genBatchID: crypto/rand 读取失败（使用零值占位 ID）: %v", err)
+		logx.Warn(context.Background(), "controlplane: genBatchID: crypto/rand 读取失败（使用零值占位 ID）", err)
 	}
 	return prefix + "-" + hex.EncodeToString(b[:])
 }

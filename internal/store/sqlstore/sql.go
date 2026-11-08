@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path"
 	"sort"
@@ -23,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
 	"github.com/Levango7/OpsMesh/internal/store/storekit"
@@ -192,7 +192,7 @@ func (s *SQLStore) initWithRetry() error {
 		}
 		lastErr = err
 		if errors.As(err, &fatal) {
-			log.Printf("[store] 迁移致命错误（不重试，立即拒绝启动）: %v", err)
+			logx.Error(context.Background(), "store: 迁移致命错误（不重试，立即拒绝启动）", err)
 			return err
 		}
 		storefail.Record("[store] 迁移失败（第 %d/%d 次，%.0fs 后重试）: %v", i+1, migrationInitAttempts, migrationInitDelay.Seconds(), err)
@@ -447,8 +447,7 @@ func (s *SQLStore) runMigrations() error {
 			if err := s.rebaselineChecksum(context.Background(), mf.version, expected); err != nil {
 				return fatalMigration(fmt.Errorf("再基线迁移 %d (%s) 的指纹失败: %w", mf.version, mf.name, err))
 			}
-			log.Printf("[store] WARN 迁移 %d (%s) 的库内指纹由 CRLF 检出产生（recorded=%s），已再基线为行尾无关的规范值 %s；"+
-				"若非行尾差异请核查是否真有篡改（本次改写已留日志）", mf.version, mf.name, recorded.checksum, expected)
+		logx.Warn(context.Background(), "store: WARN 迁移 库内指纹由 CRLF 检出产生，已再基线为行尾无关的规范值", "version", mf.version, "name", mf.name, "recorded", recorded.checksum, "expected", expected)
 			continue
 		}
 		return fatalMigration(fmt.Errorf("migration %d (%s) checksum mismatch: recorded=%s expected=%s (迁移文件已被篡改，拒绝启动)",
@@ -478,7 +477,7 @@ func (s *SQLStore) runMigrations() error {
 		if err := s.applyMigration(ctx, migConn, mf); err != nil {
 			return fmt.Errorf("apply migration %d (%s): %w", mf.version, mf.name, err)
 		}
-		log.Printf("[store] 迁移 %d (%s) 已应用 (checksum=%s)", mf.version, mf.name, migrationChecksum(mf.content))
+		logx.Info(context.Background(), "store: 迁移已应用", "version", mf.version, "name", mf.name, "checksum", migrationChecksum(mf.content))
 	}
 
 	// 5. 兼容老库增量补列/补索引（历史遗留，待后续转为正式 002+ 迁移）。
@@ -632,8 +631,7 @@ func (s *SQLStore) tolerateIdempotentDDLError(ctx context.Context, mf migrationF
 		return true, fmt.Errorf("迁移 %d (%s) 语句报 %v，但目标 %s %s.%s 状态与预期不符（存在=%v 期望=%v）：拒绝按幂等放行",
 			mf.version, mf.name, err, target.kind, target.table, target.name, exists, target.expectExists)
 	}
-	log.Printf("[store] 迁移 %d (%s) 幂等放行（%s %s.%s 已处于目标状态）: %v",
-		mf.version, mf.name, target.kind, target.table, target.name, err)
+	logx.Info(context.Background(), "store: 迁移幂等放行", "version", mf.version, "name", mf.name, "kind", target.kind, "table", target.table, "name", target.name, "err", err)
 	return true, nil
 }
 

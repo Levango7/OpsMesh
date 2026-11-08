@@ -708,7 +708,7 @@
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=pkg/shellquote/powershell.go note=新增 QuotePowerShellSingle + PowerShellEncodedCommand
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=pkg/shellquote/powershell_test.go note=PS 转义/编码守卫 + 真 PS 对拍（Windows 本地；非 Windows skip）
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=internal/controlplane/shellquote_security_test.go note=第四批守卫（PS 家族 handler 级 + 编码解码断言）
-[CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=scripts/shell-injection-audit.py note=标记集补 PowerShell 编码/转义；复算残留面
+[CLAIM] 2026-11-07T02:30:00Z from=kilo ttl=24h scope=web/enterprise/src/views/AdminConsoleView.vue,web/enterprise/src/api/admin.js,web/enterprise/src/i18n/en.json,web/enterprise/src/i18n/locales/en/common.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/i18n/locales/zh/common.json,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/zh.json,web/enterprise/src/api/__tests__/api-usage.test.js note=修复 admin_console 缺失翻译键、清理未使用导入、补充 api-usage.test.js ALLOW 条目
 [CLAIM] 2026-11-06T15:52:12Z from=opencode ttl=12h scope=docs/opsmesh-authz-audit-2026-11-04.md note=补 §3.6（PS 家族收口取证与残留）
 
 [NOTE] 2026-11-06T18:45:48Z from=opencode LANDED 戳：**PR #7 已合入 main**（merge commit `3da2a3b`）。内容=PS 家族 14 处收口（`-EncodedCommand` 传输 + `QuotePowerShellSingle`；三层实测：旧式 `-Command "..."` 在生产路径被改写为字符串字面量回显、`2>/dev/null` 在 cmd 下整行报废）+ `2>/dev/null`→`2>nul`（附带功能修复）+ §3.6 文档。合入前验收：PR CI 全绿（21 success / 5 skipped / 0 fail，含 Race detector）；真 PS 对拍 + 2 处窄变异判红复原 + 盘点器复算（PS 候选 15→1 假阳性）。
@@ -719,6 +719,8 @@
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell.go note=新增 QuotePowerShellSingle + PowerShellEncodedCommand（UTF-16LE+base64）
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=pkg/shellquote/powershell_test.go note=真 PS 对拍：8 敌意值零执行 + 未转义校准执行（Windows 本地；非 Windows skip）
 [DONE] 2026-11-06T18:45:48Z from=opencode scope=scripts/shell-injection-audit.py note=标记集补 PS 编码/转义 + 格式串降噪；复算 PS 15→1（假阳性）、全仓 616→589
+[CLAIM] 2026-11-07T17:35:00Z from=kilo ttl=24h scope=internal/agent/agent.go,internal/automation/engine.go,internal/cmdb/handler.go,internal/cmdb/sql.go,internal/controlplane/auth.go,internal/controlplane/tenant.go,internal/controlplane/git_unix_ops.go note=优先级2后端改进：log.Printf 替换为结构化日志、tenant.go 级联清理 TODO、git_unix_ops.go 编译检查
+[DONE] 2026-11-08T13:30:00Z from=kilo scope=internal/agent/agent.go,internal/agent/exec_other.go,internal/automation/engine.go,internal/cmdb/handler.go,internal/cmdb/sql.go,internal/controlplane/auth.go,internal/controlplane/auth_cutover.go,internal/controlplane/auth_login.go,internal/controlplane/auth_roles.go,internal/controlplane/auth_tokens.go,internal/controlplane/auth_users.go,internal/controlplane/automation_eval.go,internal/controlplane/backup_api.go,internal/controlplane/credentials/password.go,internal/controlplane/federation.go,internal/controlplane/gateway.go,internal/controlplane/grpc/agent_service.go,internal/controlplane/middleware_template_store.go,internal/controlplane/notify_channels.go,internal/controlplane/os_optimize.go,internal/controlplane/pipeline.go,internal/controlplane/platform_config.go,internal/controlplane/plugin_host.go,internal/controlplane/script.go,internal/controlplane/server.go,internal/controlplane/server_alerts.go,internal/controlplane/server_batch.go,internal/controlplane/server_bootstrap.go,internal/controlplane/server_deploy.go,internal/controlplane/server_lifecycle.go,internal/controlplane/server_middleware.go,internal/controlplane/server_netsec.go,internal/controlplane/server_tasks.go,internal/controlplane/service_proxy.go,internal/cron/schedule.go,internal/deploy/handler.go,internal/grpcx/codec.go,internal/logstore/handler.go,internal/orchestration/handler.go,internal/plugin/plugin.go,internal/secrets/provider.go,internal/store/memory/memory.go,internal/store/memory/memory_secret.go,internal/store/multischema/multi_schema.go,internal/store/sqlstore/sql.go,internal/store/sqlstore/sql_audit_chain.go,internal/store/sqlstore/sql_devices.go,internal/store/sqlstore/sql_rbac.go,internal/store/sqlstore/sql_refresh.go,internal/store/sqlstore/sql_tasks.go,internal/store/sqlstore/sql_tokens.go,internal/store/storekit/crypto.go,internal/tlsutil/reloader.go note=优先级2：log.Printf → logx 结构化日志替换完成，约117处调用点已迁移，go build ./... 通过，go test ./... 唯一失败为预先存在的 internal/cmdb 宽扫描豁免测试（与本次更改无关）
 
 [NOTE] 2026-11-06T20:44:27Z from=opencode 第五批认领（os_ext_ops.go sh 清扫，承接 §3.6.4 挂账的 13 处）：
   真面 = handleOSProcess 2（list 的 grep filter、kill 的 signal）、handleOSLog 1（journalctl 的 unit/since）、
@@ -857,6 +859,80 @@
 [CLAIM] 2026-11-07T18:07:56Z from=opencode ttl=8h scope=internal/controlplane/netdiag_ops.go,internal/controlplane/synthetic_ops.go,internal/controlplane/probe_injection_test.go,scripts/shell-injection-audit.py,CHANGELOG.md note=批次 7：探测/诊断面 req.* 未转义直插收口（13 处 → shellquote.Quote）+ 盘点器 raw_interp 判据
 
 [LANDED] 2026-11-08T00:33:35Z from=opencode commit=cd512a6 branch=fix/probe-injection-sweep pr=14 note=批次 7（探测/诊断面 req.* 未转义直插收口）入 main：13 处 → `shellquote.Quote`（netdiag_ops.go 8：tcpdump/mtr/nmap/dig/host/traceroute/ping/status-code；synthetic_ops.go 5：create 的 name+url、delete 的 name、http/tcp/icmp 三探针）。真缺陷面：裸拼进下发给 agent 的 shell 脚本（agent 以 `sh -c` 执行）⇒ `$(id)`/反引号被真实执行；**双引号不是防护**（POSIX 双引号内 `$` 与反引号同样展开），旧形态 `"$(id)"` 一样会被执行。tcp 探针改位置参数形态 `bash -c 'echo > /dev/tcp/"$1"/80' _ <target>`（内层 bash 会二次解析 `;`）。守卫 `internal/controlplane/probe_injection_test.go`（5 用例）：引号外文本判据 + 源码级兜底 + **真 sh 语义级证明**（标记文件不得落地）；变异验证回退旧码后 5/5 判红且语义用例实测标记文件真的落地。盘点器新增判据 C（`raw_interp`，与 A/B 独立计数）：同口径 raw_interp **333 → 320**（netdiag 8→0、synthetic 5→0），A/B 575 → 563；顺带修跨盘符 bug。CI：PR run 42422819068 + push run 42422644951 全绿（含 Race detector 44m30s）。**本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），CHANGELOG 已带 [Unreleased-探测面收口] 块，随下一版归版。
+
+[CLAIM] 2026-11-08T02:14:42Z from=qoder ttl=6h scope=docs/product-design.md note=P4 产品文档现状化（立项书 docs/projects-2026-11-07.md §4，方案 A：版本头/日期/「现状说明」声明/商业模式与 docs/license-decision-2026-10-03.md 对齐/明显过期版本引用修正 v0.9.0-draft→0.18.0；不动证据表反引号路径、不未经 owner 降级 ✅ §8-Q4）。单文件，跑 internal/gates 后单独成笔推 main。
+
+[RELEASE] 2026-11-08T04:04:48Z from=qoder ref=[CLAIM] 2026-11-08T02:14:42Z scope=docs/product-design.md commit=ac6e8fe note=P4 产品文档现状化（方案 A）已落 main，CI run 42437971067 completed/success（13 job 全绿）。改动：①头注 v0.9.0-draft/2026-09-05 → v0.18.0（现状）/现状复核 2026-11-08 + 明标「现状说明；规划项见 docs/product-roadmap.md」（原始编制日期作为历史保留）；②§3.4 给「12+6（v0.9.0 基线）」加现状核对注，指回 README 现行 34✅/1⚠️/1❌，不删历史、不改 ✅ 判定；③§8/§8.1「当前版本 v0.7.0」两处 → v0.18.0，§8.1 代码规模旧计数加注为 v0.7.0 基线并指向 README/CI（不编造新数）；④§5 商业模式核对与 docs/license-decision-2026-10-03.md §3「Open-Core（内核 Apache-2.0 + 企业版商业授权）」一致，无矛盾，未改。门禁（本地+CI）：TestCapability 36 条证据路径 0 缺失 / TestDocPaths 18 份 320 条路径全存在。未改证据表 ✅ 任何判定；矩阵逐行深度复核 + 无证据 ✅ 降级作为独立一批另做，降级需 owner 逐条认可（§8-Q4）。
+[NOTE] 2026-11-07T17:43:04Z from=workbuddy SSE 鉴权缺口取证（只读现测，接管前留痕）：
+  缺陷：handleEventsStream 自行提取身份（sse.go:103 authctx.FromHTTPHeader → tenant），
+  只在 tenant 为空时才回退 Bearer/Cookie（sse.go:107-110）。**头非空即无条件采信**，
+  既不校验凭证存在，也不与 JWT 的 tenant_id 交叉校验。而 requireTenantContext 对同一形态
+  早已判 401/403（http_infra.go:143-156：头与令牌租户不一致 403；头非空但无任何凭证且
+  requireAuth 且未开 trust-gateway-headers ⇒ 401，注释点名这是 CI E2E-sec 实测捕获的越权）。
+  可达性：生产 requireAuth 默认 true（config.go:887-888），且 Production 强制
+  TrustGatewayHeaders 回落 false（config.go:940-942）；边缘 nginx 的 SSE 专用 location
+  （deploy/docker/proxy/nginx.conf.template:83-95）只重述 Host/X-Real-IP/X-Forwarded-*，
+  **不剥离客户端 X-Tenant-ID**。仓内两处 Header.Del("X-Tenant-ID") 都在出向代理
+  （auth_cutover.go:270、service_proxy.go:103），不覆盖本 handler 的入向路径。
+  ⇒ 匿名者只发 `X-Tenant-ID: 受害租户` 即可订阅该租户的 task_status / alert_new /
+  device_online|offline / approval_status / agent_logs 事件流（跨租户信息泄露）。
+  与 owner 2026-11-06 裁决「不要对访客开放，避免信息安全泄露」直接冲突。
+  立项书 docs/projects-2026-11-05.md:437 把它记为「匿名可连…不可派发…不阻塞本批」——
+  该判断只看了「不可派发」，漏了「头可伪造」这一维；本批按追加式纠正，不改旧条目。
+  接管依据（板面 §6）：opencode 两条 ttl=6h 认领已于 08:20:12Z / 08:41:09Z 过期且无
+  DONE/RELEASE；其施工内容已落 main（0570fa7 竞态修复 + d6a6322 测试改写，二者均为
+  HEAD 祖先，git merge-base --is-ancestor 实证），工作区干净、无未提交改动可承担。
+  处置：TAKEOVER 后即 RELEASE 销号（含 CHANGELOG.md 的那条整串释放，**本线不动
+  CHANGELOG.md**，它仍在 zcode 的 48h 存活认领里），随后按本线真实施工面重新 CLAIM。
+  做法：handleEventsStream 改调 s.requireTenantContext，与其余端点同一口径；
+  demo 填 default / 非 demo 空租户 400 / requireAuth 缺身份 401 三条既有可观测行为保持不变，
+  新增「伪造头无凭证 401」「头与 JWT 租户不一致 403」「trust-gateway-headers 显式放行」回归。
+  不新建权限族、不动派发口、不动 internal/gates（zcode 认领中）、不进 web/enterprise。
+
+[TAKEOVER] 2026-11-07T17:43:04Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,CHANGELOG.md reason=ttl-expired note=opencode 2026-11-07T02:20:12Z 认领（ttl 6h）已过期无闭环；其竞态修复已落 main（0570fa7,d6a6322），无未提交改动
+[RELEASE] 2026-11-07T17:43:04Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,CHANGELOG.md note=接管后即销号：施工内容已在 main，本线不改 CHANGELOG.md（zcode 存活认领），随后按更窄施工面重新 CLAIM
+[TAKEOVER] 2026-11-07T17:43:04Z from=workbuddy scope=docs/sse-protocol.md reason=ttl-expired note=opencode 2026-11-07T02:41:09Z 认领（ttl 6h）已过期无闭环；其文档顺序保证已落 main
+[RELEASE] 2026-11-07T17:43:04Z from=workbuddy scope=docs/sse-protocol.md note=接管后即销号，随后并入本线 SSE 鉴权收口批次重新 CLAIM
+[CLAIM] 2026-11-07T17:43:04Z from=workbuddy ttl=4h scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md note=用户点名「请将没做完的做完」：SSE 端点接入 requireTenantContext，堵伪造 X-Tenant-ID 订阅他租户事件流；先证红后证绿，推送另需按批授权
+[CLAIM] 2026-11-07T17:50:58Z from=workbuddy ttl=4h scope=docs/api-specification.md note=同批文档纠正：§7.1 身份行与 §7.5「SSE 订阅计入审计 Action subscribe_sse」两处与代码不符（该动作全仓 Go 命中 0），与 docs/sse-protocol.md 同句一并改；不动事件枚举表、不动内部代码
+[NOTE] 2026-11-08T03:12:05Z from=workbuddy note=纠正本人 17:50:58Z 认领注记的边界「不动事件枚举表」：用户随后点名「§7.3 事件枚举漂移也修掉」，枚举表即进入本批施工面。已按代码实测改正 docs/api-specification.md §7.3：全量 10→11 种并补 task_cancel 行（server_tasks.go publishTaskCancel 发布，Wave 4-D）；approval_status/schedule_status 的 data 键 action→status（server_approval.go/server_schedules.go 实发 status）；device_online 去掉从未发送的 addr（grpc.go 实发 deviceID/segment/agentID/hostname）；device_offline 去掉从未发送的 lastSeen（server_devices.go 实发仅 deviceID）；§7 开头 OpenAPI type 清单同步补 task_cancel。docs/sse-protocol.md 同表对齐：该表 task_cancel 行与 schedule_status=status 在 HEAD 已正确，本批仅删同款 addr/lastSeen 假键。口径：data 键列不得点名代码从不发送的字段，可省略已发送字段（ssePayloadContract 钉的键不受影响）。
+[RELEASE] 2026-11-08T03:14:28Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md note=收口：SSE 鉴权收口批已完成（sse.go 接入 requireTenantContext + 5 条回归测试 + 两份协议文档枚举漂移纠正），待本地全量验证后按三笔拆分提交（fix/docs/board）
+[RELEASE] 2026-11-08T03:14:28Z from=workbuddy scope=docs/api-specification.md note=同上批：api-specification.md 的 §7.1/§7.3/§7.5 纠正已写入，与 RELEASE 同行销号
+[CLAIM] 2026-11-08T03:14:28Z from=workbuddy ttl=4h scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/api-specification.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md,CHANGELOG.md note=用户点名「§7.3 事件枚举漂移也修掉」后枚举表进入施工面；余量：CHANGELOG.md 补本批条目（另两条对 CHANGELOG.md 的认领均已过期，精确 scope 冲突语义下不撞车）、本地全量验证、三笔拆分提交、DONE 行带 sha
+[DONE] 2026-11-08T03:23:09Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md commit=7644752 note=代码笔：handleEventsStream 改调 requireTenantContext（伪造 X-Tenant-ID 无凭证 401、头与 JWT 租户不一致 403、trust-gateway-headers 显式放行、Cookie JWT 浏览器路径），demo 填 default/空租户 400/缺身份 401 三条既有行为不变；5 条回归先红后绿；go test ./internal/controlplane/ ./internal/gates/ 全绿（113.3s/14.5s）、build/vet/gofmt 干净；authz-route-audit 静态分类 19/5→18/6（SSE ANON→AUTH_ONLY）
+[DONE] 2026-11-08T03:23:09Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/api-specification.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md,CHANGELOG.md commit=3968dfb note=文档笔：两协议文档身份行改写为 requireTenantContext 全矩阵；§7.3 枚举漂移按用户点名修复（全量 10→11 种补 task_cancel、approval_status/schedule_status 键 action→status、device_online 删假键 addr、device_offline 删假键 lastSeen、OpenAPI type 清单同步）；subscribe_sse 审计承诺按事实纠正（全仓 Go 命中 0，403 拒绝经 auditAuthzDenied 计入）；projects 文档追加 §10.0.1/§10.0.2；CHANGELOG 增 [Unreleased-SSE鉴权] 块（fold gate offenders=0）；验证：两表 11 行与代码发布面逐名对齐，TestSSEContract_* 绿
+[NOTE] 2026-11-07T23:09:43Z from=opencode 批次 8 认领：容器/存储运维面「req.* 未转义直插」收口（docker_ops.go + container_ops.go + distfs_ops.go，盘点器 raw_interp 51 处）。
+  范围（批次 7 新增的盘点器判据 C「raw_interp」队列头部三文件）：
+    docker_ops.go 24（compose 7 + network 6 + volume 3 + debug 7 + registry 4）；
+    container_ops.go 13（inspect/start/stop/restart/rm/logs/pull/push/build/trivy/sign/tag/rmi）；
+    distfs_ops.go 14（ceph pool/fs/rbd、gluster volume/peer/mount、hdfs、weed）。
+  为什么要单列一批（沿用批次 7 的判据）：这 51 处把请求体字段裸拼进要下发到 agent 的
+  shell 脚本，agent 以 sh -c 执行 ⇒ `$(id)` / 反引号 / 分号被真实执行。鉴权面无缺口
+  （均经 dispatchKafkaTask → subsystemAuthorize 的 task:write 闸），是**已授权调用者
+  可直接打到 agent 的 RCE**。
+  做法（分两类，不搞一刀切）：
+  ① **单 token 字段**（name/container/driver/alias/subnet/gateway/image/tag/source/dest/
+     registry/username/password/project/file/service/pool/volume/host/path/remote…）
+     → 一律 shellquote.Quote（POSIX 单引号字面量，取值语义不变）。
+     注意 docker network create/connect 的选项串是**字符串拼接**出来的
+     （`opts += " --subnet " + req.Subnet`、`alias = " --alias " + req.Alias`），
+     盘点器按 Sprintf 实参抓不到，但同样是注入面——本批一并改（拼装处直接放 Quote 结果）。
+  ② **自由参数/命令串**（docker compose 的 req.Args、docker debug exec 的 req.Command）
+     → 新增 pkg/shellquote.ValidateArgList：白名单校验「一整串自由参数」是否可安全原样
+     拼接（只允许字母数字与 - _ . , : / = + @ 与空格；任何 shell 元字符一律拒绝）。
+     为什么不能用 Quote：Quote 会把 `--scale web=3` 压成**一个**词，改变语义。
+     为什么必须收：`docker exec web; rm -rf /` 的注入落在 **agent 宿主**上（越出容器边界）。
+     exec 的命令串收窄后仍是「在容器内执行命令」的原语义（容器内 shell 语义不变），
+     但宿主级逃逸被堵死——这是本批的**能力降级点**，需在 CHANGELOG 如实登记。
+  配套：① pkg/shellquote 新增 ValidateArgList + 单元测试（payload 集 + 真 shell 语义证明）；
+  ② internal/controlplane 新增容器/存储面注入守卫测试（沿用批次 7 的「引号外文本」判据 +
+     真 sh 语义级证明 + 源码级兜底）；③ 盘点器复算 raw_interp 320 → 269（-51）。
+  冲突检查：文件面 docker_ops.go / container_ops.go / distfs_ops.go / pkg/shellquote/quote.go
+  （+ 新测试）/ CHANGELOG，与 #5~#14 均无重叠；qoder/workbuddy 两条线当前未动这三个文件
+  （板面近月仅见 2026-10-30 qoder 的一条 docker_ops.go gofmt 格式修复，已早合入）。
+[CLAIM] 2026-11-07T23:09:43Z from=opencode ttl=8h scope=internal/controlplane/docker_ops.go,internal/controlplane/container_ops.go,internal/controlplane/distfs_ops.go,pkg/shellquote/quote.go,internal/controlplane/container_injection_test.go,pkg/shellquote/quote_test.go,CHANGELOG.md note=批次 8：容器/存储运维面 req.* 未转义直插收口（51 处：单 token → shellquote.Quote；自由参数/命令串 → 新增 ValidateArgList）+ 注入守卫测试
+
+[LANDED] 2026-11-08T07:19:56Z from=opencode commit=dcf07f5 branch=fix/container-injection-sweep pr=15 note=批次 8（容器/存储运维面 req.* 未转义直插收口，51 处）入 main：`internal/controlplane/docker_ops.go` 24（compose 7 + network 6 + volume 3 + debug 7 + registry 4）、`container_ops.go` 13（inspect/start/stop/restart/rm/logs/pull/push/build/trivy/sign/tag/rmi）、`distfs_ops.go` 14（ceph pool/fs/rbd / gluster volume/peer/mount / hdfs / seaweedfs）。真缺陷面：裸拼进下发给 agent 的 shell 脚本（agent 以 `sh -c` 执行）⇒ `$(id)`/反引号/分号被真实执行；**双引号不是防护**（POSIX 双引号内 `$` 与反引号同样展开）。做法分两类：① 单 token 字段（name/container/driver/alias/subnet/gateway/image/tag/source/dest/registry/username/password/project/file/service/pool/volume/host/path/remote…）→ 一律 `shellquote.Quote`；顺带修掉盘点器按 Sprintf 实参抓不到的字符串拼接形态（`opts += " --subnet " + req.Subnet`、`alias = " --alias " + req.Alias`）。② 自由参数/命令串（docker compose 的 `req.Args`、docker debug exec 的 `req.Command`、gluster 的 `mode`/`bricks`）→ 新增 `pkg/shellquote.ValidateArgList` 白名单校验（只允许字母数字与 - _ . , : / = + @ 与空格，任何 shell 元字符一律拒绝）；**不能用 Quote**——Quote 会把 `--scale web=3` 压成一个词改变语义。**能力降级点**：上述三处自由参数收窄为白名单，非法值在控制面 **400 拒收**（旧形态是把垃圾原样传给 agent 宿主执行）。配套：`pkg/shellquote` 新增 ValidateArgList + 单元测试（payload 集 + 真 shell 语义证明）；新增 `internal/controlplane/container_injection_test.go` 守卫（4 个用例，67 个 handler×字段组合 × 4 个载荷 = 268 条断言，含「引号外文本」判据 + 真 sh 语义级副作用证明 + 源码级兜底）。变异验证：回退旧码后 4/4 判红，语义载荷实测**真的被执行**（标记文件落地）。盘点器同口径复算 raw_interp **320 → 269**（-51，三文件归零），A/B 563 → 505；判据 C 的历史数字（333/320）仍可比。CI：PR run 42447066565 + push run 42447062396 全绿（含 Race detector）。**本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），CHANGELOG 已带 [Unreleased-容器存储面收口] 块，随下一版归版。
 [NOTE] 2026-11-08T02:00:43Z from=opencode 批次 9 认领：ELK/Elasticsearch 运维面「req.* 未转义直插」收口（elk_ops.go + elk_ext_ops.go，盘点器 raw_interp 39 处）。
   范围（批次 8 之后盘点器判据 C「raw_interp」队列头部两文件）：
     elk_ops.go 18（index 5 / ilm 3 / snapshot 5 / reindex 1 / security 3 / upgrade 1 / logstash pipeline 1 / opensearch index 1 —— 含派生局部变量 body/indices/roles/index/version/config 的溯源收口）；

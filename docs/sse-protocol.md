@@ -9,7 +9,12 @@ GET /api/v1/events/stream
 ```
 
 - `Content-Type: text/event-stream`
-- 身份：require-auth 开启时缺失 `X-Tenant-ID`/`Authorization: Bearer` → 401；demo 模式缺失则注入 `default` 租户。
+- 身份：与其余业务端点同一口径，由 `requireTenantContext`（`internal/controlplane/http_infra.go`）提取并**校验**：
+  - `X-Tenant-ID` 头与 Bearer/Cookie JWT 的 `tenant_id` 不一致 → **403**；`X-User-Id` 与令牌 user 不一致 → **403**；
+  - 头非空但无任何凭证：`require-auth` 开启且未开 `--trust-gateway-headers` → **401**；显式开启 `--trust-gateway-headers`（可信网关认证后剥离凭证、只留头转发）→ 放行；
+  - 头缺失 → 回退 `Authorization: Bearer` / HttpOnly Cookie JWT（浏览器 `EventSource` 设不了自定义头，走这条）；
+  - 两者均无：`require-auth` → **401**；demo 模式 → 注入 `default` 租户；其余 → **400**（不允许空租户订阅全量事件）。
+- **2026-11-07 收口**：此前 handler 自行提取身份、**头非空即无条件采信**，只在头为空时才回退令牌 ⇒ 匿名者伪造 `X-Tenant-ID: 受害租户` 即可订阅该租户的任务/告警/设备/审批事件流（边缘 nginx 的 SSE location 不剥离该头）。现由 `TestSSE_ForgedTenantHeaderWithoutCredentialRejected`、`TestSSE_TenantHeaderMismatchJWTRejected`、`TestSSE_HeaderAndMatchingJWTAllowed`、`TestSSE_TrustGatewayHeadersAllowsHeaderOnly`、`TestSSE_CookieJWTSubscriberGetsOwnTenantEvents` 五条用例钉住（前两条在收口前实测返回 200 + 握手帧）。
 - 代理配置提示：Nginx 需 `proxy_buffering off;`，否则事件会被缓冲延迟。
 
 ## 握手与心跳
@@ -48,8 +53,8 @@ GET /api/v1/events/stream
 | `task_status` | 任务创建 / 领取 / 取消 / 上报结果 | `taskID`、`status`、`agentID` |
 | `task_cancel` | 任务取消信号下发给 agent（Wave 4-D） | `taskID`、`agentID` |
 | `alert_new` | 新告警产生 / ack / silence（列表变更即触发） | `alertID`、`severity`、`ruleID` |
-| `device_online` | agent Register 上线 | `deviceID`、`segment`、`addr` |
-| `device_offline` | 设备退役 / 离线归档 | `deviceID`、`lastSeen` |
+| `device_online` | agent Register 上线 | `deviceID`、`segment` |
+| `device_offline` | 设备退役 / 离线归档 | `deviceID` |
 | `approval_status` | 作业审批通过/拒绝 | `requestID`、`status` |
 | `schedule_status` | 定时任务触发/暂停/恢复 | `scheduleID`、`status` |
 | `os_template_changed` | OS 优化模板增删改 | `templateID`、`action` |
@@ -67,4 +72,7 @@ GET /api/v1/events/stream
 ## 安全
 
 - 跨租户事件在 SSE 通道强制过滤（`publishEvent` 携带 tenantID，handler 只放行匹配项）；
-- SSE 订阅计入审计（`Action=subscribe_sse`，见 `sse.go`）。
+- 身份校验拒绝（头与令牌租户/用户不一致的 403）经 `auditAuthzDenied` 计入审计；
+- **订阅成功本身不写审计**：旧文档曾承诺 `Action=subscribe_sse`，但代码中从无该动作
+  （2026-11-07 现测：`grep -rn "subscribe_sse" --include=*.go .` 命中 **0**，全仓仅文档两处命中）。
+  本次按事实纠正该承诺，不新增审计动作；`docs/api-specification.md` §7.5 的同句一并纠正。

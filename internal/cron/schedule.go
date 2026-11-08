@@ -1,9 +1,10 @@
 package cron
 
 import (
-	"log"
+	"context"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
@@ -36,7 +37,7 @@ func NewScheduler(store TaskStore) *Scheduler {
 // Start 在后台 goroutine 中启动调度循环。
 func (s *Scheduler) Start() {
 	go s.loop()
-	log.Println("[scheduler] 启动定时任务调度（间隔 60s）")
+	 logx.Info(context.Background(), "scheduler: 启动定时任务调度", "interval", "60s")
 }
 
 // Stop 停止调度循环。
@@ -92,7 +93,7 @@ func (s *Scheduler) tick() {
 			// 缺口 3：派生实例没落库 = 这一轮什么都没跑。记日志并**不动**
 			// LastFiredAt——翻了就把这一次运行永久跳过（防重入窗口内不会再试），
 			// 留着让它下一轮重试。调度器自身不能因此中断。
-			log.Printf("[scheduler] 模板 %s 派生任务落库失败: %v", t.TaskID, err)
+			logx.Warn(context.Background(), "scheduler: 模板派生任务落库失败", "taskID", t.TaskID, "err", err)
 			continue
 		}
 		// 更新模板任务的 LastFiredAt

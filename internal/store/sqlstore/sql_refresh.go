@@ -15,8 +15,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 
 	"github.com/Levango7/OpsMesh/internal/store/model"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
@@ -119,7 +120,7 @@ func (s *SQLStore) CleanupRefreshTokens() int {
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("store: CleanupRefreshTokens RowsAffected: %v", rowsErr)
+		logx.Error(context.Background(), "store: CleanupRefreshTokens RowsAffected 错误", rowsErr)
 		return 0
 	}
 	return int(n)

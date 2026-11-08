@@ -2012,5 +2012,20 @@
   },
   "canary_detail": {
     "title": "灰度详情"
+  },
+  "admin_console": {
+    "title": "管理控制台",
+    "subtitle": "系统诊断、配置与 TD-60 服务路由",
+    "log_level": "日志级别",
+    "diagnostics_download": "下载诊断包",
+    "config_title": "生效配置",
+    "store_failures_title": "Store 写入失败",
+    "no_failures": "无失败",
+    "total_failures": "总失败数",
+    "service_routing_title": "TD-60 服务路由表",
+    "service_traffic_title": "TD-60 服务流量计数器",
+    "no_data": "无数据",
+    "load_failed": "加载失败",
+    "download_failed": "下载失败"
   }
 }

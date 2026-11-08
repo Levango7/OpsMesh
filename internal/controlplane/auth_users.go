@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -118,7 +118,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		MustChangePasswordSnake bool `json:"must_change_password"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		log.Printf("controlplane: handleCreateUser 解析请求体失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleCreateUser 解析请求体失败", err)
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -147,7 +147,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, err := credentials.HashPassword(body.Password)
 	if err != nil {
-		log.Printf("controlplane: handleCreateUser 哈希密码失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleCreateUser 哈希密码失败", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -310,7 +310,7 @@ func (s *Server) handleRejectUser(w http.ResponseWriter, r *http.Request, id str
 	}
 	// 请求体可选；解析失败时记录日志（兼容空 body 调用）。
 	if err := decodeJSONBody(w, r, &body); err != nil && err != io.EOF {
-		log.Printf("controlplane: handleRejectUser 解析请求体失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleRejectUser 解析请求体失败", err)
 	}
 	existing := s.store.GetUser(id)
 	if existing == nil {
@@ -385,7 +385,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 	raw := bufferRequestBody(w, r)
 	unknown, err := unknownUserUpdateKeys(raw)
 	if err != nil {
-		log.Printf("controlplane: handleUpdateUser 解析请求体失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleUpdateUser 解析请求体失败", err)
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -405,7 +405,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request, id str
 		TenantID     string   `json:"tenantId"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil && err != io.EOF {
-		log.Printf("controlplane: handleUpdateUser 解析请求体失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleUpdateUser 解析请求体失败", err)
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}

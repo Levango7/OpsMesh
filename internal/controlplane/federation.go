@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -112,7 +111,7 @@ func (f *FederationManager) HealthCheck(ctx context.Context, peerURL string) boo
 	}
 	defer resp.Body.Close()
 	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-		log.Printf("controlplane: federation HealthCheck drain body 失败 (peer=%s): %v", peerURL, err)
+		logx.Warn(ctx, "controlplane: federation HealthCheck drain body 失败", err, "peer", peerURL)
 	}
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }

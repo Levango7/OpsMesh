@@ -2,15 +2,16 @@
 package credentials
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
 
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/store"
 
 	"golang.org/x/crypto/bcrypt"
@@ -122,15 +123,14 @@ func DeliverAdminCredential(cfg *config.Config, st store.Store) error {
 			if err := WriteAdminPasswordFile(cfg.AdminPasswordFile, password); err != nil {
 				return err
 			}
-			log.Printf("[controlplane] 初始 admin 口令已写入 %s（权限 0600，内含明文，请读取后妥善保管并删除该文件）", cfg.AdminPasswordFile)
+			logx.Info(context.Background(), "controlplane: 初始 admin 口令已写入", "file", cfg.AdminPasswordFile)
 		case cfg.Production:
 			return fmt.Errorf("生产模式（--production=true）检测到内置 admin 仍为公开弱口令 admin123，" +
 				"但未提供初始口令交付通道：请设置 OPSMESH_ADMIN_PASSWORD（推荐，可用 Secret 注入）" +
 				"或 --admin-password-file 后重启；否则替换出的随机口令无人知晓，管理员将无法登录")
 		default:
 			// 非生产（含本地开发）：打印到 stderr，避免重蹈「口令随机生成但无人知道」的锁死。
-			log.Printf("[controlplane] 警告：非生产模式未提供初始口令通道，已生成随机 admin 口令：" +
-				"（请复制保存；生产模式请改用 OPSMESH_ADMIN_PASSWORD 或 --admin-password-file）")
+			logx.Warn(context.Background(), "controlplane: 警告：非生产模式未提供初始口令通道，已生成随机 admin 口令（请复制保存；生产模式请改用 OPSMESH_ADMIN_PASSWORD 或 --admin-password-file）")
 			fmt.Fprintf(os.Stderr, "[controlplane] 初始 admin 口令（仅本地开发/调试可见）: %s\n", password)
 		}
 	}
@@ -147,9 +147,9 @@ func DeliverAdminCredential(cfg *config.Config, st store.Store) error {
 	cp.MustChangePassword = true
 	st.UpdateUser(&cp)
 	if generated {
-		log.Printf("[controlplane] 安全提示：内置 admin 的公开弱口令已替换（首登仍须改密）。")
+	logx.Info(context.Background(), "controlplane: 安全提示：内置 admin 的公开弱口令已替换（首登仍须改密）。")
 	} else {
-		log.Printf("[controlplane] 安全提示：admin 口令已按 --admin-password 设置（口令遗失后的强制重置；首登仍须改密）。")
+	logx.Info(context.Background(), "controlplane: 安全提示：admin 口令已按 --admin-password 设置（口令遗失后的强制重置；首登仍须改密）。")
 	}
 	return nil
 }
@@ -167,23 +167,22 @@ func RevokeSeedCredentials(st store.Store) {
 		}
 		pw, err := RandomPassword()
 		if err != nil {
-			log.Printf("[controlplane] 生成随机口令失败，预置账号 %s 仍为公开弱口令: %v", u.Username, err)
+			logx.Warn(context.Background(), "controlplane: 生成随机口令失败，预置账号仍为公开弱口令", "username", u.Username, "err", err)
 			continue
 		}
 		hash, err := HashPassword(pw)
 		if err != nil {
-			log.Printf("[controlplane] 哈希随机口令失败，预置账号 %s 仍为公开弱口令: %v", u.Username, err)
+			logx.Warn(context.Background(), "controlplane: 哈希随机口令失败，预置账号仍为公开弱口令", "username", u.Username, "err", err)
 			continue
 		}
 		if !st.ChangePassword(u.ID, hash) {
-			log.Printf("[controlplane] 替换预置账号 %s 口令失败，该账号仍为公开弱口令，请尽快删除或改密", u.Username)
+			logx.Warn(context.Background(), "controlplane: 替换预置账号口令失败，该账号仍为公开弱口令，请尽快删除或改密", "username", u.Username)
 			continue
 		}
 		cp := *u
 		cp.MustChangePassword = true
 		st.UpdateUser(&cp)
-		log.Printf("[controlplane] 安全提示：预置账号 %q 的公开弱口令已替换为随机口令（该账号已不可登录）；"+
-			"如需继续使用，请以 admin 身份删除后重建", u.Username)
+		logx.Info(context.Background(), "controlplane: 安全提示：预置账号公开弱口令已替换为随机口令（该账号已不可登录；如需继续使用，请以 admin 身份删除后重建）", "username", u.Username)
 	}
 }
 
@@ -200,8 +199,7 @@ func WriteAdminPasswordFile(path, password string) error {
 	// Windows 无法用 POSIX 权限位表达 0600（os.Chmod 只映射只读位），
 	// 生产环境是 Linux，但开发机 Windows 上这个差异必须说清楚，避免误以为文件已受保护。
 	if runtime.GOOS == "windows" {
-		log.Printf("[controlplane] 警告：当前为 Windows，文件权限位不生效（见上方 0600 仅为 POSIX 语义）；" +
-			"该口令文件仅受目录 ACL 保护，请读取后立即删除")
+		logx.Warn(context.Background(), "controlplane: 警告：当前为 Windows，文件权限位不生效（见上方 0600 仅为 POSIX 语义；该口令文件仅受目录 ACL 保护，请读取后立即删除）")
 	}
 	return nil
 }

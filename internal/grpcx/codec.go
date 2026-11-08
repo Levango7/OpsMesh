@@ -5,12 +5,13 @@ package grpcx
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"google.golang.org/grpc/encoding"
 )
 
@@ -56,7 +57,7 @@ var jsonCodecDeprecationOnce sync.Once
 
 func warnJSONCodecDeprecated() {
 	jsonCodecDeprecationOnce.Do(func() {
-		log.Printf("grpcx: JSON codec 为过渡方案（__v=%d 版本协商），迁移到标准 protobuf codec 后将移除（见 docs/tech-selection.md §3）", CodecVersion)
+		logx.Warn(context.Background(), "grpcx: JSON codec 为过渡方案", "version", CodecVersion, "msg", "迁移到标准 protobuf codec 后将移除（见 docs/tech-selection.md §3）")
 	})
 }
 

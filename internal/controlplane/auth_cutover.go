@@ -16,7 +16,6 @@ package controlplane
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"os"
@@ -272,7 +271,7 @@ func (s *Server) forwardAuthToSvc(w http.ResponseWriter, r *http.Request) bool {
 		req.Header.Del("X-User-Roles")
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
-		log.Printf("[controlplane] cutover 转发 auth-svc 失败: %v", err)
+		logx.Warn(req.Context(), "controlplane: cutover 转发 auth-svc 失败", err)
 		writeProxyErrorJSON(rw, http.StatusBadGateway, "auth backend unavailable")
 	}
 	// 响应头收敛为单一来源（F5）：与聚合代理同因同修——ReverseProxy 以 Add 拷贝

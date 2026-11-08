@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -141,7 +140,7 @@ func recoveryMiddleware(h http.Handler) http.Handler {
 						"error":   "internal server error",
 						"traceId": logx.Trace(ctx),
 					}); err != nil {
-						log.Printf("controlplane: panic recover 写错误响应失败: %v", err)
+						logx.Error(ctx, "controlplane: panic recover 写错误响应失败", err)
 					}
 				}
 			}

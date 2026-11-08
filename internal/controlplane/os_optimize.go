@@ -19,12 +19,13 @@
 package controlplane
 
 import (
-	"log"
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/controlplane/presets"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // osTemplates 预置 OS 优化模板集合（由 presets.OSTemplatesCore + presets.OSTemplatesExt 组合，数据定义见 os_template_presets.go）。
@@ -41,7 +42,7 @@ func (s *Server) seedPresetOSTemplates() {
 		}
 		st := osTemplateToStore(tpl, "default")
 		if err := s.store.SaveOSTemplate(st); err != nil {
-			log.Printf("[controlplane] seed 预置 OS 模板 %s 失败: %v", tpl.ID, err)
+			logx.Warn(context.Background(), "controlplane: seed 预置 OS 模板失败", err, "templateID", tpl.ID)
 		}
 	}
 }

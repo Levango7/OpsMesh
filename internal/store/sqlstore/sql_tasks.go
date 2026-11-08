@@ -12,12 +12,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/cron"
 	"github.com/Levango7/OpsMesh/internal/dag"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
@@ -288,7 +288,7 @@ ON DUPLICATE KEY UPDATE
 		`SELECT task_id, tenant_id, status, retry_count, max_retries FROM tasks WHERE task_id=?`, res.TaskID,
 	).Scan(&tid, &tenantID, &status, &rc, &mr); err == nil && tid != "" {
 		if status.String != "running" {
-			log.Printf("[store] SubmitResult 忽略非 running 任务 %s (status=%s exitCode=%d)", res.TaskID, status.String, res.ExitCode)
+			logx.Warn(context.Background(), "store: SubmitResult 忽略非 running 任务", "taskID", res.TaskID, "status", status.String, "exitCode", res.ExitCode)
 		} else if success {
 			if r, uerr := s.db.ExecContext(ctx,
 				`UPDATE tasks SET status='done' WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
@@ -297,7 +297,7 @@ ON DUPLICATE KEY UPDATE
 			} else if n, raErr := r.RowsAffected(); raErr == nil && n > 0 {
 				accepted = true
 			} else {
-				log.Printf("[store] SubmitResult 拒绝旧持有者上报 %s (claim_epoch=%d 不匹配)", res.TaskID, res.ClaimEpoch)
+				logx.Warn(context.Background(), "store: SubmitResult 拒绝旧持有者上报", "taskID", res.TaskID, "claimEpoch", res.ClaimEpoch)
 			}
 		} else if rc.Int64 < mr.Int64 {
 			r, uerr := s.db.ExecContext(ctx,
@@ -310,7 +310,7 @@ ON DUPLICATE KEY UPDATE
 				s.publish(events.Event{Action: "task_retry", Target: res.TaskID, TenantID: tenantID.String,
 					Detail: fmt.Sprintf("retry %d/%d", rc.Int64+1, mr.Int64), Level: events.LevelWarn})
 			} else {
-				log.Printf("[store] SubmitResult 拒绝旧持有者重试 %s (claim_epoch=%d 不匹配)", res.TaskID, res.ClaimEpoch)
+				logx.Warn(context.Background(), "store: SubmitResult 拒绝旧持有者重试", "taskID", res.TaskID, "claimEpoch", res.ClaimEpoch)
 			}
 		} else {
 			r, uerr := s.db.ExecContext(ctx,
@@ -330,7 +330,7 @@ ON DUPLICATE KEY UPDATE
 					CreatedAt: time.Now().UTC(),
 				})
 			} else {
-				log.Printf("[store] SubmitResult 拒绝旧持有者死信 %s (claim_epoch=%d 不匹配)", res.TaskID, res.ClaimEpoch)
+				logx.Warn(context.Background(), "store: SubmitResult 拒绝旧持有者死信", "taskID", res.TaskID, "claimEpoch", res.ClaimEpoch)
 			}
 		}
 	}
@@ -819,7 +819,7 @@ func (s *SQLStore) ReclaimStaleTasks(maxAge time.Duration) int {
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] ReclaimStaleTasks RowsAffected: %v", rowsErr)
+		logx.Error(context.Background(), "store: ReclaimStaleTasks RowsAffected 错误", rowsErr)
 		return 0
 	}
 	return int(n)
