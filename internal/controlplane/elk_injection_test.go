@@ -28,7 +28,12 @@ package controlplane
 //     不构成可执行注入的证明。
 
 import (
+	"bytes"
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/printer"
+	"go/token"
 	"net/http"
 	"os"
 	"os/exec"
@@ -368,32 +373,257 @@ func TestB9APIURLQuoteSemantics(t *testing.T) {
 
 // TestB9NoRawReqInterpolation 判据④：两个文件里不得再有未经收口的用户字段直插脚本。
 //
-// 收口形态：shellquote.Quote / esAPIURL / esQuoteJSONText / esJSONPayload / esEcho。
+// 为什么不用**行级**判据（批次 7 的做法）：行级判据是「整行含任意收口 marker 即放过」，
+// 于是「同一行里既有已收口的 req.A、又有未收口的 req.B」会**漏判**；而且行级判据只看得到
+// `req.` 字面量，看不到派生局部变量（`body := req.Body` 之后的 `body`、`version`、
+// `index`、`payload` …）——真正的注入点恰恰常是这些派生变量。
+//
+// 故本判据改为 **AST 级污点传播**：
+//   - 污点源：请求结构体里**字符串类型**的字段（`req.Foo`）；
+//   - 传播：局部变量赋值、字符串拼接、`fmt.Sprintf` 实参；
+//   - 净化：经收口助手（`shellquote.Quote` / `esAPIURL` / `esQuoteJSONText` /
+//     `esJSONPayload` / `esEcho`）返回的值即已安全；
+//   - 断言：`script = fmt.Sprintf(...)` 的**每一个实参**都不得携带未净化的污点。
+//
+// 非字符串字段（`port` / `maxSegments`，int）不构成注入面：JSON 解码阶段就会因类型不符
+// 而 400，请求体无法把 shell 元字符送进来。
 func TestB9NoRawReqInterpolation(t *testing.T) {
-	markers := []string{"shellquote.Quote(", "esAPIURL(", "esQuoteJSONText(", "esJSONPayload(", "esEcho("}
 	for _, f := range []string{"elk_ops.go", "elk_ext_ops.go"} {
-		body, err := os.ReadFile(f)
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, f, nil, parser.ParseComments)
 		if err != nil {
-			t.Fatalf("读取 %s 失败：%v", f, err)
+			t.Fatalf("解析 %s 失败：%v", f, err)
 		}
-		for i, line := range strings.Split(string(body), "\n") {
-			if !strings.Contains(line, "script") || !strings.Contains(line, "fmt.Sprintf") {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
 				continue
 			}
-			if !strings.Contains(line, "req.") {
-				continue
+			st := &b9TaintState{
+				tainted:    map[string]bool{},
+				sanitized:  map[string]bool{},
+				fieldTypes: map[string]string{},
 			}
-			covered := false
-			for _, m := range markers {
-				if strings.Contains(line, m) {
-					covered = true
-					break
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.DeclStmt:
+					// 函数体内的 `var req struct{...}` 是 DeclStmt 包着 GenDecl。
+					gd, ok := x.Decl.(*ast.GenDecl)
+					if ok {
+						st.collectReqStruct(gd)
+					}
+				case *ast.GenDecl:
+					st.collectReqStruct(x)
+				case *ast.AssignStmt:
+					st.checkAssign(fset, f, x, t)
 				}
-			}
-			if covered {
-				continue
-			}
-			t.Errorf("%s:%d 用户字段未经收口直插脚本：%s", f, i+1, strings.TrimSpace(line))
+				return true
+			})
 		}
 	}
+}
+
+// b9SafeHelpers 是本批认可的「收口助手」集合：它们的返回值已是可安全进 shell 的字面量。
+//
+// 口径要与 `scripts/shell-injection-audit.py` 的 QUOTE_MARKERS 一致（那边多了几个
+// 历史形态的助手，本批两个文件未用到）。
+var b9SafeHelpers = map[string]bool{
+	"shellquote.Quote":       true,
+	"shellquote.QuoteDouble": true,
+	"shellquote.QuoteJoin":   true,
+	"esAPIURL":               true,
+	"esQuoteJSONText":        true,
+	"esJSONPayload":          true,
+	"esEcho":                 true,
+}
+
+// b9Taint 取值：表达式携带未净化的用户数据 / 已净化 / 干净。
+type b9Taint int
+
+const (
+	b9Clean b9Taint = iota
+	b9Tainted
+	b9Sanitized
+)
+
+// b9TaintState 是单个 handler 内的污点状态。
+type b9TaintState struct {
+	tainted    map[string]bool   // 局部变量名 -> 携带未净化的用户数据
+	sanitized  map[string]bool   // 局部变量名 -> 已由收口助手净化
+	fieldTypes map[string]string // req 字段名 -> 类型标识（"string" / "int" …）
+}
+
+// collectReqStruct 收集 `var req struct{...}` 的字段名与类型。
+//
+// 为什么需要类型：只有**字符串**字段能携带 shell 元字符；int 字段在 JSON 解码阶段
+// 就被类型校验挡掉（传字符串 ⇒ 400），不可能成为注入面。
+func (st *b9TaintState) collectReqStruct(decl *ast.GenDecl) {
+	if decl.Tok != token.VAR {
+		return
+	}
+	for _, spec := range decl.Specs {
+		switch sp := spec.(type) {
+		case *ast.ValueSpec:
+			// `var req struct{...}` 的形态是 ValueSpec 且 **Values 为空**——
+			// 类型写在 ValueSpec.Type 上（不是 Values[i]）。
+			for _, name := range sp.Names {
+				if name.Name != "req" {
+					continue
+				}
+				stt, ok := sp.Type.(*ast.StructType)
+				if !ok {
+					continue
+				}
+				for _, field := range stt.Fields.List {
+					typ := ""
+					if id, ok := field.Type.(*ast.Ident); ok {
+						typ = id.Name
+					}
+					for _, fname := range field.Names {
+						st.fieldTypes[fname.Name] = typ
+					}
+				}
+			}
+		case *ast.TypeSpec:
+			// `type req struct{...}` 形态（本仓两个文件未用，留作兼容）。
+			if sp.Name.Name != "req" {
+				continue
+			}
+			stt, ok := sp.Type.(*ast.StructType)
+			if !ok {
+				continue
+			}
+			for _, field := range stt.Fields.List {
+				typ := ""
+				if id, ok := field.Type.(*ast.Ident); ok {
+					typ = id.Name
+				}
+				for _, fname := range field.Names {
+					st.fieldTypes[fname.Name] = typ
+				}
+			}
+		}
+	}
+}
+
+// classify 判定表达式携带的污点级别。
+func (st *b9TaintState) classify(e ast.Expr) b9Taint {
+	switch x := e.(type) {
+	case *ast.CallExpr:
+		name := b9CallName(x.Fun)
+		if b9SafeHelpers[name] {
+			// 收口助手的返回值已是安全字面量（助手内部负责 Quote / JSON 构造）。
+			return b9Sanitized
+		}
+		for _, a := range x.Args {
+			if st.classify(a) == b9Tainted {
+				return b9Tainted
+			}
+		}
+		return b9Clean
+	case *ast.SelectorExpr:
+		if id, ok := x.X.(*ast.Ident); ok && id.Name == "req" {
+			if st.fieldTypes[x.Sel.Name] == "string" {
+				return b9Tainted
+			}
+			return b9Clean
+		}
+		return st.classify(x.X)
+	case *ast.Ident:
+		if st.tainted[x.Name] {
+			return b9Tainted
+		}
+		if st.sanitized[x.Name] {
+			return b9Sanitized
+		}
+		return b9Clean
+	case *ast.BinaryExpr:
+		if st.classify(x.X) == b9Tainted || st.classify(x.Y) == b9Tainted {
+			return b9Tainted
+		}
+		return b9Clean
+	case *ast.ParenExpr:
+		return st.classify(x.X)
+	}
+	return b9Clean
+}
+
+// checkAssign 处理一条赋值：先传播污点，再对 `script = fmt.Sprintf(...)` 逐实参断言。
+func (st *b9TaintState) checkAssign(fset *token.FileSet, file string, as *ast.AssignStmt, t *testing.T) {
+	// 传播：Go 的多返回值写法 `a, b := f()` 只把首个结果绑定到首个 lhs。
+	binding := len(as.Lhs)
+	if len(as.Rhs) == 1 && binding > 1 {
+		for i := 1; i < binding; i++ {
+			if id, ok := as.Lhs[i].(*ast.Ident); ok {
+				st.sanitized[id.Name] = true
+			}
+		}
+		binding = 1
+	}
+	for i := 0; i < binding && i < len(as.Rhs); i++ {
+		id, ok := as.Lhs[i].(*ast.Ident)
+		if !ok {
+			continue
+		}
+		switch st.classify(as.Rhs[i]) {
+		case b9Tainted:
+			st.tainted[id.Name] = true
+			delete(st.sanitized, id.Name)
+		case b9Sanitized:
+			st.sanitized[id.Name] = true
+			delete(st.tainted, id.Name)
+		}
+	}
+
+	// 断言：`script = fmt.Sprintf(...)` 的每个实参都不得携带未净化的污点。
+	if len(as.Lhs) != 1 {
+		return
+	}
+	id, ok := as.Lhs[0].(*ast.Ident)
+	if !ok || id.Name != "script" {
+		return
+	}
+	call, ok := as.Rhs[0].(*ast.CallExpr)
+	if !ok || b9CallName(call.Fun) != "fmt.Sprintf" {
+		return
+	}
+	if len(call.Args) == 0 {
+		return
+	}
+	// 格式串必须是字面量（防 format string 注入：格式串本身若来自用户输入，
+	// 其中的 % 会被解释为动词）。
+	if _, ok := call.Args[0].(*ast.BasicLit); !ok {
+		t.Errorf("%s:%d script 的 fmt.Sprintf 格式串不是字面量（format string 注入面）：%s",
+			file, fset.Position(call.Pos()).Line, b9Src(fset, call.Args[0]))
+	}
+	for i, a := range call.Args[1:] {
+		if st.classify(a) != b9Tainted {
+			continue
+		}
+		t.Errorf("%s:%d script 的 fmt.Sprintf 第 %d 个实参携带未净化的用户字段：%s",
+			file, fset.Position(a.Pos()).Line, i+1, b9Src(fset, a))
+	}
+}
+
+// b9CallName 返回调用者的限定名（如 `shellquote.Quote` / `esAPIURL`）。
+func b9CallName(fun ast.Expr) string {
+	switch f := fun.(type) {
+	case *ast.Ident:
+		return f.Name
+	case *ast.SelectorExpr:
+		if id, ok := f.X.(*ast.Ident); ok {
+			return id.Name + "." + f.Sel.Name
+		}
+		return f.Sel.Name
+	}
+	return ""
+}
+
+// b9Src 渲染 AST 片段的源码文本（用于报错定位）。
+func b9Src(fset *token.FileSet, e ast.Expr) string {
+	var b bytes.Buffer
+	if err := printer.Fprint(&b, fset, e); err != nil {
+		return "<expr>"
+	}
+	return b.String()
 }
