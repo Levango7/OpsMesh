@@ -985,3 +985,7 @@
 [CLAIM] 2026-11-08T16:41:59Z from=workbuddy ttl=4h scope=internal/cron/schedule.go note=main 尖 gofmt 内容红（logx 批 76426bf 引入的前导空格破损，CI Gofmt 步判红 4 文件）；用户授权 A 案：gofmt -w 机械归一，零逻辑改动
 [CLAIM] 2026-11-08T16:41:59Z from=workbuddy ttl=4h scope=internal/store/memory/memory.go note=main 尖 gofmt 内容红（logx 批 76426bf 引入的前导空格破损，CI Gofmt 步判红 4 文件）；用户授权 A 案：gofmt -w 机械归一，零逻辑改动
 [CLAIM] 2026-11-08T16:41:59Z from=workbuddy ttl=4h scope=internal/store/sqlstore/sql.go note=main 尖 gofmt 内容红（logx 批 76426bf 引入的前导空格破损，CI Gofmt 步判红 4 文件）；用户授权 A 案：gofmt -w 机械归一，零逻辑改动
+[DONE] 2026-11-08T16:43:05Z from=workbuddy scope=internal/controlplane/credentials/password.go commit=5160412 note=上游同修先行落地，本线 fix 3fd5ad0 被 rebase 判重丢弃（内容逐字相同）；本线复验 gofmt -l=0（4/4）+ 4 包 build/vet 绿收尾；CI 42462032203 两次红已证 actionlint 下载 504 环境红非内容红
+[DONE] 2026-11-08T16:43:05Z from=workbuddy scope=internal/cron/schedule.go commit=9cc31cd note=上游同修先行落地，本线 fix 3fd5ad0 被 rebase 判重丢弃（内容逐字相同）；本线复验 gofmt -l=0（4/4）+ 4 包 build/vet 绿收尾；CI 42462032203 两次红已证 actionlint 下载 504 环境红非内容红
+[DONE] 2026-11-08T16:43:05Z from=workbuddy scope=internal/store/memory/memory.go commit=9cc31cd note=上游同修先行落地，本线 fix 3fd5ad0 被 rebase 判重丢弃（内容逐字相同）；本线复验 gofmt -l=0（4/4）+ 4 包 build/vet 绿收尾；CI 42462032203 两次红已证 actionlint 下载 504 环境红非内容红
+[DONE] 2026-11-08T16:43:05Z from=workbuddy scope=internal/store/sqlstore/sql.go commit=9cc31cd note=上游同修先行落地，本线 fix 3fd5ad0 被 rebase 判重丢弃（内容逐字相同）；本线复验 gofmt -l=0（4/4）+ 4 包 build/vet 绿收尾；CI 42462032203 两次红已证 actionlint 下载 504 环境红非内容红
