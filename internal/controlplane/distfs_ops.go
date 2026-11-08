@@ -8,9 +8,15 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleDistFS 处理 POST /api/v1/storage/distfs
+//
+// 注入面（批次 8）：pool / volume / host / path / file / remote / version 等字段
+// 一律经 shellquote.Quote 变成 POSIX 单引号字面量后再入脚本；**多词**形态的
+// 字段（gluster 的 mode「replica 3」与 bricks「srv1:/v1 srv2:/v2」）改用
+// shellquote.ValidateArgList 白名单校验——Quote 会把多个词压成一个词、改掉语义。
 func (s *Server) handleDistFS(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -85,7 +91,7 @@ func (s *Server) handleCeph(w http.ResponseWriter, r *http.Request, req struct {
 		if version == "" {
 			version = "18.2.0" // Reef
 		}
-		script := fmt.Sprintf(`cephadm bootstrap --mon-ip 127.0.0.1 --initial-dashboard-user admin --initial-dashboard-password admin 2>/dev/null || (apt-get install -y ceph ceph-mgr ceph-mon ceph-osd 2>/dev/null && echo "Ceph %s deployed (manual mode)")`, version)
+		script := fmt.Sprintf(`cephadm bootstrap --mon-ip 127.0.0.1 --initial-dashboard-user admin --initial-dashboard-password admin 2>/dev/null || (apt-get install -y ceph ceph-mgr ceph-mon ceph-osd 2>/dev/null && echo "Ceph %s deployed (manual mode)")`, shellquote.Quote(version))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "ceph_deploy")
 		if !ok {
 			return
@@ -109,7 +115,7 @@ func (s *Server) handleCeph(w http.ResponseWriter, r *http.Request, req struct {
 		if pgNum <= 0 {
 			pgNum = 32
 		}
-		script := fmt.Sprintf(`ceph osd pool create %s %d 2>/dev/null && ceph osd pool application enable %s rbd 2>/dev/null && echo "Pool %s created (pg=%d)"`, req.Pool, pgNum, req.Pool, req.Pool, pgNum)
+		script := fmt.Sprintf(`ceph osd pool create %s %d 2>/dev/null && ceph osd pool application enable %s rbd 2>/dev/null && echo "Pool %s created (pg=%d)"`, shellquote.Quote(req.Pool), pgNum, shellquote.Quote(req.Pool), shellquote.Quote(req.Pool), pgNum)
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "ceph_create-pool")
 		if !ok {
 			return
@@ -121,7 +127,7 @@ func (s *Server) handleCeph(w http.ResponseWriter, r *http.Request, req struct {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "pool is required"})
 			return
 		}
-		script := fmt.Sprintf(`ceph osd pool delete %s %s --yes-i-really-really-mean-it 2>/dev/null && echo "Pool %s deleted"`, req.Pool, req.Pool, req.Pool)
+		script := fmt.Sprintf(`ceph osd pool delete %s %s --yes-i-really-really-mean-it 2>/dev/null && echo "Pool %s deleted"`, shellquote.Quote(req.Pool), shellquote.Quote(req.Pool), shellquote.Quote(req.Pool))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "ceph_delete-pool")
 		if !ok {
 			return
@@ -141,7 +147,7 @@ func (s *Server) handleCeph(w http.ResponseWriter, r *http.Request, req struct {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "volume (filesystem name) is required"})
 			return
 		}
-		script := fmt.Sprintf(`ceph fs new %s %s_data %s_meta 2>/dev/null && echo "CephFS %s created"`, req.Volume, req.Volume, req.Volume, req.Volume)
+		script := fmt.Sprintf(`ceph fs new %s %s_data %s_meta 2>/dev/null && echo "CephFS %s created"`, shellquote.Quote(req.Volume), shellquote.Quote(req.Volume), shellquote.Quote(req.Volume), shellquote.Quote(req.Volume))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "ceph_cephfs-create")
 		if !ok {
 			return
@@ -153,7 +159,7 @@ func (s *Server) handleCeph(w http.ResponseWriter, r *http.Request, req struct {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "pool and volume (image name) are required"})
 			return
 		}
-		script := fmt.Sprintf(`rbd create %s/%s --size 10240 2>/dev/null && echo "RBD image %s/%s created (10GB)"`, req.Pool, req.Volume, req.Pool, req.Volume)
+		script := fmt.Sprintf(`rbd create %s/%s --size 10240 2>/dev/null && echo "RBD image %s/%s created (10GB)"`, shellquote.Quote(req.Pool), shellquote.Quote(req.Volume), shellquote.Quote(req.Pool), shellquote.Quote(req.Volume))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "ceph_rbd-create")
 		if !ok {
 			return
@@ -190,7 +196,7 @@ func (s *Server) handleGlusterFS(w http.ResponseWriter, r *http.Request, req str
 		if version == "" {
 			version = "11.0"
 		}
-		script := fmt.Sprintf(`apt-get install -y glusterfs-server 2>/dev/null || yum install -y glusterfs-server 2>/dev/null && systemctl enable glusterd && systemctl start glusterd && echo "GlusterFS %s deployed"`, version)
+		script := fmt.Sprintf(`apt-get install -y glusterfs-server 2>/dev/null || yum install -y glusterfs-server 2>/dev/null && systemctl enable glusterd && systemctl start glusterd && echo "GlusterFS %s deployed"`, shellquote.Quote(version))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "glusterfs_deploy")
 		if !ok {
 			return
@@ -214,7 +220,17 @@ func (s *Server) handleGlusterFS(w http.ResponseWriter, r *http.Request, req str
 		if volType == "" {
 			volType = "replica 3"
 		}
-		script := fmt.Sprintf(`gluster volume create %s %s %s force 2>/dev/null && gluster volume start %s && echo "Volume %s created (%s)"`, req.Volume, volType, req.Bricks, req.Volume, req.Volume, volType)
+		// volType（如 "replica 3"）与 bricks（如 "srv1:/v1 srv2:/v2"）都是**多词**形态
+		// ⇒ 不能用 Quote（会把多个词压成一个词，改掉命令语义），改用白名单校验（批次 8）。
+		if err := shellquote.ValidateArgList(volType, 64); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mode: " + err.Error()})
+			return
+		}
+		if err := shellquote.ValidateArgList(req.Bricks, 512); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid bricks: " + err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`gluster volume create %s %s %s force 2>/dev/null && gluster volume start %s && echo "Volume %s created (%s)"`, shellquote.Quote(req.Volume), volType, req.Bricks, shellquote.Quote(req.Volume), shellquote.Quote(req.Volume), volType)
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "glusterfs_create-volume")
 		if !ok {
 			return
@@ -226,7 +242,7 @@ func (s *Server) handleGlusterFS(w http.ResponseWriter, r *http.Request, req str
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "volume is required"})
 			return
 		}
-		script := fmt.Sprintf(`gluster volume stop %s 2>/dev/null && gluster volume delete %s 2>/dev/null && echo "Volume %s deleted"`, req.Volume, req.Volume, req.Volume)
+		script := fmt.Sprintf(`gluster volume stop %s 2>/dev/null && gluster volume delete %s 2>/dev/null && echo "Volume %s deleted"`, shellquote.Quote(req.Volume), shellquote.Quote(req.Volume), shellquote.Quote(req.Volume))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "glusterfs_delete-volume")
 		if !ok {
 			return
@@ -246,7 +262,7 @@ func (s *Server) handleGlusterFS(w http.ResponseWriter, r *http.Request, req str
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "host is required"})
 			return
 		}
-		script := fmt.Sprintf(`gluster peer probe %s 2>/dev/null && echo "Peer %s probed"`, req.Host, req.Host)
+		script := fmt.Sprintf(`gluster peer probe %s 2>/dev/null && echo "Peer %s probed"`, shellquote.Quote(req.Host), shellquote.Quote(req.Host))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "glusterfs_peer-probe")
 		if !ok {
 			return
@@ -258,7 +274,7 @@ func (s *Server) handleGlusterFS(w http.ResponseWriter, r *http.Request, req str
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "volume and path are required"})
 			return
 		}
-		script := fmt.Sprintf(`mkdir -p %s && mount -t glusterfs localhost:/%s %s 2>/dev/null && echo "Mounted %s at %s"`, req.Path, req.Volume, req.Path, req.Volume, req.Path)
+		script := fmt.Sprintf(`mkdir -p %s && mount -t glusterfs localhost:/%s %s 2>/dev/null && echo "Mounted %s at %s"`, shellquote.Quote(req.Path), shellquote.Quote(req.Volume), shellquote.Quote(req.Path), shellquote.Quote(req.Volume), shellquote.Quote(req.Path))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "glusterfs_mount")
 		if !ok {
 			return
@@ -295,7 +311,7 @@ func (s *Server) handleHDFS(w http.ResponseWriter, r *http.Request, req struct {
 		if version == "" {
 			version = "3.3.6"
 		}
-		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/hadoop/common/hadoop-%s/hadoop-%s.tar.gz -O /tmp/hadoop.tgz && tar -xzf /tmp/hadoop.tgz -C /opt/ && ln -sfn /opt/hadoop-%s /opt/hadoop && echo "Hadoop %s deployed"`, version, version, version, version)
+		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/hadoop/common/hadoop-%s/hadoop-%s.tar.gz -O /tmp/hadoop.tgz && tar -xzf /tmp/hadoop.tgz -C /opt/ && ln -sfn /opt/hadoop-%s /opt/hadoop && echo "Hadoop %s deployed"`, shellquote.Quote(version), shellquote.Quote(version), shellquote.Quote(version), shellquote.Quote(version))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "hdfs_deploy")
 		if !ok {
 			return
@@ -315,7 +331,7 @@ func (s *Server) handleHDFS(w http.ResponseWriter, r *http.Request, req struct {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
 			return
 		}
-		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -mkdir -p %s 2>/dev/null && echo "Directory %s created"`, req.Path, req.Path)
+		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -mkdir -p %s 2>/dev/null && echo "Directory %s created"`, shellquote.Quote(req.Path), shellquote.Quote(req.Path))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "hdfs_mkdir")
 		if !ok {
 			return
@@ -327,7 +343,7 @@ func (s *Server) handleHDFS(w http.ResponseWriter, r *http.Request, req struct {
 		if path == "" {
 			path = "/"
 		}
-		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -ls %s 2>/dev/null || echo "Path not found"`, path)
+		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -ls %s 2>/dev/null || echo "Path not found"`, shellquote.Quote(path))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "hdfs_ls")
 		if !ok {
 			return
@@ -339,7 +355,7 @@ func (s *Server) handleHDFS(w http.ResponseWriter, r *http.Request, req struct {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "file and path are required"})
 			return
 		}
-		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -put %s %s 2>/dev/null && echo "File uploaded to %s"`, req.File, req.Path, req.Path)
+		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -put %s %s 2>/dev/null && echo "File uploaded to %s"`, shellquote.Quote(req.File), shellquote.Quote(req.Path), shellquote.Quote(req.Path))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "hdfs_put")
 		if !ok {
 			return
@@ -351,7 +367,7 @@ func (s *Server) handleHDFS(w http.ResponseWriter, r *http.Request, req struct {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "remote and file are required"})
 			return
 		}
-		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -get %s %s 2>/dev/null && echo "File downloaded to %s"`, req.Remote, req.File, req.File)
+		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -get %s %s 2>/dev/null && echo "File downloaded to %s"`, shellquote.Quote(req.Remote), shellquote.Quote(req.File), shellquote.Quote(req.File))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "hdfs_get")
 		if !ok {
 			return
@@ -363,7 +379,7 @@ func (s *Server) handleHDFS(w http.ResponseWriter, r *http.Request, req struct {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
 			return
 		}
-		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -rm -r %s 2>/dev/null && echo "Deleted %s"`, req.Path, req.Path)
+		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -rm -r %s 2>/dev/null && echo "Deleted %s"`, shellquote.Quote(req.Path), shellquote.Quote(req.Path))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "hdfs_rm")
 		if !ok {
 			return
@@ -375,7 +391,7 @@ func (s *Server) handleHDFS(w http.ResponseWriter, r *http.Request, req struct {
 		if path == "" {
 			path = "/"
 		}
-		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -du -h %s 2>/dev/null | head -20`, path)
+		script := fmt.Sprintf(`/opt/hadoop/bin/hdfs dfs -du -h %s 2>/dev/null | head -20`, shellquote.Quote(path))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "hdfs_du")
 		if !ok {
 			return
@@ -412,7 +428,7 @@ func (s *Server) handleSeaweedFS(w http.ResponseWriter, r *http.Request, req str
 		if version == "" {
 			version = "3.66"
 		}
-		script := fmt.Sprintf(`wget -q https://github.com/seaweedfs/seaweedfs/releases/download/%s/linux_amd64.tar.gz -O /tmp/seaweedfs.tgz && tar -xzf /tmp/seaweedfs.tgz -C /usr/local/bin/ && echo "SeaweedFS %s deployed"`, version, version)
+		script := fmt.Sprintf(`wget -q https://github.com/seaweedfs/seaweedfs/releases/download/%s/linux_amd64.tar.gz -O /tmp/seaweedfs.tgz && tar -xzf /tmp/seaweedfs.tgz -C /usr/local/bin/ && echo "SeaweedFS %s deployed"`, shellquote.Quote(version), shellquote.Quote(version))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "seaweedfs_deploy")
 		if !ok {
 			return
@@ -440,7 +456,7 @@ func (s *Server) handleSeaweedFS(w http.ResponseWriter, r *http.Request, req str
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "file is required"})
 			return
 		}
-		script := fmt.Sprintf(`weed upload %s 2>/dev/null && echo "Uploaded %s"`, req.File, req.File)
+		script := fmt.Sprintf(`weed upload %s 2>/dev/null && echo "Uploaded %s"`, shellquote.Quote(req.File), shellquote.Quote(req.File))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "seaweedfs_upload")
 		if !ok {
 			return
@@ -452,7 +468,7 @@ func (s *Server) handleSeaweedFS(w http.ResponseWriter, r *http.Request, req str
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "remote and file are required"})
 			return
 		}
-		script := fmt.Sprintf(`weed download -o %s %s 2>/dev/null && echo "Downloaded to %s"`, req.File, req.Remote, req.File)
+		script := fmt.Sprintf(`weed download -o %s %s 2>/dev/null && echo "Downloaded to %s"`, shellquote.Quote(req.File), shellquote.Quote(req.Remote), shellquote.Quote(req.File))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "seaweedfs_download")
 		if !ok {
 			return
