@@ -861,3 +861,41 @@
 [CLAIM] 2026-11-08T02:14:42Z from=qoder ttl=6h scope=docs/product-design.md note=P4 产品文档现状化（立项书 docs/projects-2026-11-07.md §4，方案 A：版本头/日期/「现状说明」声明/商业模式与 docs/license-decision-2026-10-03.md 对齐/明显过期版本引用修正 v0.9.0-draft→0.18.0；不动证据表反引号路径、不未经 owner 降级 ✅ §8-Q4）。单文件，跑 internal/gates 后单独成笔推 main。
 
 [RELEASE] 2026-11-08T04:04:48Z from=qoder ref=[CLAIM] 2026-11-08T02:14:42Z scope=docs/product-design.md commit=ac6e8fe note=P4 产品文档现状化（方案 A）已落 main，CI run 42437971067 completed/success（13 job 全绿）。改动：①头注 v0.9.0-draft/2026-09-05 → v0.18.0（现状）/现状复核 2026-11-08 + 明标「现状说明；规划项见 docs/product-roadmap.md」（原始编制日期作为历史保留）；②§3.4 给「12+6（v0.9.0 基线）」加现状核对注，指回 README 现行 34✅/1⚠️/1❌，不删历史、不改 ✅ 判定；③§8/§8.1「当前版本 v0.7.0」两处 → v0.18.0，§8.1 代码规模旧计数加注为 v0.7.0 基线并指向 README/CI（不编造新数）；④§5 商业模式核对与 docs/license-decision-2026-10-03.md §3「Open-Core（内核 Apache-2.0 + 企业版商业授权）」一致，无矛盾，未改。门禁（本地+CI）：TestCapability 36 条证据路径 0 缺失 / TestDocPaths 18 份 320 条路径全存在。未改证据表 ✅ 任何判定；矩阵逐行深度复核 + 无证据 ✅ 降级作为独立一批另做，降级需 owner 逐条认可（§8-Q4）。
+[NOTE] 2026-11-07T17:43:04Z from=workbuddy SSE 鉴权缺口取证（只读现测，接管前留痕）：
+  缺陷：handleEventsStream 自行提取身份（sse.go:103 authctx.FromHTTPHeader → tenant），
+  只在 tenant 为空时才回退 Bearer/Cookie（sse.go:107-110）。**头非空即无条件采信**，
+  既不校验凭证存在，也不与 JWT 的 tenant_id 交叉校验。而 requireTenantContext 对同一形态
+  早已判 401/403（http_infra.go:143-156：头与令牌租户不一致 403；头非空但无任何凭证且
+  requireAuth 且未开 trust-gateway-headers ⇒ 401，注释点名这是 CI E2E-sec 实测捕获的越权）。
+  可达性：生产 requireAuth 默认 true（config.go:887-888），且 Production 强制
+  TrustGatewayHeaders 回落 false（config.go:940-942）；边缘 nginx 的 SSE 专用 location
+  （deploy/docker/proxy/nginx.conf.template:83-95）只重述 Host/X-Real-IP/X-Forwarded-*，
+  **不剥离客户端 X-Tenant-ID**。仓内两处 Header.Del("X-Tenant-ID") 都在出向代理
+  （auth_cutover.go:270、service_proxy.go:103），不覆盖本 handler 的入向路径。
+  ⇒ 匿名者只发 `X-Tenant-ID: 受害租户` 即可订阅该租户的 task_status / alert_new /
+  device_online|offline / approval_status / agent_logs 事件流（跨租户信息泄露）。
+  与 owner 2026-11-06 裁决「不要对访客开放，避免信息安全泄露」直接冲突。
+  立项书 docs/projects-2026-11-05.md:437 把它记为「匿名可连…不可派发…不阻塞本批」——
+  该判断只看了「不可派发」，漏了「头可伪造」这一维；本批按追加式纠正，不改旧条目。
+  接管依据（板面 §6）：opencode 两条 ttl=6h 认领已于 08:20:12Z / 08:41:09Z 过期且无
+  DONE/RELEASE；其施工内容已落 main（0570fa7 竞态修复 + d6a6322 测试改写，二者均为
+  HEAD 祖先，git merge-base --is-ancestor 实证），工作区干净、无未提交改动可承担。
+  处置：TAKEOVER 后即 RELEASE 销号（含 CHANGELOG.md 的那条整串释放，**本线不动
+  CHANGELOG.md**，它仍在 zcode 的 48h 存活认领里），随后按本线真实施工面重新 CLAIM。
+  做法：handleEventsStream 改调 s.requireTenantContext，与其余端点同一口径；
+  demo 填 default / 非 demo 空租户 400 / requireAuth 缺身份 401 三条既有可观测行为保持不变，
+  新增「伪造头无凭证 401」「头与 JWT 租户不一致 403」「trust-gateway-headers 显式放行」回归。
+  不新建权限族、不动派发口、不动 internal/gates（zcode 认领中）、不进 web/enterprise。
+
+[TAKEOVER] 2026-11-07T17:43:04Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,CHANGELOG.md reason=ttl-expired note=opencode 2026-11-07T02:20:12Z 认领（ttl 6h）已过期无闭环；其竞态修复已落 main（0570fa7,d6a6322），无未提交改动
+[RELEASE] 2026-11-07T17:43:04Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,CHANGELOG.md note=接管后即销号：施工内容已在 main，本线不改 CHANGELOG.md（zcode 存活认领），随后按更窄施工面重新 CLAIM
+[TAKEOVER] 2026-11-07T17:43:04Z from=workbuddy scope=docs/sse-protocol.md reason=ttl-expired note=opencode 2026-11-07T02:41:09Z 认领（ttl 6h）已过期无闭环；其文档顺序保证已落 main
+[RELEASE] 2026-11-07T17:43:04Z from=workbuddy scope=docs/sse-protocol.md note=接管后即销号，随后并入本线 SSE 鉴权收口批次重新 CLAIM
+[CLAIM] 2026-11-07T17:43:04Z from=workbuddy ttl=4h scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md note=用户点名「请将没做完的做完」：SSE 端点接入 requireTenantContext，堵伪造 X-Tenant-ID 订阅他租户事件流；先证红后证绿，推送另需按批授权
+[CLAIM] 2026-11-07T17:50:58Z from=workbuddy ttl=4h scope=docs/api-specification.md note=同批文档纠正：§7.1 身份行与 §7.5「SSE 订阅计入审计 Action subscribe_sse」两处与代码不符（该动作全仓 Go 命中 0），与 docs/sse-protocol.md 同句一并改；不动事件枚举表、不动内部代码
+[NOTE] 2026-11-08T03:12:05Z from=workbuddy note=纠正本人 17:50:58Z 认领注记的边界「不动事件枚举表」：用户随后点名「§7.3 事件枚举漂移也修掉」，枚举表即进入本批施工面。已按代码实测改正 docs/api-specification.md §7.3：全量 10→11 种并补 task_cancel 行（server_tasks.go publishTaskCancel 发布，Wave 4-D）；approval_status/schedule_status 的 data 键 action→status（server_approval.go/server_schedules.go 实发 status）；device_online 去掉从未发送的 addr（grpc.go 实发 deviceID/segment/agentID/hostname）；device_offline 去掉从未发送的 lastSeen（server_devices.go 实发仅 deviceID）；§7 开头 OpenAPI type 清单同步补 task_cancel。docs/sse-protocol.md 同表对齐：该表 task_cancel 行与 schedule_status=status 在 HEAD 已正确，本批仅删同款 addr/lastSeen 假键。口径：data 键列不得点名代码从不发送的字段，可省略已发送字段（ssePayloadContract 钉的键不受影响）。
+[RELEASE] 2026-11-08T03:14:28Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md note=收口：SSE 鉴权收口批已完成（sse.go 接入 requireTenantContext + 5 条回归测试 + 两份协议文档枚举漂移纠正），待本地全量验证后按三笔拆分提交（fix/docs/board）
+[RELEASE] 2026-11-08T03:14:28Z from=workbuddy scope=docs/api-specification.md note=同上批：api-specification.md 的 §7.1/§7.3/§7.5 纠正已写入，与 RELEASE 同行销号
+[CLAIM] 2026-11-08T03:14:28Z from=workbuddy ttl=4h scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/api-specification.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md,CHANGELOG.md note=用户点名「§7.3 事件枚举漂移也修掉」后枚举表进入施工面；余量：CHANGELOG.md 补本批条目（另两条对 CHANGELOG.md 的认领均已过期，精确 scope 冲突语义下不撞车）、本地全量验证、三笔拆分提交、DONE 行带 sha
+[DONE] 2026-11-08T03:23:09Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md commit=7644752 note=代码笔：handleEventsStream 改调 requireTenantContext（伪造 X-Tenant-ID 无凭证 401、头与 JWT 租户不一致 403、trust-gateway-headers 显式放行、Cookie JWT 浏览器路径），demo 填 default/空租户 400/缺身份 401 三条既有行为不变；5 条回归先红后绿；go test ./internal/controlplane/ ./internal/gates/ 全绿（113.3s/14.5s）、build/vet/gofmt 干净；authz-route-audit 静态分类 19/5→18/6（SSE ANON→AUTH_ONLY）
+[DONE] 2026-11-08T03:23:09Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/api-specification.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md,CHANGELOG.md commit=3968dfb note=文档笔：两协议文档身份行改写为 requireTenantContext 全矩阵；§7.3 枚举漂移按用户点名修复（全量 10→11 种补 task_cancel、approval_status/schedule_status 键 action→status、device_online 删假键 addr、device_offline 删假键 lastSeen、OpenAPI type 清单同步）；subscribe_sse 审计承诺按事实纠正（全仓 Go 命中 0，403 拒绝经 auditAuthzDenied 计入）；projects 文档追加 §10.0.1/§10.0.2；CHANGELOG 增 [Unreleased-SSE鉴权] 块（fold gate offenders=0）；验证：两表 11 行与代码发布面逐名对齐，TestSSEContract_* 绿
