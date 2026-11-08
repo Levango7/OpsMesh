@@ -55,6 +55,18 @@ QUOTE_MARKERS = (
     "Quote(",
     "QuotePowerShellSingle(",
     "PowerShellEncodedCommand(",
+    # 批次 9 新增的收口助手（internal/controlplane/elk_script.go）：
+    # esAPIURL        —— ES URL 在 Go 层拼完整后整体 Quote（不能把 Quote 结果塞回
+    #                   双引号段：双引号内单引号是字面量，URL 会带上 %27）
+    # esQuoteJSONText —— 用户自由 JSON：校验合法性后整体 Quote
+    # esJSONPayload   —— Go 层 map + json.Marshal 构造 JSON 后整体 Quote
+    # esEcho          —— 回显消息整体 Quote（双引号段内 $ / 反引号会展开）
+    # 这四个名字只在**收口后的**代码里出现（旧代码没有它们），故扩充 marker 集合
+    # **不改变历史口径**：批次 7/8 的 raw_interp 数字（333 / 320 / 269）仍可比。
+    "esAPIURL(",
+    "esQuoteJSONText(",
+    "esJSONPayload(",
+    "esEcho(",
 )
 VALIDATE_MARKERS = ("Validate", "MatchString(", "regexp.")
 SPRINTF_RE = re.compile(r"fmt\.Sprintf\(")
