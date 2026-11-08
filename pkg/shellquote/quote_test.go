@@ -329,6 +329,90 @@ func TestValidateQualifiedName(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------- ValidateArgList
+//
+// 该函数的正确性有两层：① 白名单（拒绝集含全部 shell 元字符）；② **载荷可执行性**
+// ——被它放行的参数串按原样拼进命令行后，shell 仍会把它拆成多个参数词（语义不变），
+// 且不会产生额外命令/管道/重定向。
+
+func TestValidateArgList(t *testing.T) {
+	good := []string{
+		"",
+		"--scale web=3",
+		"-d --build",
+		"--label key=value",
+		"/var/lib/data,ro",
+		"user@host:8080",
+		"--env FOO=bar+baz",
+		"sh -c df",
+		strings.Repeat("a", 256),
+	}
+	bad := []string{
+		"$(id)", "`id`", "a;b", "a|b", "a&b", "a>b", "a<b", "a(b)", "a'b", `a"b`,
+		"a\\b", "a*b", "a?b", "a[b]", "a{b}", "a!b", "a#b", "a~b", "a%b",
+		"a\nb", "a\rb", "a\x00b", "日本語", "a\tb",
+	}
+	for _, g := range good {
+		if err := ValidateArgList(g, 256); err != nil {
+			t.Errorf("ValidateArgList(%q) 误拒: %v", g, err)
+		}
+	}
+	for _, b := range bad {
+		if err := ValidateArgList(b, 256); err == nil {
+			t.Errorf("ValidateArgList(%q) 应拒", b)
+		}
+	}
+	// 长度上限按参数生效
+	if err := ValidateArgList("abcd", 3); err == nil {
+		t.Error("ValidateArgList(abcd, 3) 应拒")
+	}
+}
+
+// TestValidateArgListRejectsWhatWouldExecute 钉「拒绝集确实拦得住会执行的载荷」：
+// 同一批载荷，若裸拼进命令行会被真 shell 执行；ValidateArgList 必须全部拒。
+// 反证（裸拼确实会执行）也由真 shell 给出——否则「拒绝」可能只是判据保守而非必要。
+func TestValidateArgListRejectsWhatWouldExecute(t *testing.T) {
+	if shProbe == nil {
+		t.Skip("no POSIX shell available on this host")
+	}
+	const marker = "/tmp/shellquote-arglist-pwned"
+	payloads := []string{
+		"x; touch " + marker,
+		"x$(touch " + marker + ")",
+		"x`touch " + marker + "`",
+		"x | tee " + marker,
+		"x && touch " + marker,
+	}
+	for _, p := range payloads {
+		if err := ValidateArgList(p, 256); err == nil {
+			t.Errorf("ValidateArgList(%q) 应拒（裸拼会被执行）", p)
+		}
+	}
+	// 反证：裸拼确实执行（判据是必要的，不是多余的保守）
+	out := shellEval(t, "true x; touch "+marker+"; if [ -f "+marker+" ]; then echo PWNED; else echo SAFE; fi")
+	if !strings.Contains(out, "PWNED") {
+		t.Fatalf("反证失败：裸拼未执行（判据可能过于保守）：%s", out)
+	}
+	_ = os.Remove(marker)
+}
+
+// TestValidateArgListKeepsWordSplitting 钉语义边界：通过校验的参数串按原样拼接，
+// shell 仍把它拆成多个参数词（这正是「自由参数串」形态的语义要求）。
+func TestValidateArgListKeepsWordSplitting(t *testing.T) {
+	if shProbe == nil {
+		t.Skip("no POSIX shell available on this host")
+	}
+	argStr := "--scale web=3 --build"
+	if err := ValidateArgList(argStr, 256); err != nil {
+		t.Fatalf("合法参数串被拒: %v", err)
+	}
+	// 原样拼接：三个词应被拆成三个参数（--scale / web=3 / --build）
+	out := shellEval(t, "set -- "+argStr+"; echo $#")
+	if strings.TrimSpace(out) != "3" {
+		t.Fatalf("参数词拆分被改变：$#=%q（期望 3）", strings.TrimSpace(out))
+	}
+}
+
 // ---------------------------------------------------------------- ValidateCmdQuoted
 //
 // 该函数的正确性有两层：字符串层（拒绝集）与真 cmd 语义层（接受集保持字面量、

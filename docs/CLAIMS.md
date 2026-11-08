@@ -901,3 +901,33 @@
 [CLAIM] 2026-11-08T03:14:28Z from=workbuddy ttl=4h scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/api-specification.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md,CHANGELOG.md note=用户点名「§7.3 事件枚举漂移也修掉」后枚举表进入施工面；余量：CHANGELOG.md 补本批条目（另两条对 CHANGELOG.md 的认领均已过期，精确 scope 冲突语义下不撞车）、本地全量验证、三笔拆分提交、DONE 行带 sha
 [DONE] 2026-11-08T03:23:09Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md commit=7644752 note=代码笔：handleEventsStream 改调 requireTenantContext（伪造 X-Tenant-ID 无凭证 401、头与 JWT 租户不一致 403、trust-gateway-headers 显式放行、Cookie JWT 浏览器路径），demo 填 default/空租户 400/缺身份 401 三条既有行为不变；5 条回归先红后绿；go test ./internal/controlplane/ ./internal/gates/ 全绿（113.3s/14.5s）、build/vet/gofmt 干净；authz-route-audit 静态分类 19/5→18/6（SSE ANON→AUTH_ONLY）
 [DONE] 2026-11-08T03:23:09Z from=workbuddy scope=internal/controlplane/sse.go,internal/controlplane/sse_test.go,docs/sse-protocol.md,docs/api-specification.md,docs/projects-2026-11-05.md,docs/CLAIMS.md,docs/COORDINATION-BOARD.md,CHANGELOG.md commit=3968dfb note=文档笔：两协议文档身份行改写为 requireTenantContext 全矩阵；§7.3 枚举漂移按用户点名修复（全量 10→11 种补 task_cancel、approval_status/schedule_status 键 action→status、device_online 删假键 addr、device_offline 删假键 lastSeen、OpenAPI type 清单同步）；subscribe_sse 审计承诺按事实纠正（全仓 Go 命中 0，403 拒绝经 auditAuthzDenied 计入）；projects 文档追加 §10.0.1/§10.0.2；CHANGELOG 增 [Unreleased-SSE鉴权] 块（fold gate offenders=0）；验证：两表 11 行与代码发布面逐名对齐，TestSSEContract_* 绿
+[NOTE] 2026-11-07T23:09:43Z from=opencode 批次 8 认领：容器/存储运维面「req.* 未转义直插」收口（docker_ops.go + container_ops.go + distfs_ops.go，盘点器 raw_interp 51 处）。
+  范围（批次 7 新增的盘点器判据 C「raw_interp」队列头部三文件）：
+    docker_ops.go 24（compose 7 + network 6 + volume 3 + debug 7 + registry 4）；
+    container_ops.go 13（inspect/start/stop/restart/rm/logs/pull/push/build/trivy/sign/tag/rmi）；
+    distfs_ops.go 14（ceph pool/fs/rbd、gluster volume/peer/mount、hdfs、weed）。
+  为什么要单列一批（沿用批次 7 的判据）：这 51 处把请求体字段裸拼进要下发到 agent 的
+  shell 脚本，agent 以 sh -c 执行 ⇒ `$(id)` / 反引号 / 分号被真实执行。鉴权面无缺口
+  （均经 dispatchKafkaTask → subsystemAuthorize 的 task:write 闸），是**已授权调用者
+  可直接打到 agent 的 RCE**。
+  做法（分两类，不搞一刀切）：
+  ① **单 token 字段**（name/container/driver/alias/subnet/gateway/image/tag/source/dest/
+     registry/username/password/project/file/service/pool/volume/host/path/remote…）
+     → 一律 shellquote.Quote（POSIX 单引号字面量，取值语义不变）。
+     注意 docker network create/connect 的选项串是**字符串拼接**出来的
+     （`opts += " --subnet " + req.Subnet`、`alias = " --alias " + req.Alias`），
+     盘点器按 Sprintf 实参抓不到，但同样是注入面——本批一并改（拼装处直接放 Quote 结果）。
+  ② **自由参数/命令串**（docker compose 的 req.Args、docker debug exec 的 req.Command）
+     → 新增 pkg/shellquote.ValidateArgList：白名单校验「一整串自由参数」是否可安全原样
+     拼接（只允许字母数字与 - _ . , : / = + @ 与空格；任何 shell 元字符一律拒绝）。
+     为什么不能用 Quote：Quote 会把 `--scale web=3` 压成**一个**词，改变语义。
+     为什么必须收：`docker exec web; rm -rf /` 的注入落在 **agent 宿主**上（越出容器边界）。
+     exec 的命令串收窄后仍是「在容器内执行命令」的原语义（容器内 shell 语义不变），
+     但宿主级逃逸被堵死——这是本批的**能力降级点**，需在 CHANGELOG 如实登记。
+  配套：① pkg/shellquote 新增 ValidateArgList + 单元测试（payload 集 + 真 shell 语义证明）；
+  ② internal/controlplane 新增容器/存储面注入守卫测试（沿用批次 7 的「引号外文本」判据 +
+     真 sh 语义级证明 + 源码级兜底）；③ 盘点器复算 raw_interp 320 → 269（-51）。
+  冲突检查：文件面 docker_ops.go / container_ops.go / distfs_ops.go / pkg/shellquote/quote.go
+  （+ 新测试）/ CHANGELOG，与 #5~#14 均无重叠；qoder/workbuddy 两条线当前未动这三个文件
+  （板面近月仅见 2026-10-30 qoder 的一条 docker_ops.go gofmt 格式修复，已早合入）。
+[CLAIM] 2026-11-07T23:09:43Z from=opencode ttl=8h scope=internal/controlplane/docker_ops.go,internal/controlplane/container_ops.go,internal/controlplane/distfs_ops.go,pkg/shellquote/quote.go,internal/controlplane/container_injection_test.go,pkg/shellquote/quote_test.go,CHANGELOG.md note=批次 8：容器/存储运维面 req.* 未转义直插收口（51 处：单 token → shellquote.Quote；自由参数/命令串 → 新增 ValidateArgList）+ 注入守卫测试

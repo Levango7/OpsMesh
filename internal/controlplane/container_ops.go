@@ -7,9 +7,14 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleContainer 处理 POST /api/v1/container
+//
+// 注入面（批次 8）：container / image / tag / dockerfile / context 是用户可控字段，
+// 一律经 shellquote.Quote 变成 POSIX 单引号字面量后再入脚本——原先裸拼可被
+// `$(id)` / 反引号 / 分号执行（agent 以 sh -c 执行下发的脚本）。
 func (s *Server) handleContainer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -36,37 +41,37 @@ func (s *Server) handleContainer(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "container is required"})
 			return
 		}
-		script = fmt.Sprintf(`docker inspect %s 2>/dev/null | head -40 || echo "Container not found"`, req.Container)
+		script = fmt.Sprintf(`docker inspect %s 2>/dev/null | head -40 || echo "Container not found"`, shellquote.Quote(req.Container))
 	case "start":
 		if req.Container == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "container is required"})
 			return
 		}
-		script = fmt.Sprintf(`docker start %s && echo "Container %s started"`, req.Container, req.Container)
+		script = fmt.Sprintf(`docker start %s && echo "Container %s started"`, shellquote.Quote(req.Container), shellquote.Quote(req.Container))
 	case "stop":
 		if req.Container == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "container is required"})
 			return
 		}
-		script = fmt.Sprintf(`docker stop %s && echo "Container %s stopped"`, req.Container, req.Container)
+		script = fmt.Sprintf(`docker stop %s && echo "Container %s stopped"`, shellquote.Quote(req.Container), shellquote.Quote(req.Container))
 	case "restart":
 		if req.Container == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "container is required"})
 			return
 		}
-		script = fmt.Sprintf(`docker restart %s && echo "Container %s restarted"`, req.Container, req.Container)
+		script = fmt.Sprintf(`docker restart %s && echo "Container %s restarted"`, shellquote.Quote(req.Container), shellquote.Quote(req.Container))
 	case "remove":
 		if req.Container == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "container is required"})
 			return
 		}
-		script = fmt.Sprintf(`docker rm -f %s && echo "Container %s removed"`, req.Container, req.Container)
+		script = fmt.Sprintf(`docker rm -f %s && echo "Container %s removed"`, shellquote.Quote(req.Container), shellquote.Quote(req.Container))
 	case "logs":
 		if req.Container == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "container is required"})
 			return
 		}
-		script = fmt.Sprintf(`docker logs --tail 50 %s 2>&1`, req.Container)
+		script = fmt.Sprintf(`docker logs --tail 50 %s 2>&1`, shellquote.Quote(req.Container))
 	case "stats":
 		script = `docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}" 2>/dev/null || echo "Docker not available"`
 	default:
@@ -82,6 +87,8 @@ func (s *Server) handleContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleImage 处理 POST /api/v1/container/image
+//
+// 注入面（批次 8）：同 handleContainer——image / tag / dockerfile / context 走 Quote。
 func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -110,13 +117,13 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "image is required"})
 			return
 		}
-		script = fmt.Sprintf(`docker pull %s && echo "Pulled %s"`, req.Image, req.Image)
+		script = fmt.Sprintf(`docker pull %s && echo "Pulled %s"`, shellquote.Quote(req.Image), shellquote.Quote(req.Image))
 	case "push":
 		if req.Image == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "image is required"})
 			return
 		}
-		script = fmt.Sprintf(`docker push %s && echo "Pushed %s"`, req.Image, req.Image)
+		script = fmt.Sprintf(`docker push %s && echo "Pushed %s"`, shellquote.Quote(req.Image), shellquote.Quote(req.Image))
 	case "build":
 		if req.Image == "" || req.Dockerfile == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "image and dockerfile are required"})
@@ -126,31 +133,31 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 		if ctx == "" {
 			ctx = "."
 		}
-		script = fmt.Sprintf(`docker build -t %s -f %s %s 2>&1 | tail -20 && echo "Built %s"`, req.Image, req.Dockerfile, ctx, req.Image)
+		script = fmt.Sprintf(`docker build -t %s -f %s %s 2>&1 | tail -20 && echo "Built %s"`, shellquote.Quote(req.Image), shellquote.Quote(req.Dockerfile), shellquote.Quote(ctx), shellquote.Quote(req.Image))
 	case "scan":
 		if req.Image == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "image is required"})
 			return
 		}
-		script = fmt.Sprintf(`trivy image %s 2>/dev/null || echo "Trivy not available"`, req.Image)
+		script = fmt.Sprintf(`trivy image %s 2>/dev/null || echo "Trivy not available"`, shellquote.Quote(req.Image))
 	case "sign":
 		if req.Image == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "image is required"})
 			return
 		}
-		script = fmt.Sprintf(`cosign sign %s 2>/dev/null && echo "Signed %s" || echo "Cosign not available"`, req.Image, req.Image)
+		script = fmt.Sprintf(`cosign sign %s 2>/dev/null && echo "Signed %s" || echo "Cosign not available"`, shellquote.Quote(req.Image), shellquote.Quote(req.Image))
 	case "tag":
 		if req.Image == "" || req.Tag == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "image and tag are required"})
 			return
 		}
-		script = fmt.Sprintf(`docker tag %s %s && echo "Tagged %s as %s"`, req.Image, req.Tag, req.Image, req.Tag)
+		script = fmt.Sprintf(`docker tag %s %s && echo "Tagged %s as %s"`, shellquote.Quote(req.Image), shellquote.Quote(req.Tag), shellquote.Quote(req.Image), shellquote.Quote(req.Tag))
 	case "remove":
 		if req.Image == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "image is required"})
 			return
 		}
-		script = fmt.Sprintf(`docker rmi %s && echo "Removed %s"`, req.Image, req.Image)
+		script = fmt.Sprintf(`docker rmi %s && echo "Removed %s"`, shellquote.Quote(req.Image), shellquote.Quote(req.Image))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
