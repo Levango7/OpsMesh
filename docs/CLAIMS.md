@@ -834,6 +834,29 @@
 [LANDED] 2026-11-07T11:30:15Z from=opencode commit=773bacc branch=fix/ps-family-final pr=13 note=PowerShell 家族最后一处收口入 main：13 处 `powershell -Command "..."` → `-EncodedCommand`（git_unix_ops.go 10 + os_ext_ops.go 2 + server_network.go 1 带插值）；cmd 尾巴 `2>/dev/null`→`2>nul`、Unix 的 `| head -40` 折进 PS 载荷；注入面盘点器 powershell 语境候选位 1→0（全仓 576→575）；新增 TestPSFamilyFinalSweep（12 子用例：wire 形态 + 尾巴口径 + 解码载荷逐字相等）。**本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），CHANGELOG 已带 [Unreleased-PS收尾] 块，随下一版归版。
 
 [RELEASE] 2026-11-07T17:40:50Z from=qoder ref=[CLAIM] 2026-11-07T03:02:23Z scope=internal/agent commit=none-reverted note=owner 拍板 option A（截断用例改 64KB 小缓冲 + 新增 TestMaxOutputBytes 锁 10MB 常量）实测证伪，未推送。容器整包 -race（golang:1.26.10，无 -skip，最终树 6fe6435+编辑）复跑 2/2 仍 FAIL 于 TestExecute_OutputTruncation：TSan failed to allocate 0x3f000（258048B，errno:12），失败分配仅 252KB 而非 21MB，地址随 ASLR 漂移（run1 2180005b1000 / run2 2180007b9000）⇒ 触发点不是缓冲大小，缩缓冲无效。根因坐实：容器内核 6.6.87.2-microsoft-standard-WSL2 + vm.mmap_rnd_bits=32 破坏 TSan shadow-memory 映射＝WSL2 本地环境伪影，非数据竞争、非 agent 逻辑缺陷。且此容器失败不等于 CI flake：CI 553e2bb（run 42321960462）是裸 SIGSEGV@TestSafeGo_RecoversAndRestarts（safego.go:53 selectgo）、0 个 TSan 签名，同份 agent 代码在 a08c693/2555254/be3b771 三次绿 ⇒ runner 级间歇 flake。处置：本地编辑已 git restore 回退（security_test.go 恢复 origin/main 原状，gofmt/vet 曾干净，工作树干净）。internal/agent 面无可修真实缺陷，释放认领（前认领 03:02:23Z ttl=6h 已过期；main 全程未碰 agent 包、无他线认领 ⇒ 无主）。CI flake 去向交 owner：option B（CI 侧 runner/ASLR 调参）属禁区我不碰；或据同代码三次绿接受为 flake。取证日志（仓外）：F:/Agent/Qoder/workspace/race-agent-optionA.log 与 race-agent-optionA-run2.log。
+[NOTE] 2026-11-07T18:07:56Z from=opencode 批次 7 认领：探测/诊断面「目标参数未转义直插」收口（netdiag_ops.go + synthetic_ops.go，13 处）。
+  为什么是真缺陷面（不是风格问题）：这 13 处把请求体字段 req.Target / req.URL / req.Name **裸拼**进
+  要下发给 agent 的 shell 脚本（agent 以 `sh -c` 执行，internal/agent/agent.go 的 shellCommand），
+  `$(id)` / 反引号会被**真实执行**——与批次 1~6 修的 shellQuote 静默失效同族，但成因不同：那些行
+  走了 shellQuote 却转义不完整，这些行**根本没走**任何转义/校验（req.* 直插 fmt.Sprintf 格式串）。
+  实测面（本次逐行核对 origin/main）：netdiag_ops.go 8 处——tcpdump `host %s`、mtr ×2、nmap、dig ×2、
+  host、traceroute ×2、ping、status-code 的 curl URL ×2（后者虽在双引号段内，但 `$` 与反引号在 POSIX
+  双引号里同样会展开 ⇒ `"$(id)"` 一样会被执行）；synthetic_ops.go 5 处——create 的 Name+URL、delete 的
+  Name、http/tcp/icmp 三种探针。鉴权面无缺口（两条 handler 均经 dispatchKafkaTask → subsystemAuthorize
+  的 task:write 闸），这是**已授权调用者可直接打到 agent 的 RCE**。
+  做法：全部走既有 pkg/shellquote.Quote（POSIX 单引号字面量，语义保证「求值结果恒等于原字面字节序列，
+  不含任何可展开结构」）；tcp 探针的内层 bash -c 命令**整体 Quote 后作为单个 argv** 传入，避免嵌套引号
+  歧义（外层 Quote(inner) 使内层的单引号按关闭-转义-重开还原，bash -c 收到的仍是恰好一条命令）；
+  端口仍是纯数字字面量。选 Quote 而非 ValidateHost：target 合法域含 CIDR（tcpdump）、主机名、URL，
+  白名单会误杀合法输入；Quote 不改取值语义。
+  配套：① 新增 internal/controlplane/probe_injection_test.go——载荷 `$(id)` / 反引号 / `;` / 引号闭合，
+  逐条断言脚本里载荷只以单引号字面量形态出现，且全文无裸 `$()` / 反引号 / 裸分号；② 盘点器
+  scripts/shell-injection-audit.py 新增 raw_interp 判据（直接插值 req.* 到脚本的行），给出可复算基线。
+  冲突检查：文件面 netdiag_ops.go / synthetic_ops.go / 新测试 / 盘点器 / CHANGELOG，与 #5~#13 均无重叠；
+  qoder 的 internal/agent 线（69a801c 只动 docs/CLAIMS.md）零重叠。
+[CLAIM] 2026-11-07T18:07:56Z from=opencode ttl=8h scope=internal/controlplane/netdiag_ops.go,internal/controlplane/synthetic_ops.go,internal/controlplane/probe_injection_test.go,scripts/shell-injection-audit.py,CHANGELOG.md note=批次 7：探测/诊断面 req.* 未转义直插收口（13 处 → shellquote.Quote）+ 盘点器 raw_interp 判据
+
+[LANDED] 2026-11-08T00:33:35Z from=opencode commit=cd512a6 branch=fix/probe-injection-sweep pr=14 note=批次 7（探测/诊断面 req.* 未转义直插收口）入 main：13 处 → `shellquote.Quote`（netdiag_ops.go 8：tcpdump/mtr/nmap/dig/host/traceroute/ping/status-code；synthetic_ops.go 5：create 的 name+url、delete 的 name、http/tcp/icmp 三探针）。真缺陷面：裸拼进下发给 agent 的 shell 脚本（agent 以 `sh -c` 执行）⇒ `$(id)`/反引号被真实执行；**双引号不是防护**（POSIX 双引号内 `$` 与反引号同样展开），旧形态 `"$(id)"` 一样会被执行。tcp 探针改位置参数形态 `bash -c 'echo > /dev/tcp/"$1"/80' _ <target>`（内层 bash 会二次解析 `;`）。守卫 `internal/controlplane/probe_injection_test.go`（5 用例）：引号外文本判据 + 源码级兜底 + **真 sh 语义级证明**（标记文件不得落地）；变异验证回退旧码后 5/5 判红且语义用例实测标记文件真的落地。盘点器新增判据 C（`raw_interp`，与 A/B 独立计数）：同口径 raw_interp **333 → 320**（netdiag 8→0、synthetic 5→0），A/B 575 → 563；顺带修跨盘符 bug。CI：PR run 42422819068 + push run 42422644951 全绿（含 Race detector 44m30s）。**本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），CHANGELOG 已带 [Unreleased-探测面收口] 块，随下一版归版。
 [NOTE] 2026-11-07T23:09:43Z from=opencode 批次 8 认领：容器/存储运维面「req.* 未转义直插」收口（docker_ops.go + container_ops.go + distfs_ops.go，盘点器 raw_interp 51 处）。
   范围（批次 7 新增的盘点器判据 C「raw_interp」队列头部三文件）：
     docker_ops.go 24（compose 7 + network 6 + volume 3 + debug 7 + registry 4）；
