@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -46,7 +47,8 @@ func (s *Server) handleKafkaShareGroup(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "group is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group %s --group-type share 2>/dev/null`, req.Group)
+		// 注入面（批次 10）：group 名是**值** ⇒ 整体 Quote（取值语义不变）。
+		script := fmt.Sprintf(`kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group %s --group-type share 2>/dev/null`, shellquote.Quote(req.Group))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "share-group_describe")
 		if !ok {
 			return
@@ -58,7 +60,8 @@ func (s *Server) handleKafkaShareGroup(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "group and topic are required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic %s --group %s --group-type share --from-beginning --max-messages 1 --timeout-ms 5000 2>/dev/null && echo "Share group created"`, req.Topic, req.Group)
+		// 注入面（批次 10）：topic 与 group 都是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic %s --group %s --group-type share --from-beginning --max-messages 1 --timeout-ms 5000 2>/dev/null && echo "Share group created"`, shellquote.Quote(req.Topic), shellquote.Quote(req.Group))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "share-group_create")
 		if !ok {
 			return
@@ -70,7 +73,8 @@ func (s *Server) handleKafkaShareGroup(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "group is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-consumer-groups.sh --bootstrap-server localhost:9092 --delete --group %s 2>/dev/null`, req.Group)
+		// 注入面（批次 10）：group 名是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-consumer-groups.sh --bootstrap-server localhost:9092 --delete --group %s 2>/dev/null`, shellquote.Quote(req.Group))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "share-group_delete")
 		if !ok {
 			return
@@ -124,7 +128,21 @@ checkpoints.topic.replication.factor = 3
 heartbeats.topic.replication.factor = 3
 offset.syncs.topic.replication.factor = 3`, req.SourceCluster, req.TargetCluster, req.Topics)
 		}
-		script := fmt.Sprintf(`cat > /tmp/mm2.properties << 'EOF'\n%s\nEOF\nconnect-mirror-maker.sh /tmp/mm2.properties &`, mm2Config)
+		// 注入面（批次 10）：**heredoc** 形态。内容在 `<< 'EOF'` 里本应字面，但载荷里
+		// 出现**一行恰好等于 EOF** 就会让 heredoc **提前闭合** ⇒ 其后的内容被 shell
+		// 当**命令**执行（已用真 sh 实测：标记文件真的落地）⇒ 整段交给 kafkaHeredoc。
+		//
+		// **顺带修一个既有 bug**：旧形态的 heredoc 写在 Go 的 **raw string** 里，其中的
+		// `\n` 是**字面**反斜杠+n（不是换行）⇒ 分隔符被拼成 `EOFnclusters`，
+		// heredoc 永不闭合 ⇒ 该功能**今天就跑不起来**（实测：cat 报 "No such file or
+		// directory"、配置文件根本没生成）。本批改用真换行 ⇒ 功能首次可用；
+		// 相应的「提前闭合」面随之显性化，已由 kafkaHeredoc 收口。
+		heredoc, err := kafkaHeredoc("/tmp/mm2.properties", mm2Config)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := heredoc + "\nconnect-mirror-maker.sh /tmp/mm2.properties &"
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "mirror-maker_start")
 		if !ok {
 			return
@@ -241,7 +259,9 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "23.0"
 		}
-		script := fmt.Sprintf(`docker run -d --name keycloak -p 8080:8080 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:%s start-dev 2>/dev/null && echo "Keycloak deployed"`, version)
+		// 注入面（批次 10）：version 落在**镜像 tag**位置 ⇒ 整体 Quote
+		//（docker 收到的 tag 与旧形态逐字相同）。
+		script := fmt.Sprintf(`docker run -d --name keycloak -p 8080:8080 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:%s start-dev 2>/dev/null && echo "Keycloak deployed"`, shellquote.Quote(version))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "oauth_deploy")
 		if !ok {
 			return
@@ -261,7 +281,21 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "realm is required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $(curl -s -X POST http://localhost:8080/realms/master/protocol/openid-connect/token -d "client_id=admin-cli" -d "username=admin" -d "password=admin" -d "grant_type=password" | jq -r .access_token)" -d '{"realm":"%s","enabled":true}' http://localhost:8080/admin/realms`, req.Realm)
+		// 注入面（批次 10）：realm 被裸拼进 **JSON 字面量**（`-d '{"realm":"%s"}'`）⇒
+		// 字段里的 `"` 会**破坏 JSON 结构**、`'` 会**破 shell 单引号段** ⇒
+		// 改由 Go 层 map + json.Marshal 构造 JSON，再整体 Quote。
+		// 非法 realm 名 ⇒ 400 拒收（旧形态是把垃圾原样发给 Keycloak，由它报错）。
+		realm, err := kafkaResource(req.Realm)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		payload, err := opsJSONPayload(map[string]any{"realm": realm, "enabled": true})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid realm payload: " + err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $(curl -s -X POST http://localhost:8080/realms/master/protocol/openid-connect/token -d "client_id=admin-cli" -d "username=admin" -d "password=admin" -d "grant_type=password" | jq -r .access_token)" --data %s %s`, payload, opsURL("http://localhost:8080", "admin/realms"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "oauth_create-realm")
 		if !ok {
 			return
@@ -273,7 +307,30 @@ func (s *Server) handleOAuth(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "realm and clientId are required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $(curl -s -X POST http://localhost:8080/realms/master/protocol/openid-connect/token -d "client_id=admin-cli" -d "username=admin" -d "password=admin" -d "grant_type=password" | jq -r .access_token)" -d '{"clientId":"%s","enabled":true,"protocol":"openid-connect","publicClient":true}' http://localhost:8080/admin/realms/%s/clients`, req.ClientID, req.Realm)
+		// 注入面（批次 10）：clientId 裸拼进 **JSON 字面量**、realm 裸拼进 **URL 段**
+		// ⇒ JSON 由 Go 层构造后整体 Quote；URL 在 Go 层拼完整后**整体** Quote
+		//（不能把 Quote 结果塞回双引号段：双引号内单引号是字面量 ⇒ URL 会带 %27）。
+		clientID, err := kafkaResource(req.ClientID)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		realm, err := kafkaResource(req.Realm)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		payload, err := opsJSONPayload(map[string]any{
+			"clientId":     clientID,
+			"enabled":      true,
+			"protocol":     "openid-connect",
+			"publicClient": true,
+		})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid client payload: " + err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $(curl -s -X POST http://localhost:8080/realms/master/protocol/openid-connect/token -d "client_id=admin-cli" -d "username=admin" -d "password=admin" -d "grant_type=password" | jq -r .access_token)" --data %s %s`, payload, opsURL("http://localhost:8080", "admin/realms/"+realm+"/clients"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "oauth_create-client")
 		if !ok {
 			return

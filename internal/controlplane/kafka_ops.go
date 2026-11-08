@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // kafkaResourceRe 校验资源名称（ACL/Connector/Schema 等）。
@@ -156,7 +157,28 @@ func (s *Server) handleKafkaACL(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = "*"
 		}
-		script := fmt.Sprintf(`kafka-acls.sh --bootstrap-server localhost:9092 --add --allow-principal %s --operation %s --%s %s`, req.Principal, op, strings.ToLower(req.Resource), name)
+		// 注入面（批次 10）：--operation 的值会被 Kafka CLI 解析成选项、--%s 的
+		// **选项名**也是用户字段 ⇒ 两处都枚举白名单；principal 与资源名是**值**
+		// ⇒ 整体 Quote（shell 层封住，取值语义不变）。
+		aclOp, err := kafkaACLOperation(op)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		aclFlag, err := kafkaACLResourceFlag(req.Resource)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		// 资源名是 `--%s` 的**值**位置 ⇒ 光 Quote 不够：Quote 只保证 shell 层安全，
+		// 而 `--topic x --delete` 这种载荷在 **Kafka CLI 层**仍是「多传了一个选项」。
+		// 故资源名走白名单（放行 `*` = 全部资源，与 Kafka CLI 语义一致）。
+		aclName, err := kafkaACLResourceName(name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`kafka-acls.sh --bootstrap-server localhost:9092 --add --allow-principal %s --operation %s --%s %s`, shellquote.Quote(req.Principal), aclOp, aclFlag, shellquote.Quote(aclName))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "create")
 		if !ok {
 			return
@@ -172,7 +194,20 @@ func (s *Server) handleKafkaACL(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = "*"
 		}
-		script := fmt.Sprintf(`kafka-acls.sh --bootstrap-server localhost:9092 --remove --force --allow-principal %s --operation All --%s %s`, req.Principal, strings.ToLower(req.Resource), name)
+		// 注入面（批次 10）：--%s 的**选项名**是用户字段 ⇒ 枚举白名单；principal 与
+		// 资源名是**值** ⇒ 整体 Quote。
+		aclFlag, err := kafkaACLResourceFlag(req.Resource)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		// 同 create：资源名是 `--%s` 的值位置 ⇒ 走白名单（放行 `*`）。
+		aclName, err := kafkaACLResourceName(name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`kafka-acls.sh --bootstrap-server localhost:9092 --remove --force --allow-principal %s --operation All --%s %s`, shellquote.Quote(req.Principal), aclFlag, shellquote.Quote(aclName))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "delete")
 		if !ok {
 			return
@@ -215,7 +250,7 @@ func (s *Server) handleKafkaConnect(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "list":
-		script := fmt.Sprintf(`curl -s %s/connectors`, connectURL)
+		script := fmt.Sprintf(`curl -s %s`, opsURL(connectURL, "connectors"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "list")
 		if !ok {
 			return
@@ -227,7 +262,9 @@ func (s *Server) handleKafkaConnect(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "connector is required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s %s/connectors/%s/status`, connectURL, req.Connector)
+		// 注入面（批次 10）：URL 在 Go 层拼完整后**整体 Quote**（不能把 Quote 结果
+		// 塞回双引号段——双引号内单引号是字面量，URL 会带 %27 而 404）。
+		script := fmt.Sprintf(`curl -s %s`, opsURL(connectURL, "connectors/"+req.Connector+"/status"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "status")
 		if !ok {
 			return
@@ -239,7 +276,14 @@ func (s *Server) handleKafkaConnect(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "connector and config are required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s -X POST -H "Content-Type: application/json" --data '%s' %s/connectors`, req.Config, connectURL)
+		// 注入面（批次 10）：config 是用户提供的**自由 JSON**，旧形态 `--data '%s'`
+		// 里的单引号会**破段** ⇒ 先校验合法性再整体 Quote（非法 JSON 拒收）。
+		payload, err := opsQuoteJSONText(req.Config)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid config: " + err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`curl -s -X POST -H "Content-Type: application/json" --data %s %s`, payload, opsURL(connectURL, "connectors"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "create")
 		if !ok {
 			return
@@ -251,7 +295,7 @@ func (s *Server) handleKafkaConnect(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "connector is required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s -X DELETE %s/connectors/%s`, connectURL, req.Connector)
+		script := fmt.Sprintf(`curl -s -X DELETE %s`, opsURL(connectURL, "connectors/"+req.Connector))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "delete")
 		if !ok {
 			return
@@ -263,7 +307,7 @@ func (s *Server) handleKafkaConnect(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "connector is required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s -X POST %s/connectors/%s/restart`, connectURL, req.Connector)
+		script := fmt.Sprintf(`curl -s -X POST %s`, opsURL(connectURL, "connectors/"+req.Connector+"/restart"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "restart")
 		if !ok {
 			return
@@ -275,7 +319,7 @@ func (s *Server) handleKafkaConnect(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "connector is required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s -X PUT %s/connectors/%s/pause`, connectURL, req.Connector)
+		script := fmt.Sprintf(`curl -s -X PUT %s`, opsURL(connectURL, "connectors/"+req.Connector+"/pause"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "pause")
 		if !ok {
 			return
@@ -287,7 +331,7 @@ func (s *Server) handleKafkaConnect(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "connector is required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s -X PUT %s/connectors/%s/resume`, connectURL, req.Connector)
+		script := fmt.Sprintf(`curl -s -X PUT %s`, opsURL(connectURL, "connectors/"+req.Connector+"/resume"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "resume")
 		if !ok {
 			return
@@ -325,7 +369,7 @@ func (s *Server) handleKafkaSchemaRegistry(w http.ResponseWriter, r *http.Reques
 
 	switch req.Action {
 	case "list-subjects":
-		script := fmt.Sprintf(`curl -s %s/subjects`, srURL)
+		script := fmt.Sprintf(`curl -s %s`, opsURL(srURL, "subjects"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "list-subjects")
 		if !ok {
 			return
@@ -337,7 +381,7 @@ func (s *Server) handleKafkaSchemaRegistry(w http.ResponseWriter, r *http.Reques
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject is required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s %s/subjects/%s/versions/latest`, srURL, req.Subject)
+		script := fmt.Sprintf(`curl -s %s`, opsURL(srURL, "subjects/"+req.Subject+"/versions/latest"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "get-schema")
 		if !ok {
 			return
@@ -349,7 +393,16 @@ func (s *Server) handleKafkaSchemaRegistry(w http.ResponseWriter, r *http.Reques
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject and schema are required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" --data '{"schema":%s}' %s/subjects/%s/versions`, req.Schema, srURL, req.Subject)
+		// 注入面（批次 10）：schema 被裸拼进 JSON 字面量（`{"schema":%s}`）⇒ 字段里的
+		// `"` 会**破坏 JSON 结构**、`'` 会**破 shell 单引号段** ⇒ 改由 Go 层构造：
+		// 把用户给的 schema 当 **json.RawMessage** 原样嵌进对象（保持旧形态的结构），
+		// 再整体 Quote。schema 非法 JSON ⇒ 400 拒收。
+		payload, err := opsJSONPayload(map[string]json.RawMessage{"schema": json.RawMessage(req.Schema)})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid schema: " + err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`curl -s -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" --data %s %s`, payload, opsURL(srURL, "subjects/"+req.Subject+"/versions"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "register")
 		if !ok {
 			return
@@ -361,7 +414,13 @@ func (s *Server) handleKafkaSchemaRegistry(w http.ResponseWriter, r *http.Reques
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject and schema are required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" --data '{"schema":%s}' %s/compatibility/subjects/%s/versions/latest`, req.Schema, srURL, req.Subject)
+		// 注入面（批次 10）：同 register——schema 内嵌 JSON 由 Go 层构造后整体 Quote。
+		payload, err := opsJSONPayload(map[string]json.RawMessage{"schema": json.RawMessage(req.Schema)})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid schema: " + err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`curl -s -X POST -H "Content-Type: application/vnd.schemaregistry.v1+json" --data %s %s`, payload, opsURL(srURL, "compatibility/subjects/"+req.Subject+"/versions/latest"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "check-compat")
 		if !ok {
 			return
@@ -373,7 +432,7 @@ func (s *Server) handleKafkaSchemaRegistry(w http.ResponseWriter, r *http.Reques
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject is required"})
 			return
 		}
-		script := fmt.Sprintf(`curl -s %s/subjects/%s/versions`, srURL, req.Subject)
+		script := fmt.Sprintf(`curl -s %s`, opsURL(srURL, "subjects/"+req.Subject+"/versions"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "list-versions")
 		if !ok {
 			return
@@ -485,7 +544,19 @@ func (s *Server) handleKafkaQuota(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		configs = strings.TrimSuffix(configs, ",")
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type %s --entity-name %s --alter --add-config %s`, req.Entity, req.EntityName, configs)
+		// 注入面（批次 10）：entity-type 与 entity-name 是 Kafka CLI 的**选项值** ⇒
+		// 白名单（复用 kafkaResourceRe 的字符集）；configs 由 int 拼成，但仍整体 Quote。
+		entityType, err := kafkaResource(req.Entity)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		entityName, err := kafkaResource(req.EntityName)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type %s --entity-name %s --alter --add-config %s`, shellquote.Quote(entityType), shellquote.Quote(entityName), shellquote.Quote(configs))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "set")
 		if !ok {
 			return
@@ -497,7 +568,18 @@ func (s *Server) handleKafkaQuota(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "entity and entityName are required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type %s --entity-name %s --alter --delete-config producer_byte_rate,consumer_byte_rate`, req.Entity, req.EntityName)
+		// 注入面（批次 10）：entity-type 与 entity-name 是 Kafka CLI 的**选项值** ⇒ 白名单。
+		entityType, err := kafkaResource(req.Entity)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		entityName, err := kafkaResource(req.EntityName)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type %s --entity-name %s --alter --delete-config producer_byte_rate,consumer_byte_rate`, shellquote.Quote(entityType), shellquote.Quote(entityName))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "delete")
 		if !ok {
 			return
