@@ -447,7 +447,7 @@ func (s *SQLStore) runMigrations() error {
 			if err := s.rebaselineChecksum(context.Background(), mf.version, expected); err != nil {
 				return fatalMigration(fmt.Errorf("再基线迁移 %d (%s) 的指纹失败: %w", mf.version, mf.name, err))
 			}
-		logx.Warn(context.Background(), "store: WARN 迁移 库内指纹由 CRLF 检出产生，已再基线为行尾无关的规范值", "version", mf.version, "name", mf.name, "recorded", recorded.checksum, "expected", expected)
+			logx.Warn(context.Background(), "store: WARN 迁移 库内指纹由 CRLF 检出产生，已再基线为行尾无关的规范值", "version", mf.version, "name", mf.name, "recorded", recorded.checksum, "expected", expected)
 			continue
 		}
 		return fatalMigration(fmt.Errorf("migration %d (%s) checksum mismatch: recorded=%s expected=%s (迁移文件已被篡改，拒绝启动)",

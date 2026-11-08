@@ -11,8 +11,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/Levango7/OpsMesh/internal/logx"
 	"google.golang.org/grpc/encoding"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // CodecName 是我们在 encoding 注册表里登记的 codec 名字。
