@@ -10,13 +10,13 @@ package controlplane
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"runtime"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/plugin"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
@@ -120,7 +120,7 @@ func (s *Server) handleUpdatePlatformConfig(w http.ResponseWriter, r *http.Reque
 		Ctx:     r.Context(),
 	}); err != nil {
 		// pre 阶段阻断 = 业务尚未落库，按 4xx 回给客户端，错误详情不回吐内部细节。
-		log.Printf("[controlplane] config.preSet 钩子阻断配置写入: %v", err)
+		logx.Warn(r.Context(), "controlplane: config.preSet 钩子阻断配置写入", err)
 		paginate.WriteJSON(w, http.StatusBadRequest,
 			map[string]string{"error": "config update rejected by plugin policy"})
 		return
@@ -157,7 +157,7 @@ func (s *Server) handleUpdatePlatformConfig(w http.ResponseWriter, r *http.Reque
 		Payload: &body,
 		Ctx:     r.Context(),
 	}); err != nil {
-		log.Printf("[controlplane] config.postSet 钩子失败（配置已落库，不回滚）: %v", err)
+		logx.Warn(r.Context(), "controlplane: config.postSet 钩子失败（配置已落库，不回滚）", err)
 		s.audit(r.Context(), &proto.AuditEvent{
 			TenantID: "default", UserID: caller.ID, Action: "plugin_hook_failed",
 			Target: string(plugin.HookConfigPostSet), Detail: "post 钩子失败，配置已落库未回滚",

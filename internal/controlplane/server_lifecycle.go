@@ -4,7 +4,6 @@ package controlplane
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -632,14 +631,14 @@ func (s *Server) Start() error {
 		shutCtx, cancel := context.WithTimeout(context.Background(), s.shutdownWait)
 		defer cancel()
 		if err := httpSrv.Shutdown(shutCtx); err != nil {
-			log.Printf("controlplane: HTTP 服务优雅退出失败: %v", err)
+			logx.Error(ctx, "controlplane: HTTP 服务优雅退出失败", err)
 		}
 		if err := metricsSrv.Shutdown(shutCtx); err != nil {
-			log.Printf("controlplane: metrics 服务优雅退出失败: %v", err)
+			logx.Error(ctx, "controlplane: metrics 服务优雅退出失败", err)
 		}
 		if fedSrv != nil {
 			if err := fedSrv.Shutdown(shutCtx); err != nil {
-				log.Printf("controlplane: federation 服务优雅退出失败: %v", err)
+				logx.Error(ctx, "controlplane: federation 服务优雅退出失败", err)
 			}
 		}
 		return nil

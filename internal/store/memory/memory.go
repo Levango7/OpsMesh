@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/cron"
 	"github.com/Levango7/OpsMesh/internal/dag"
 	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
 	"github.com/Levango7/OpsMesh/internal/store/storekit"
@@ -454,7 +454,8 @@ func (m *MemoryStore) seedRBAC() {
 			// bcrypt 失败属于环境异常（成本因子超限等），构造期 panic 暴露问题。
 			// log.Panicf 合理：bcrypt 哈希失败意味着密码哈希算法不可用（如 bcrypt 库损坏），
 			// 这是不可恢复的初始化错误。seedRBAC 在构造时调用，失败时程序无法安全启动。
-			log.Panicf("[store] 预填充用户 %q 的 bcrypt 哈希失败: %v", us.name, err)
+		logx.Error(context.Background(), "store: 预填充用户 bcrypt 哈希失败", err, "user", us.name)
+		panic(fmt.Sprintf("bcrypt hash failed for user %q: %v", us.name, err))
 		}
 		u := &User{
 			ID:                 us.id,
@@ -514,7 +515,7 @@ func (m *MemoryStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 	// 跨租户重绑定防护（P1-2）：与 SQLStore.Register 同规则（威胁模型见该处注释）。
 	// 既有租户非空且与新租户不同 → 拒绝注册（返回 nil，由 gRPC 层映射为 PermissionDenied）。
 	if prev, ok := m.agents[a.AgentID]; ok && prev != nil && prev.TenantID != "" && prev.TenantID != a.TenantID {
-		log.Printf("[store] Register 拒绝跨租户重绑定 %s（既有租户=%q，请求租户=%q）", a.AgentID, prev.TenantID, a.TenantID)
+		logx.Warn(context.Background(), "store: Register 拒绝跨租户重绑定", "agentID", a.AgentID, "existingTenant", prev.TenantID, "requestTenant", a.TenantID)
 		return nil
 	}
 	a.LastSeen = time.Now()
@@ -1056,7 +1057,7 @@ func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 			}
 		}
 		if !validTaskTransition(t.Status, next) {
-			log.Printf("store: memory SubmitResult 状态机拒绝非法转移 %s %s→%s (exitCode=%d)", t.TaskID, t.Status, next, res.ExitCode)
+			logx.Warn(context.Background(), "store: memory SubmitResult 状态机拒绝非法转移", "taskID", t.TaskID, "fromStatus", t.Status, "toStatus", next, "exitCode", res.ExitCode)
 			return
 		}
 		// 防双跑 + 防伪造：claim_epoch 校验——上报令牌必须与任务当前 ClaimEpoch 精确相等。
@@ -1067,7 +1068,7 @@ func (m *MemoryStore) SubmitResult(res *proto.TaskResult) {
 		// 才被放行——此时任务未经任何 agent 认领，不存在"抢占他人任务"的语义。
 		// 旧实现是 res.ClaimEpoch>0 才校验，等于给 ClaimEpoch:0 开了越权改写的后门。
 		if res.ClaimEpoch != t.ClaimEpoch {
-			log.Printf("store: memory SubmitResult 拒绝越权上报 %s (claim_epoch=%d != %d)", t.TaskID, res.ClaimEpoch, t.ClaimEpoch)
+			logx.Warn(context.Background(), "store: memory SubmitResult 拒绝越权上报", "taskID", t.TaskID, "reportEpoch", res.ClaimEpoch, "taskEpoch", t.ClaimEpoch)
 			return
 		}
 		if success {

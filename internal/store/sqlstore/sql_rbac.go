@@ -14,13 +14,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
 	"github.com/Levango7/OpsMesh/internal/store/storekit"
 )
@@ -399,7 +399,7 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 			return err
 		}
 		if changed {
-			log.Printf("[store] 预置角色 %s 的权限快照落后于权限目录，已按并集回填", r.id)
+			logx.Warn(ctx, "store: 预置角色权限快照落后于权限目录，已按并集回填", "roleID", r.id)
 		}
 	}
 	// 3. 默认用户（bcrypt 哈希；与 memory.go 保持一致）。
@@ -462,7 +462,7 @@ func (s *SQLStore) refreshPresetRolePermissions(ctx context.Context, roleID stri
 	var stored []string
 	if storedJSON != "" {
 		if err := json.Unmarshal([]byte(storedJSON), &stored); err != nil {
-			log.Printf("[store] 角色 %s 的 permissions 不是合法 JSON（%v），按空快照回填", roleID, err)
+			logx.Warn(ctx, "store: 角色 permissions 不是合法 JSON，按空快照回填", "roleID", roleID, "err", err)
 			stored = nil
 		}
 	}

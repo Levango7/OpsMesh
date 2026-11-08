@@ -10,13 +10,13 @@
 package controlplane
 
 import (
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -63,7 +63,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		log.Printf("controlplane: handleAuthRegister 解析请求体失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleAuthRegister 解析请求体失败", err)
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -85,13 +85,13 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 	// 权限展开失败（userPermissions 跳过 nil 角色），用户实际无任何权限且难以排查。
 	// 此处前置校验快速失败暴露配置问题，返回 500 表明是服务端数据缺陷而非客户端错误。
 	if s.store.GetRole("role-viewer") == nil {
-		log.Printf("controlplane: handleAuthRegister 默认角色 role-viewer 不存在，注册中止")
+		logx.Warn(r.Context(), "controlplane: handleAuthRegister 默认角色 role-viewer 不存在，注册中止")
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "default role not found"})
 		return
 	}
 	hash, err := credentials.HashPassword(body.Password)
 	if err != nil {
-		log.Printf("controlplane: handleAuthRegister 哈希密码失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleAuthRegister 哈希密码失败", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -122,13 +122,13 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.AllowPublicRegister {
 		token, err := s.issueUserToken(u)
 		if err != nil {
-			log.Printf("controlplane: handleAuthRegister 签发 token 失败: %v", err)
+			logx.Error(r.Context(), "controlplane: handleAuthRegister 签发 token 失败", err)
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
 		rt, err := s.createRefreshToken(u.ID, u.TenantID, deviceFingerprint(r))
 		if err != nil {
-			log.Printf("controlplane: handleAuthRegister 生成刷新令牌失败: %v", err)
+			logx.Error(r.Context(), "controlplane: handleAuthRegister 生成刷新令牌失败", err)
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
@@ -164,7 +164,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		log.Printf("controlplane: handleAuthLogin 解析请求体失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleAuthLogin 解析请求体失败", err)
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -190,7 +190,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		// 任意账号登录 ⇒ "invalid username or password"，且失败**计入** loginGuard
 		// ⇒ 活跃用户 5 次后被锁 15 分钟（一次 DB 抖动 = 全体击退 + 全员锁号）。
 		// 503 的语义：故障可恢复、与凭据无关、不改变任何计数状态。
-		log.Printf("controlplane: handleAuthLogin 读用户失败（store 故障，按不可用分流）: %v", lookupErr)
+		logx.Error(r.Context(), "controlplane: handleAuthLogin 读用户失败（store 故障，按不可用分流）", lookupErr)
 		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authentication temporarily unavailable, retry shortly"})
 		return
 	}
@@ -232,7 +232,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if u.MustChangePassword {
 		cpt, err := s.createChangePasswordToken(u.ID)
 		if err != nil {
-			log.Printf("controlplane: handleAuthLogin 生成改密令牌失败: %v", err)
+			logx.Error(r.Context(), "controlplane: handleAuthLogin 生成改密令牌失败", err)
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
@@ -245,14 +245,14 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := s.issueUserToken(u)
 	if err != nil {
-		log.Printf("controlplane: handleAuthLogin 签发 token 失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleAuthLogin 签发 token 失败", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	// 双 Cookie：at（短寿命，JS 不可读）+ rt（长寿命，服务端可吊销/旋转）。
 	rt, err := s.createRefreshToken(u.ID, u.TenantID, deviceFingerprint(r))
 	if err != nil {
-		log.Printf("controlplane: handleAuthLogin 生成刷新令牌失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleAuthLogin 生成刷新令牌失败", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -330,7 +330,7 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		// GetUser 的 nil（读失败与查无压成同一个 nil）一律当"user not active" ⇒
 		// 清 Cookie + 401 ⇒ 故障期一次 refresh 就销毁活跃会话（演练实测，
 		// "能登录、能刷新，偏偏故障窗口刷新一次就被踢下线"）。
-		log.Printf("controlplane: handleAuthRefresh 读用户失败（store 故障，按不可用分流）: %v", lookupErr)
+		logx.Error(r.Context(), "controlplane: handleAuthRefresh 读用户失败（store 故障，按不可用分流）", lookupErr)
 		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "session service temporarily unavailable, retry shortly"})
 		return
 	}
@@ -341,14 +341,14 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	at, err := s.issueUserToken(u)
 	if err != nil {
-		log.Printf("controlplane: handleAuthRefresh 签发 token 失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleAuthRefresh 签发 token 失败", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	// 签发新 rt 时绑定当前设备指纹（与 consume 时的 DeviceFP 一致，实现设备绑定旋转）。
 	rt, err := s.createRefreshToken(u.ID, u.TenantID, deviceFingerprint(r))
 	if err != nil {
-		log.Printf("controlplane: handleAuthRefresh 生成刷新令牌失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleAuthRefresh 生成刷新令牌失败", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -474,7 +474,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		ChangePasswordToken string `json:"changePasswordToken"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		log.Printf("controlplane: handleAuthChangePassword 解析请求体失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleAuthChangePassword 解析请求体失败", err)
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -536,7 +536,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	// bcrypt 哈希新密码。
 	newHash, err := credentials.HashPassword(body.NewPassword)
 	if err != nil {
-		log.Printf("controlplane: handleAuthChangePassword 哈希密码失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleAuthChangePassword 哈希密码失败", err)
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
@@ -553,13 +553,13 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	if firstLoginChange {
 		token, err := s.issueUserToken(u)
 		if err != nil {
-			log.Printf("controlplane: handleAuthChangePassword 签发 token 失败: %v", err)
+			logx.Error(r.Context(), "controlplane: handleAuthChangePassword 签发 token 失败", err)
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}
 		rt, err := s.createRefreshToken(u.ID, u.TenantID, deviceFingerprint(r))
 		if err != nil {
-			log.Printf("controlplane: handleAuthChangePassword 生成刷新令牌失败: %v", err)
+			logx.Error(r.Context(), "controlplane: handleAuthChangePassword 生成刷新令牌失败", err)
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 			return
 		}

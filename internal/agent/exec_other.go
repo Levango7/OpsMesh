@@ -3,10 +3,12 @@
 package agent
 
 import (
-	"log"
+	"context"
 	"os/exec"
 	"runtime"
 	"strconv"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // setProcessGroup 在非 POSIX 平台（如 Windows）是 noop（安全加固）。
@@ -31,7 +33,7 @@ func killProcessGroup(pid int) error {
 		// 同步执行 taskkill，等待整个进程树被终止。
 		c := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid))
 		if err := c.Run(); err != nil {
-			log.Printf("agent: taskkill 杀进程树(pid=%d) 失败: %v", pid, err)
+			logx.Warn(context.Background(), "agent: taskkill 杀进程树失败", err, "pid", pid)
 		}
 		return nil
 	}

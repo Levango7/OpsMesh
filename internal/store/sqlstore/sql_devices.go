@@ -5,12 +5,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
 	"github.com/Levango7/OpsMesh/internal/store/storekit"
@@ -55,7 +55,7 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 	if existingTenant, known := s.agentTenant(ctx, a.AgentID); known && existingTenant != "" && existingTenant != a.TenantID {
 		// G706 豁免（#nosec）：三个入参均以 %q 输出，控制字符/换行被转义为 Go 转义序列，
 		// 伪造不出新的日志行（日志注入不可行）；a.AgentID 仍需保留原文以便运维定位。
-		log.Printf("[store] Register 拒绝跨租户重绑定 %q（既有租户=%q，请求租户=%q）", a.AgentID, existingTenant, a.TenantID) // #nosec G706 -- %q 转义换行与控制字符，见上注
+		logx.Warn(context.Background(), "store: Register 拒绝跨租户重绑定", "agentID", a.AgentID, "existingTenant", existingTenant, "requestTenant", a.TenantID)
 		return nil
 	}
 
@@ -120,7 +120,7 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 			storefail.Record("[store] Register onboard 查询候选设备 %s 租户失败: %v", a.OnboardDeviceID, qerr)
 		}
 		if a.TenantID != "" && curTenant != "" && curTenant != a.TenantID {
-			log.Printf("[store] Register onboard 拒绝跨租户翻转 %s（device tenant=%q, agent tenant=%q）", a.OnboardDeviceID, curTenant, a.TenantID)
+			logx.Warn(context.Background(), "store: Register onboard 拒绝跨租户翻转", "onboardDeviceID", a.OnboardDeviceID, "deviceTenant", curTenant, "agentTenant", a.TenantID)
 		} else {
 			_, err = s.db.ExecContext(ctx, `
 INSERT INTO devices (device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, hostname, os, arch)
@@ -458,7 +458,7 @@ func (s *SQLStore) RetireStaleDevices(maxAge time.Duration) int {
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] RetireStaleDevices RowsAffected: %v", rowsErr)
+		logx.Error(context.Background(), "store: RetireStaleDevices RowsAffected 错误", rowsErr)
 		return 0
 	}
 	return int(n)

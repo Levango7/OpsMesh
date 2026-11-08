@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,6 +20,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 
 	gnet "github.com/shirou/gopsutil/v3/net"
 
@@ -33,7 +34,6 @@ import (
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/discovery"
 	"github.com/Levango7/OpsMesh/internal/grpcx"
-	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
@@ -187,7 +187,7 @@ func (a *Agent) shutdownOTel() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := a.otelShutdown(ctx); err != nil {
-		log.Printf("agent: OTel shutdown 失败: %v", err)
+		logx.Error(ctx, "agent: OTel shutdown 失败", err)
 	}
 }
 
@@ -1424,10 +1424,10 @@ func (a *Agent) runProcess(ctx context.Context, cmd *exec.Cmd, stdout, stderr io
 		// 取消/超时：先杀进程组/树（Linux: SIGTERM 进程组；Windows: taskkill /T /F /PID 进程树），
 		// 再用 cmd.Process.Kill() 兜底杀父进程（确保终止，避免 taskkill 启动慢时父进程继续运行）。
 		if err := killProcessGroup(cmd.Process.Pid); err != nil {
-			log.Printf("agent: killProcessGroup(pid=%d) 失败: %v", cmd.Process.Pid, err)
+			logx.Error(context.Background(), "agent: killProcessGroup 失败", err, "pid", cmd.Process.Pid)
 		}
 		if err := cmd.Process.Kill(); err != nil {
-			log.Printf("agent: Process.Kill(pid=%d) 失败: %v", cmd.Process.Pid, err)
+			logx.Error(context.Background(), "agent: Process.Kill 失败", err, "pid", cmd.Process.Pid)
 		}
 		// 等待 cmd.Wait 返回，回收子进程资源避免僵尸进程
 		<-waitCh
@@ -1553,12 +1553,12 @@ func (a *Agent) execFile(ctx context.Context, out, errb io.Writer, t proto.Task)
 	tmpName := tmp.Name()
 	defer func() {
 		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-			log.Printf("agent: 清理临时文件 %s 失败: %v", tmpName, err)
+			logx.Warn(context.Background(), "agent: 清理临时文件失败", err, "tmpName", tmpName)
 		}
 	}()
 	if _, err := tmp.WriteString(t.Content); err != nil {
 		if cerr := tmp.Close(); cerr != nil {
-			log.Printf("agent: 写临时文件失败后关闭句柄失败: %v", cerr)
+			logx.Warn(context.Background(), "agent: 写临时文件失败后关闭句柄失败", cerr)
 		}
 		return err
 	}

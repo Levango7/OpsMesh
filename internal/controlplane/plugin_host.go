@@ -35,9 +35,9 @@ package controlplane
 
 import (
 	"context"
-	"log"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/pluginhost"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/plugin"
 )
 
@@ -72,7 +72,7 @@ func (s *Server) firePluginHook(ctx context.Context, h plugin.Hook, ev plugin.Ev
 	}
 	if err := m.FireHook(ctx, h, ev); err != nil {
 		// 只做统一日志前缀，错误本身交给调用方处置。
-		log.Printf("[controlplane] 插件钩子 %q 返回错误: %v", h, err)
+		logx.Warn(ctx, "controlplane: 插件钩子返回错误", "hook", h, "err", err)
 		return err
 	}
 	return nil

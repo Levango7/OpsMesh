@@ -6,12 +6,12 @@
 package controlplane
 
 import (
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -57,7 +57,7 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		Permissions []string `json:"permissions"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		log.Printf("controlplane: handleCreateRole 解析请求体失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleCreateRole 解析请求体失败", err)
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -115,7 +115,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request, id str
 		Permissions []string `json:"permissions"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		log.Printf("controlplane: handleUpdateRole 解析请求体失败: %v", err)
+		logx.Error(r.Context(), "controlplane: handleUpdateRole 解析请求体失败", err)
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}

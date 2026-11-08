@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/cron"
 	"github.com/Levango7/OpsMesh/internal/dag"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
@@ -683,7 +683,7 @@ func (h *Handler) Reconcile(ctx context.Context, id int64, tenantID string) erro
 		// 历史记录读取失败仅跳过终态回写，不影响工作流主状态。
 		runs, runsErr := h.store.ListRuns(ctx, wf.ID, tenantID)
 		if runsErr != nil {
-			log.Printf("[orchestration] ListRuns 失败 wf=%d: %v", wf.ID, runsErr)
+			logx.Error(ctx, "orchestration: ListRuns 失败", runsErr, "workflowID", wf.ID)
 		} else if len(runs) > 0 {
 			latest := runs[len(runs)-1]
 			latest.Status = finalStatus
@@ -698,7 +698,7 @@ func (h *Handler) Reconcile(ctx context.Context, id int64, tenantID string) erro
 			}
 			latest.NodeStates = nodeStates
 			if uerr := h.store.UpdateRun(ctx, &latest); uerr != nil {
-				log.Printf("[orchestration] UpdateRun 失败 run=%d: %v", latest.ID, uerr)
+				logx.Error(ctx, "orchestration: UpdateRun 失败", uerr, "runID", latest.ID)
 			}
 		}
 	}
@@ -769,6 +769,6 @@ const internalErrorBody = "internal server error"
 
 // writeInternalError 是 5xx 的唯一出口：原始错误只进服务端日志，响应体只给固定文案。
 func writeInternalError(w http.ResponseWriter, op string, err error) {
-	log.Printf("[orchestration] %s 失败: %v", op, err)
+	logx.Error(context.Background(), "orchestration: 操作失败", err, "op", op)
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": internalErrorBody})
 }

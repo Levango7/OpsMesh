@@ -25,7 +25,6 @@ package controlplane
 import (
 	"context"
 	"errors"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -37,6 +36,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/extension"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
@@ -547,7 +547,7 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 	if !gw.loaded[actx.TenantID] {
 		if err := s.loadTenantRoutesLocked(gw, actx.TenantID); err != nil {
 			gw.mu.Unlock()
-			log.Printf("controlplane: /gw/ 加载租户路由失败: %v", err)
+			logx.Error(r.Context(), "controlplane: /gw/ 加载租户路由失败", err)
 			paginate.WriteJSON(w, http.StatusServiceUnavailable,
 				map[string]string{"error": "load gateway routes failed"})
 			return
@@ -631,7 +631,7 @@ func (s *Server) handleGatewayProxy(w http.ResponseWriter, r *http.Request) {
 	// 拒绝原因只进服务端日志，不进响应体：ValidateWebhookURL 的错误里含解析出的
 	// IP 与拒绝类别，回吐等于把内网地址段与网关拓扑送给未授权调用方。
 	if err := ValidateWebhookURL(rule.TargetBackend, true); err != nil {
-		log.Printf("controlplane: /gw/ 后端 SSRF 复检拒绝（target 不入日志：属用户配置数据）: %v", err)
+		logx.Warn(r.Context(), "controlplane: /gw/ 后端 SSRF 复检拒绝", err)
 		paginate.WriteJSON(rw, http.StatusBadGateway, map[string]string{"error": "gateway target rejected by egress policy"})
 		return
 	}

@@ -8,11 +8,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
 	"github.com/Levango7/OpsMesh/internal/store/storekit"
 )
@@ -139,7 +139,7 @@ func (s *SQLStore) CleanupTokens(batch int) int {
 	}
 	n, rowsErr := res.RowsAffected()
 	if rowsErr != nil {
-		log.Printf("[store] CleanupTokens RowsAffected: %v", rowsErr)
+		logx.Error(context.Background(), "store: CleanupTokens RowsAffected 错误", rowsErr)
 		return 0
 	}
 	return int(n)

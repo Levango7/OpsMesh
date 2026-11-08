@@ -32,7 +32,6 @@
 package controlplane
 
 import (
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -40,6 +39,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
@@ -144,7 +144,7 @@ func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required st
 	//    原实现仅判断头存在即放行，未验签，任意客户端伪造 X-Federation-Forwarded=1 即可绕过 RBAC。
 	if r.Header.Get("X-Federation-Forwarded") == "1" {
 		if err := s.verifyFederationRequest(r); err != nil {
-			log.Printf("controlplane: requireProd 联邦验签失败: %v", err)
+			logx.Error(r.Context(), "controlplane: requireProd 联邦验签失败", err)
 			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "federation signature verification failed"})
 			return nil, false
 		}

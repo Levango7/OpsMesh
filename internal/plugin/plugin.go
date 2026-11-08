@@ -39,8 +39,9 @@ package plugin
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // Hook 扩展点标识。由控制面在各扩展点定义并触发。
@@ -129,7 +130,7 @@ func (m *Manager) Register(p Plugin, cfg any) error {
 		m.mu.Unlock()
 		return fmt.Errorf("plugin: %q Init 失败: %w", name, err)
 	}
-	log.Printf("[plugin] 注册成功: %s@%s", name, p.Version())
+	logx.Info(context.Background(), "plugin: 注册成功", "name", name, "version", p.Version())
 	return nil
 }
 
@@ -148,10 +149,10 @@ func (m *Manager) Unregister(name string) error {
 
 	// Close 在锁外调用。
 	if err := p.Close(); err != nil {
-		log.Printf("[plugin] %q Close 失败（已移除）: %v", name, err)
+		logx.Warn(context.Background(), "plugin: Close 失败（已移除）", err, "name", name)
 		return fmt.Errorf("plugin: %q Close 失败: %w", name, err)
 	}
-	log.Printf("[plugin] 反注册成功: %s", name)
+	logx.Info(context.Background(), "plugin: 反注册成功", "name", name)
 	return nil
 }
 
@@ -244,7 +245,7 @@ func (m *Manager) Close() error {
 	var firstErr error
 	for _, p := range plugins {
 		if err := p.Close(); err != nil {
-			log.Printf("[plugin] %q Close 失败: %v", p.Name(), err)
+			logx.Warn(context.Background(), "plugin: Close 失败", err, "name", p.Name())
 			if firstErr == nil {
 				firstErr = err
 			}

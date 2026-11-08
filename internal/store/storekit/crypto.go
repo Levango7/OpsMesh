@@ -19,18 +19,20 @@
 package storekit
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // BcryptHash 包装 bcrypt.GenerateFromPassword，避免调用方直接依赖 bcrypt 包
@@ -60,7 +62,7 @@ func BcryptHash(password string) (string, error) {
 func RandHex(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		log.Printf("[store] 警告：crypto/rand 熵源不可用（%v），回退时间戳派生 nonce——熵降级", err)
+		logx.Warn(context.Background(), "store: crypto/rand 熵源不可用，回退时间戳派生 nonce（熵降级）", err)
 		return fmt.Sprintf("%x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
@@ -73,7 +75,8 @@ func MustRandHex(n int) string {
 	if _, err := rand.Read(b); err != nil {
 		// log.Panicf 合理：crypto/rand 不可用意味着系统随机数生成器故障，
 		// 无法生成安全的 HMAC 签名密钥，这是不可恢复的系统级错误。
-		log.Panicf("[store] crypto/rand 不可用，无法生成安全密钥: %v", err)
+		logx.Error(context.Background(), "store: crypto/rand 不可用，无法生成安全密钥", err)
+		panic(fmt.Sprintf("crypto/rand unavailable: %v", err))
 	}
 	return hex.EncodeToString(b)
 }

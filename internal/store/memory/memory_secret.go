@@ -1,11 +1,12 @@
 package memory
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"sort"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
@@ -71,7 +72,7 @@ func (m *MemoryStore) SetSecret(item *SecretItem, tenantID string) *SecretMeta {
 	}
 	// TD-88：secrets 表只存 ${provider:key} 引用（明文拒绝；契约见 model.RequireSecretReference）。
 	if err := model.RequireSecretReference(item.Value); err != nil {
-		log.Printf("[store] SetSecret 拒绝非引用值 (tenant=%s key=%s): %v", tenantID, item.Key, err)
+		logx.Warn(context.Background(), "store: SetSecret 拒绝非引用值", "tenantID", tenantID, "key", item.Key, "err", err)
 		return nil
 	}
 	m.mu.Lock()

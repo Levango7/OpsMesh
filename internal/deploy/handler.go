@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
@@ -678,7 +678,7 @@ const internalErrorBody = "internal server error"
 // writeInternalError 是 5xx 的唯一出口：原始错误只进服务端日志，响应体只给固定文案。
 // op 用于日志定位（哪一步失败），不进响应体。
 func writeInternalError(w http.ResponseWriter, op string, err error) {
-	log.Printf("[deploy] %s 失败: %v", op, err)
+	logx.Error(context.Background(), "deploy: 操作失败", err, "op", op)
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": internalErrorBody})
 }
 

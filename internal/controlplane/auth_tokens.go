@@ -18,12 +18,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
@@ -267,7 +267,7 @@ func (s *Server) userFromToken(r *http.Request) (*store.User, error) {
 		// 下方 status 校验与既有租户闸约束；sub 能在本侧解析时本分支不生效、行为完全不变。
 		if u2 := s.store.GetUserByUsername(claims.Username); u2 != nil {
 			// 日志不落令牌里的原值（沿用 F2 的 G706 处置口径"修法不落原值"），只记回落事件本身。
-			log.Printf("controlplane: userFromToken 按用户名回落本侧身份（切流对侧签发令牌）localUser=%s", u2.ID)
+			logx.Info(r.Context(), "controlplane: userFromToken 按用户名回落本侧身份（切流对侧签发令牌）", "localUser", u2.ID)
 			u = u2
 		}
 	}

@@ -4,13 +4,13 @@ package controlplane
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // handleServiceProxy 五域统一代理 handler：
@@ -115,7 +115,7 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 		// 原因**（连接被拒 / TLS 握手失败 / 超时），回吐给客户端等于把内部
 		// 服务拓扑与网络策略一并暴露。502 对客户端的含义是"后端不可用"，
 		// 排查所需信息服务端日志里都有。
-		log.Printf("[controlplane] service proxy backend error: %v", err)
+		logx.Warn(req.Context(), "controlplane: service proxy backend error", err)
 		writeProxyErrorJSON(rw, http.StatusBadGateway, "service backend unavailable")
 	}
 	// 响应头收敛为单一来源（F5）：剥掉上游自设的安全头/CORS，外层值单份生效。

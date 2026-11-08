@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -271,7 +270,7 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		Comment         string `json:"comment"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil && err != io.EOF {
-		log.Printf("controlplane: handleSilenceAlert 解析请求体失败: %v", err)
+		logx.Warn(r.Context(), "controlplane: handleSilenceAlert 解析请求体失败", err)
 	}
 	if s.store.Alert(id) == nil {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})

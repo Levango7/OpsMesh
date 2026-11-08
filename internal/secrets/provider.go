@@ -13,13 +13,15 @@
 package secrets
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // ErrSecretNotFound 密钥不存在时返回的哨兵错误。
@@ -177,7 +179,7 @@ func (c *ChainProvider) Get(key string) (string, error) {
 		// 非 NotFound 错误：降级模式下跳过并记录警告，否则立即返回（fail-fast）。
 		if !errors.Is(err, ErrSecretNotFound) {
 			if c.AllowDegradation {
-				log.Printf("secrets: ChainProvider 降级跳过 provider %q（key=%q, 错误: %v）", p.Name(), key, err)
+				logx.Warn(context.Background(), "secrets: ChainProvider 降级跳过 provider", "provider", p.Name(), "key", key, "err", err)
 				continue
 			}
 			return "", err

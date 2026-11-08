@@ -9,14 +9,15 @@ package automation
 //   - 规则引擎 Evaluate 方法判定触发条件是否满足（MVP 桩实现）。
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/cron"
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // TriggerType 触发器类型。
@@ -299,13 +300,13 @@ func scheduleExpr(t Trigger) string {
 func (e *Engine) evaluateSchedule(rule *Rule) bool {
 	expr := scheduleExpr(rule.Trigger)
 	if expr == "" {
-		log.Printf("automation: 规则 %s（%s）为 schedule 触发但未配置 cron 表达式，跳过本轮评估", rule.ID, rule.Name)
+		logx.Warn(context.Background(), "automation: 规则为 schedule 触发但未配置 cron 表达式，跳过本轮评估", "ruleID", rule.ID, "ruleName", rule.Name)
 		return false
 	}
 	now := e.clock()
 	match, err := cron.Match(expr, now)
 	if err != nil {
-		log.Printf("automation: 规则 %s（%s）的 cron 表达式 %q 非法: %v", rule.ID, rule.Name, expr, err)
+		logx.Warn(context.Background(), "automation: 规则 cron 表达式非法", err, "ruleID", rule.ID, "ruleName", rule.Name, "expr", expr)
 		return false
 	}
 	if !match {
@@ -394,7 +395,7 @@ func (e *Engine) executeAction(tenantID string, action Action) (string, error) {
 		if r := action.Params["replicas"]; r != "" {
 			// 解析失败时 replicas 保持 0，落入下方「replicas > 0」校验返回明确错误。
 			if _, err := fmt.Sscanf(r, "%d", &replicas); err != nil {
-				log.Printf("[automation] scale: 解析 replicas 参数 %q 失败: %v", r, err)
+				logx.Warn(context.Background(), "automation: scale: 解析 replicas 参数失败", err, "replicas", r)
 			}
 		}
 		if service == "" || replicas <= 0 {

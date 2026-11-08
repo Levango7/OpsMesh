@@ -7,7 +7,6 @@ package controlplane
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/cron"
@@ -70,7 +69,7 @@ func (s *Server) workflowScheduleLoop(ctx context.Context) {
 				continue
 			}
 			if err := s.orchHandler.Reconcile(ctx, wf.ID, wf.TenantID); err != nil {
-				log.Printf("controlplane: cronLoop Reconcile 工作流 %d 失败: %v", wf.ID, err)
+				logx.Error(ctx, "controlplane: cronLoop Reconcile 工作流失败", err, "workflowID", wf.ID)
 			}
 		}
 	}

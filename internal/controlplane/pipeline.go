@@ -23,13 +23,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -271,7 +271,7 @@ func (s *Server) handleRunPipelineTemplate(w http.ResponseWriter, r *http.Reques
 	// 请求体可选（可无参数触发）：解析失败不 4xx 拒绝，body 保持零值继续，
 	// 但畸形请求体必须留痕（非静默吞错）。
 	if err := decodeJSONBody(w, r, &body); err != nil && !errors.Is(err, io.EOF) {
-		log.Printf("[controlplane] trigger run: 可选请求体解析失败（按无参数继续）: %v", err)
+		logx.Warn(r.Context(), "controlplane: trigger run: 可选请求体解析失败（按无参数继续）", err)
 	}
 	now := time.Now()
 	run := &store.PipelineRun{

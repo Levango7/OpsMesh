@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -20,13 +19,14 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
 	"github.com/Levango7/OpsMesh/internal/egress"
 	"github.com/Levango7/OpsMesh/internal/grpcx"
-	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 	"github.com/Levango7/OpsMesh/internal/plugin"
 
@@ -330,7 +330,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := s.pingStore(ctx); err != nil {
-		log.Printf("controlplane: healthz store ping 失败: %v", err)
+		logx.Error(r.Context(), "controlplane: healthz store ping 失败", err)
 		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "unhealthy",
 			"error":  "store unavailable",
@@ -364,7 +364,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := s.pingStore(ctx); err != nil {
-		log.Printf("controlplane: readyz store ping 失败: %v", err)
+		logx.Error(r.Context(), "controlplane: readyz store ping 失败", err)
 		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "not_ready",
 			"reason": "store unavailable",

@@ -2,8 +2,8 @@ package grpc
 
 import (
 	"context"
-	"log"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
@@ -127,7 +127,7 @@ func (a *storeAgentService) StoreDeviceMetrics(deviceID string, metrics *proto.D
 func (a *storeAgentService) ClaimTask(agentID string) *proto.Task {
 	if a.preClaim != nil {
 		if err := a.preClaim(context.Background(), agentID); err != nil {
-			log.Printf("[controlplane-grpc] task.preClaim 钩子拒绝 agent %s 领取任务: %v", agentID, err)
+			logx.Warn(context.Background(), "controlplane-grpc: task.preClaim 钩子拒绝 agent 领取任务", err, "agentID", agentID)
 			return nil
 		}
 	}

@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // SQLCiStore 基于 MySQL 的 CMDB 存储实现。
@@ -38,7 +39,7 @@ func (s *SQLCiStore) seedTypes() {
 		if _, err := s.db.ExecContext(ctx,
 			`INSERT IGNORE INTO ci_types (name, display_name, builtin, created_at) VALUES (?, ?, 1, NOW())`,
 			t.name, t.display); err != nil {
-			log.Printf("[cmdb] seedTypes %s: %v", t.name, err)
+			logx.Warn(ctx, "cmdb: seedTypes 失败", "type", t.name, "err", err)
 		}
 	}
 }
