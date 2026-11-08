@@ -1722,26 +1722,21 @@ controlplane:
     kubernetes.io/arch: arm64
     kubernetes.io/os: linux
   extraEnv:
-    - name: OPSMESH_DOMESTIC_MODE
-      value: "true"
-    - name: OPSMESH_DB_DRIVER
-      value: "gaussdb"  # 使用 GaussDB
+    # 注：OPSMESH_DOMESTIC_MODE/OPSMESH_DB_DRIVER/OPSMESH_CRYPTO_ALGORITHM/OPSMESH_TLS_CIPHER
+    # 在代码中无消费方（2026-11-08 核实），国密与多 DB 驱动未实现，勿配。
+    # GaussDB 仅经 MySQL 兼容协议以 OPSMESH_MYSQL_DSN 接入，SQL 方言未审计。
     - name: OPSMESH_MYSQL_DSN
       valueFrom:
         secretKeyRef:
           name: gaussdb-secret
           key: dsn
-    - name: OPSMESH_CRYPTO_ALGORITHM
-      value: "sm4"  # 商密 SM4 加密
-    - name: OPSMESH_TLS_CIPHER
-      value: "ECDHE-SM2-SM4-SM3"  # 商密 TLS 套件
     - name: OPSMESH_AUDIT_RETENTION_DAYS
       value: "365"  # 等保要求 365 天
     - name: OPSMESH_RBAC_DOMAIN_ENABLED
       value: "true"  # 分权分域
 
 mysql:
-  enabled: false  # 使用外部 GaussDB
+  enabled: false  # 使用外部 GaussDB（须 MySQL 兼容模式；OpsMesh SQL 方言未审计）
 
 # 国产化中间件（如使用东方通 TongWeb 替代 Tomcat）
 # 注：OpsMesh 控制面是 Go 二进制，不依赖 Java 中间件
@@ -2125,11 +2120,7 @@ controlplane:
       value: "2555"  # 7 年留存
     - name: OPSMESH_AUDIT_DESENSITIZE
       value: "true"  # 审计脱敏
-    # 商密
-    - name: OPSMESH_CRYPTO_ALGORITHM
-      value: "sm4"
-    - name: OPSMESH_TLS_CIPHER
-      value: "ECDHE-SM2-SM4-SM3"
+    # 商密（未实现：代码中无消费方，2026-11-08 核实，勿配）
     # 三员分立
     - name: OPSMESH_RBAC_THREE_ADMIN
       value: "true"
