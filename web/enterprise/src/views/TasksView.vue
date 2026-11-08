@@ -252,15 +252,19 @@ onMounted(async () => {
   try { agents.value = await getAgents() || [] } catch (e) { console.error('fetch agents failed:', e) }
   store.fetchTasks()
   store.fetchPendingApprovals()
-  // SSE 实时推送：任务状态变更（创建/领取/取消/回执）到达即刷新列表（App.vue 事件总线）。
+  // SSE 实时推送：任务状态变更（创建/领取/回执）到达即刷新列表（App.vue 事件总线）。
   window.addEventListener('opsmesh:task-status', onTaskStatus)
+  // 任务取消（issue #16 裁决：取消必须即时反映在列表）——独立事件名，复用同一节流刷新。
+  window.addEventListener('opsmesh:task-cancel', onTaskStatus)
 })
 onUnmounted(() => {
   window.removeEventListener('opsmesh:task-status', onTaskStatus)
+  window.removeEventListener('opsmesh:task-cancel', onTaskStatus)
   clearTimeout(sseTimer)
   sseTimer = null
 })
 
+// 状态事件与取消事件共用：节流 refetch 任务列表 + 同步刷新待审批计数。
 function onTaskStatus() {
   scheduleSSEFetch()
   store.fetchPendingApprovals()
