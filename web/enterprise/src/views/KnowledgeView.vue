@@ -82,23 +82,31 @@
         <template #cell-source="{ value }"><span class="source-tag">{{ value }}</span></template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
-            <Button variant="danger" size="sm" @click="deleteDoc(row.id)">{{ $t('common.delete') }}</Button>
+            <Button variant="danger" size="sm" @click="askDelete(row.id)">{{ $t('common.delete') }}</Button>
           </div>
         </template>
       </DataTable>
       <div v-else class="muted">{{ $t('knowledge.noDocs') }}</div>
     </div>
+    <ConfirmModal
+      v-model="deleteConfirm.show"
+      data-testid="knowledge-delete-confirm-modal"
+      :title="$t('common.delete')"
+      :message="$t('knowledge.confirm_delete')"
+      @confirm="onDeleteConfirm"
+    />
   </PageShell>
 </template>
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 
-import { ref, onMounted } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 import { Button } from '@/components/ui'
 
 const store = useKnowledgeStore()
@@ -148,7 +156,16 @@ async function fetchDocs() {
   catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
-async function deleteDoc(id) {
+// 删除确认（2026-11-06 五维排查批 3）：知识文档删除不可逆（含向量化成本），此前单击即删。
+const deleteConfirm = reactive({ show: false, id: null })
+function askDelete(id) {
+  deleteConfirm.id = id
+  deleteConfirm.show = true
+}
+async function onDeleteConfirm() {
+  const id = deleteConfirm.id
+  deleteConfirm.show = false
+  if (!id) return
   try { await store.deleteDoc(id) }
   catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }

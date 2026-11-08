@@ -37,7 +37,7 @@
           <h3 class="card__title">{{ $t('system_ops.users_title') }}</h3>
           <Input v-model="userSearch" :placeholder="$t('system_ops.search_user')" class="search-input" />
           <label class="chk"><input type="checkbox" v-model="showSystemUsers" /> {{ $t('system_ops.show_system') }}</label>
-          <Button variant="primary" size="sm" @click="openCreateUser">
+          <Button variant="primary" size="sm" @click="openCreateUser" data-testid="systemops-opencreateuser-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
             <Icon name="add" :size="13" /> {{ $t('system_ops.add_user') }}
           </Button>
         </div>
@@ -52,7 +52,7 @@
               size="sm"
               :data-testid="'del-user-' + row.name"
               @click="confirmDelete('user', row.name, t('system_ops.confirm_delete_user', { name: row.name }))"
-            >{{ $t('common.delete') }}</Button>
+             :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
           </template>
         </Table>
       </div>
@@ -62,7 +62,7 @@
         <div class="flowbar">
           <h3 class="card__title">{{ $t('system_ops.groups_title') }}</h3>
           <Input v-model="groupSearch" :placeholder="$t('system_ops.search_group')" class="search-input" />
-          <Button variant="primary" size="sm" @click="openCreateGroup">
+          <Button variant="primary" size="sm" @click="openCreateGroup" data-testid="systemops-opencreategroup-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
             <Icon name="add" :size="13" /> {{ $t('system_ops.add_group') }}
           </Button>
         </div>
@@ -77,7 +77,7 @@
               size="sm"
               :data-testid="'del-group-' + row.name"
               @click="confirmDelete('group', row.name, t('system_ops.confirm_delete_group', { name: row.name }))"
-            >{{ $t('common.delete') }}</Button>
+             :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
           </template>
         </Table>
       </div>
@@ -90,7 +90,7 @@
           <Button variant="ghost" size="sm" @click="onQueryFirewallRules">
             {{ $t('system_ops.query_rules') }}
           </Button>
-          <Button variant="primary" size="sm" @click="openAddRule">
+          <Button variant="primary" size="sm" @click="openAddRule" data-testid="systemops-openaddrule-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
             <Icon name="add" :size="13" /> {{ $t('system_ops.add_rule') }}
           </Button>
         </div>
@@ -104,7 +104,7 @@
               size="sm"
               :data-testid="'del-rule-' + (row.port || 'any')"
               @click="confirmDelete('rule', ruleLabel(row), t('system_ops.confirm_delete_rule', { name: ruleLabel(row) }), row)"
-            >{{ $t('common.delete') }}</Button>
+             :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
           </template>
         </Table>
         <div v-if="firewallRules" class="firewall-rules-result">
@@ -184,6 +184,7 @@
 
     <!-- 创建用户弹窗 -->
     <Drawer v-model="showUserForm" :title="$t('system_ops.add_user')" @close="showUserForm = false">
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <form class="op-form" @submit.prevent="submitCreateUser">
         <FormItem :label="t('system_ops.col_name') + ' *'" required>
           <Input v-model.trim="userForm.username" placeholder="deploy" />
@@ -198,7 +199,7 @@
           <Input v-model.trim="userForm.shell" placeholder="/bin/bash" />
         </FormItem>
         <div class="btnbar btnbar--end btnbar--bottom">
-          <Button native-type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
+          <Button native-type="submit" variant="primary" size="sm" :disabled="submitting || !canWrite" data-testid="systemops-submitcreateuser-btn" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('system_ops.submit') }}</Button>
           <Button variant="ghost" size="sm" @click="showUserForm = false">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
@@ -211,7 +212,7 @@
           <Input v-model.trim="groupForm.groupName" placeholder="deploy" />
         </FormItem>
         <div class="btnbar btnbar--end btnbar--bottom">
-          <Button native-type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
+          <Button native-type="submit" variant="primary" size="sm" :disabled="submitting || !canWrite" data-testid="systemops-submitcreategroup-btn" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('system_ops.submit') }}</Button>
           <Button variant="ghost" size="sm" @click="showGroupForm = false">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
@@ -230,7 +231,7 @@
           <Input v-model.trim="ruleForm.source" placeholder="0.0.0.0/0" />
         </FormItem>
         <div class="btnbar btnbar--end btnbar--bottom">
-          <Button native-type="submit" variant="primary" size="sm" :disabled="submitting">{{ $t('system_ops.submit') }}</Button>
+          <Button native-type="submit" variant="primary" size="sm" :disabled="submitting || !canWrite" data-testid="systemops-submitaddrule-btn" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('system_ops.submit') }}</Button>
           <Button variant="ghost" size="sm" @click="showRuleForm = false">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
@@ -241,7 +242,7 @@
       <p>{{ deleteConfirm.message }}</p>
       <div class="btnbar btnbar--end btnbar--bottom">
         <Button variant="ghost" size="sm" @click="deleteConfirm.show = false">{{ $t('common.cancel') }}</Button>
-        <Button variant="danger" size="sm" data-testid="confirm-delete" @click="doDelete">{{ $t('common.delete') }}</Button>
+        <Button variant="danger" size="sm" data-testid="confirm-delete" @click="doDelete" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
       </div>
     </Modal>
 
@@ -258,6 +259,7 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
+import { useAuthStore } from '@/stores/auth'
 import { reactive, ref, computed, onMounted } from 'vue'
 import { useDeviceStore } from '@/stores/device'
 import { t } from '@/i18n'
@@ -277,6 +279,11 @@ import {
   getTaskResult,
   listFirewallRules,
 } from '@/api/system-ops'
+
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('system:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('system:write'))
 
 const deviceStore = useDeviceStore()
 

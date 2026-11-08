@@ -45,6 +45,7 @@
         >{{ $t('k8s.' + rt) }}</Button>
       </div>
 
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <div v-if="store.resourcesLoading && !store.resources.length" class="muted">{{ $t('common.loading') }}</div>
       <div v-else-if="!store.currentClusterID" class="muted">{{ $t('k8s.noClusterSelected') }}</div>
       <DataTable
@@ -101,33 +102,33 @@
               <Button variant="ghost" size="sm" @click="onViewLogs(row)" data-testid="k8s-view-logs-btn">
                 {{ $t('k8s.viewLogs') }}
               </Button>
-              <Button variant="danger" size="sm" @click="onDeletePod(row)" data-testid="k8s-delete-pod-btn">
+              <Button variant="danger" size="sm" @click="onDeletePod(row)" data-testid="k8s-delete-pod-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
                 {{ $t('k8s.delete') }}
               </Button>
             </template>
             <template v-else-if="store.resourceType === 'deployments'">
-              <Button variant="ghost" size="sm" @click="onScale(row)" data-testid="k8s-scale-btn">
+              <Button variant="ghost" size="sm" @click="onScale(row)" data-testid="k8s-scale-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
                 {{ $t('k8s.scale') }}
               </Button>
-              <Button variant="ghost" size="sm" @click="onRestart(row)" data-testid="k8s-restart-btn">
+              <Button variant="ghost" size="sm" @click="onRestart(row)" data-testid="k8s-restart-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
                 {{ $t('k8s.restart') }}
               </Button>
             </template>
             <template v-else-if="store.resourceType === 'statefulsets'">
-              <Button variant="ghost" size="sm" @click="onScaleStatefulSet(row)">
+              <Button variant="ghost" size="sm" @click="onScaleStatefulSet(row)" data-testid="k8sresources-onscalestatefulset-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
                 {{ $t('k8s.scale') }}
               </Button>
-              <Button variant="ghost" size="sm" @click="onRestartStatefulSet(row)">
+              <Button variant="ghost" size="sm" @click="onRestartStatefulSet(row)" data-testid="k8sresources-onrestartstatefulset-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
                 {{ $t('k8s.restart') }}
               </Button>
             </template>
             <template v-else-if="store.resourceType === 'daemonsets'">
-              <Button variant="ghost" size="sm" @click="onRestartDaemonSet(row)">
+              <Button variant="ghost" size="sm" @click="onRestartDaemonSet(row)" data-testid="k8sresources-onrestartdaemonset-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
                 {{ $t('k8s.restart') }}
               </Button>
             </template>
             <template v-else-if="store.resourceType === 'jobs' || store.resourceType === 'cronjobs'">
-              <Button variant="danger" size="sm" @click="onDeleteWorkload(row)">
+              <Button variant="danger" size="sm" @click="onDeleteWorkload(row)" data-testid="k8sresources-ondeleteworkload-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
                 {{ $t('k8s.delete') }}
               </Button>
             </template>
@@ -176,7 +177,7 @@
             <input v-model.number="scaleReplicas" type="number" min="0" data-testid="k8s-scale-replicas" />
           </div>
           <div class="btnbar">
-            <Button variant="primary" size="sm" @click="confirmScale" :disabled="scaling" data-testid="k8s-scale-confirm">
+            <Button variant="primary" size="sm" @click="confirmScale" :disabled="scaling || !canWrite" data-testid="k8s-scale-confirm" :title="canWrite ? '' : $t('common.write_denied')">
               {{ $t('k8s.confirm') }}
             </Button>
             <Button variant="ghost" size="sm" @click="scaleOpen = false">{{ $t('k8s.cancel') }}</Button>
@@ -201,7 +202,7 @@
           <Input v-model.trim="nsCreateName" :placeholder="$t('k8s.namespacesCreatePlaceholder')" data-testid="k8s-ns-create-input" />
         </FormItem>
         <div class="btnbar btnbar--end btnbar--bottom">
-          <Button native-type="submit" variant="primary" size="sm" :disabled="!nsCreateName || nsSubmitting" data-testid="k8s-ns-create-submit">
+          <Button native-type="submit" variant="primary" size="sm" :disabled="!nsCreateName || nsSubmitting || !canWrite" data-testid="k8s-ns-create-submit" :title="canWrite ? '' : $t('common.write_denied')">
             {{ $t('k8s.namespacesCreate') }}
           </Button>
         </div>
@@ -215,7 +216,7 @@
             size="sm"
             :data-testid="'k8s-ns-delete-' + ns"
             @click="confirmDeleteNamespace(ns)"
-          >{{ $t('k8s.delete') }}</Button>
+           :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8s.delete') }}</Button>
         </div>
       </div>
     </Drawer>
@@ -232,6 +233,7 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
+import { useAuthStore } from '@/stores/auth'
 
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useK8sStore } from '@/stores/k8s'
@@ -244,6 +246,11 @@ import K8sSubNav from '@/components/K8sSubNav.vue'
 import { Button, Input, Drawer, FormItem } from '@/components/ui'
 import { createK8sNamespace, deleteK8sNamespace } from '@/api/k8s'
 import { toast } from '@/utils/toast'
+
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('k8s:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('k8s:write'))
 
 const store = useK8sStore()
 

@@ -6,7 +6,7 @@
     :error="loadErr"
   >
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate">
+      <Button variant="primary" size="md" @click="openCreate" data-testid="scripts-opencreate-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <Icon name="add" :size="14" />
         {{ $t('scripts.add') }}
       </Button>
@@ -18,6 +18,7 @@
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <DataTable :columns="columns" :rows="scripts" row-key="id" :empty-text="$t('scripts.empty')">
         <template #cell-language="{ value }"><code>{{ value }}</code></template>
         <template #cell-enabled="{ row }">
@@ -26,10 +27,10 @@
         <template #cell-updatedAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <Button variant="ghost" size="sm" :title="$t('scripts.execute')" @click="openExec(row)"><Icon name="task" :size="13" /></Button>
+            <Button variant="ghost" size="sm" :title="canWrite ? ($t('scripts.execute')) : $t('common.write_denied')" @click="openExec(row)" data-testid="scripts-openexec-btn" :disabled="!canWrite"><Icon name="task" :size="13" /></Button>
             <Button variant="ghost" size="sm" :title="$t('scripts.executions')" @click="openExecutions(row)"><Icon name="clipboard" :size="13" /></Button>
-            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
-            <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="scripts-openedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="scripts-ondelete-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -59,7 +60,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('scripts.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="scripts-onsave-btn" :disabled="!canWrite || saving" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('scripts.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('scripts.cancel') }}</Button>
         </div>
       </form>
@@ -78,7 +79,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="task" :size="14" /> {{ $t('scripts.execute') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="scripts-onexecute-btn" :disabled="!canWrite || executing" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="task" :size="14" /> {{ $t('scripts.execute') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="execForm = null">{{ $t('scripts.cancel') }}</Button>
         </div>
       </form>
@@ -116,6 +117,7 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
+import { useAuthStore } from '@/stores/auth'
 
 // 自定义脚本管理页 — 脚本 CRUD + 下发执行 + 执行记录查看
 import { ref, computed, reactive, onMounted } from 'vue'
@@ -132,6 +134,11 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 import Button from "@/components/ui/Button.vue"
 
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('script:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('script:write'))
+
 const scripts = ref([])
 const loading = ref(false)
 const form = ref(null)
@@ -143,6 +150,11 @@ const execForm = ref(null)
 const execRow = ref(null)
 const executions = ref([])
 const execLoading = ref(false)
+
+// 在飞态（防重复提交）：脚本执行对生产机不可幂等——慢网络下连点两次就是两次下发
+// （2026-11-06 五维排查批 2 发现：此文件此前全文件零 :disabled）。保存同理（重复创建）。
+const saving = ref(false)
+const executing = ref(false)
 
 // 删除确认弹窗（替代 confirm）
 const deleteConfirm = reactive({ show: false, row: null })
@@ -196,6 +208,8 @@ function openEdit(row) {
 }
 
 async function onSave() {
+  if (saving.value) return
+  saving.value = true
   formError.value = ''
   try {
     const body = {
@@ -211,6 +225,8 @@ async function onSave() {
     await fetchScripts()
   } catch (e) {
     formError.value = e.j?.error || t('scripts.save_failed')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -220,9 +236,12 @@ function openExec(row) {
 }
 
 async function onExecute() {
+  if (executing.value) return
+  executing.value = true
   formError.value = ''
   if (!execForm.value.deviceID) {
     formError.value = t('scripts.need_device')
+    executing.value = false
     return
   }
   try {
@@ -235,6 +254,8 @@ async function onExecute() {
     execForm.value = null
   } catch (e) {
     formError.value = e.j?.error || t('scripts.execute_failed')
+  } finally {
+    executing.value = false
   }
 }
 

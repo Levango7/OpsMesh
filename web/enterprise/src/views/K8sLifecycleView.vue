@@ -5,6 +5,7 @@
     testid="k8s-lifecycle"
     :error="loadErr"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('k8sLifecycle.upgrade_title') }}</h3>
@@ -28,7 +29,7 @@
         </div>
       </div>
       <div class="btnbar">
-        <Button variant="primary" size="sm" @click="planUpgrade" :disabled="planning">{{ $t('k8sLifecycle.plan_btn') }}</Button>
+        <Button variant="primary" size="sm" @click="planUpgrade" :disabled="planning || !canWrite" data-testid="k8slifecycle-planupgrade-btn" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8sLifecycle.plan_btn') }}</Button>
         <Button variant="primary" size="sm" disabled :title="$t('k8sLifecycle.upgrade_unimplemented')">{{ $t('k8sLifecycle.upgrade_btn') }}</Button>
       </div>
       <div class="hint">{{ $t('k8sLifecycle.upgrade_unimplemented') }}</div>
@@ -52,7 +53,7 @@
         </div>
       </div>
       <div class="btnbar">
-        <Button variant="primary" size="sm" @click="doBackup" :disabled="backing">{{ $t('k8sLifecycle.backup_btn') }}</Button>
+        <Button variant="primary" size="sm" @click="doBackup" :disabled="backing || !canWrite" data-testid="k8slifecycle-dobackup-btn" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8sLifecycle.backup_btn') }}</Button>
         <Button variant="ghost" size="sm" @click="listBackups">{{ $t('k8sLifecycle.list_backups') }}</Button>
       </div>
       <div v-if="backupResult" class="result-box">
@@ -102,7 +103,7 @@
         </div>
       </div>
       <div class="btnbar">
-        <Button variant="primary" size="sm" @click="doNodeScale" :disabled="scaling">{{ $t('k8sLifecycle.scale_btn') }}</Button>
+        <Button variant="primary" size="sm" @click="doNodeScale" :disabled="scaling || !canWrite" data-testid="k8slifecycle-donodescale-btn" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8sLifecycle.scale_btn') }}</Button>
       </div>
       <div v-if="scaleResult" class="result-box">
         <pre class="code-block">{{ JSON.stringify(scaleResult, null, 2) }}</pre>
@@ -113,8 +114,9 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
+import { useAuthStore } from '@/stores/auth'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { t } from '@/i18n'
 import {
   planK8sUpgrade,
@@ -125,6 +127,11 @@ import {
 import { Button } from '@/components/ui'
 
 // 六个操作此前静默吞错——统一骨架批次补上可见错误横幅
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('k8s:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('k8s:write'))
+
 const loadErr = ref('')
 
 const planning = ref(false)

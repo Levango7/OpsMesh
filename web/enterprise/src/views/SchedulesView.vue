@@ -6,7 +6,7 @@
     :error="loadErr"
   >
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate">
+      <Button variant="primary" size="md" @click="openCreate" data-testid="schedules-opencreate-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <Icon name="add" :size="14" />
         {{ $t('schedules.add') }}
       </Button>
@@ -18,6 +18,7 @@
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <DataTable :columns="columns" :rows="schedules" row-key="id" :empty-text="$t('schedules.empty')">
         <template #cell-status="{ row }">
           <span class="status-pill" :class="row.status === 'active' ? 'ok' : 'warn'">{{ statusText(row.status) }}</span>
@@ -29,17 +30,17 @@
           <div class="row-actions">
             <Button
               variant="ghost" size="sm" v-if="row.status === 'active'"
-              :title="$t('schedules.pause')"
+              :title="canWrite ? ($t('schedules.pause')) : $t('common.write_denied')"
               @click="onToggle(row, 'pause')"
-            ><Icon name="mute" :size="13" /></Button>
+             data-testid="schedules-pause-btn" :disabled="!canWrite"><Icon name="mute" :size="13" /></Button>
             <Button
               variant="ghost" size="sm" v-else
 
-              :title="$t('schedules.resume')"
+              :title="canWrite ? ($t('schedules.resume')) : $t('common.write_denied')"
               @click="onToggle(row, 'resume')"
-            ><Icon name="success" :size="13" /></Button>
-            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
-            <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
+             data-testid="schedules-resume-btn" :disabled="!canWrite"><Icon name="success" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="schedules-openedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="schedules-ondelete-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -62,7 +63,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('schedules.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="schedules-onsave-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('schedules.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('schedules.cancel') }}</Button>
         </div>
       </form>
@@ -89,6 +90,7 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
+import { useAuthStore } from '@/stores/auth'
 
 // 定时任务管理页 — cron 调度列表 + 新增/编辑/删除 + 暂停/恢复
 import { ref, computed, reactive, onMounted } from 'vue'
@@ -104,6 +106,11 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 import Button from "@/components/ui/Button.vue"
+
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('schedule:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('schedule:write'))
 
 const schedules = ref([])
 const loading = ref(false)
