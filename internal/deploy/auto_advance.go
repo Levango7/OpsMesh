@@ -475,17 +475,17 @@ func (m *AutoAdvanceManager) ServeHTTP(w http.ResponseWriter, r *http.Request, d
 				})
 			}
 		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
 	case "auto-advance/status":
 		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		status := m.Status(deployID)
 		writeJSON(w, http.StatusOK, status)
 	default:
-		http.Error(w, "not found", http.StatusNotFound)
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}
 }
 
