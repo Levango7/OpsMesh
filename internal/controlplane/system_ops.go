@@ -48,7 +48,7 @@ var (
 // 租户隔离：仅返回本租户设备。
 func (s *Server) handleDeviceSystemInfo(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)

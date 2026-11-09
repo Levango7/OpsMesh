@@ -348,7 +348,7 @@ func (f *FederationManager) fetchPeerDevices(ctx context.Context, peerURL, tenan
 // 响应示例：[{"url":"http://peer1:8080","online":true},{"url":"http://peer2:8080","online":false}]
 func (s *Server) handleFederationPeers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if s.fed == nil {
@@ -370,7 +370,7 @@ func (s *Server) handleFederationPeers(w http.ResponseWriter, r *http.Request) {
 // 调用 ForwardTask 把 task 转发到 peerURL，返回 peer 侧创建的完整 Task（含分配的 TaskID）。
 func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if s.fed == nil {
@@ -432,7 +432,7 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 // 返回 { "data": [...], "total": N, "page": 1, "pageSize": 20, "hasMore": bool, "local": [...], "peers": {...} }。
 func (s *Server) handleFederationDevices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if s.fed == nil {
@@ -472,7 +472,7 @@ func (f *FederationManager) isKnownPeer(url string) bool {
 //   - GET /api/v1/federation/tasks/{taskID}?peerURL=... 查询转发任务在 peer 的执行结果。
 func (s *Server) handleFederationTaskRouting(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if s.fed == nil {

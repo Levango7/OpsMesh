@@ -29,7 +29,7 @@ import (
 //   - ?range=2h：返回历史时序（proto.MetricsSeries），range 支持 15m/1h/2h/6h/24h。
 func (s *Server) handleDeviceMetrics(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
