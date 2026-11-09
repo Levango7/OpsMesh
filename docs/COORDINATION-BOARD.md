@@ -116,7 +116,7 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  (无)
+  internal/cmdb/handler.go,internal/logstore/handler.go,internal/orchestration/handler.go,internal/gates/json_error_body_gate_test.go <- zcode  (ttl=72h by zcode)
 
 TASKS:
   (无)
