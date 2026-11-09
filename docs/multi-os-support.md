@@ -192,6 +192,17 @@ builds:
 
 > 现状：仅 `linux/amd64` + `linux/arm64` 经 goreleaser 产出发布产物。macOS/Windows 在开发者本机经 `make backend` 构建验证，未纳入发布矩阵。本文档第 6/7 章将扩展发布矩阵。
 
+### 2.5 实测状态（2026-11-09 UTC 增补）
+
+按 §1.1「代码能编译 ≠ 平台能运行」判据分层登记实测面：
+
+| 层 | 项 | 状态 | 证据 |
+|---|---|---|---|
+| L0 编译 | `GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath ./cmd/opsmesh` | 通过（exit 0，132s） | 产物 90,369,319 字节；`file` 报 `ELF 64-bit LSB executable, ARM aarch64, statically linked`；sha256 `ed3a6824b61a4dd649124de33e183f97e56e6fb2c4b58412427dfc1ef3826894`；宿主工具链 go1.26.6 windows/amd64；与 §2.4 goreleaser 矩阵的 arm64 目标一致 |
+| L1 实跑 | openEuler ARM / 麒麟 V10 / 统信 UOS 注册-心跳-任务-采集闭环 | 未验证 | 无 ARM 国产 OS 运行环境（自测清单 #2/#3，待客户 POC 或租用环境） |
+
+结论：L0 通过不改变本文档「设计稿」定性；实跑面验证完成前不升级状态。
+
 ---
 
 ## 第3章 目标支持矩阵
