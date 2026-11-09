@@ -92,16 +92,25 @@
 
 ### 分页
 
-列表类接口支持 `page` / `pageSize` 查询参数（部分接口用 `limit` / `offset`），响应统一包装：
+列表类接口支持 `page` / `pageSize` 查询参数（部分接口用 `limit` / `offset`）。
+
+> **⚠️ 实现状态（2026-11-07 勘误，A2 审计 BB-08；与 api-specification.md §6.1 对齐）**：
+> 下方"统一包装"是**设计目标**，实测信封有四套并存（A2/BB-04）：裸数组（logs/deploys/cmdb-ci 等）、
+> 领域名键（`{"apiKeys":…}`、`{"tasks":…}` 等 60+ 键）、`{items,…}`（仅 helm）、
+> `{data,total,page,pageSize,hasMore}`（仅 tasks/devices/alerts 走 `paginate.ParsePagination` 的 5 处）。
+> 且**仅传 page 才分页**：同一端点不传 `page` 返回裸数组、传 `?page=1` 返回信封（BB-01）。
+> 对接请以各端点 handler 实测为准；本节不再声称"响应统一包装"。
 
 ```json
 {
-  "items": [],
+  "data": [],
+  "total": 100,
   "page": 1,
   "pageSize": 20,
-  "total": 100
+  "hasMore": false
 }
 ```
+（上为 `page/pageSize` 族的实测信封；`items`/`total` 组合当前仅 helm 的 `{items,…}` 存在且无分页键。）
 
 ---
 

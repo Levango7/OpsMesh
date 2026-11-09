@@ -1,5 +1,6 @@
 {
   "users": {
+    "confirm_reject": "This will reject the pending user. Continue?",
     "title": "Users",
     "subtitle": "Manage platform user accounts, status and role bindings",
     "add": "Add User",

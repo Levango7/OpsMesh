@@ -74,6 +74,7 @@
     "noHistory": "暂无命令历史"
   },
   "aiops": {
+    "execute_confirm": "将按修复计划向目标设备下发命令（autoExecute），确认继续？",
     "title": "AIOps 智能运维",
     "desc": "基于 LLM 的故障根因分析、智能修复方案生成、自然语言运维与自动任务下发",
     "status_enabled": "AIOps 启用状态",
