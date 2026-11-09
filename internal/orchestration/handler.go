@@ -685,7 +685,7 @@ func (h *Handler) listRuns(w http.ResponseWriter, r *http.Request, id int64, ten
 // 源 run 不存在/不属于该工作流/租户 → 404（与 listRuns 语义一致，不泄露他租户存在性）。
 func (h *Handler) replayRun(w http.ResponseWriter, r *http.Request, workflowID int64, runIDStr, tenantID string) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	runID, err := strconv.ParseInt(runIDStr, 10, 64)
