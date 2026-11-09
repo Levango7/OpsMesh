@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleRocketMQDeploy 处理 POST /api/v1/middleware/rocketmq/deploy
@@ -26,12 +27,16 @@ func (s *Server) handleRocketMQDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version := req.Version
+	version, err := mqVersion("version", req.Version)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if version == "" {
 		version = "5.2.0"
 	}
 
-	script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/rocketmq/%s/rocketmq-all-%s-bin-release.zip -O /tmp/rocketmq.zip && unzip -q /tmp/rocketmq.zip -d /opt/ && ln -sfn /opt/rocketmq-all-%s-bin-release /opt/rocketmq && echo "RocketMQ %s deployed"`, version, version, version, version)
+	script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/rocketmq/%s/rocketmq-all-%s-bin-release.zip -O /tmp/rocketmq.zip && unzip -q /tmp/rocketmq.zip -d /opt/ && ln -sfn /opt/rocketmq-all-%s-bin-release /opt/rocketmq && echo %s`, version, version, version, opsEcho("RocketMQ %s deployed", version))
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rocketmq_deploy")
 	if !ok {
 		return
@@ -103,13 +108,23 @@ func (s *Server) handleRocketMQTopic(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topic is required"})
 			return
 		}
-		script = fmt.Sprintf(`/opt/rocketmq/bin/mqadmin updateTopic -n localhost:9876 -t %s -c DefaultCluster 2>/dev/null && echo "Topic %s created"`, req.Topic, req.Topic)
+		topic, err := mqRocketTopic("topic", req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`/opt/rocketmq/bin/mqadmin updateTopic -n localhost:9876 -t %s -c DefaultCluster 2>/dev/null && echo %s`, shellquote.Quote(topic), opsEcho("Topic %s created", topic))
 	case "delete":
 		if req.Topic == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topic is required"})
 			return
 		}
-		script = fmt.Sprintf(`/opt/rocketmq/bin/mqadmin deleteTopic -n localhost:9876 -t %s 2>/dev/null && echo "Topic %s deleted"`, req.Topic, req.Topic)
+		topic, err := mqRocketTopic("topic", req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`/opt/rocketmq/bin/mqadmin deleteTopic -n localhost:9876 -t %s 2>/dev/null && echo %s`, shellquote.Quote(topic), opsEcho("Topic %s deleted", topic))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -148,7 +163,12 @@ func (s *Server) handleRocketMQConsumerGroup(w http.ResponseWriter, r *http.Requ
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "group is required"})
 			return
 		}
-		script = fmt.Sprintf(`/opt/rocketmq/bin/mqadmin consumerProgress -n localhost:9876 -g %s 2>/dev/null`, req.Group)
+		group, err := mqName("group", req.Group)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`/opt/rocketmq/bin/mqadmin consumerProgress -n localhost:9876 -g %s 2>/dev/null`, shellquote.Quote(group))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -189,13 +209,33 @@ func (s *Server) handleRocketMQACL(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject is required"})
 			return
 		}
-		script = fmt.Sprintf(`/opt/rocketmq/bin/mqadmin updateAclConfig -n localhost:9876 -s %s -t %s -g %s 2>/dev/null && echo "ACL created"`, req.Subject, req.Topic, req.Group)
+		subject, err := mqName("subject", req.Subject)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		topic, err := mqRocketTopicAllowEmpty("topic", req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		group, err := mqNameAllowEmpty("group", req.Group)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`/opt/rocketmq/bin/mqadmin updateAclConfig -n localhost:9876 -s %s -t %s -g %s 2>/dev/null && echo "ACL created"`, shellquote.Quote(subject), shellquote.Quote(topic), shellquote.Quote(group))
 	case "delete":
 		if req.Subject == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject is required"})
 			return
 		}
-		script = fmt.Sprintf(`/opt/rocketmq/bin/mqadmin deleteAclConfig -n localhost:9876 -s %s 2>/dev/null && echo "ACL deleted"`, req.Subject)
+		subject, err := mqName("subject", req.Subject)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`/opt/rocketmq/bin/mqadmin deleteAclConfig -n localhost:9876 -s %s 2>/dev/null && echo "ACL deleted"`, shellquote.Quote(subject))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

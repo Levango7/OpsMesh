@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handlePulsarDeploy 处理 POST /api/v1/middleware/pulsar/deploy
@@ -26,12 +27,16 @@ func (s *Server) handlePulsarDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version := req.Version
+	version, err := mqVersion("version", req.Version)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if version == "" {
 		version = "3.2.0"
 	}
 
-	script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/pulsar/pulsar-%s/apache-pulsar-%s-bin.tar.gz -O /tmp/pulsar.tgz && tar -xzf /tmp/pulsar.tgz -C /opt/ && ln -sfn /opt/apache-pulsar-%s /opt/pulsar && /opt/pulsar/bin/pulsar standalone & echo "Pulsar %s deployed"`, version, version, version, version)
+	script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/pulsar/pulsar-%s/apache-pulsar-%s-bin.tar.gz -O /tmp/pulsar.tgz && tar -xzf /tmp/pulsar.tgz -C /opt/ && ln -sfn /opt/apache-pulsar-%s /opt/pulsar && /opt/pulsar/bin/pulsar standalone & echo %s`, version, version, version, opsEcho("Pulsar %s deployed", version))
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "pulsar_deploy")
 	if !ok {
 		return
@@ -94,11 +99,19 @@ func (s *Server) handlePulsarTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenant := req.Tenant
+	tenant, err := mqNameAllowEmpty("tenant", req.Tenant)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if tenant == "" {
 		tenant = "public"
 	}
-	ns := req.Namespace
+	ns, err := mqNameAllowEmpty("namespace", req.Namespace)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if ns == "" {
 		ns = "default"
 	}
@@ -112,13 +125,23 @@ func (s *Server) handlePulsarTopic(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topic is required"})
 			return
 		}
-		script = fmt.Sprintf(`pulsar-admin topics create persistent://%s/%s/%s 2>/dev/null && echo "Topic %s created"`, tenant, ns, req.Topic, req.Topic)
+		topic, err := mqName("topic", req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`pulsar-admin topics create persistent://%s/%s/%s 2>/dev/null && echo %s`, shellquote.Quote(tenant), shellquote.Quote(ns), shellquote.Quote(topic), opsEcho("Topic %s created", topic))
 	case "delete":
 		if req.Topic == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topic is required"})
 			return
 		}
-		script = fmt.Sprintf(`pulsar-admin topics delete persistent://%s/%s/%s 2>/dev/null && echo "Topic %s deleted"`, tenant, ns, req.Topic, req.Topic)
+		topic, err := mqName("topic", req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`pulsar-admin topics delete persistent://%s/%s/%s 2>/dev/null && echo %s`, shellquote.Quote(tenant), shellquote.Quote(ns), shellquote.Quote(topic), opsEcho("Topic %s deleted", topic))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -159,17 +182,37 @@ func (s *Server) handlePulsarSubscription(w http.ResponseWriter, r *http.Request
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topic and subName are required"})
 			return
 		}
+		topic, err := mqName("topic", req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		subName, err := mqName("subName", req.SubName)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		subType := req.SubType
 		if subType == "" {
 			subType = "Exclusive"
 		}
-		script = fmt.Sprintf(`pulsar-admin topics create-subscription --subscription %s --topic persistent://public/default/%s --messageId earliest 2>/dev/null && echo "Subscription %s created (%s)"`, req.SubName, req.Topic, req.SubName, subType)
+		script = fmt.Sprintf(`pulsar-admin topics create-subscription --subscription %s --topic persistent://public/default/%s --messageId earliest 2>/dev/null && echo %s`, shellquote.Quote(subName), shellquote.Quote(topic), opsEcho("Subscription %s created (%s)", subName, subType))
 	case "delete":
 		if req.Topic == "" || req.SubName == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topic and subName are required"})
 			return
 		}
-		script = fmt.Sprintf(`pulsar-admin topics delete-subscription --subscription %s --topic persistent://public/default/%s 2>/dev/null && echo "Subscription %s deleted"`, req.SubName, req.Topic, req.SubName)
+		topic, err := mqName("topic", req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		subName, err := mqName("subName", req.SubName)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`pulsar-admin topics delete-subscription --subscription %s --topic persistent://public/default/%s 2>/dev/null && echo %s`, shellquote.Quote(subName), shellquote.Quote(topic), opsEcho("Subscription %s deleted", subName))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -209,17 +252,32 @@ func (s *Server) handlePulsarTenant(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant is required"})
 			return
 		}
+		tenant, err := mqName("tenant", req.Tenant)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		clusters := req.Clusters
 		if clusters == "" {
 			clusters = "standalone"
 		}
-		script = fmt.Sprintf(`pulsar-admin tenants create %s --allowed-clusters %s 2>/dev/null && echo "Tenant %s created"`, req.Tenant, clusters, req.Tenant)
+		clusters, err = mqCSVList("clusters", clusters)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`pulsar-admin tenants create %s --allowed-clusters %s 2>/dev/null && echo %s`, shellquote.Quote(tenant), shellquote.Quote(clusters), opsEcho("Tenant %s created", tenant))
 	case "delete":
 		if req.Tenant == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant is required"})
 			return
 		}
-		script = fmt.Sprintf(`pulsar-admin tenants delete %s 2>/dev/null && echo "Tenant %s deleted"`, req.Tenant, req.Tenant)
+		tenant, err := mqName("tenant", req.Tenant)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`pulsar-admin tenants delete %s 2>/dev/null && echo %s`, shellquote.Quote(tenant), opsEcho("Tenant %s deleted", tenant))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -250,7 +308,11 @@ func (s *Server) handlePulsarNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenant := req.Tenant
+	tenant, err := mqNameAllowEmpty("tenant", req.Tenant)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if tenant == "" {
 		tenant = "public"
 	}
@@ -258,19 +320,29 @@ func (s *Server) handlePulsarNamespace(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch req.Action {
 	case "list":
-		script = fmt.Sprintf(`pulsar-admin namespaces list %s 2>/dev/null || echo "Pulsar not available"`, tenant)
+		script = fmt.Sprintf(`pulsar-admin namespaces list %s 2>/dev/null || echo "Pulsar not available"`, shellquote.Quote(tenant))
 	case "create":
 		if req.Namespace == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace is required"})
 			return
 		}
-		script = fmt.Sprintf(`pulsar-admin namespaces create %s/%s 2>/dev/null && echo "Namespace %s/%s created"`, tenant, req.Namespace, tenant, req.Namespace)
+		namespace, err := mqName("namespace", req.Namespace)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`pulsar-admin namespaces create %s/%s 2>/dev/null && echo %s`, shellquote.Quote(tenant), shellquote.Quote(namespace), opsEcho("Namespace %s/%s created", tenant, namespace))
 	case "delete":
 		if req.Namespace == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace is required"})
 			return
 		}
-		script = fmt.Sprintf(`pulsar-admin namespaces delete %s/%s 2>/dev/null && echo "Namespace %s/%s deleted"`, tenant, req.Namespace, tenant, req.Namespace)
+		namespace, err := mqName("namespace", req.Namespace)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`pulsar-admin namespaces delete %s/%s 2>/dev/null && echo %s`, shellquote.Quote(tenant), shellquote.Quote(namespace), opsEcho("Namespace %s/%s deleted", tenant, namespace))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -305,11 +377,19 @@ func (s *Server) handlePulsarFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenant := req.Tenant
+	tenant, err := mqNameAllowEmpty("tenant", req.Tenant)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if tenant == "" {
 		tenant = "public"
 	}
-	ns := req.NS
+	ns, err := mqNameAllowEmpty("namespace", req.NS)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if ns == "" {
 		ns = "default"
 	}
@@ -317,25 +397,45 @@ func (s *Server) handlePulsarFunction(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch req.Action {
 	case "list":
-		script = fmt.Sprintf(`pulsar-admin functions list --tenant %s --namespace %s 2>/dev/null || echo "Pulsar not available"`, tenant, ns)
+		script = fmt.Sprintf(`pulsar-admin functions list --tenant %s --namespace %s 2>/dev/null || echo "Pulsar not available"`, shellquote.Quote(tenant), shellquote.Quote(ns))
 	case "create":
 		if req.Name == "" || req.ClassName == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name and className are required"})
 			return
 		}
-		script = fmt.Sprintf(`pulsar-admin functions create --tenant %s --namespace %s --name %s --classname %s --inputs %s --output %s 2>/dev/null && echo "Function %s created"`, tenant, ns, req.Name, req.ClassName, req.Inputs, req.Outputs, req.Name)
+		name, err := mqName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		className, err := mqName("className", req.ClassName)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`pulsar-admin functions create --tenant %s --namespace %s --name %s --classname %s --inputs %s --output %s 2>/dev/null && echo %s`, shellquote.Quote(tenant), shellquote.Quote(ns), shellquote.Quote(name), shellquote.Quote(className), shellquote.Quote(req.Inputs), shellquote.Quote(req.Outputs), opsEcho("Function %s created", name))
 	case "delete":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`pulsar-admin functions delete --tenant %s --namespace %s --name %s 2>/dev/null && echo "Function %s deleted"`, tenant, ns, req.Name, req.Name)
+		name, err := mqName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`pulsar-admin functions delete --tenant %s --namespace %s --name %s 2>/dev/null && echo %s`, shellquote.Quote(tenant), shellquote.Quote(ns), shellquote.Quote(name), opsEcho("Function %s deleted", name))
 	case "status":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`pulsar-admin functions status --tenant %s --namespace %s --name %s 2>/dev/null`, tenant, ns, req.Name)
+		name, err := mqName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`pulsar-admin functions status --tenant %s --namespace %s --name %s 2>/dev/null`, shellquote.Quote(tenant), shellquote.Quote(ns), shellquote.Quote(name))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

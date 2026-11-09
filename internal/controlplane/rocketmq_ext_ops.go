@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleRocketMQHA 处理 POST /api/v1/middleware/rocketmq/ha
@@ -32,7 +33,12 @@ func (s *Server) handleRocketMQHA(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "nodes is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Setting up RocketMQ DLedger HA..." && for node in %s; do echo "Configuring $node as DLedger member"; done && echo "DLedger cluster configured"`, req.Nodes)
+		nodes, err := mqNodeList("nodes", req.Nodes)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`echo %s && for node in %s; do echo "Configuring $node as DLedger member"; done && echo %s`, opsEcho("Setting up RocketMQ DLedger HA..."), nodes, opsEcho("DLedger cluster configured"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rocketmq_ha_setup-dledger")
 		if !ok {
 			return
@@ -75,7 +81,12 @@ func (s *Server) handleRocketMQScale(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "broker is required"})
 			return
 		}
-		script := fmt.Sprintf(`nohup /opt/rocketmq/bin/mqbroker -n localhost:9876 -c /opt/rocketmq/conf/broker-%s.conf > /tmp/broker-%s.log 2>&1 & sleep 5 && echo "Broker %s added"`, req.Broker, req.Broker, req.Broker)
+		broker, err := mqName("broker", req.Broker)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`nohup /opt/rocketmq/bin/mqbroker -n localhost:9876 -c /opt/rocketmq/conf/broker-%s.conf > /tmp/broker-%s.log 2>&1 & sleep 5 && echo %s`, shellquote.Quote(broker), shellquote.Quote(broker), opsEcho("Broker %s added", broker))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rocketmq_scale_add-broker")
 		if !ok {
 			return
@@ -87,7 +98,7 @@ func (s *Server) handleRocketMQScale(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "broker is required"})
 			return
 		}
-		script := fmt.Sprintf(`/opt/rocketmq/bin/mqshutdown broker -n localhost:9876 2>/dev/null; echo "Broker %s removed"`, req.Broker)
+		script := fmt.Sprintf(`/opt/rocketmq/bin/mqshutdown broker -n localhost:9876 2>/dev/null; echo %s`, opsEcho("Broker %s removed", req.Broker))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rocketmq_scale_remove-broker")
 		if !ok {
 			return
@@ -129,11 +140,15 @@ func (s *Server) handleRocketMQUpgrade(w http.ResponseWriter, r *http.Request) {
 	case "plan":
 		script = `echo "=== Current Version ===" && /opt/rocketmq/bin/mqadmin clusterList -n localhost:9876 2>/dev/null | head -1 && echo "=== Upgrade Plan ===" && echo "1. Stop broker" && echo "2. Backup data" && echo "3. Replace binaries" && echo "4. Start broker" && echo "5. Verify"`
 	case "upgrade":
-		version := req.TargetVersion
+		version, err := mqVersion("targetVersion", req.TargetVersion)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		if version == "" {
 			version = "5.2.0"
 		}
-		script = fmt.Sprintf(`systemctl stop rocketmq && cp -r /opt/rocketmq/store /tmp/rocketmq-store-backup && wget -q https://archive.apache.org/dist/rocketmq/%s/rocketmq-all-%s-bin-release.zip -O /tmp/rocketmq.zip && unzip -q /tmp/rocketmq.zip -d /opt/ && ln -sfn /opt/rocketmq-all-%s-bin-release /opt/rocketmq && systemctl start rocketmq && echo "Upgraded to %s"`, version, version, version, version)
+		script = fmt.Sprintf(`systemctl stop rocketmq && cp -r /opt/rocketmq/store /tmp/rocketmq-store-backup && wget -q https://archive.apache.org/dist/rocketmq/%s/rocketmq-all-%s-bin-release.zip -O /tmp/rocketmq.zip && unzip -q /tmp/rocketmq.zip -d /opt/ && ln -sfn /opt/rocketmq-all-%s-bin-release /opt/rocketmq && systemctl start rocketmq && echo %s`, version, version, version, opsEcho("Upgraded to %s", version))
 	case "rollback":
 		script = `systemctl stop rocketmq && cp -r /tmp/rocketmq-store-backup /opt/rocketmq/store && systemctl start rocketmq && echo "Rollback complete"`
 	case "version":
@@ -213,13 +228,28 @@ func (s *Server) handleRocketMQDLQ(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topic and group are required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Retrying DLQ messages for topic=%s group=%s" && /opt/rocketmq/bin/mqadmin queryMsgByOffset -n localhost:9876 -t %s -g %s 2>/dev/null`, req.Topic, req.Group, req.Topic, req.Group)
+		topic, err := mqRocketTopic("topic", req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		group, err := mqName("group", req.Group)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && /opt/rocketmq/bin/mqadmin queryMsgByOffset -n localhost:9876 -t %s -g %s 2>/dev/null`, opsEcho("Retrying DLQ messages for topic=%s group=%s", topic, group), shellquote.Quote(topic), shellquote.Quote(group))
 	case "purge":
 		if req.Topic == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topic is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Purging DLQ for topic %s" && /opt/rocketmq/bin/mqadmin deleteTopic -n localhost:9876 -t %%DLQ%% 2>/dev/null`, req.Topic)
+		topic, err := mqRocketTopic("topic", req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && /opt/rocketmq/bin/mqadmin deleteTopic -n localhost:9876 -t %%DLQ%% 2>/dev/null`, opsEcho("Purging DLQ for topic %s", topic))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

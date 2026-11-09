@@ -107,8 +107,27 @@ QUOTE_MARKERS = (
     "kafkaResource(",
     "kafkaTopic(",
     "kafkaTopicList(",
+    # 批次 11 新增的收口助手（internal/controlplane/mq_script.go）。这些名字**只在收口后的
+    # 代码里出现**（旧代码没有它们）⇒ 扩充 marker 集合**不改变历史口径**。
+    # mqName / mqNameAllowEmpty —— MQ 资源名白名单（字母数字开头；仅字母数字与 ._:@-）
+    # mqVersion             —— 版本号白名单（落下载 URL 的路径段）
+    # mqNode                —— 节点名白名单（`rabbit@host`，含 `@`）
+    # mqNodeList            —— 逗号/空白分隔节点列表：逐项白名单后以空格连接，
+    #                           交给 `for node in %s`（不能整体 Quote）
+    # mqCSVList             —— 逗号分隔的**单参数**列表：逐项白名单后重新以逗号连接
+    # mqRocketTopic / mqRocketTopicAllowEmpty —— RocketMQ topic 白名单（额外放行 % 与 |）
+    # mqPath                —— 绝对路径白名单（备份路径 / heredoc 证书路径；后者不能 Quote）
     "kafkaHeredoc(",
     "kafkaHeredocf(",
+    "mqName(",
+    "mqNameAllowEmpty(",
+    "mqVersion(",
+    "mqNode(",
+    "mqNodeList(",
+    "mqCSVList(",
+    "mqRocketTopic(",
+    "mqRocketTopicAllowEmpty(",
+    "mqPath(",
 )
 VALIDATE_MARKERS = ("Validate", "MatchString(", "regexp.")
 SPRINTF_RE = re.compile(r"fmt\.Sprintf\(")
