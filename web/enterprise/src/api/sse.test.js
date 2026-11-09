@@ -28,11 +28,22 @@ describe('parseSSEFrame', () => {
   it('多帧连续解析', () => {
     const frames = parseSSEFrame(
       'event: hello\ndata: {}\n\n' +
-      'event: device_online\ndata: {"deviceID":"d1","segment":"default","addr":"1.2.3.4"}\n\n'
+      // 字段对齐服务端实发（internal/controlplane/grpc/grpc.go 发 deviceID/segment/agentID/hostname；
+      // 历史上的 addr 是夹具自造、服务端从不发 —— issue #16 顺带修正）。
+      'event: device_online\ndata: {"deviceID":"d1","segment":"default"}\n\n'
     )
     expect(frames).toHaveLength(2)
     expect(frames[0].event).toBe('hello')
     expect(frames[1].event).toBe('device_online')
+  })
+
+  it('解析 task_cancel 帧（第 11 种事件，issue #16）', () => {
+    const frames = parseSSEFrame('event: task_cancel\ndata: {"taskID":"t9","agentID":"a1"}\n\n')
+    expect(frames).toHaveLength(1)
+    expect(frames[0].event).toBe('task_cancel')
+    const data = JSON.parse(frames[0].data)
+    expect(data.taskID).toBe('t9')
+    expect(data.agentID).toBe('a1')
   })
 
   it('data 多行拼接（SSE 规范）', () => {
@@ -78,10 +89,18 @@ describe('validateEventData（data 关键字段）', () => {
     expect(validateEventData('hello', {})).toBe(true)
   })
 
-  it('所有事件类型在 EVENT_CONTRACT 有定义（与协议文档 10 种对齐）', () => {
+  // issue #16 核心断言：task_cancel 帧此前不在 EVENT_CONTRACT ⇒ 信封校验直接丢弃（UI 收不到取消信号）。
+  it('task_cancel 契约在位且字段校验生效（缺 agentID 拒绝）', () => {
+    expect(validateEnvelope({ type: 'task_cancel', data: { taskID: 't1', agentID: 'a1' } })).toBe(true)
+    expect(validateEventData('task_cancel', { taskID: 't1', agentID: 'a1' })).toBe(true)
+    expect(validateEventData('task_cancel', { taskID: 't1' })).toBe(false)
+  })
+
+  it('所有事件类型在 EVENT_CONTRACT 有定义（与协议文档 11 种对齐）', () => {
     expect(Object.keys(EVENT_CONTRACT).sort()).toEqual([
       'agent_logs', 'alert_new', 'approval_status', 'device_offline', 'device_online',
-      'hello', 'mw_template_changed', 'os_template_changed', 'schedule_status', 'task_status'
+      'hello', 'mw_template_changed', 'os_template_changed', 'schedule_status',
+      'task_cancel', 'task_status'
     ])
   })
 })

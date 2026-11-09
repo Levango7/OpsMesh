@@ -6,7 +6,7 @@
 //
 // 协议契约（与 docs/sse-protocol.md 逐字对齐，字段名为 Go tag 直出 camelCase）：
 //   - 信封：{ type, tenantID?, data, traceID? }
-//   - 事件类型 10 种：hello / task_status / alert_new / device_online /
+//   - 事件类型 11 种：hello / task_status / task_cancel / alert_new / device_online /
 //     device_offline / approval_status / schedule_status / os_template_changed /
 //     mw_template_changed / agent_logs
 //
@@ -24,6 +24,9 @@ import { refreshToken } from './request'
 export const EVENT_CONTRACT = {
   hello: [],
   task_status: ['taskID', 'status'],
+  // task_cancel：服务端 server_tasks.go 的 publishTaskCancel 发布（data 键 taskID/agentID，
+  // 见 docs/sse-protocol.md 第 11 种）。此前漏登记 ⇒ 帧被 validateEnvelope 丢弃、UI 收不到取消信号。
+  task_cancel: ['taskID', 'agentID'],
   alert_new: ['alertID', 'severity'],
   device_online: ['deviceID', 'segment'],
   device_offline: ['deviceID'],

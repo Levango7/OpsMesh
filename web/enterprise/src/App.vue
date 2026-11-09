@@ -295,6 +295,12 @@ function handleSSEEvent(ev) {
       // 任务状态变更：task store 在路由懒加载中，此处经事件总线通知各视图自行刷新。
       window.dispatchEvent(new CustomEvent('opsmesh:task-status', { detail: ev.data }))
       break
+    case 'task_cancel':
+      // 任务取消（服务端 publishTaskCancel，data=taskID/agentID）。
+      // 裁决（zcode 线，issue #16 §3）：取消信号**必须即时反映在任务列表**——单独事件名派发，
+      // TasksView 复用同一节流 refetch（2s trailing），不做乐观改行（服务端为准，取消事件稀疏）。
+      window.dispatchEvent(new CustomEvent('opsmesh:task-cancel', { detail: ev.data }))
+      break
     default:
       // hello / approval_status / schedule_status / *_template_changed / agent_logs
       // 目前无全局列表依赖，事件仅消费（含契约校验），无需主动拉取。
