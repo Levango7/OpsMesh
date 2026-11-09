@@ -110,7 +110,7 @@ func (h *Handler) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusCreated, wf)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -142,7 +142,7 @@ func (h *Handler) handleWorkflowByID(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) getWorkflow(w http.ResponseWriter, r *http.Request, id int64, tenantID string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	wf, err := h.store.Get(r.Context(), id, tenantID)
@@ -164,7 +164,7 @@ func (h *Handler) getWorkflow(w http.ResponseWriter, r *http.Request, id int64, 
 // DAG 与 cron 各自独立校验；draft 工作流设合法 cron 后自动转 active。租户隔离沿用 Get 的权限语义。
 func (h *Handler) updateWorkflow(w http.ResponseWriter, r *http.Request, id int64, tenantID string) {
 	if r.Method != http.MethodPut && r.Method != http.MethodPatch {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	wf, err := h.store.Get(r.Context(), id, tenantID)
@@ -219,7 +219,7 @@ func (h *Handler) updateWorkflow(w http.ResponseWriter, r *http.Request, id int6
 // 复用 proto.Task.DependsOn + per-agent releaseDeps 引擎驱动依赖就绪。
 func (h *Handler) runWorkflow(w http.ResponseWriter, r *http.Request, id int64, tenantID string) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	if _, err := h.store.Get(r.Context(), id, tenantID); err != nil {
@@ -562,7 +562,7 @@ func (h *Handler) scheduleWorkflow(w http.ResponseWriter, r *http.Request, id in
 		return
 	}
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	var body struct {
@@ -591,7 +591,7 @@ func (h *Handler) scheduleWorkflow(w http.ResponseWriter, r *http.Request, id in
 // statusWorkflow GET /api/v1/workflows/{id}/status：返回工作流定义 + 各节点任务状态。
 func (h *Handler) statusWorkflow(w http.ResponseWriter, r *http.Request, id int64, tenantID string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	wf, err := h.store.Get(r.Context(), id, tenantID)
@@ -621,7 +621,7 @@ func (h *Handler) statusWorkflow(w http.ResponseWriter, r *http.Request, id int6
 // 按租户隔离；不存在的工作流返回空列表（不报 404，与 List 语义一致）。
 func (h *Handler) listRuns(w http.ResponseWriter, r *http.Request, id int64, tenantID string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	runs, err := h.store.ListRuns(r.Context(), id, tenantID)
