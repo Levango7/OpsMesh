@@ -163,9 +163,10 @@ jobs:
           set -euo pipefail
           command -v syft >/dev/null 2>&1 || {
               export GOPROXY=https://goproxy.cn,direct
-              GOBIN="$(go env GOPATH)/bin" go install github.com/anchore/syft/cmd/syft@v1.51.1
+              go install github.com/anchore/syft/cmd/syft@v1.51.1
               echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-              export PATH="$(go env GOPATH)/bin:$PATH"
+              GOPATH_BIN="$(go env GOPATH)/bin"
+              export PATH="$GOPATH_BIN:$PATH"
           }
           syft version
           syft "${{ steps.meta.outputs.image }}:${{ github.sha }}" -o spdx-json > "sbom-${{ matrix.service }}-${GITHUB_SHA}.spdx.json"
@@ -191,8 +192,9 @@ jobs:
         run: |
           set -euo pipefail
           export GOPROXY=https://goproxy.cn,direct
-          GOBIN="$(go env GOPATH)/bin" go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
+          GOPATH_BIN="$(go env GOPATH)/bin"
+          export PATH="$GOPATH_BIN:$PATH"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           cosign version
 

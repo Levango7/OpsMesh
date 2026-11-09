@@ -44,8 +44,9 @@ jobs:
         run: |
           set -euo pipefail
           export GOPROXY=https://goproxy.cn,direct
-          GOBIN="$(go env GOPATH)/bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          GOPATH_BIN="$(go env GOPATH)/bin"
+          export PATH="$GOPATH_BIN:$PATH"
           actionlint -version
           # 不带参数 = 检查仓库内全部 workflow（显式写 *.yml 会漏掉 *.yaml，且 glob 不匹配时
           # 命令本身报错，容易写成"失败被 || 吞掉"的假门禁）。
@@ -68,8 +69,9 @@ jobs:
         run: |
           set -euo pipefail
           export GOPROXY=https://goproxy.cn,direct
-          GOBIN="$(go env GOPATH)/bin" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          GOPATH_BIN="$(go env GOPATH)/bin"
+          export PATH="$GOPATH_BIN:$PATH"
           # 钉死 v2.13.2，防止新版 lint 规则集漂移（v2.6→v2.13 曾新增 G702/G703 报点、
           # SA1019 消息格式变化——本机验证通过仍把 CI 判红）。与 action 行为等价：
           # 默认读取仓库根 .golangci.yml；根 ./... 全仓。
@@ -343,8 +345,9 @@ jobs:
           # services 腿会在 build 阶段就先红——所以只修这一步就够。
           gll_ver=v2.13.2
           export GOPROXY=https://goproxy.cn,direct
-          GOBIN="$(go env GOPATH)/bin" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${gll_ver}
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${gll_ver}
+          GOPATH_BIN="$(go env GOPATH)/bin"
+          export PATH="$GOPATH_BIN:$PATH"
           glv="$(golangci-lint version 2>&1)"; grep -q "2.13.2" <<<"$glv" || { echo "::error::golangci-lint 版本不是钉死的 2.13.2"; exit 1; }
           # 服务子模块用独立配置（根 .golangci.yml 的 path 豁免按根模块相对路径编写，
           # 会与 services/<svc> 自己的 internal/... 误配对；理由与规则集见该文件头注释）。
@@ -837,8 +840,9 @@ jobs:
         run: |
           set -euo pipefail
           export GOPROXY=https://goproxy.cn,direct
-          GOBIN="$(go env GOPATH)/bin" go install github.com/anchore/syft/cmd/syft@v1.51.1
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          go install github.com/anchore/syft/cmd/syft@v1.51.1
+          GOPATH_BIN="$(go env GOPATH)/bin"
+          export PATH="$GOPATH_BIN:$PATH"
           syft version
       - uses: goreleaser/goreleaser-action@v7
         with:
@@ -864,8 +868,9 @@ jobs:
         run: |
           set -euo pipefail
           export GOPROXY=https://goproxy.cn,direct
-          GOBIN="$(go env GOPATH)/bin" go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
+          GOPATH_BIN="$(go env GOPATH)/bin"
+          export PATH="$GOPATH_BIN:$PATH"
           cosign version
       - name: cosign 签名 goreleaser 产物
         if: env.COSIGN_PRIVATE_KEY != ''

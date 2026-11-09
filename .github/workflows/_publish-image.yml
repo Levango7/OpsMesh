@@ -202,8 +202,9 @@ jobs:
           # CI runner 上稳定 504；本机已实测 @v1.51.1 编译通过（go1.26.6，goproxy.cn）。钉版本、
           # 不装 latest。syft 装到 GOPATH/bin，复用件里后续步骤统一从 PATH 取。
           export GOPROXY=https://goproxy.cn,direct
-          GOBIN="$(go env GOPATH)/bin" go install github.com/anchore/syft/cmd/syft@v1.51.1
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          go install github.com/anchore/syft/cmd/syft@v1.51.1
+          GOPATH_BIN="$(go env GOPATH)/bin"
+          export PATH="$GOPATH_BIN:$PATH"
           syft version
           syft "${IMAGE}" -o spdx-json > "sbom-${SBOM_PREFIX}-${GITHUB_SHA}.spdx.json"
           python3 -c 'import json,sys; ps=(json.load(open(sys.argv[1])) or {}).get("packages") or []; sys.exit("SPDX packages 为空——SBOM 没抓到任何组件，判红（空证据比没证据更坏）") if not ps else print("SBOM 包条目数:", len(ps))' "sbom-${SBOM_PREFIX}-${GITHUB_SHA}.spdx.json"
@@ -227,8 +228,9 @@ jobs:
         run: |
           set -euo pipefail
           export GOPROXY=https://goproxy.cn,direct
-          GOBIN="$(go env GOPATH)/bin" go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
+          GOPATH_BIN="$(go env GOPATH)/bin"
+          export PATH="$GOPATH_BIN:$PATH"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           cosign version
       - name: cosign 签名镜像（key-based，私有仓库路径）
@@ -405,8 +407,9 @@ jobs:
             # 钉死 yq v4.40.5，防 latest 供应链漂移。github release 资产在当前 CI runner 稳 504，
             # 改 go install + 国内 Go 模块代理。
             export GOPROXY=https://goproxy.cn,direct
-            GOBIN="$(go env GOPATH)/bin" go install github.com/mikefarah/yq/v4/cmd/yq@v4.40.5
-            export PATH="$(go env GOPATH)/bin:$PATH"
+            go install github.com/mikefarah/yq/v4/cmd/yq@v4.40.5
+            GOPATH_BIN="$(go env GOPATH)/bin"
+            export PATH="$GOPATH_BIN:$PATH"
             echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           }
           git config --global user.email "ci@opsmesh"
