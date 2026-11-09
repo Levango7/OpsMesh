@@ -4,6 +4,7 @@
 #
 # 行为不变量（改判据前先想明白）：
 # - 同 scope 存活 CLAIM 只许一个；DISPATCH 含 scope 时视为一次性 CLAIM（有效期到 ddl）。
+# - 闭环事件 = RELEASE/DONE/TAKEOVER/LANDED，均须带 scope=；与 CLAIM 的 scope 逐字一致或集合同一才销号（候选唯一才销）。
 # - CLAIM 过期无闭环 ⇒ issue；DISPATCH 过 ddl 无 STATUS/DONE ⇒ issue。
 # - BLOCKED 未销号 ⇒ issue（lead 用 [NOTE] 或新 [DISPATCH] 裁定后由执行线 [STATUS] 销）。
 # - 旧档案 docs/INBOX-ZCODE.md / docs/INBOX-LEVANGO.md 照常解析（历史行重放闭环）。
@@ -43,7 +44,7 @@ for extra in sorted(glob.glob(os.path.join(_INBOX_DIR, "INBOX-*.md"))):
     if extra not in LOGS:
         LOGS.append(extra)
 
-KINDS = "CLAIM|RELEASE|DONE|TAKEOVER|CONFLICT|DISPATCH|STATUS|BLOCKED|NOTE|ROLE"
+KINDS = "CLAIM|RELEASE|DONE|TAKEOVER|CONFLICT|DISPATCH|STATUS|BLOCKED|NOTE|ROLE|LANDED"
 LINE = re.compile(r"^\[(%s)\]\s+(\S+)\s+(.*)$" % KINDS)
 
 
@@ -82,6 +83,10 @@ def ttl_hours(blob):
     return int(m.group(1)) if m else 0
 
 
+def scope_set(s):
+    return frozenset(x.strip() for x in s.split(",") if x.strip())
+
+
 NOW = datetime.datetime.now(datetime.timezone.utc).timestamp()
 
 claims = {}        # scope -> {who, ts, ttl_h, state, src, ddl_ts, ddl, by}
@@ -106,7 +111,10 @@ events.sort(key=lambda e: e[0])
 for _, kind, ts, blob in events:
         f = kv(blob)
         who = f.get("from", "?")
-        scope = f.get("scope", "")
+        # scope 取 blob 中首次出现（合规行 scope= 恒在 note= 前；note 内游离
+        # "scope=" 文本会被 kv() 后覆盖成空串，导致销号静默失效）。
+        m_scope = re.search(r"\bscope=(\S+)", blob)
+        scope = m_scope.group(1) if m_scope else ""
         task = f.get("task", "")
         t = parse_ts(ts)
 
@@ -133,9 +141,18 @@ for _, kind, ts, blob in events:
                 conflicts.add(scope)
             claims[scope] = record
 
-        if kind in ("RELEASE", "DONE", "TAKEOVER") and scope:
+        if kind in ("RELEASE", "DONE", "TAKEOVER", "LANDED") and scope:
+            target = None
             if scope in claims:
-                claims[scope]["state"] = "taken" if kind == "TAKEOVER" else "closed"
+                target = scope
+            else:
+                # 逐字配不上再按集合同一兜底（顺序/空格差异）；候选唯一才销，部分重叠不销。
+                cands = [s for s, c in claims.items()
+                         if c["state"] == "open" and scope_set(s) == scope_set(scope)]
+                if len(cands) == 1:
+                    target = cands[0]
+            if target is not None:
+                claims[target]["state"] = "taken" if kind == "TAKEOVER" else "closed"
 
         if kind == "DISPATCH" and task:
             tasks[task] = {

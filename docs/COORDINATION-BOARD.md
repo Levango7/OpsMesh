@@ -58,9 +58,13 @@
 ### 2. 认领（CLAIM）与完成（DONE）
 
 - `scope` 必须是**目录或单个文件**，不许 `internal/` 这种粒度；多 scope 就多行。
-- `ttl` 到期无 DONE/RELEASE，任何一线可单方面 TAKEOVER（见 §6）。
+- `ttl` 到期无 DONE/RELEASE/LANDED，任何一线可单方面 TAKEOVER（见 §6）。
 - 同一 scope 只允许一个 CLAIM 存活；重复认领 = 撞车（§5）。
 - DISPATCH 含 scope 时**等价于一次性 CLAIM**（有效期到 ddl），无需再补 CLAIM。
+- 闭环销号认 `DONE`/`RELEASE`/`TAKEOVER`/`LANDED`，均须带 `scope=`；与 CLAIM 的
+  scope 逐字一致或集合同一（顺序/空格差异不算撞车；候选唯一才销，部分重叠不销）。
+- `[LANDED]` 是「PR 合入 main」回执；缺 `scope=` 的存量 LANDED 行由任一线 append
+  带 scope 的补配对行（from=代登线，note 注明代登，原行不动）。
 
 ### 3. 层级：派遣（DISPATCH）与上报（BLOCKED）
 
@@ -91,7 +95,7 @@
 
 ### 6. 接管（TAKEOVER）
 
-CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
+CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展：
 
 ```
 [TAKEOVER] 2026-10-26T06:00:00Z from=kilo scope=... reason=ttl-expired
