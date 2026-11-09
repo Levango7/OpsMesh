@@ -225,6 +225,36 @@
   TestSSEContract_* 守代码↔文档事件名双向对齐）；`go build ./...` / `go vet` / `gofmt` 干净。
 - **前端缺口（只报告，不在本批修）**：`web/enterprise/src/api/sse.js` 的 EVENT_CONTRACT 未含
   `task_cancel`，ALLOWED_TYPES 会静默丢弃该帧——web/enterprise 为 zcode 只读域，随收口报告一并提示。
+## [Unreleased-五维生产力排查] — 2026-11-06（方法论 + 全量矩阵 + 批 1：15 视图写门）
+
+- **方法论与执行记录（活文档）**：`docs/qa-sweep-2026-11-06.md` —— 五维度（后端接口/前端体验/前后端契约/数据流/方法论自身）
+  各给可复算判据表、证据标准（只认当前 HEAD 可复现的证据、静态匹配只是线索、反向证伪优先）、P0/P1/P2 分诊矩阵与批次规则。
+- **三级矩阵脚本**：`scripts/qa-matrix.py`（只读）。路由（控制面 + `services/*-svc` + `svcproxy` 代理表） × 前端 api 函数
+  × infra 动作目录 × 视图 × 权限目录，一次产出 GHOST/METHOD/DEAD/PERM-GAP/WRITE-NOGATE 五类台账。
+  基线实测：**GHOST 0 / METHOD 错配 0 / PERM-GAP 0**（无回归：与 11-02 契约对账结论一致）；
+  DEAD 96 条（未接前端的后端能力面，待产品裁决）；**WRITE-NOGATE 54 视图 → 本批后 39**。
+- **批 1（本批）＝按钮级写权限门 15 视图**：`APIKeysView(apikey:write) / AutomationView(automation:write) / BillingView(billing:write) /
+  GatewayRoutesView(gateway:write) / SLOsView(slo:write) / SchedulesView(schedule:write) / ScriptsView(script:write) /
+  TicketsView(ticket:write) / TrafficPoliciesView(traffic:write) / WebhooksView(webhook:write) / K8sClusterDeployView +
+  K8sLifecycleView + K8sResourcesView(k8s:write) / SystemOpsView(system:write) / secrets/SecretsView(secrets:write)`。
+  范式同 InfraConsole/Flux：`hasPerm` → `canWrite` → 写按钮 `:disabled` + `:title` + `data-testid` → 页首/表前常驻提示；
+  新增共享双语键 **`common.write_denied`**（zh/en）。
+- **新棘轮**：`src/views/__tests__/write-gate-ledger.test.js` —— GATED 掉门判红、PENDING 挂完必须挪出（欠账只许减）、
+  台账文件消失判红、共享键缺一边判红。余 39 视图按台账续作（每视图缺哪些权限点已写在台账里）。
+- **既有 spec 适配**：`K8sResourcesView.spec.js` / `SystemOpsView.spec.js` / `secrets/SecretsView.spec.js` 补 `@/stores/auth`
+  替身（视图 setup 现在取 auth store，无 Pinia 会抛 `[🍍]`）；全量 **74 文件 / 1375 用例全过**。
+- **审计方法论的两处自我修正（已写回脚本）**：①"后端"必须含 `services/**` 与网关代理表（否则 autoscaler/portal/device-svc 出 30 条假幽灵，修后 0）；
+  ②权限点只从**守卫调用实参**里取（函数体内其它 `x:y` 字面量会把 HBase 的 action 名 `ns:table` 误记成权限点）。
+- **去伪（供下一轮省时）**：删除确认已是全站规范（`onDelete`→`ConfirmModal`→`onDeleteConfirm`）；三态由 `DataTable`/`PageShell`
+  共享组件承担（按字面计数会大量误报）；`v-for` 缺 `:key` 与 `v-if`+`v-for` 同元素各 0 条。
+- **批 2 / 批 3（本块补记，已随 PR #8 合并入 main，merge `a7973d8`）**：重复提交守卫 + 死信清除确认 + 页内失败态（9 视图）；
+  破坏性操作接 `ConfirmModal`（四视图）+ AIOps 原生 `alert()` 换 toast；后端 **abac 注入 P0**（`internal/controlplane/abac_ops.go`
+  真注入 + 假 ALLOWED 判定改 501）+ knowledge 列表上界 + `cost/budget` 进程内口径字段；`docs/api-specification.md` /
+  `docs/api-reference.md` 勘误（错误体形状 / 过滤排序实现状态 / 分页信封）。
+- **账目口径说明（本块为何后置）**：本线先前两笔 `[DONE]` 用了 `paths=` 而非 `scope=`，机器（`scripts/coord-gate.py` 只认
+  scope 逐字匹配）一直未销号；本次随本提交以**逐字 `scope=`** 的 `[RELEASE]/[DONE]` 一并闭环。CHANGELOG/CLAIMS/板面
+  属主线高频写入文件，故账目不再随 PR 携带，改由合并后的单父提交直推 main（同 `chore(coord): … LANDED` 先例）。
+
 ## [0.18.0] — 2026-11-07（本版汇总：派发口鉴权收口 + 注入面清扫 + AI 预算执法与租户隔离 + 交付链换源与 CVE 修复）
 
 - **鉴权（覆盖面最大）**：派发路径 599 个调用点（去注释口径，冻结点 06b78c9）补 `task:write`
