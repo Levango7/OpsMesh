@@ -116,13 +116,14 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  internal/deploy/handler.go,internal/deploy/auto_advance.go,internal/controlplane/device_metrics.go,internal/controlplane/federation.go,internal/controlplane/sse.go,internal/controlplane/system_ops.go,internal/gates/json_error_body_gate_test.go <- zcode  (ttl=72h by zcode)
+  docs/api-reference.md                          <- qoder  (ttl=8h by qoder)
 
 TASKS:
   (无)
 
 ISSUES:
   CLAIM 过期未闭环：.github/workflows/ci.yml,.github/workflows/mirror-digest-check.yml（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：.github/workflows/ci.yml,.github/workflows/release.yml,.github/workflows/_publish-image.yml（认领人 opencode，ttl 8h）
   CLAIM 过期未闭环：CHANGELOG.md（认领人 opencode，ttl 12h）
   CLAIM 过期未闭环：CHANGELOG.md,docs/release-notes.md,internal/version/version.go,deploy/helm/opsmesh/Chart.yaml,deploy/helm/opsmesh/values-production.yaml,deploy/gitops/segments/production-segment.yaml,deploy/docker/docker-compose.prod.yml,deploy/docker/scripts/deploy.sh,deploy/k8s/deploy-opsmesh.sh,deploy/k8s/README.md,deploy/k8s/deployments/alert-svc-deployment.yaml,deploy/k8s/deployments/auth-svc-deployment.yaml,deploy/k8s/deployments/device-svc-deployment.yaml,deploy/k8s/deployments/gpu-svc-deployment.yaml,deploy/k8s/deployments/task-svc-deployment.yaml,deploy/scripts/validate-deploy-assets.sh（认领人 opencode，ttl 8h）
   CLAIM 过期未闭环：docs/opsmesh-authz-audit-2026-11-04.md（认领人 opencode，ttl 12h）
@@ -138,7 +139,6 @@ ISSUES:
   CLAIM 过期未闭环：services/device-svc/internal/service/,services/device-svc/internal/server/（认领人 workbuddy，ttl 4h）
   CLAIM 过期未闭环：services/log-svc/internal/server/,services/log-svc/cmd/log-svc/（认领人 workbuddy，ttl 4h）
   CLAIM 过期未闭环：web/enterprise/src/views/AdminConsoleView.vue,web/enterprise/src/api/admin.js,web/enterprise/src/i18n/en.json,web/enterprise/src/i18n/locales/en/common.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/i18n/locales/zh/common.json,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/zh.json,web/enterprise/src/api/__tests__/api-usage.test.js（认领人 kilo，ttl 24h）
-  CLAIM 过期未闭环：web/enterprise/src/views/CostView.vue,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/views/__tests__/CostView.spec.js,docs/CLAIMS.md（认领人 qoder，ttl 4h）
 ```
 
 ---

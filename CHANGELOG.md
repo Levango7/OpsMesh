@@ -5,6 +5,21 @@
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
 
+## [Unreleased-前端在飞态守卫收尾] — 2026-11-09（P1-8 余项：Alerts / CMDB / Deploys 三视图，条目清零）
+
+- **背景**：`docs/qa-sweep-2026-11-06.md` P1-8 台账——批 2 修了 ScriptsView / APIKeysView 等 9 视图后，
+  余下这三个视图的写入口**零在飞态**：点一次能连点，连击 = 重复下发。
+- **修复（PR #26，merge `46b14fb9`）**：
+  - `AlertsView`：单条告警的 ack / silence 在飞时该行两按钮禁用 + handler 重入守卫（两接口都不幂等，
+    连击会重复 ack / 重复静默并重复写审计）；
+  - `CMDBView`：CI 创建表单提交期间禁用提交按钮 + 重入守卫（回车/连击会重复创建配置项）；
+  - `DeploysView`：注册表单 `submitting` + 行级 execute/rollback 按 id 在飞态禁用 + 重入守卫
+    （部署执行/回滚非幂等，连击 = 对生产机重复下发/重复回滚）。
+- **形态与批 2 一致**：`:disabled` + `:title` 说明 + `finally` 复位 + handler 首行 `if (inFlight) return`；
+  行级操作按 id 用 `Set` 记录在飞，同一视图的其它行不受阻。
+- **P1-8 前端在飞态条目至此清零**（后续新增写入口按同一判据扫描）。
+- 验证：eslint 三文件 0 告警；`vite build`（全量模板编译）通过；全量前端 74 文件 / 1379 用例全过。
+
 ## [Unreleased-HTTP 错误体统一] — 2026-11-09（BB-03 批 A：25 处 text/plain 错误体 → JSON + 静态棘轮门禁）
 
 - **为什么是真缺陷面**：仓内非测试代码有 56 处 `http.Error(w, msg, code)`——写的是 **text/plain 裸文本**，
@@ -16,9 +31,12 @@
 - **新增静态棘轮门禁**（`internal/gates`）：白名单外出现任何 `http.Error(` 即判红；含**探测器自证**（注释/字符串里的不算、
   真实调用必判）与**扫描面自证**（非测试 `.go` 文件数地板 + 永久豁免文件必须真被扫到，防「扫描器坏了导致假绿」）；
   **豁免过期判红**（债务不许藏在豁免里）；**变异电池已实测**（注入探针 ⇒ 红并点名 offender；删除 ⇒ 复绿）。
-- **收编进度 56 → 31**：余 `internal/deploy` 两文件（20 处）+ `internal/controlplane` 四文件（11 处）走批 B；
-  `internal/controlplane/enterprise_ui.go`（3 处）为**永久豁免**——浏览器资产面（embed 静态 UI），
-  405/503 保持 text/plain 便于浏览器直接显示，改 JSON 反而更差。
+- **批 B（PR #24，merge `c22cdc3e`，收口）**：`internal/deploy/handler.go`(17) + `auto_advance.go`(3)
+  + `internal/controlplane/device_metrics.go`(1) + `federation.go`(4) + `sse.go`(2) + `system_ops.go`(1)
+  → 同上处理；门禁白名单同步从 7 行收到 **1 行**。
+- **收编结果 56 → 3**：唯一剩余的 `internal/controlplane/enterprise_ui.go`（3 处）为**永久豁免**——
+  浏览器资产面（embed 静态 UI），405/503 保持 text/plain 便于浏览器直接显示，改 JSON 反而更差；
+  该文件即门禁唯一白名单条目，**此后新增任何一处 `http.Error` 都会 CI 判红**。
 - **本地门教训（已入本线记忆）**：本仓 `build-test` 第 10 步 `golangci-lint` 零容忍——本批首推就栽在
   `QF1001: could apply De Morgan's law`（本地 build/test/gofmt 全绿也看不见它），修后本地 lint 0 issues、CI 27/27 全绿。
 
