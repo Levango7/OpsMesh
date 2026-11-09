@@ -236,7 +236,7 @@
 | 10 | **用户中心** | 注册/登录/RBAC（用户/角色/权限三表）/ JWT 双 Token（at/rt HttpOnly Cookie）/ 防爆破 + 失败锁账号 / 注册审批 / 首登强制改密 / Refresh Token 持久化 + 设备指纹绑定 | ✅ | `internal/controlplane/auth*.go` |
 | 11 | **审计日志** | 100% 留痕（AuditEvent → audit_log / memory ring）/ 审计检索（租户/动作/时间窗过滤）/ 等保三级 ≥6 月导出 / bootstrap 端点审计 | ✅ | `internal/controlplane/server_audits.go` |
 | 12 | **联邦** | 跨网段任务转发 / 联邦设备视图聚合 / 独立 mTLS 监听 / HMAC 签名验签（防伪造/重放）/ 多集群联邦发布协调 | ✅ | `internal/controlplane/federation.go`、`internal/deploy/federation.go` |
-| 13 | **SSE 实时推送** | 任务状态/告警/设备上下线事件流 / 替代 5s 轮询 / 心跳保活 / 契约守护测试（9 事件名 + 信封 + 心跳） | ✅ | `internal/controlplane/sse.go`、`docs/sse-protocol.md` |
+| 13 | **SSE 实时推送** | 任务状态/告警/设备上下线事件流 / 替代 5s 轮询 / 心跳保活 / 契约守护测试（11 事件名 + 信封 + 心跳） | ✅ | `internal/controlplane/sse.go`、`docs/sse-protocol.md` |
 | 14 | **工作流** | DAG 引擎（拓扑排序 + 环检测 + 依赖就绪判定）/ 子工作流展开 + 条件分支 + 节点级超时重试 / 执行历史（ListRuns）/ 画布编辑 / cron 触发 + reconcile | ✅ | `internal/orchestration/`、`internal/dag/` |
 | | ↳ 执行历史**回放** | ✅ **2026-11-09 实现**：`POST /api/v1/workflows/{id}/runs/{run_id}/replay` 以历史运行为血缘起点重放（新 run 的 `originRunID` 指向原 run，写库后不可变）；原 run 不存在或跨租户返回 404（不泄露存在性）；租户隔离沿用 ListRuns 口径 | `internal/orchestration/handler.go ReplayRun`、`internal/orchestration/replay_test.go` |
 
