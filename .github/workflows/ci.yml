@@ -69,7 +69,8 @@ jobs:
         run: |
           set -euo pipefail
           export GOPROXY=https://goproxy.cn,direct
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          gll_ver=v2.13.2
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${gll_ver}
           GOPATH_BIN="$(go env GOPATH)/bin"
           export PATH="$GOPATH_BIN:$PATH"
           # 钉死 v2.13.2，防止新版 lint 规则集漂移（v2.6→v2.13 曾新增 G702/G703 报点、
@@ -348,7 +349,7 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${gll_ver}
           GOPATH_BIN="$(go env GOPATH)/bin"
           export PATH="$GOPATH_BIN:$PATH"
-          glv="$(golangci-lint version 2>&1)"; grep -q "2.13.2" <<<"$glv" || { echo "::error::golangci-lint 版本不是钉死的 2.13.2"; exit 1; }
+          glv="$(golangci-lint version 2>&1)"; grep -q "${gll_ver#v}" <<<"$glv" || { echo "::error::golangci-lint 版本不是钉死的 ${gll_ver#v}"; exit 1; }
           # 服务子模块用独立配置（根 .golangci.yml 的 path 豁免按根模块相对路径编写，
           # 会与 services/<svc> 自己的 internal/... 误配对；理由与规则集见该文件头注释）。
           CONFIG="$(git rev-parse --show-toplevel)/.golangci.services.yml"
