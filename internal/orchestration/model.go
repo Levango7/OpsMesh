@@ -179,4 +179,7 @@ type WorkflowRun struct {
 	FinishedAt time.Time         `json:"finishedAt"`
 	Status     string            `json:"status"`     // running / success / failed
 	NodeStates map[string]string `json:"nodeStates"` // nodeID -> status (pending/running/done/failed)
+	// OriginRunID 回放血缘：本 run 由哪次历史运行重放而来（0=首次运行，非回放）。
+	// 仅 ReplayRun 写入；写库后不可变（UpdateRun 不回写该列）。
+	OriginRunID int64 `json:"originRunID,omitempty"`
 }

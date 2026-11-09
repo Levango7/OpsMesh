@@ -110,7 +110,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 |---|---|---|---|
 | CMDB | Phase1 模型 + CRUD + SQL + 采集 + 关系图谱可视化（力导向图）+ 变更审批 | ✅ | `internal/cmdb/`、`web/enterprise/src/views/CMDBView.vue` |
 | 作业编排 | DAG 引擎 + store 阻塞→释放链路 + 画布 + 子工作流 + 并行/串行/条件分支 + 节点级超时重试 + 执行历史回放 | ✅ | `internal/dag/`、`internal/orchestration/` |
-| 部署编排 | 计划 + fan-out 执行 + Reconcile + Rollback + 蓝绿/金丝雀/滚动 + 发布门禁 + 自动回滚 + 多集群联邦发布 + 灰度指标自适应推进 | ✅ | `internal/deploy/`、`internal/controlplane/server_deploy.go` |
+| 部署编排 | 计划 + fan-out 执行 + Reconcile + Rollback + 蓝绿/金丝雀/滚动 + 发布门禁 + 自动回滚 + 多集群联邦发布 + 灰度指标自适应推进 | ✅ | `internal/deploy/`、`internal/controlplane/server_deploy.go`、`internal/controlplane/factory/` |
 | K8s 管理 | 集群增删查 + 测试连接 + 资源只读/写（namespace/pod/deployment/service/configmap/secret/node）+ scale/restart/rollback + client-go 无 kubectl 依赖 + 租户隔离 | ✅ | `internal/controlplane/k8s_cluster.go`、`k8s_manage.go`、`internal/k8s/` |
 | OS 优化 | 预置模板（内核/网络/安全/时间同步/SSH/磁盘/系统/用户）+ 在线 CRUD + 在指定 agent 执行 + 模板 store 持久化 + 幂等 seed | ✅ | `internal/controlplane/os_optimize.go` |
 | 中间件部署 | 10+ 中间件（MySQL/Redis/Kafka/Nginx/Tomcat/Zookeeper/PostgreSQL/MongoDB/RabbitMQ/Elasticsearch）× docker/systemd 双模式 + CRUD + 实例查询 | ✅ | `internal/controlplane/middleware_deploy.go` |
@@ -124,7 +124,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 联邦 | 控制面联邦 mTLS + HMAC 签名验签 + 跨网段任务转发 + 联邦级设备/任务视图 + 多集群联邦发布协调 | ✅ | `internal/controlplane/federation.go`、`internal/deploy/federation.go` |
 | 密钥管理 | Env/File/Vault/Chain provider + `--secret-provider` 配置 + `${vault:key}` 引用解析 + 告警通道密钥外置 + 前端 SecretsView UI + kubeconfig AES-256-GCM 加密 | ✅ | `internal/secrets/`、`web/enterprise/src/views/secrets/SecretsView.vue` |
 | 日志检索 | 双后端（Memory/SQL）+ offset 分页 + 全文本检索（倒排索引 + 中英文分词 + TF-IDF + 短语/布尔/通配符）+ Loki/ES 适配 | ✅ | `internal/logstore/` |
-| 审计 | 100% 留痕（AuditEvent → audit_log / memory ring）+ 可查（租户/动作/时间窗过滤）+ 6 月留存规划 | ✅ | `internal/controlplane/server.go`、`internal/store/sqlstore/sql.go` |
+| 审计 | 100% 留痕（AuditEvent → audit_log / memory ring）+ 可查（租户/动作/时间窗过滤）+ 6 月留存已实现（默认 180 天，可调） | ✅ | `internal/controlplane/server.go`、`internal/store/sqlstore/sql.go` |
 | HA | 多副本 leader 选举（leader_lease 表）+ 超期任务自动回收 + agent 多控制面 failover + PodDisruptionBudget | ✅ | `internal/controlplane/server.go`（leaderLoop） |
 
 ### 3.4 成熟度汇总
@@ -135,7 +135,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | ✅ 已接线就绪（v0.9.0） | 6 | GPU / Bot（ChatOps）/ Runbook / Incident / Autoscaler / Portal（产品域，见脚注¹） |
 | 🔵 规划中 | 0 | — |
 
-> ¹ **微服务域如实说明（v0.9.0 基线；2026-09-29 更新）**：GPU / Bot / Runbook / Incident / Autoscaler / Portal 共 6 域为产品能力面；其中 5 域以 `services/` 独立微服务形态交付（gpu-svc / runbook-svc / incident-svc / autoscaler-svc / portal-svc，各自独立 go.mod），Bot 域由聚合层 `bot_bridge.go` 独任（原 bot-svc 已于 2026-09-29 删除）。**一体化使用路径已打通（v0.9.0）**：controlplane 聚合层 `service_proxy.go`（五域反向代理：静态映射+env 覆盖+路径改写+鉴权双守卫）与 `bot_bridge.go`（ChatOps Web 命令台）已上线，前端六路由启用，RBAC 12 权限点补种，部署配置（Dockerfile×5+compose+helm，默认 disabled）齐备。由 v0.8.0 基线的 🟡 升级为 ✅「已接线就绪」——后端服务进程需部署侧拉起（compose/helm 条目在位），未拉起时聚合层返回 503 明确提示。
+> ¹ **微服务域如实说明（v0.9.0 基线；2026-09-29 更新）**：GPU / Bot / Runbook / Incident / Autoscaler / Portal 共 6 域为产品能力面；其中 5 域以 `services/` 独立微服务形态交付（gpu-svc / runbook-svc / incident-svc / autoscaler-svc / portal-svc，各自独立 go.mod），Bot 域由聚合层 `bot_bridge.go` 独任（原 bot-svc 已于 2026-09-29 删除）。**一体化使用路径已打通（v0.9.0）**：controlplane 聚合层 `service_proxy.go`（五域反向代理：静态映射+env 覆盖+路径改写+鉴权双守卫）与 `bot_bridge.go`（ChatOps Web 命令台）已上线，前端六路由启用，RBAC 12 权限点补种，部署配置（共享 Dockerfile.service × 5 域+compose+helm，默认 disabled）齐备。由 v0.8.0 基线的 🟡 升级为 ✅「已接线就绪」——后端服务进程需部署侧拉起（compose/helm 条目在位），未拉起时聚合层返回 503 明确提示。
 
 > **结论**：v0.9.0 基线下，用户要求的核心运维功能模块中 12 个功能完整（CI 验证中）+ 6 个微服务域已接线就绪（聚合层+前端入口+RBAC+部署配置全通）；"生产可用"结论以 CI 真跑通过为准（见 `DELIVERY.md` §7）。AI 增强能力（AI-03~AI-14 共 12 项，见 `docs/ai-design.md`）为独立规划线，不在上述模块范围内。其他深化能力（如等保三级审计 6 月留存、Vault/KMS 远期轮转）见 §8 路线图。
 
@@ -227,10 +227,10 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | 联邦跨网段 | ✅ | ✅ + 联邦级发布协调 UI |
 | SSO/JWT 集成 | 头注入模式 + JWT（用户中心登录/Cookie/API Key） | ❌ **OIDC/SAML/LDAP 适配器未实现**（2026-10-04 复核：Go 代码零命中，仅 authctx 注释提及"网关校验 OIDC"——指外部网关行为，非本项目实现） |
 | 密钥管理 | Env/File/Vault/KMS provider + 前端 SecretsView UI | 🟡 Vault/KMS 后端已实现（`internal/secrets/`）；**密钥轮转未实现**（全仓无 rotate 实现） |
-| 审计合规 | 100% 留痕 | ✅ + 6 月归档 + 导出 + 等保三级报告 |
+| 审计合规 | 100% 留痕 | ✅ + 6 月归档 + 导出 + 等保三级对照表 |
 | 插件市场 | 🟡 资产分发（注册/下载/SHA256 校验/落盘/启停） | 🟡 同左，**但无执行层**：全仓无代码加载 `plugin.bin`，安装成功≠插件会运行（2026-10-04 复核，2026-10-07 复测仍成立）。市场条目的"装载二进制"与下面的"独立进程插件"是两条不同路径 |
 | 插件扩展（控制面钩子） | ✅ 3 个扩展点可被**独立进程插件**接管（HTTP 契约 + 清单装载：`internal/plugin/remote.go`、`internal/controlplane/pluginhost/remote.go`；契约与用法 `plugins/remote-example/README.md`） | ✅ 同左（本项不分版本）。两个必须写清的前提：① 需显式配 `--plugin-manifest` 并重启，默认部署不启用；② 准入类扩展点 fail-closed——插件不可达时平台配置写入会被拒 400，配套告警 `OpsMeshPluginHookFailed` |
-| 商业支持 | 社区 issue | SLA 保障 + 工单系统 + 专属技术支持 |
+| 商业支持 | 社区 issue | SLA 保障 + 工单系统 + 专属技术支持（**商务洽谈项，未交付**） |
 
 ### 5.3 云服务
 
@@ -254,7 +254,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 |---|---|---|---|
 | 异地机房 | ✅ 强适配 | 控制面联邦 + 跨网段任务转发 | 每地一套控制面，联邦 mTLS + HMAC 签名验签跨段下发，规避单巨型 master |
 | 多数据中心 | ✅ 强适配 | 控制面联邦 + 多集群联邦发布 | 多 DC 统一视图，灰度发布跨 DC 协调 |
-| 电信资源池 | ✅ 核心场景 | 网段纳管 + 联邦 + 裸金属 + 中间件部署 | 单网段 200-2000 台自动纳管，OS 优化模板批量调优，中间件 docker/systemd 双模式 |
+| 电信资源池 | ✅ 核心场景 | 网段纳管 + 联邦 + 裸金属 + 中间件部署 | 单网段 200-2000 台自动纳管（设计目标，压测证据待 P3），OS 优化模板批量调优，中间件 docker/systemd 双模式 |
 | 混合云 | ✅ 强适配 | K8s 管理 + 裸金属 + 联邦 | K8s 集群与裸金属统一纳管，联邦跨云任务转发 |
 | 公有云 | 🟡 适配 | K8s 管理 + 中间件部署 | 不绑定云，云原生集成需自配；K8s 集群接入后可管理 |
 | 私有云 | ✅ 强适配 | 全部能力 | 定位核心场景，数据不出机房，等保三级对照 |
