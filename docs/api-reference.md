@@ -1617,6 +1617,29 @@ M5 作业编排：DAG 创建 / 触发 / 状态查询。
 
 工作流执行历史。
 
+### POST /api/v1/workflows/{id}/runs/{run_id}/replay
+
+重放一次历史执行：以源 run 所属工作流的**当前定义**重新展开执行（与触发同链路），在新 run 记录写入 `originRunID` 血缘（指向被重放的 run；写库后不可变，UpdateRun 不回写该列），源 run 记录不变。
+
+- **认证**：需 `workflow:write` 权限（写操作，与触发同权）
+- **路径参数**：`run_id` 为数字 run ID
+- **响应**：`201 Created`，返回新 `WorkflowRun`（含 `originRunID`；该字段为 0 时省略，即首次运行）
+- 源 run 不存在或不属于该工作流/本租户：`404`（与 `listRuns` 同语义，不泄露他租户存在性）
+- 工作流不属于本租户：`403`；`run_id` 非数字：`400`；非 POST 方法：`405`；其他错误：`500`（错误体均为 JSON `{"error": ...}`）
+
+```json
+{
+  "id": 42,
+  "workflowID": 7,
+  "tenantID": "t1",
+  "startedAt": "2026-11-09T16:30:00Z",
+  "finishedAt": "0001-01-01T00:00:00Z",
+  "status": "running",
+  "nodeStates": {},
+  "originRunID": 17
+}
+```
+
 ---
 
 ## 审批 API
