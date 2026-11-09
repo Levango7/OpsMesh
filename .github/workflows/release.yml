@@ -21,8 +21,7 @@ permissions:
 
 env:
   # 同 ci.yml：GOSUMDB=off（go.sum 钉版入库 + Go 模块完整性本地校验，不依赖 sum.golang.org）
-  # 消除 goproxy.cn ↔ sum.golang.org 间 http2 GOAWAY 对 goreleaser 下载的影响。
-  # 模块仍经 goproxy.cn 完整拉取并以 go.sum 哈希校验，未被放松。
+  # 消除 sum.golang.org tile 侧 GOAWAY 对 goreleaser 下载的影响。
   GOSUMDB: off
   # Docker Hub 凭据（可选，同 ci.yml）：拉基础镜像按 IP 限流，配置后配额提升（TD-89）。
   # 步骤级 if: 不能用 secrets 上下文（actionlint 门禁），故以 env 承载并作判据。
@@ -166,8 +165,7 @@ jobs:
         run: |
           set -euo pipefail
           command -v syft >/dev/null 2>&1 || {
-              export GOPROXY=https://goproxy.cn,direct
-              go install github.com/anchore/syft/cmd/syft@v1.51.1
+                            go install github.com/anchore/syft/cmd/syft@v1.51.1
               echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
               GOPATH_BIN="$(go env GOPATH)/bin"
               export PATH="$GOPATH_BIN:$PATH"
@@ -191,12 +189,10 @@ jobs:
 
       - name: 安装 cosign（go install，钉版 v2.2.4）
         # 口径刻意与 ci.yml 逐字一致（同一取数方式、同一 cosign 版本），避免两条发布路径
-        # 产出不同强度的证据。github release 资产在当前 CI runner 稳定 504 ⇒ 改 go install
-        # + 国内 Go 模块代理（goproxy.cn）；本机已实测 @v2.2.4 编译通过。
+        # 产出不同强度的证据。github release 资产在 CI runner 稳定 504 ⇒ 改 `go install`。
         run: |
           set -euo pipefail
-          export GOPROXY=https://goproxy.cn,direct
-          go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
+                    go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
           GOPATH_BIN="$(go env GOPATH)/bin"
           export PATH="$GOPATH_BIN:$PATH"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"

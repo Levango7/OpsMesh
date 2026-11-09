@@ -198,11 +198,10 @@ jobs:
           SBOM_PREFIX: ${{ inputs.sbom_prefix }}
         run: |
           set -euo pipefail
-          # 取数改用 `go install` + 国内 Go 模块代理（goproxy.cn）：github release 资产在当前
-          # CI runner 上稳定 504；本机已实测 @v1.51.1 编译通过（go1.26.6，goproxy.cn）。钉版本、
-          # 不装 latest。syft 装到 GOPATH/bin，复用件里后续步骤统一从 PATH 取。
-          export GOPROXY=https://goproxy.cn,direct
-          go install github.com/anchore/syft/cmd/syft@v1.51.1
+          # 取数改用 `go install`：github release 资产在 CI runner 稳定 504；
+          # GOSUMDB=off（见 .github/workflows/ci.yml）消除 sum.golang.org 侧的校验随机失败。
+          # 钉版本、不装 latest。syft 装到 GOPATH/bin，复用件里后续步骤统一从 PATH 取。
+                    go install github.com/anchore/syft/cmd/syft@v1.51.1
           GOPATH_BIN="$(go env GOPATH)/bin"
           export PATH="$GOPATH_BIN:$PATH"
           syft version
@@ -222,13 +221,11 @@ jobs:
       # ② GHCR 路径（无密钥）→ keyless，以本 workflow 的 OIDC 身份签名并上传 Rekor 透明日志，零 secret。
       - name: 安装 cosign（go install，钉版 v2.2.4）
         if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
-        # 取数改用 `go install` + 国内 Go 模块代理（goproxy.cn）：github release 资产在当前
-        # CI runner 上稳定 504（sigstore/cosign-installer 内部同样是 curl release 资产，两条 PR
-        # 已实测死在这一步）；本机已实测 @v2.2.4 编译通过（go1.26.6，goproxy.cn）。钉版本。
+        # 取数改用 `go install`：github release 资产在 CI runner 稳定 504；
+        # sigstore/cosign-installer 内部同样是 curl release 资产，不可用。钉版本。
         run: |
           set -euo pipefail
-          export GOPROXY=https://goproxy.cn,direct
-          go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
+                    go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
           GOPATH_BIN="$(go env GOPATH)/bin"
           export PATH="$GOPATH_BIN:$PATH"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -406,8 +403,7 @@ jobs:
           command -v yq >/dev/null 2>&1 || {
             # 钉死 yq v4.40.5，防 latest 供应链漂移。github release 资产在当前 CI runner 稳 504，
             # 改 go install + 国内 Go 模块代理。
-            export GOPROXY=https://goproxy.cn,direct
-            go install github.com/mikefarah/yq/v4/cmd/yq@v4.40.5
+                        go install github.com/mikefarah/yq/v4/cmd/yq@v4.40.5
             GOPATH_BIN="$(go env GOPATH)/bin"
             export PATH="$GOPATH_BIN:$PATH"
             echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
