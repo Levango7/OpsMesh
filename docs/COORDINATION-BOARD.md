@@ -116,7 +116,7 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  internal/cmdb/handler.go,internal/logstore/handler.go,internal/orchestration/handler.go,internal/gates/json_error_body_gate_test.go <- zcode  (ttl=72h by zcode)
+  (无)
 
 TASKS:
   (无)
@@ -131,6 +131,7 @@ ISSUES:
   CLAIM 过期未闭环：internal/controlplane/docker_ops.go,internal/controlplane/container_ops.go,internal/controlplane/distfs_ops.go,pkg/shellquote/quote.go,internal/controlplane/container_injection_test.go,pkg/shellquote/quote_test.go,CHANGELOG.md（认领人 opencode，ttl 8h）
   CLAIM 过期未闭环：internal/controlplane/elk_ops.go,internal/controlplane/elk_ext_ops.go,internal/controlplane/elk_script.go,internal/controlplane/elk_injection_test.go,CHANGELOG.md（认领人 opencode，ttl 8h）
   CLAIM 过期未闭环：internal/controlplane/git_unix_ops.go,internal/controlplane/os_ext_ops.go,internal/controlplane/server_network.go,internal/controlplane/shellquote_security_test.go,internal/controlplane/server_network_extra_test.go,internal/controlplane/coverage_extra_test.go,CHANGELOG.md（认领人 opencode，ttl 6h）
+  CLAIM 过期未闭环：internal/controlplane/kafka_ops.go,internal/controlplane/kafka_ops_ext.go,internal/controlplane/kafka_scale_ops.go,internal/controlplane/kafka_advanced_ops.go,internal/controlplane/kafka_final_ops.go,internal/controlplane/graph_ext_ops.go,internal/controlplane/gpu_ext_ops.go,internal/controlplane/kafka_script.go,internal/controlplane/kafka_injection_test.go,scripts/shell-injection-audit.py,CHANGELOG.md（认领人 opencode，ttl 8h）
   CLAIM 过期未闭环：internal/controlplane/netdiag_ops.go,internal/controlplane/synthetic_ops.go,internal/controlplane/probe_injection_test.go,scripts/shell-injection-audit.py,CHANGELOG.md（认领人 opencode，ttl 8h）
   CLAIM 过期未闭环：internal/controlplane/os_ext_ops.go（认领人 opencode，ttl 12h）
   CLAIM 过期未闭环：internal/controlplane/shellquote_security_test.go（认领人 opencode，ttl 12h）
