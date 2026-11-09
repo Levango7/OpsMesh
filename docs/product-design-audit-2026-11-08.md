@@ -68,3 +68,8 @@ sed -n '50,70p' internal/controlplane/factory/server_factory.go
 # 门禁（改动 product-design/README 后必跑）
 go test ./internal/gates/ -run 'TestCapability|TestDocPaths'
 ```
+## 六、收口记录（2026-11-09，qoder）
+
+- **D1 已实现**：`POST /api/v1/workflows/{id}/runs/{run_id}/replay`（`internal/orchestration/handler.go` replayRun → `ReplayRun` → `trigger(..., originRunID)`）；血缘列 `workflow_runs.origin_run_id` 建表即含 + 旧库幂等 ALTER 兜底（`internal/orchestration/sql.go`，模式同 `internal/deploy/sql.go` 的 isDupColumnErr）；`OriginRunID` 仅 `ReplayRun` 写入、`UpdateRun` 不回写 ⇒ 不可变；origin 按租户过滤查找，跨租户/不存在一律 404 不泄露存在性。测试 `internal/orchestration/replay_test.go` 4 组（血缘建立/不可变/origin 缺失与跨租户/HTTP 形态 201/404/400/405）。变异验证：把 `OriginRunID: originRunID` 改为 0 ⇒ 3 例红，恢复后绿。§五的 D1 grep 命令现已命中实现（预期变化）。
+- **D2 已接线**：`NewDeployHandler` 两分支统一经 `newDeployHandlerWired` 装配 AutoAdvanceManager（`internal/controlplane/factory/server_factory.go`）；`POST /auto-advance` 同步预检（404/400）后 202 异步推进（`internal/deploy/auto_advance.go`）。测试 `TestNewDeployHandler_AutoAdvanceWired` 断言 404 + body 含 "deploy 999"（未接线时恒 501）。变异验证：删装配块 ⇒ 该例红，恢复后绿。§五的 D2 grep 命令现已命中装配点（预期变化）。
+- **W1-W5 措辞**已按上表更新（product-design.md 审计合规/商业支持/脚注¹/电信资源池/§3.3 审计 五行）；README:232/241 的 D2/D1 宣称由「✅ 但未接线/❌ 未实现」转为真实现并补证据锚点；README:1044 登记按审计单 §三不动。

@@ -433,9 +433,23 @@ func (m *AutoAdvanceManager) ServeHTTP(w http.ResponseWriter, r *http.Request, d
 	case "auto-advance":
 		switch r.Method {
 		case http.MethodPost:
-			// 启动自动推进（异步 goroutine）。
+			// 同步预检（2026-11-09 深度复核批修复）：部署不存在/不在灰度阶段须当场返回，
+			// 不得先回 202「started」再让 goroutine 里 Monitor 预检失败、错误被静默吞掉。
+			dt, err := m.deploys.Get(r.Context(), deployID, tenantID)
+			if err != nil {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("deploy %d: %v", deployID, err)})
+				return
+			}
+			if dt.EffectiveStrategy() != StrategyCanary {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("auto-advance only supports canary strategy, got %s", dt.EffectiveStrategy())})
+				return
+			}
+			if dt.Status != StatusCanary && dt.Status != StatusGated {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("deploy %d not in canary stage (status=%s), cannot monitor", deployID, dt.Status)})
+				return
+			}
+			// 启动自动推进（异步 goroutine；Monitor 内仍带权威预检，防同步预检后状态漂移）。
 			ctx, cancel := context.WithCancel(context.Background())
-			_ = tenantID // tenantID 校验由 Get 隐式完成（空串=管理员视角）
 			go func() {
 				defer cancel()
 				if err := m.Monitor(ctx, deployID); err != nil && err != ErrAlreadyMonitoring {

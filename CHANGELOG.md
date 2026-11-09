@@ -4,6 +4,7 @@
 
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+
 ## [Unreleased-SSE 取消帧契约] — 2026-11-08（task_cancel 补进前端事件契约 + 取消即时刷新，issue #16）
 
 - **真缺陷（客户可见面）**：服务端 `internal/controlplane/server_tasks.go` 的 `publishTaskCancel` 发
@@ -21,6 +22,27 @@
   （`internal/controlplane/grpc/grpc.go` 实发 `deviceID/segment/agentID/hostname`）。
 - 测试：`sse.test.js` 新增 task_cancel 帧解析 + 契约在位/字段校验（缺 `agentID` 拒绝）两例，
   契约枚举断言 10 → 11 种（本地 **17/17 通过**）。
+
+## [Unreleased-复核批执行] — 2026-11-09（深度复核批执行：D1 执行历史回放实现 + D2 灰度自适应推进生产接线 + W1-W5 文档措辞）
+
+- **D1 执行历史回放（此前 README 登记为 ❌「有历史无回放」）**：新增
+  `POST /api/v1/workflows/{id}/runs/{run_id}/replay`（`internal/orchestration/handler.go`
+  replayRun → `ReplayRun` → 内部 `trigger(..., originRunID)`）。以历史运行为血缘起点重放：
+  新 run 的 `origin_run_id` 指向原 run（`WorkflowRun.OriginRunID`），写库后不可变
+  （`UpdateRun` 不回写该列）；origin 按租户过滤查找，原 run 不存在或跨租户一律 404，不泄露存在性。
+  `workflow_runs` 为代码自建表，`origin_run_id` 列建表即含 + 旧库幂等 ALTER 兜底
+  （`isDupColumnErr` 容忍 1060，模式同 `internal/deploy/sql.go`）。测试
+  `internal/orchestration/replay_test.go` 4 组（血缘建立/不可变/origin 缺失与跨租户/HTTP 形态
+  201/404/400/405）；变异验证：断血缘写 ⇒ 3 例红，恢复后绿。
+- **D2 灰度指标自适应推进（实现齐全但生产未接线，`POST /auto-advance` 恒 501）**：
+  `NewDeployHandler` 两分支统一经 `newDeployHandlerWired` 装配 `AutoAdvanceManager`
+  （`internal/controlplane/factory/server_factory.go`）；端点先做同步预检（404/400）再 202 异步推进
+  （`internal/deploy/auto_advance.go`）。测试 `TestNewDeployHandler_AutoAdvanceWired` 断言 404 +
+  body 含 "deploy 999"（未接线时恒 501）；变异验证：删装配块 ⇒ 该例红，恢复后绿。
+- **W1-W5 文档措辞**（`docs/product-design.md`）：等保三级报告→对照表；商业支持标注
+  「商务洽谈项，未交付」；Dockerfile×5→共享 Dockerfile.service × 5 域；单网段 200-2000 台加注
+  「设计目标，压测证据待 P3」；审计 6 月留存规划→已实现（默认 180 天，可调）。
+  README 编排部署/工作流两行的 D1/D2 宣称随实现转正并补证据锚点。
 
 ## [Unreleased-ELK面收口] — 2026-11-08（ELK/Elasticsearch 运维面：39 处用户字段未转义直插 → URL/JSON/回显三类整体 Quote）
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -47,11 +48,22 @@ func (s *SQLWorkflowStore) initSchema(ctx context.Context) error {
 			started_at DATETIME NOT NULL,
 			finished_at DATETIME,
 			status VARCHAR(16) NOT NULL,
-			node_states MEDIUMTEXT
+			node_states MEDIUMTEXT,
+			origin_run_id BIGINT NOT NULL DEFAULT 0
 		)`); err != nil {
 		return fmt.Errorf("建 workflow_runs 表失败: %w", err)
 	}
+	// 兼容旧表：幂等补回放血缘列（已存在则忽略 1060 错误）。
+	// 与 internal/deploy/sql.go 的自建表补列模式一致（MySQL 无 ADD COLUMN IF NOT EXISTS）。
+	if _, e := s.db.ExecContext(ctx, `ALTER TABLE workflow_runs ADD COLUMN origin_run_id BIGINT NOT NULL DEFAULT 0`); e != nil && !isDupColumnErr(e) {
+		return fmt.Errorf("补 workflow_runs.origin_run_id 列失败: %w", e)
+	}
 	return nil
+}
+
+// isDupColumnErr 判断是否为"列已存在"错误（MySQL 1060 / Duplicate column）。
+func isDupColumnErr(e error) bool {
+	return e != nil && (strings.Contains(e.Error(), "1060") || strings.Contains(e.Error(), "Duplicate column"))
 }
 
 const wfCols = "id, name, agent_id, tenant_id, dag, cron, status, last_run_at, last_run_status, created_at, updated_at"
@@ -222,9 +234,9 @@ func (s *SQLWorkflowStore) CreateRun(ctx context.Context, run *WorkflowRun) erro
 		return fmt.Errorf("WorkflowStore.CreateRun marshal nodeStates: %w", err)
 	}
 	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO workflow_runs (workflow_id, tenant_id, started_at, finished_at, status, node_states)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		run.WorkflowID, run.TenantID, run.StartedAt, nullTime(run.FinishedAt), run.Status, string(statesJSON))
+		INSERT INTO workflow_runs (workflow_id, tenant_id, started_at, finished_at, status, node_states, origin_run_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		run.WorkflowID, run.TenantID, run.StartedAt, nullTime(run.FinishedAt), run.Status, string(statesJSON), run.OriginRunID)
 	if err != nil {
 		return fmt.Errorf("WorkflowStore.CreateRun: %w", err)
 	}
@@ -238,7 +250,7 @@ func (s *SQLWorkflowStore) CreateRun(ctx context.Context, run *WorkflowRun) erro
 
 // ListRuns 列出指定工作流的运行历史（按 ID 升序），支持租户隔离（MySQL 后端）。
 func (s *SQLWorkflowStore) ListRuns(ctx context.Context, workflowID int64, tenantID string) ([]WorkflowRun, error) {
-	q := `SELECT id, workflow_id, tenant_id, started_at, finished_at, status, node_states FROM workflow_runs WHERE workflow_id=?`
+	q := `SELECT id, workflow_id, tenant_id, started_at, finished_at, status, node_states, origin_run_id FROM workflow_runs WHERE workflow_id=?`
 	args := []interface{}{workflowID}
 	if tenantID != "" {
 		q += ` AND tenant_id=?`
@@ -255,7 +267,7 @@ func (s *SQLWorkflowStore) ListRuns(ctx context.Context, workflowID int64, tenan
 		var r WorkflowRun
 		var finishedAt sql.NullTime
 		var nodeStates sql.NullString
-		if err := rows.Scan(&r.ID, &r.WorkflowID, &r.TenantID, &r.StartedAt, &finishedAt, &r.Status, &nodeStates); err != nil {
+		if err := rows.Scan(&r.ID, &r.WorkflowID, &r.TenantID, &r.StartedAt, &finishedAt, &r.Status, &nodeStates, &r.OriginRunID); err != nil {
 			return nil, fmt.Errorf("WorkflowStore.ListRuns scan: %w", err)
 		}
 		if finishedAt.Valid {

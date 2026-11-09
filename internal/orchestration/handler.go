@@ -127,7 +127,13 @@ func (h *Handler) handleWorkflowByID(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(parts) >= 2 && parts[1] == "run":
 		h.runWorkflow(w, r, id, actx.TenantID)
-	case len(parts) >= 2 && parts[1] == "runs":
+	case len(parts) >= 2 && (parts[1] == "runs" || strings.HasPrefix(parts[1], "runs/")):
+		// /runs/{run_id}/replay 子路径优先于 /runs 列表（parts[1] 形如 "runs/12/replay"）。
+		rp := strings.SplitN(parts[1], "/", 3)
+		if len(rp) == 3 && rp[2] == "replay" {
+			h.replayRun(w, r, id, rp[1], actx.TenantID)
+			return
+		}
 		h.listRuns(w, r, id, actx.TenantID)
 	case len(parts) >= 2 && parts[1] == "schedule":
 		h.scheduleWorkflow(w, r, id, actx.TenantID)
@@ -251,16 +257,23 @@ const maxExpandDepth = 10
 // Trigger 展开工作流 DAG 为底层任务（不重复校验，调用方负责权限/存在性）。
 // 支持 shell/file/service（直接展开）/ workflow（递归展开子工作流）/ condition（求值条件分支）。
 func (h *Handler) Trigger(ctx context.Context, id int64, tenantID string) (*WorkflowDef, error) {
+	wf, _, err := h.trigger(ctx, id, tenantID, 0)
+	return wf, err
+}
+
+// trigger 是 Trigger / ReplayRun 的共同实现：originRunID=0 为首次运行，
+// >0 为回放（写入 WorkflowRun.OriginRunID 血缘）。返回本次创建的 WorkflowRun。
+func (h *Handler) trigger(ctx context.Context, id int64, tenantID string, originRunID int64) (*WorkflowDef, *WorkflowRun, error) {
 	wf, err := h.store.Get(ctx, id, tenantID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	nodes, err := wf.Nodes()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := dag.Validate(toProtoTasks(nodes)); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	parent := "wf:" + strconv.FormatInt(wf.ID, 10)
 	prefix := "wf-" + strconv.FormatInt(wf.ID, 10) + "-"
@@ -275,7 +288,7 @@ func (h *Handler) Trigger(ctx context.Context, id int64, tenantID string) (*Work
 	}
 
 	if err := h.expandNodes(ctx, wf, nodes, prefix, parent, 0, nil, nodeStatuses); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	now := time.Now()
@@ -283,7 +296,7 @@ func (h *Handler) Trigger(ctx context.Context, id int64, tenantID string) (*Work
 	wf.LastRunAt = now
 	wf.LastRunStatus = StatusRunning
 	if err := h.store.Update(ctx, wf); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// 创建一条 WorkflowRun 记录本次运行（执行历史与回放）。
@@ -295,14 +308,46 @@ func (h *Handler) Trigger(ctx context.Context, id int64, tenantID string) (*Work
 		}
 	}
 	run := &WorkflowRun{
-		WorkflowID: wf.ID,
-		TenantID:   wf.TenantID,
-		StartedAt:  now,
-		Status:     StatusRunning,
-		NodeStates: nodeStates,
+		WorkflowID:  wf.ID,
+		TenantID:    wf.TenantID,
+		StartedAt:   now,
+		Status:      StatusRunning,
+		NodeStates:  nodeStates,
+		OriginRunID: originRunID,
 	}
 	_ = h.store.CreateRun(ctx, run) // 历史记录写入失败不影响主流程
-	return wf, nil
+	return wf, run, nil
+}
+
+// ReplayRun 重放一次历史运行：以源 run 所属的工作流定义重新展开执行（与 Trigger 同链路），
+// 并在新 run 记录写入 origin_run_id 血缘（指向被重放的 run；写库后不可变）。
+// 源 run 不存在（或不属于该工作流/租户）返回 ErrWFNotFound。
+// CreateRun 失败时任务虽已展开但血缘无法落库，返回错误而非静默返回无 ID 的 run。
+func (h *Handler) ReplayRun(ctx context.Context, workflowID, originRunID int64, tenantID string) (*WorkflowRun, error) {
+	runs, err := h.store.ListRuns(ctx, workflowID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	var origin *WorkflowRun
+	for i := range runs {
+		if runs[i].ID == originRunID {
+			origin = &runs[i]
+			break
+		}
+	}
+	if origin == nil {
+		return nil, ErrWFNotFound
+	}
+	logx.Info(ctx, "orchestration: 重放历史运行", "workflowID", workflowID,
+		"originRunID", origin.ID, "originStatus", origin.Status)
+	_, run, err := h.trigger(ctx, workflowID, tenantID, originRunID)
+	if err != nil {
+		return nil, err
+	}
+	if run.ID == 0 {
+		return nil, fmt.Errorf("replay run %d: run history write failed (lineage not persisted)", originRunID)
+	}
+	return run, nil
 }
 
 // expandNodes 递归展开工作流节点为底层任务。
@@ -633,6 +678,34 @@ func (h *Handler) listRuns(w http.ResponseWriter, r *http.Request, id int64, ten
 		runs = []WorkflowRun{}
 	}
 	writeJSON(w, http.StatusOK, runs)
+}
+
+// replayRun POST /api/v1/workflows/{id}/runs/{run_id}/replay：重放一次历史执行。
+// 以源 run 所属工作流的当前定义重新展开执行，新 run 记录 originRunID 血缘（不可变）。
+// 源 run 不存在/不属于该工作流/租户 → 404（与 listRuns 语义一致，不泄露他租户存在性）。
+func (h *Handler) replayRun(w http.ResponseWriter, r *http.Request, workflowID int64, runIDStr, tenantID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	runID, err := strconv.ParseInt(runIDStr, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid run id"})
+		return
+	}
+	run, err := h.ReplayRun(r.Context(), workflowID, runID, tenantID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch err {
+		case ErrWFNotFound:
+			status = http.StatusNotFound
+		case ErrWFTenantMismatch:
+			status = http.StatusForbidden
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, run)
 }
 
 // Reconcile 依据底层节点任务状态翻工作流最近运行终态：
