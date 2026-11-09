@@ -37,17 +37,19 @@ jobs:
         # secret 缺失导致 job 空转绿 / 发布模板只在发版那一刻才执行）。其中 `github.run_date` 这个
         # **根本不存在的表达式**，actionlint 本机一跑即报（2026-09-26 实测：全部 workflow 0 问题）。
         # 只在本机跑等于没有门禁——workflow 是交付物的一部分，必须在 CI 里被检查。
-        # 版本钉死并校验下载：不装 latest，避免门禁自身成为供应链入口。
+        # 取数改用 `go install` + 国内 Go 模块代理（goproxy.cn，与 kubeconform / gosec / govulncheck
+        # 同一信道）：2026-11-09 起 github.com release 资产在 CI runner 上稳定 504（同一颗 `curl
+        # .../actionlint_...tar.gz` 连续死了四次，含两次 rerun），而 goproxy.cn 对本环境持续可用。
+        # 钉版本、不装 latest。本机已实测：GOPROXY=goproxy.cn,direct go install ...@v1.7.7 一次通过。
         run: |
           set -euo pipefail
-          ver=1.7.7
-          curl -sSfL -o /tmp/actionlint.tgz \
-            "https://github.com/rhysd/actionlint/releases/download/v${ver}/actionlint_${ver}_linux_amd64.tar.gz"
-          tar -xzf /tmp/actionlint.tgz -C /tmp actionlint
-          /tmp/actionlint -version
+          export GOPROXY=https://goproxy.cn,direct
+          GOBIN="$(go env GOPATH)/bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          actionlint -version
           # 不带参数 = 检查仓库内全部 workflow（显式写 *.yml 会漏掉 *.yaml，且 glob 不匹配时
           # 命令本身报错，容易写成"失败被 || 吞掉"的假门禁）。
-          /tmp/actionlint -color=false
+          actionlint -color=false
       - name: Verify internal package count (H4 防回归)
         run: |
           ACTUAL=$(find internal -maxdepth 1 -type d | tail -n +2 | wc -l)
@@ -59,15 +61,19 @@ jobs:
             exit 1
           fi
           echo "✅ internal 包数一致 ($ACTUAL)"
-      - name: golangci-lint (聚合静态分析)
-        uses: golangci/golangci-lint-action@v9
-        with:
-          # 默认读取仓库根 .golangci.yml；args 限定扫描范围为全仓。
-          args: ./...
-          # 钉版本：action 默认 latest（曾用 v2.13.2），新版 lint 规则集会漂移
-          # （v2.6→v2.13 曾新增 G702/G703 报点、SA1019 消息格式变化），导致
-          # 本机验证通过 CI 仍红。钉死后本机/CI 用同一版本，豁免规则稳定生效。
-          version: v2.13.2
+      - name: golangci-lint (聚合静态分析，钉版 v2.13.2)
+        # 与 services job 的逐模块 lint 同版同信道（v2.13.2，go install + goproxy.cn）。
+        # 取数改用 go install + 国内 Go 模块代理：github release 在 CI runner 稳定 504，
+        # golangci-lint-action 默认从 github release 下载同一产物，同样失效。
+        run: |
+          set -euo pipefail
+          export GOPROXY=https://goproxy.cn,direct
+          GOBIN="$(go env GOPATH)/bin" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          # 钉死 v2.13.2，防止新版 lint 规则集漂移（v2.6→v2.13 曾新增 G702/G703 报点、
+          # SA1019 消息格式变化——本机验证通过仍把 CI 判红）。与 action 行为等价：
+          # 默认读取仓库根 .golangci.yml；根 ./... 全仓。
+          golangci-lint run ./...
       - name: Gofmt
         run: test -z "$(gofmt -l .)"
       - name: 判据自测（TD-80 重试判据 ci-infra-death.sh）
@@ -328,41 +334,18 @@ jobs:
         # 2026-09-29 因单体 orchestration 覆盖而删除，门禁对存量服务的价值不变）。
         run: |
           set -euo pipefail
-          # 为什么不再用 `go install github.com/golangci/...@v2.13.2`：那一步要在 runner 上
-          # **现编译整个 linter**，顺带把它自己的整张依赖图过一遍公网（连 charmbracelet/ultraviolet
-          # → x/windows 这种在 linux 上根本用不到的包也要拉）。2026-10-07 run 37638185377 里
-          # proxy.golang.org 读 zip 断流（stream error: INTERNAL_ERROR，卡了 2 分钟）就把这条
-          # 「12 个模块 build/vet/lint/race」的腿整体判红，而那次提交的 Go 码一行都没改——
-          # 同一颗提交重跑（attempt 2）即绿。门禁工具的取数方式不该是单点故障。
-          # 现在改成与本文件上面 actionlint 那步同构：钉版本 + 钉 sha256 + 取预编译产物，
-          # 有界重试只作用于这一颗产物，不再作用于整张依赖图。
-          # sha256 出处：release 自带的 golangci-lint-2.13.2-checksums.txt 里
-          # golangci-lint-2.13.2-linux-amd64.tar.gz 那一行（经 api.github.com 的 asset 接口取回并
-          # 按 `awk '$2==名称'` 精确取列，不是手抄）。产物与摘要同信道 ⇒ 摘要挡的是"下载被截断/被换"；
-          # 若上游重新打包，本步直接红（可发现），不会静默放行，另有一道版本断言作异源判据。
-          # 架构前提：ubuntu-latest 是 linux/amd64；换架构要同时换 tarball 名与 gll_sha。
-          gll_ver=2.13.2
-          gll_sha=2277d43b98ec0054280f2ac26b53268bae97682444678a59a657dd565da021d6
-          gll_tar="golangci-lint-${gll_ver}-linux-amd64.tar.gz"
-          curl -sSfL --retry 3 --retry-delay 5 -o "/tmp/${gll_tar}" \
-            "https://github.com/golangci/golangci-lint/releases/download/v${gll_ver}/${gll_tar}" \
-            || { echo "::error::下载 ${gll_tar} 失败（已重试 3 次）——这是取数失败，不是代码问题"; exit 1; }
-          # 把**实测**摘要打出来（不是把钉值再念一遍）：CI 日志因此自带可审计的复算凭证，
-          # 而本机拿不到完整产物（release asset 直链被重置、api 取 15.4MB 四次分别截在
-          # 10.7/13.4/12.2/0 MB），所以"第一次独立复算"就是这一跑。
-          echo "实测 sha256=$(sha256sum "/tmp/${gll_tar}" | cut -d' ' -f1)  size=$(wc -c < "/tmp/${gll_tar}")"
-          printf '%s  %s\n' "$gll_sha" "/tmp/${gll_tar}" | sha256sum -c - \
-            || { echo "::error::${gll_tar} 的 sha256 与钉死值不符：别改这个值去迁就下载，先确认上游是否重新打过包"; exit 1; }
-          mkdir -p /tmp/gll-extract
-          tar -xzf "/tmp/${gll_tar}" -C /tmp/gll-extract
-          gll_bin="$(find /tmp/gll-extract -type f -name golangci-lint -print -quit)"
-          [ -n "$gll_bin" ] || { echo "::error::tar 包里没有 golangci-lint 可执行文件，解压布局与预期不符"; exit 1; }
-          GOBIN="$(go env GOPATH)/bin"
-          mkdir -p "$GOBIN"
-          cp -f "$gll_bin" "${GOBIN}/golangci-lint"
-          chmod 0755 "${GOBIN}/golangci-lint"
-          export PATH="${GOBIN}:$PATH"
-          glv="$(golangci-lint version 2>&1)"; grep -q "$gll_ver" <<<"$glv" || { echo "::error::golangci-lint 版本不是钉死的 ${gll_ver}"; exit 1; }
+          # 取数改用 `go install` + 国内 Go 模块代理（goproxy.cn，与本 job 的 build/vet 依赖下载
+          # 同一信道，也与 kubeconform / gosec / govulncheck 的取用方式一致）：
+          # 2026-11-09 起 github.com release 资产在 CI runner 上稳定 504（同一份 golangci-lint
+          # tarball 连续死了三次，含两次 rerun），原先 pin sha256 的预编译 tarball 路线不可行了。
+          # 钉版本、不装 latest；go 相关产物经 goproxy.cn 拉取（本机已实测：@v2.13.2 一次编译通过）。
+          # 注：gosec / govulncheck / kubeconform 也一直用 go install 取数，go 代理不可用时整个
+          # services 腿会在 build 阶段就先红——所以只修这一步就够。
+          gll_ver=v2.13.2
+          export GOPROXY=https://goproxy.cn,direct
+          GOBIN="$(go env GOPATH)/bin" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${gll_ver}
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          glv="$(golangci-lint version 2>&1)"; grep -q "2.13.2" <<<"$glv" || { echo "::error::golangci-lint 版本不是钉死的 2.13.2"; exit 1; }
           # 服务子模块用独立配置（根 .golangci.yml 的 path 豁免按根模块相对路径编写，
           # 会与 services/<svc> 自己的 internal/... 误配对；理由与规则集见该文件头注释）。
           CONFIG="$(git rev-parse --show-toplevel)/.golangci.services.yml"
@@ -587,24 +570,18 @@ jobs:
           #   ② deploy.sh 的 PASSWORD_SPECIAL_CHARS 声明了口令字符集，但生成器走 openssl rand -base64
           #      （字母表含 '/'）——常量从未被引用；
           #   ③ .env 的 chmod 失败时（无 POSIX 权限的文件系统）仍无条件自称"权限 0600"。
-          # 取二进制而不是 docker 镜像：本机 Docker 配了镜像白名单代理拉不到 shellcheck-alpine，
-          # runner 侧则要吃 Docker Hub 匿名限额——同一个门禁不该有两种环境失效方式。
-          # 下载带退避重试（§20.5 的教训：一次代理截断 = 整批门禁失败）。
+          # 改用 koalaman 官方 shellcheck-alpine 镜像（v0.10.0）：github release 资产在当前 CI
+          # runner 稳定 504（curl .../shellcheck-...tar.xz 重试 5 次必死）。runner 侧 docker
+          # 拉取 docker.io 是通的（buf/helm 门禁已在册、mysql/redis 镜像服务成功启动）——镜像 tag
+          # 与钉版一致，这是唯一还要过 docker 出来的一颗门禁。
           set -euo pipefail
           ver=0.10.0
-          url="https://github.com/koalaman/shellcheck/releases/download/v${ver}/shellcheck-v${ver}.linux.x86_64.tar.xz"
-          for i in 1 2 3 4 5; do
-              if curl -sSfL --max-time 120 -o /tmp/sc.tar.xz "$url"; then break; fi
-              if [ "$i" = 5 ]; then echo "::error::shellcheck 下载连续 5 次失败：不是抖动，是真取不到"; exit 1; fi
-              sleep $((i * 5))
-          done
-          tar -xJf /tmp/sc.tar.xz -C /tmp
-          SC="/tmp/shellcheck-v${ver}/shellcheck"
-          "$SC" --version | head -3
+          sc() { docker run --rm -v "$PWD:/work" -w /work koalaman/shellcheck-alpine:v${ver} shellcheck "$@"; }
+          sc --version | head -3
           # 断言版本：下到别的版本 = 门禁强度变了却看不出来。
           # 注意输出格式（本机 v0.10.0 实测）：首行是 "ShellCheck - shell script analysis tool"，
           # 版本在第二行 "version: 0.10.0"——按 "ShellCheck 0.10.0" grep 永远不匹配。
-          scv="$("$SC" --version 2>&1)"; grep -q "version: ${ver}" <<<"$scv" || { echo "::error::shellcheck 版本不是钉死的 ${ver}"; exit 1; }
+          scv="$(sc --version 2>&1)"; grep -q "version: ${ver}" <<<"$scv" || { echo "::error::shellcheck 版本不是钉死的 ${ver}"; exit 1; }
           mapfile -t SH < <(git ls-files '*.sh')
           if [ "${#SH[@]}" -eq 0 ]; then
               echo "::error::git ls-files 未返回任何 .sh —— 门禁空转，不等于「脚本都干净」"
@@ -614,7 +591,7 @@ jobs:
           # verify-runtime 39×SC2015、validate-deploy-assets SC2012/SC2015、deploy.sh 2×SC2016、
           # verify-release-artifacts SC2086——"0 findings"此前只对 warning 档成立，门禁名不副实。
           # 清零后档位收到 info；style 级仍不设卡（格式化偏好不进交付门禁）。
-          "$SC" -S info "${SH[@]}"
+          sc -S info "${SH[@]}"
           echo "✅ ${#SH[@]} 个交付脚本在 shellcheck -S info 下 0 findings"
       - name: 部署资产一致性门禁
         run: |
@@ -855,11 +832,13 @@ jobs:
         # 钉死 syft v1.51.1（2026 最新稳定版），防 latest 供应链漂移。
         # v1.11.0（2024 版）实测不认 goreleaser v2.18.0 默认传的 --enrich all
         # 旗标（"unknown flag: --enrich"）——两个工具版本必须同代。
+        # 取数改用 `go install` + 国内 Go 模块代理（goproxy.cn）：github release 资产在当前
+        # CI runner 上稳定 504；本机已实测 @v1.51.1 编译通过（go1.26.6，goproxy.cn）。
         run: |
-          curl -sSL https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz \
-            -o /tmp/syft.tar.gz
-          tar -xzf /tmp/syft.tar.gz -C /tmp syft
-          sudo mv /tmp/syft /usr/local/bin/syft
+          set -euo pipefail
+          export GOPROXY=https://goproxy.cn,direct
+          GOBIN="$(go env GOPATH)/bin" go install github.com/anchore/syft/cmd/syft@v1.51.1
+          export PATH="$(go env GOPATH)/bin:$PATH"
           syft version
       - uses: goreleaser/goreleaser-action@v7
         with:
@@ -876,11 +855,18 @@ jobs:
       # --tlog-upload=false：不上传透明日志（内网/无 OIDC 场景）；
       # cosign attach signature 把签名附加到 GitHub Release 资产。
       # cosign 安装：官方 installer action，钉死 commit + 版本，内部链式校验（防供应链投毒）。
-      - name: 安装 cosign（官方 installer，钉死 commit）
+      - name: 安装 cosign（go install，钉版 v2.2.4）
         if: env.COSIGN_PRIVATE_KEY != ''
-        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
-        with:
-          cosign-release: 'v2.2.4'
+        # 取数改用 `go install` + 国内 Go 模块代理（goproxy.cn）：github release 资产在当前
+        # CI runner 上稳定 504（sigstore/cosign-installer 内部同样是 curl 下 release 资产，
+        # 两条 PR 已实测死在这一步）；本机已实测 @v2.2.4 编译通过（go1.26.6，goproxy.cn）。
+        # 钉版本、不装 latest。
+        run: |
+          set -euo pipefail
+          export GOPROXY=https://goproxy.cn,direct
+          GOBIN="$(go env GOPATH)/bin" go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          cosign version
       - name: cosign 签名 goreleaser 产物
         if: env.COSIGN_PRIVATE_KEY != ''
         env:

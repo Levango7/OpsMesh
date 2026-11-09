@@ -198,11 +198,12 @@ jobs:
           SBOM_PREFIX: ${{ inputs.sbom_prefix }}
         run: |
           set -euo pipefail
-          command -v syft >/dev/null 2>&1 || {
-            curl -sSL https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz -o /tmp/syft.tar.gz
-            tar -xzf /tmp/syft.tar.gz -C /tmp syft
-            sudo mv /tmp/syft /usr/local/bin/syft
-          }
+          # 取数改用 `go install` + 国内 Go 模块代理（goproxy.cn）：github release 资产在当前
+          # CI runner 上稳定 504；本机已实测 @v1.51.1 编译通过（go1.26.6，goproxy.cn）。钉版本、
+          # 不装 latest。syft 装到 GOPATH/bin，复用件里后续步骤统一从 PATH 取。
+          export GOPROXY=https://goproxy.cn,direct
+          GOBIN="$(go env GOPATH)/bin" go install github.com/anchore/syft/cmd/syft@v1.51.1
+          export PATH="$(go env GOPATH)/bin:$PATH"
           syft version
           syft "${IMAGE}" -o spdx-json > "sbom-${SBOM_PREFIX}-${GITHUB_SHA}.spdx.json"
           python3 -c 'import json,sys; ps=(json.load(open(sys.argv[1])) or {}).get("packages") or []; sys.exit("SPDX packages 为空——SBOM 没抓到任何组件，判红（空证据比没证据更坏）") if not ps else print("SBOM 包条目数:", len(ps))' "sbom-${SBOM_PREFIX}-${GITHUB_SHA}.spdx.json"
@@ -218,11 +219,18 @@ jobs:
       # 供应链安全：对推送的镜像做 cosign 签名，两条互斥路径：
       # ① 私有路径（COSIGN_PRIVATE_KEY 已配置）→ key-based，--tlog-upload=false（内网无 OIDC 场景）。
       # ② GHCR 路径（无密钥）→ keyless，以本 workflow 的 OIDC 身份签名并上传 Rekor 透明日志，零 secret。
-      - name: 安装 cosign（官方 installer，钉死 commit）
+      - name: 安装 cosign（go install，钉版 v2.2.4）
         if: env.COSIGN_PRIVATE_KEY != '' || steps.check.outputs.mode == 'ghcr'
-        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
-        with:
-          cosign-release: 'v2.2.4'
+        # 取数改用 `go install` + 国内 Go 模块代理（goproxy.cn）：github release 资产在当前
+        # CI runner 上稳定 504（sigstore/cosign-installer 内部同样是 curl release 资产，两条 PR
+        # 已实测死在这一步）；本机已实测 @v2.2.4 编译通过（go1.26.6，goproxy.cn）。钉版本。
+        run: |
+          set -euo pipefail
+          export GOPROXY=https://goproxy.cn,direct
+          GOBIN="$(go env GOPATH)/bin" go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          cosign version
       - name: cosign 签名镜像（key-based，私有仓库路径）
         if: env.COSIGN_PRIVATE_KEY != ''
         env:
@@ -394,9 +402,12 @@ jobs:
         run: |
           echo "pinned tag = ${TAG}, digest = ${DIGEST}"
           command -v yq >/dev/null 2>&1 || {
-            # 钉死 yq v4.40.5，防 latest 供应链漂移
-            curl -sSL https://github.com/mikefarah/yq/releases/download/v4.40.5/yq_linux_amd64 -o /usr/local/bin/yq
-            chmod +x /usr/local/bin/yq
+            # 钉死 yq v4.40.5，防 latest 供应链漂移。github release 资产在当前 CI runner 稳 504，
+            # 改 go install + 国内 Go 模块代理。
+            export GOPROXY=https://goproxy.cn,direct
+            GOBIN="$(go env GOPATH)/bin" go install github.com/mikefarah/yq/v4/cmd/yq@v4.40.5
+            export PATH="$(go env GOPATH)/bin:$PATH"
+            echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           }
           git config --global user.email "ci@opsmesh"
           git config --global user.name "OpsMesh CI"

@@ -162,9 +162,10 @@ jobs:
         run: |
           set -euo pipefail
           command -v syft >/dev/null 2>&1 || {
-              curl -sSfL "https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz" -o /tmp/syft.tar.gz
-              tar -xzf /tmp/syft.tar.gz -C /tmp syft
-              sudo mv /tmp/syft /usr/local/bin/syft
+              export GOPROXY=https://goproxy.cn,direct
+              GOBIN="$(go env GOPATH)/bin" go install github.com/anchore/syft/cmd/syft@v1.51.1
+              echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+              export PATH="$(go env GOPATH)/bin:$PATH"
           }
           syft version
           syft "${{ steps.meta.outputs.image }}:${{ github.sha }}" -o spdx-json > "sbom-${{ matrix.service }}-${GITHUB_SHA}.spdx.json"
@@ -183,10 +184,17 @@ jobs:
           path: sbom-${{ matrix.service }}-${{ github.sha }}.*.json
           retention-days: 30
 
-      - name: 安装 cosign（官方 installer，钉死 commit）
-        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
-        with:
-          cosign-release: 'v2.2.4'
+      - name: 安装 cosign（go install，钉版 v2.2.4）
+        # 口径刻意与 ci.yml 逐字一致（同一取数方式、同一 cosign 版本），避免两条发布路径
+        # 产出不同强度的证据。github release 资产在当前 CI runner 稳定 504 ⇒ 改 go install
+        # + 国内 Go 模块代理（goproxy.cn）；本机已实测 @v2.2.4 编译通过。
+        run: |
+          set -euo pipefail
+          export GOPROXY=https://goproxy.cn,direct
+          GOBIN="$(go env GOPATH)/bin" go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          cosign version
 
       - name: cosign 签名镜像（keyless OIDC）
         run: |
