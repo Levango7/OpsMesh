@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -30,7 +31,11 @@ func (s *Server) handleRabbitMQDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version := req.Version
+	version, err := mqVersion("version", req.Version)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if version == "" {
 		version = "3.13"
 	}
@@ -41,9 +46,9 @@ func (s *Server) handleRabbitMQDeploy(w http.ResponseWriter, r *http.Request) {
 
 	var script string
 	if mode == "cluster" {
-		script = fmt.Sprintf(`apt-get install -y rabbitmq-server 2>/dev/null || yum install -y rabbitmq-server 2>/dev/null && systemctl enable rabbitmq-server && systemctl start rabbitmq-server && rabbitmq-plugins enable rabbitmq_management && echo "RabbitMQ %s deployed (cluster mode: join with rabbitmqctl join_cluster)"`, version)
+		script = fmt.Sprintf(`apt-get install -y rabbitmq-server 2>/dev/null || yum install -y rabbitmq-server 2>/dev/null && systemctl enable rabbitmq-server && systemctl start rabbitmq-server && rabbitmq-plugins enable rabbitmq_management && echo %s`, opsEcho("RabbitMQ %s deployed (cluster mode: join with rabbitmqctl join_cluster)", version))
 	} else {
-		script = fmt.Sprintf(`apt-get install -y rabbitmq-server 2>/dev/null || yum install -y rabbitmq-server 2>/dev/null && systemctl enable rabbitmq-server && systemctl start rabbitmq-server && rabbitmq-plugins enable rabbitmq_management && echo "RabbitMQ %s deployed (single mode)"`, version)
+		script = fmt.Sprintf(`apt-get install -y rabbitmq-server 2>/dev/null || yum install -y rabbitmq-server 2>/dev/null && systemctl enable rabbitmq-server && systemctl start rabbitmq-server && rabbitmq-plugins enable rabbitmq_management && echo %s`, opsEcho("RabbitMQ %s deployed (single mode)", version))
 	}
 
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rabbitmq_deploy")
@@ -149,13 +154,23 @@ func (s *Server) handleRabbitMQUser(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user and password are required"})
 			return
 		}
-		script = fmt.Sprintf(`rabbitmqctl add_user %s %s && echo "User %s created"`, req.User, req.Password, req.User)
+		user, err := mqName("user", req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`rabbitmqctl add_user %s %s && echo %s`, shellquote.Quote(user), shellquote.Quote(req.Password), opsEcho("User %s created", user))
 	case "delete":
 		if req.User == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
 			return
 		}
-		script = fmt.Sprintf(`rabbitmqctl delete_user %s && echo "User %s deleted"`, req.User, req.User)
+		user, err := mqName("user", req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`rabbitmqctl delete_user %s && echo %s`, shellquote.Quote(user), opsEcho("User %s deleted", user))
 	case "set-permissions":
 		if req.User == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
@@ -173,7 +188,12 @@ func (s *Server) handleRabbitMQUser(w http.ResponseWriter, r *http.Request) {
 		if read == "" {
 			read = ".*"
 		}
-		script = fmt.Sprintf(`rabbitmqctl set_permissions -p %s %s "%s" "%s" "%s" && echo "Permissions set for %s"`, vhost, req.User, conf, write, read, req.User)
+		user, err := mqName("user", req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`rabbitmqctl set_permissions -p %s %s %s %s %s && echo %s`, shellquote.Quote(vhost), shellquote.Quote(user), shellquote.Quote(conf), shellquote.Quote(write), shellquote.Quote(read), opsEcho("Permissions set for %s", user))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -214,7 +234,12 @@ func (s *Server) handleRabbitMQCluster(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
 			return
 		}
-		script = fmt.Sprintf(`rabbitmqctl stop_app && rabbitmqctl join_cluster %s && rabbitmqctl start_app && echo "Joined cluster node %s"`, req.Node, req.Node)
+		node, err := mqNode("node", req.Node)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`rabbitmqctl stop_app && rabbitmqctl join_cluster %s && rabbitmqctl start_app && echo %s`, shellquote.Quote(node), opsEcho("Joined cluster node %s", node))
 	case "status":
 		script = `rabbitmqctl cluster_status`
 	case "list-nodes":
@@ -264,23 +289,38 @@ func (s *Server) handleRabbitMQPolicy(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch req.Action {
 	case "list":
-		script = fmt.Sprintf(`rabbitmqctl list_policies -p %s`, vhost)
+		script = fmt.Sprintf(`rabbitmqctl list_policies -p %s`, shellquote.Quote(vhost))
 	case "set":
 		if req.Name == "" || req.Pattern == "" || req.Def == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name, pattern, and def are required"})
+			return
+		}
+		name, err := mqName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		def, err := opsQuoteJSONText(req.Def)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		priority := req.Priority
 		if priority == 0 {
 			priority = 0
 		}
-		script = fmt.Sprintf(`rabbitmqctl set_policy -p %s %s "%s" '%s' --priority %d && echo "Policy %s set"`, vhost, req.Name, req.Pattern, req.Def, priority, req.Name)
+		script = fmt.Sprintf(`rabbitmqctl set_policy -p %s %s %s %s --priority %d && echo %s`, shellquote.Quote(vhost), shellquote.Quote(name), shellquote.Quote(req.Pattern), def, priority, opsEcho("Policy %s set", name))
 	case "clear":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`rabbitmqctl clear_policy -p %s %s && echo "Policy %s cleared"`, vhost, req.Name, req.Name)
+		name, err := mqName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`rabbitmqctl clear_policy -p %s %s && echo %s`, shellquote.Quote(vhost), shellquote.Quote(name), opsEcho("Policy %s cleared", name))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -327,13 +367,33 @@ func (s *Server) handleRabbitMQShovel(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name, srcUri, and destUri are required"})
 			return
 		}
-		script = fmt.Sprintf(`rabbitmqctl set_parameter shovel %s '{"src-uri":"%s","src-queue":"%s","dest-uri":"%s","dest-queue":"%s"}' && echo "Shovel %s added"`, req.Name, req.SrcURI, req.SrcQueue, req.DestURI, req.DestQueue, req.Name)
+		name, err := mqName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		payload, err := opsJSONPayload(map[string]string{
+			"src-uri":    req.SrcURI,
+			"src-queue":  req.SrcQueue,
+			"dest-uri":   req.DestURI,
+			"dest-queue": req.DestQueue,
+		})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`rabbitmqctl set_parameter shovel %s %s && echo %s`, shellquote.Quote(name), payload, opsEcho("Shovel %s added", name))
 	case "delete":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`rabbitmqctl clear_parameter shovel %s && echo "Shovel %s deleted"`, req.Name, req.Name)
+		name, err := mqName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`rabbitmqctl clear_parameter shovel %s && echo %s`, shellquote.Quote(name), opsEcho("Shovel %s deleted", name))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -377,13 +437,28 @@ func (s *Server) handleRabbitMQFederation(w http.ResponseWriter, r *http.Request
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name and uri are required"})
 			return
 		}
-		script = fmt.Sprintf(`rabbitmqctl set_parameter federation-upstream %s '{"uri":"%s"}' && echo "Upstream %s added"`, req.Name, req.URI, req.Name)
+		name, err := mqName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		payload, err := opsJSONPayload(map[string]string{"uri": req.URI})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`rabbitmqctl set_parameter federation-upstream %s %s && echo %s`, shellquote.Quote(name), payload, opsEcho("Upstream %s added", name))
 	case "remove-upstream":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`rabbitmqctl clear_parameter federation-upstream %s && echo "Upstream %s removed"`, req.Name, req.Name)
+		name, err := mqName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`rabbitmqctl clear_parameter federation-upstream %s && echo %s`, shellquote.Quote(name), opsEcho("Upstream %s removed", name))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -432,23 +507,38 @@ func (s *Server) handleRabbitMQMessage(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "queue and message are required"})
 			return
 		}
-		script = fmt.Sprintf(`echo '%s' | rabbitmqadmin publish exchange=amq.default routing_key=%s 2>/dev/null || echo "rabbitmqadmin not available"`, req.Message, req.Queue)
+		queue, err := mqName("queue", req.Queue)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s | rabbitmqadmin publish exchange=amq.default routing_key=%s 2>/dev/null || echo "rabbitmqadmin not available"`, shellquote.Quote(req.Message), shellquote.Quote(queue))
 	case "get":
 		if req.Queue == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "queue is required"})
+			return
+		}
+		queue, err := mqName("queue", req.Queue)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		count := req.Count
 		if count <= 0 {
 			count = 1
 		}
-		script = fmt.Sprintf(`rabbitmqadmin get queue=%s count=%d 2>/dev/null || rabbitmqctl list_messages %s -p %s 2>/dev/null`, req.Queue, count, req.Queue, vhost)
+		script = fmt.Sprintf(`rabbitmqadmin get queue=%s count=%d 2>/dev/null || rabbitmqctl list_messages %s -p %s 2>/dev/null`, shellquote.Quote(queue), count, shellquote.Quote(queue), shellquote.Quote(vhost))
 	case "count":
 		if req.Queue == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "queue is required"})
 			return
 		}
-		script = fmt.Sprintf(`rabbitmqctl list_queues -p %s name messages 2>/dev/null | grep %s`, vhost, req.Queue)
+		queue, err := mqName("queue", req.Queue)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`rabbitmqctl list_queues -p %s name messages 2>/dev/null | grep %s`, shellquote.Quote(vhost), shellquote.Quote(queue))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

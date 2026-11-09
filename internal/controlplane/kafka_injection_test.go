@@ -242,7 +242,7 @@ func TestB10ValidatingHelperErrorChecked(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			b10CheckErrorsChecked(fset, f, fn, t)
+			b10CheckErrorsChecked(fset, f, fn, b10ValidatingHelpers, t)
 		}
 	}
 }
@@ -256,7 +256,10 @@ type b10Event struct {
 }
 
 // b10CheckErrorsChecked 断言：校验型助手的 err 变量在其后被检查。
-func b10CheckErrorsChecked(fset *token.FileSet, file string, fn *ast.FuncDecl, t *testing.T) {
+//
+// helpers：本批次认可的校验型助手集合（批次 10 传 b10ValidatingHelpers、批次 11 传
+// b11ValidatingHelpers；判据本身只有一份）。
+func b10CheckErrorsChecked(fset *token.FileSet, file string, fn *ast.FuncDecl, helpers map[string]bool, t *testing.T) {
 	var events []b10Event
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -269,7 +272,7 @@ func b10CheckErrorsChecked(fset *token.FileSet, file string, fn *ast.FuncDecl, t
 			if !ok {
 				return true
 			}
-			if !b10ValidatingHelpers[b9CallName(call.Fun)] {
+			if !helpers[b9CallName(call.Fun)] {
 				return true
 			}
 			errID, ok := x.Lhs[1].(*ast.Ident)
