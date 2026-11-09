@@ -399,11 +399,7 @@ func TestB9NoRawReqInterpolation(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			st := &b9TaintState{
-				tainted:    map[string]bool{},
-				sanitized:  map[string]bool{},
-				fieldTypes: map[string]string{},
-			}
+			st := newB9TaintState(b9SafeHelpers, false)
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.DeclStmt:
@@ -423,10 +419,14 @@ func TestB9NoRawReqInterpolation(t *testing.T) {
 	}
 }
 
-// b9SafeHelpers 是本批认可的「收口助手」集合：它们的返回值已是可安全进 shell 的字面量。
+// b9SafeHelpers 是**批次 9** 认可的「收口助手」集合：它们的返回值已是可安全进 shell 的字面量。
 //
 // 口径要与 `scripts/shell-injection-audit.py` 的 QUOTE_MARKERS 一致（那边多了几个
 // 历史形态的助手，本批两个文件未用到）。
+//
+// 注：批次 10 起本集合被**参数化**（见 newB9TaintState）——不同批次认定的收口助手
+// 集合不同（批次 10 多了 ops*/graph*/kafka* 一族），但**污点传播机制本身只有一份**，
+// 避免两套实现漂移。
 var b9SafeHelpers = map[string]bool{
 	"shellquote.Quote":       true,
 	"shellquote.QuoteDouble": true,
@@ -451,6 +451,24 @@ type b9TaintState struct {
 	tainted    map[string]bool   // 局部变量名 -> 携带未净化的用户数据
 	sanitized  map[string]bool   // 局部变量名 -> 已由收口助手净化
 	fieldTypes map[string]string // req 字段名 -> 类型标识（"string" / "int" …）
+	safe       map[string]bool   // 认可的收口助手集合（按批次注入）
+	strict     bool              // 是否对 `script = <任意表达式>` 做**整体**断言
+}
+
+// newB9TaintState 建一个污点状态。
+//
+// safe：本批次认可的收口助手集合（传 nil ⇒ 不认任何助手 ⇒ 全部用户字段都算污点）。
+// strict：true 时额外断言 `script = <任意表达式>` 的整体不带未净化污点——批次 10 的
+// 收口后形态大量是**拼接**（`script = cypherShell(...) + " … " + opsEcho(...)`），
+// 只盯 `fmt.Sprintf` 会漏掉这些行。
+func newB9TaintState(safe map[string]bool, strict bool) *b9TaintState {
+	return &b9TaintState{
+		tainted:    map[string]bool{},
+		sanitized:  map[string]bool{},
+		fieldTypes: map[string]string{},
+		safe:       safe,
+		strict:     strict,
+	}
 }
 
 // collectReqStruct 收集 `var req struct{...}` 的字段名与类型。
@@ -511,8 +529,8 @@ func (st *b9TaintState) classify(e ast.Expr) b9Taint {
 	switch x := e.(type) {
 	case *ast.CallExpr:
 		name := b9CallName(x.Fun)
-		if b9SafeHelpers[name] {
-			// 收口助手的返回值已是安全字面量（助手内部负责 Quote / JSON 构造）。
+		if st.safe[name] {
+			// 收口助手的返回值已是安全字面量（助手内部负责 Quote / 白名单 / JSON 构造）。
 			return b9Sanitized
 		}
 		for _, a := range x.Args {
@@ -582,6 +600,21 @@ func (st *b9TaintState) checkAssign(fset *token.FileSet, file string, as *ast.As
 	id, ok := as.Lhs[0].(*ast.Ident)
 	if !ok || id.Name != "script" {
 		return
+	}
+	// 断言（strict 模式，批次 10 起）：`script = <任意表达式>` 的**整体**都不得携带
+	// 未净化的污点。
+	//
+	// 为什么不能只盯 fmt.Sprintf：批次 10 的收口后形态大量是**拼接**形态
+	// （`script = cypherShell(...) + " 2>/dev/null && echo " + opsEcho(...)`），
+	// 只盯 Sprintf 会漏掉这些行 ⇒ 必须对整体表达式断言。
+	//
+	// 注意：cypherShell / nebulaConsole 在批次 10 里**故意不算净化器**——它们只把
+	// 整条语句做 shell 层 Quote，**挡不住图库层注入**（Cypher / nGQL 自己的字符串
+	// 字面量仍可被闭合）。把它们排除在 safe 集合之外，AST 守卫才能抓到「图库层
+	// 注入」——即使用户字段绕过了白名单助手直接进语句。
+	if st.strict && st.classify(as.Rhs[0]) == b9Tainted {
+		t.Errorf("%s:%d script 的赋值携带未净化的用户字段：%s",
+			file, fset.Position(as.Pos()).Line, b9Src(fset, as.Rhs[0]))
 	}
 	call, ok := as.Rhs[0].(*ast.CallExpr)
 	if !ok || b9CallName(call.Fun) != "fmt.Sprintf" {

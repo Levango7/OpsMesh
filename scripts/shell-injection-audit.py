@@ -67,6 +67,48 @@ QUOTE_MARKERS = (
     "esQuoteJSONText(",
     "esJSONPayload(",
     "esEcho(",
+    # 批次 10 新增的收口助手（internal/controlplane/ops_script.go + graph_script.go
+    # + kafka_script.go）。这些名字**只在收口后的代码里出现**（旧代码没有它们）
+    # ⇒ 扩充 marker 集合**不改变历史口径**：批次 7/8/9 的 raw_interp 数字
+    # （333 / 320 / 269）与 derived_interp 数字（286）仍可比。
+    # opsURL        —— URL 在 Go 层拼完整后整体 Quote（不能塞回双引号段）
+    # opsQuoteJSONText —— 用户自由 JSON：校验合法性后整体 Quote
+    # opsJSONPayload   —— Go 层 map + json.Marshal 构造 JSON 后整体 Quote
+    # opsEcho          —— 回显消息整体 Quote（双引号段内 $ / 反引号会展开）
+    # graphCommandType —— 图库类型白名单（它是**命令名** ⇒ 命令注入）
+    # graphIdent       —— 图库层标识符白名单
+    # graphPropDefs    —— 图库层属性定义片段白名单
+    # graphSecret      —— 图库层密钥白名单（与方言无关）
+    # graphPath        —— 图库层备份/恢复路径白名单
+    # cypherShell      —— cypher-shell 调用：整条语句整体 Quote（shell 层）
+    # nebulaConsole    —— nebula-console 调用：整条语句整体 Quote（shell 层）
+    # kafkaACLOperation   —— ACL operation 白名单（选项值）
+    # kafkaACLResourceFlag —— ACL 资源**选项名**白名单
+    # kafkaACLResourceName —— ACL 资源名白名单（放行 `*`）
+    # kafkaResource    —— Kafka 资源名白名单
+    # kafkaTopic        —— 单个 topic 名白名单
+    # kafkaTopicList    —— 逗号分隔 topic 列表白名单（逐项校验）
+    # kafkaHeredoc      —— heredoc 写入：拒绝「含等于分隔符的行」的内容
+    # kafkaHeredocf     —— kafkaHeredoc 的模板版
+    "opsURL(",
+    "opsQuoteJSONText(",
+    "opsJSONPayload(",
+    "opsEcho(",
+    "graphCommandType(",
+    "graphIdent(",
+    "graphPropDefs(",
+    "graphSecret(",
+    "graphPath(",
+    "cypherShell(",
+    "nebulaConsole(",
+    "kafkaACLOperation(",
+    "kafkaACLResourceFlag(",
+    "kafkaACLResourceName(",
+    "kafkaResource(",
+    "kafkaTopic(",
+    "kafkaTopicList(",
+    "kafkaHeredoc(",
+    "kafkaHeredocf(",
 )
 VALIDATE_MARKERS = ("Validate", "MatchString(", "regexp.")
 SPRINTF_RE = re.compile(r"fmt\.Sprintf\(")

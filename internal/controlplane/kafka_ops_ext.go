@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -37,7 +38,15 @@ func (s *Server) handleKafkaRebalance(w http.ResponseWriter, r *http.Request) {
 	case "preferred-leader-election":
 		topicsFlag := "--all-topic-partitions"
 		if req.Topics != "" {
-			topicsFlag = fmt.Sprintf("--topic %s", req.Topics)
+			// 注入面（批次 10）：topics 是逗号分隔的 topic 列表，旧形态裸拼进
+			// `--topic %s` ⇒ 逐项按 kafkaTopicRe 校验（挡「列表里一项是另一个选项」），
+			// 再整体 Quote（挡 shell 层）。
+			topics, err := kafkaTopicList(req.Topics)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			topicsFlag = fmt.Sprintf("--topic %s", shellquote.Quote(topics))
 		}
 		script := fmt.Sprintf(`kafka-leader-election.sh --bootstrap-server localhost:9092 --election-type preferred %s`, topicsFlag)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rebalance_preferred-leader-election")
@@ -52,7 +61,18 @@ func (s *Server) handleKafkaRebalance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 生成 reassignment plan
-		genScript := fmt.Sprintf(`kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --topics-to-move-json-file <(echo '{"topics":[{"topic":"%s"}],"version":1}') --broker-list "0,1,2" --generate 2>/dev/null`, req.Topics)
+		// 注入面（批次 10）：topics 被裸拼进 JSON 字面量（`{"topic":"%s"}`）⇒ 字段里的
+		// `"` 会**破坏 JSON 结构**、`'` 会**破 shell 单引号段** ⇒ 改由 Go 层 map +
+		// json.Marshal 构造（结构与旧形态一致），再整体 Quote。
+		payload, err := opsJSONPayload(map[string]any{
+			"topics":  []any{map[string]any{"topic": req.Topics}},
+			"version": 1,
+		})
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid topics: " + err.Error()})
+			return
+		}
+		genScript := fmt.Sprintf(`kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --topics-to-move-json-file <(echo %s) --broker-list "0,1,2" --generate 2>/dev/null`, payload)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, genScript, "rebalance_reassign-generate")
 		if !ok {
 			return
@@ -61,9 +81,15 @@ func (s *Server) handleKafkaRebalance(w http.ResponseWriter, r *http.Request) {
 
 	case "execute-reassignment":
 		// 执行 reassignment (需要 reassignment JSON 文件)
-		script := fmt.Sprintf(`kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --reassignment-json-file /tmp/reassignment.json --execute --throttle %d 2>/dev/null`, req.Throttle)
-		if req.Throttle <= 0 {
-			script = `kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --reassignment-json-file /tmp/reassignment.json --execute 2>/dev/null`
+		//
+		// 注入面（批次 10）：throttle 是 **int** 字段（JSON 解码阶段类型已定 ⇒
+		// 不可能携带 shell 元字符，**不构成注入面**），但盘点器判据 C/D 是行级文本
+		// 判据、不区分字段类型 ⇒ 用 opsPositiveInt 把「这是整数」显式写进代码。
+		//
+		// 语义与旧逻辑逐字一致：throttle<=0 ⇒ 不带 --throttle 参数。
+		script := `kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --reassignment-json-file /tmp/reassignment.json --execute 2>/dev/null`
+		if throttle, ok := opsPositiveInt(req.Throttle); ok {
+			script = fmt.Sprintf(`kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --reassignment-json-file /tmp/reassignment.json --execute --throttle %d 2>/dev/null`, throttle)
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rebalance_execute")
 		if !ok {
@@ -119,7 +145,21 @@ func (s *Server) handleKafkaDeleteRecords(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	script := fmt.Sprintf(`echo '{"partitions":[{"topic":"%s","partition":%d,"offset":%d}],"version":1}' > /tmp/delete-records.json && kafka-delete-records.sh --bootstrap-server localhost:9092 --offset-json-file /tmp/delete-records.json`, req.Topic, req.Partition, req.Offset)
+	// 注入面（批次 10）：topic 被裸拼进 JSON 字面量 ⇒ Go 层构造后整体 Quote
+	// （键序改由 json.Marshal 决定，语义等价）。
+	payload, err := opsJSONPayload(map[string]any{
+		"partitions": []any{map[string]any{
+			"topic":     req.Topic,
+			"partition": req.Partition,
+			"offset":    req.Offset,
+		}},
+		"version": 1,
+	})
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid delete-records payload: " + err.Error()})
+		return
+	}
+	script := fmt.Sprintf(`echo %s > /tmp/delete-records.json && kafka-delete-records.sh --bootstrap-server localhost:9092 --offset-json-file /tmp/delete-records.json`, payload)
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "delete-records")
 	if !ok {
 		return
@@ -156,7 +196,8 @@ func (s *Server) handleKafkaDelegationToken(w http.ResponseWriter, r *http.Reque
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "principal is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-delegation-tokens.sh --bootstrap-server localhost:9092 --create --renewer-principal %s`, req.Principal)
+		// 注入面（批次 10）：principal 是**值** ⇒ 整体 Quote（shell 层封住）。
+		script := fmt.Sprintf(`kafka-delegation-tokens.sh --bootstrap-server localhost:9092 --create --renewer-principal %s`, shellquote.Quote(req.Principal))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "delegation-token_create")
 		if !ok {
 			return
@@ -176,7 +217,8 @@ func (s *Server) handleKafkaDelegationToken(w http.ResponseWriter, r *http.Reque
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "tokenId is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-delegation-tokens.sh --bootstrap-server localhost:9092 --expire --delegation-token %s`, req.TokenID)
+		// 注入面（批次 10）：tokenId 是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-delegation-tokens.sh --bootstrap-server localhost:9092 --expire --delegation-token %s`, shellquote.Quote(req.TokenID))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "delegation-token_expire")
 		if !ok {
 			return
@@ -188,7 +230,8 @@ func (s *Server) handleKafkaDelegationToken(w http.ResponseWriter, r *http.Reque
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "tokenId is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-delegation-tokens.sh --bootstrap-server localhost:9092 --renew --delegation-token %s`, req.TokenID)
+		// 注入面（批次 10）：tokenId 是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-delegation-tokens.sh --bootstrap-server localhost:9092 --renew --delegation-token %s`, shellquote.Quote(req.TokenID))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "delegation-token_renew")
 		if !ok {
 			return
@@ -229,7 +272,19 @@ func (s *Server) handleKafkaConfig(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "describe":
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type %s --entity-name %s --describe`, req.EntityType, req.EntityName)
+		// 注入面（批次 10）：entity-type 与 entity-name 是 Kafka CLI 的**选项值** ⇒
+		// 白名单（复用 kafkaResourceRe 的字符集）。
+		entityType, err := kafkaResource(req.EntityType)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		entityName, err := kafkaResource(req.EntityName)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type %s --entity-name %s --describe`, shellquote.Quote(entityType), shellquote.Quote(entityName))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "config_describe")
 		if !ok {
 			return
@@ -241,7 +296,19 @@ func (s *Server) handleKafkaConfig(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "config is required (key=value,key=value)"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type %s --entity-name %s --alter --add-config %s`, req.EntityType, req.EntityName, req.Config)
+		// 注入面（批次 10）：entity-type / entity-name 是**选项值** ⇒ 白名单；
+		// config 是**值**（key=value,…）⇒ 整体 Quote。
+		entityType, err := kafkaResource(req.EntityType)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		entityName, err := kafkaResource(req.EntityName)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type %s --entity-name %s --alter --add-config %s`, shellquote.Quote(entityType), shellquote.Quote(entityName), shellquote.Quote(req.Config))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "config_alter")
 		if !ok {
 			return
@@ -253,7 +320,19 @@ func (s *Server) handleKafkaConfig(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "config keys to delete required (comma-separated)"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type %s --entity-name %s --alter --delete-config %s`, req.EntityType, req.EntityName, req.Config)
+		// 注入面（批次 10）：entity-type / entity-name 是**选项值** ⇒ 白名单；
+		// config 是**值** ⇒ 整体 Quote。
+		entityType, err := kafkaResource(req.EntityType)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		entityName, err := kafkaResource(req.EntityName)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type %s --entity-name %s --alter --delete-config %s`, shellquote.Quote(entityType), shellquote.Quote(entityName), shellquote.Quote(req.Config))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "config_delete")
 		if !ok {
 			return

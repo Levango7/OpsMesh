@@ -44,6 +44,133 @@
   「设计目标，压测证据待 P3」；审计 6 月留存规划→已实现（默认 180 天，可调）。
   README 编排部署/工作流两行的 D1/D2 宣称随实现转正并补证据锚点。
 
+## [Unreleased-Kafka图库GPU面收口] — 2026-11-08（Kafka/Graph/GPU 运维面：90 处用户字段未转义直插 → 五类收口：命令名白名单 / 图库语句双层收口 / Kafka CLI 选项枚举 / URL-JSON-回显整体 Quote / heredoc 提前闭合拒绝）
+
+- **为什么是真缺陷面**：这 90 处把请求体字段**裸拼**进要下发到 agent 的 shell 脚本，
+  agent 以 `sh -c` 执行 ⇒ `$(id)` / 反引号 / 分号被**真实执行**。鉴权面无缺口（均经
+  `dispatchKafkaTask` → `subsystemAuthorize` 的 `task:write` 闸）⇒ 这是**已授权调用者
+  可直接打到 agent 的 RCE**。**双引号不是防护**：POSIX 双引号内 `$` 与反引号照样展开
+  （`echo "…$(id)…"` 一样被执行）。
+- **范围（90 处）**：判据 C **71 行** ∪ 判据 D **26 行**（去重后的行；D 的**条目数**是 35）
+  ⇒ **并集 87 行**，另加 **3 处多行 `fmt.Sprintf` 的 heredoc 形态**（判据 C/D 是**行级**
+  文本判据 ⇒ 多行 Sprintf 全部漏判，已逐处实测）⇒ 实际 **90 处**。
+  `kafka_ops.go` 14 / `kafka_ops_ext.go` 8 / `kafka_scale_ops.go` 15 /
+  `kafka_advanced_ops.go` 7 / `kafka_final_ops.go` 5 / `graph_ext_ops.go` 20 /
+  `gpu_ext_ops.go` 18。
+- **做法分五类（不能一律 Quote）**：
+  ① **命令名**（Graph 的 `req.Type`，在 `%s --version` 里要**当二进制执行**）⇒ 这是
+     **命令注入**（比 shell 注入更严重：载荷可指向任意二进制/脚本），Quote 挡不住 ⇒
+     **枚举白名单**，复用同包 `graph_ops.go` 已有的 `allowedGraphTypes`
+     （neo4j/nebulagraph），非法值 400 拒收。
+  ② **双层注入**（Cypher / nGQL 语句：`cypher-shell … "CREATE USER %s SET PASSWORD
+     '%s'"`）⇒ 图库层是字符串字面量、shell 层是双引号段，**两层都得收**：标识符走
+     `graphIdent`（复用既有 `graphDatabaseRe`）、属性定义片段走 `graphPropDefs`、密钥走
+     `graphSecret`、路径走 `graphPath`；整条语句再由 `cypherShell` / `nebulaConsole`
+     做 shell 层 Quote。**密钥用白名单而不是 Cypher 层转义**：Cypher 与 nGQL 的 `\'`
+     规则不一致 ⇒ 转义不可证 ⇒ 改用**方言无关**的字符集白名单。
+  ③ **CLI 选项名 / 选项值**（Kafka ACL 的 `--operation %s` 与 `--%s`）⇒ Quote 只保证
+     shell 层安全，`Operation=All --add-config x` 这类载荷在 **Kafka CLI 层**仍是
+     「多传了一个选项」⇒ **枚举白名单**（`kafkaACLOperation` / `kafkaACLResourceFlag`）；
+     资源名走 `kafkaACLResourceName`（放行 `*` = 全部资源）。
+  ④ **URL 段 / 内嵌 JSON / 自由 JSON / 回显段** ⇒ URL 在 Go 层拼完整后**整体** Quote
+     （**不能**把 Quote 结果塞回双引号段：双引号内单引号是字面量 ⇒ URL 会带上 %27 ⇒
+     必然 404）；内嵌 JSON 的字段值改由 Go 层 map + `json.Marshal` 构造后整体 Quote；
+     用户提供的**自由 JSON** 文本先 `json.Valid` 校验（不合法 ⇒ 400）再整体 Quote
+     （保留用户 JSON **原字节**）；回显段整条消息整体 Quote（双引号内 `$` / 反引号会展开）。
+  ⑤ **heredoc 提前闭合** ⇒ `cat > f << 'EOF'` 的内容本应字面，但载荷里出现**一行恰好
+     等于 EOF** 就会让 heredoc **提前闭合** ⇒ 其后内容被 shell 当**命令**执行（已用真 sh
+     实测：标记文件真的落地）⇒ `kafkaHeredoc` / `kafkaHeredocf` 拒绝「含一行恰好等于
+     分隔符的内容」（400）；目标路径也整体 Quote（助手自洽）。
+- **新增三个收口助手文件**（避免 90 处各写一遍）：
+  - `internal/controlplane/ops_script.go` —— 域无关：`opsURL` / `opsQuoteJSONText` /
+    `opsJSONPayload` / `opsEcho` / `opsPositiveInt` / `opsNonNegativeInt`
+  - `internal/controlplane/graph_script.go` —— 图库面：`graphCommandType` / `graphIdent` /
+    `graphPropDefs` / `graphSecret` / `graphPath` / `cypherShell` / `nebulaConsole`
+  - `internal/controlplane/kafka_script.go` —— Kafka 面：`kafkaACLOperation` /
+    `kafkaACLResourceFlag` / `kafkaACLResourceName` / `kafkaResource` / `kafkaTopic` /
+    `kafkaTopicList` / `kafkaHeredoc` / `kafkaHeredocf`
+- **int 字段不是注入面**：gpu 序号 / 功率上限 / throttle / partition / offset 等是
+  **int** 字段——JSON 解码阶段类型已定（传字符串 ⇒ 400）⇒ 请求体**无法**携带 shell
+  元字符。而盘点器判据 C/D 是**行级文本**判据、不区分字段类型 ⇒ 本批用
+  `opsPositiveInt` / `opsNonNegativeInt` 把「这是整数」显式写进代码（语义与旧逻辑
+  逐字一致：`v<=0` ⇒ 不带该参数；`v<0` ⇒ 0）。
+- **⚠️ 能力降级清单（如实登记）**：
+  - **新增 400**（旧形态是把垃圾原样发下去，由下游自己报错）：
+    - Graph：`type` 非白名单、`user` / `index` / `name` 非法标识符、`props` 非法属性
+      定义片段、`password` 非法密钥、`path` 非法路径
+    - Kafka：ACL 的 `operation` / `resource` / 资源名非法、topic 列表含非法项、
+      connector / schema / realm / clientId / entity / entityName 非法、**自由 JSON**
+      （connector config / schema）非法、KEDA 的 consumerGroup / topic 非法
+    - GPU：kubectl 节点名非法
+    - heredoc：内容含一行恰好 `EOF`
+  - **图库口令字符集收窄**：口令走**方言无关**白名单 ⇒ 含引号 / 反斜杠 / 空白的口令
+    被 400 拒收（换取「图库层注入可证」——Cypher 与 nGQL 的转义规则不一致 ⇒ 不可用
+    转义）；用 `cypher-shell` / `nebula-console` 自带的密码参数传口令不受此限。
+  - **内嵌 JSON 的键序**改由 `json.Marshal` 决定（下游 API 不关心键序，语义等价）；
+    其余取值语义与回显输出**均不变**（Quote 后 shell 剥掉引号，参数与旧形态逐字相同）。
+- **✅ 能力提升（顺带修一个既有 bug）**：旧 mirror-maker 的 heredoc 写在 Go 的
+  **raw string** 里，其中的 `\n` 是**字面**反斜杠+n ⇒ 分隔符被拼成 `EOFnclusters`、
+  heredoc 永不闭合 ⇒ 该功能**今天就跑不起来**（实测：cat 报 "No such file or directory"、
+  配置文件根本没生成）。本批改用**真换行** ⇒ **功能首次可用**；相应的「提前闭合」面
+  随之显性化，已由 `kafkaHeredoc` 收口。
+- **回归测试**（`internal/controlplane/kafka_injection_test.go`，**12 个用例**；38 个
+  「值位置」handler×字段组合 + 23 个「白名单拒收」组合，载荷×用例共 **457 条**）：
+  ①**AST 级污点传播**（**权威口径**，类型感知 + 多行/拼接感知）：污点源 = 请求结构体里
+  **字符串类型**字段，传播 = 局部变量赋值 / 字符串拼接 / Sprintf 实参，净化 = 收口助手
+  返回值；断言 `script = <任意表达式>` 的**整体**都不得携带未净化污点（**拼接形态**也
+  覆盖——本批收口后大量是 `cypherShell(...) + " … " + opsEcho(...)`，只盯 Sprintf 会漏）。
+  ②**白名单助手的 error 必须被检查**（否则 `x, _ := kafkaTopic(req.Topic)` 会把字段
+  **静默清空** ⇒ 白名单形同虚设）。③载荷只以**字面量**形态出现在脚本里（「引号外文本」
+  不含载荷 / 非双引号直插形态）。④白名单字段的载荷必须 **400 拒收且不下发任何脚本**
+  （先用**合法值**证明该路径本身是通的 ⇒ 否则 400 可能来自别的分支 ⇒ 假通过）。
+  ⑤用户提供的**自由 JSON** 非法 ⇒ 400；合法仍受理（能力不误伤）。⑥**真 sh 语义级
+  证明**：把脚本交给真 shell 执行，注入载荷不得产生副作用（标记文件不得落地）。
+  ⑦**URL 整体 Quote 的语义等价证明**：交给真 shell 求值后 URL 与原 URL **逐字相同**
+  （专治「把 Quote 结果塞回双引号段」——文本断言看不出来，因为引号是配对的，但 URL
+  会带 %27 而必然 404）。⑧**命令名白名单**：`req.Type` 非白名单必须 400 且不下发脚本。
+  ⑨**heredoc 提前闭合**：内容含一行恰好 `EOF` ⇒ 400 且不下发脚本。⑩**heredoc 提前闭合
+  向量真实可执行**（真 sh 实测旧形态 ⇒ 标记文件真的落地）——这是判据⑨存在的前提。
+  ⑪**mirror-maker heredoc 形态正确**（含真换行的定界符行 + 闭合行，且不含字面 `\n`）。
+  ⑫**int 字段携带不了元字符**（传字符串 ⇒ JSON 类型校验 400）。
+  **变异验证（旧码必红）**：把 7 个生产文件回退到本批前 ⇒ **12 个用例中 8 个判红**
+  （`NoRawReqInterpolation` / `InjectionQuoted` / `RejectedByWhitelist` /
+  `FreeFormJSONRejected` / **`SemanticNoSideEffect`（语义级：注入载荷真的被执行、标记
+  文件真的落地）** / `CommandNameRejected` / `HeredocEarlyCloseRejected` /
+  `MirrorMakerHeredocIsWellFormed`），共 **491 条错误行**（其中 **235 条**「携带未净化的
+  用户字段」、**116 条**「应 400 拒收」）。剩余 4 个仍绿是**设计如此**：② 盯的是调用方
+  是否检查 error（旧码也没用这些助手）、⑦ 只验 Quote 语义、⑩ 只验 shell 语义、⑫ 验
+  JSON 类型校验——它们**不依赖**本批的收口代码。
+- **守卫机制复用而非复制**：批次 9 的 AST 污点传播机制被**参数化**
+  （`newB9TaintState(safe, strict)`：收口助手集合可注入 + 新增 `strict` 开关做整体断言），
+  批次 10 复用**同一份**实现 ⇒ 污点传播机制只有一份，不会两套实现漂移。批次 9 自身用
+  `newB9TaintState(b9SafeHelpers, false)`（行为不变，已复验 TestB9 5/5 绿）。
+  `cypherShell` / `nebulaConsole` 在批次 10 的 safe 集合中**故意排除**——它们只封 shell
+  层、挡不住图库层注入 ⇒ 排除之后 AST 守卫才能抓到「图库层注入」。
+- **盘点器复算（判据 C `raw_interp` / 判据 D `derived_interp`，与 A/B 独立计数）**：本批
+  在 `QUOTE_MARKERS` 增列批次 10 的 **19 个**收口助手名。这些名字**只在收口后的代码里
+  出现**（旧代码没有它们）⇒ **不改变历史口径**。同口径复算（基线 = `origin/main` @
+  `4737466`，用**同一份** `audit.py`）：
+
+  | 指标 | main 基线 | 批次 10 后 | 差 |
+  | --- | --- | --- | --- |
+  | A/B 总数 | 454 | 371 | **-83** |
+  | 判据 C（raw_interp） | 230 | 159 | **-71** |
+  | 判据 D（derived_interp） | 252 | 217 | **-35 条目** |
+
+  批次 10 面（`kafka_*` / `graph_ext_ops.go` / `gpu_ext_ops.go`）：判据 C **71 行** ∪
+  判据 D **26 行** ⇒ **并集 87 行** ⇒ **0**（C、D 两个判据下均归零）。
+  另（旧基线 `6857c3e` 口径）：A/B 505 → 422、C 269 → 198、D 286 → 251。
+- **CI 同口径复验**：`golangci-lint run ./...`（**全仓**，与 CI 同一口径）**0 issues**；
+  `gofmt -l .` 无输出；`go build ./...` 干净；`go vet ./internal/controlplane/` 干净；
+  `go test ./internal/controlplane/` **整包绿**（含批次 9 的 TestB9 5/5）。
+- **附带清零 main 自带的 lint 债**（8 个文件，与 `origin/main` **逐字相同** ⇒ **不是本批
+  引入**，是 main 自带的 gofmt/goimports 债，本批独立清零，零语义变更）：
+  `internal/controlplane/credentials/password.go` / `internal/controlplane/server_netsec.go` /
+  `internal/cron/schedule.go` / `internal/grpcx/codec.go` / `internal/store/memory/memory.go` /
+  `internal/store/sqlstore/sql.go` / `internal/store/sqlstore/sql_tasks.go` /
+  `internal/tlsutil/reloader.go`。
+- **本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），随下一版归版。
+
 ## [Unreleased-ELK面收口] — 2026-11-08（ELK/Elasticsearch 运维面：39 处用户字段未转义直插 → URL/JSON/回显三类整体 Quote）
 
 - **为什么是真缺陷面**：这 39 处把请求体字段**裸拼**进要下发到 agent 的 shell 脚本，

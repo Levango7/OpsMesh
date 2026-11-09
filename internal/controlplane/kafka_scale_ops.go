@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -51,8 +52,15 @@ func (s *Server) handleKafkaScale(w http.ResponseWriter, r *http.Request) {
 			port = 9092
 		}
 		// 生成 broker 配置并启动
-		script := fmt.Sprintf(`cat > /tmp/server.properties << 'EOF'
-broker.id=%s
+		//
+		// 注入面（批次 10）：这是 **heredoc** 形态。内容在 `<< 'EOF'` 里本应字面，
+		// 但载荷里出现**一行恰好等于 EOF** 就会让 heredoc **提前闭合** ⇒ 其后的内容
+		// 被 shell 当**命令**执行（已用真 sh 实测：标记文件真的落地）。
+		// 故整段交给 kafkaHeredoc：它构造 heredoc，并拒绝「含等于分隔符的行」的内容。
+		//
+		// 注：判据 C/D 是**行级**判据，看不到这种跨行的 fmt.Sprintf ⇒ 本批的 AST 级
+		// 守卫（kafka_injection_test.go）才是这里的权威口径。
+		heredoc, err := kafkaHeredocf("/tmp/server.properties", `broker.id=%s
 listeners=PLAINTEXT://:%d
 advertised.listeners=PLAINTEXT://%s:%d
 log.dirs=/var/lib/kafka/data
@@ -67,9 +75,12 @@ default.replication.factor=3
 min.insync.replicas=2
 offsets.topic.replication.factor=3
 transaction.state.log.replication.factor=3
-transaction.state.log.min.isr=2
-EOF
-kafka-server-start.sh -daemon /tmp/server.properties && echo "Broker started"`, req.BrokerID, port, req.Host, port)
+transaction.state.log.min.isr=2`, req.BrokerID, port, req.Host, port)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := heredoc + "\nkafka-server-start.sh -daemon /tmp/server.properties && echo \"Broker started\""
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "scale_add-broker")
 		if !ok {
 			return
@@ -83,7 +94,9 @@ kafka-server-start.sh -daemon /tmp/server.properties && echo "Broker started"`, 
 		}
 		// 1. 迁移分区 away from this broker
 		// 2. 停止 broker
-		script := fmt.Sprintf(`kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --topics-to-move-json-file <(echo '{"topics":[],"version":1}') --broker-list "0,1,2" --generate 2>/dev/null; kafka-server-stop.sh 2>/dev/null; echo "Broker %s removed"`, req.BrokerID)
+		// 注入面（批次 10）：回显段落在**双引号**内 ⇒ 段内 $ 与反引号照样展开 ⇒
+		// 整条回显消息整体 Quote（shell 剥掉引号后输出与旧形态逐字相同）。
+		script := fmt.Sprintf(`kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --topics-to-move-json-file <(echo '{"topics":[],"version":1}') --broker-list "0,1,2" --generate 2>/dev/null; kafka-server-stop.sh 2>/dev/null; echo %s`, opsEcho("Broker %s removed", req.BrokerID))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "scale_remove-broker")
 		if !ok {
 			return
@@ -96,7 +109,8 @@ kafka-server-start.sh -daemon /tmp/server.properties && echo "Broker started"`, 
 			return
 		}
 		// 安全下线：drain + reassign + stop
-		script := fmt.Sprintf(`echo "Draining broker %s..." && kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --topics-to-move-json-file <(echo '{"topics":[],"version":1}') --broker-list "0,1,2" --generate 2>/dev/null && kafka-server-stop.sh 2>/dev/null && echo "Broker %s decommissioned"`, req.BrokerID, req.BrokerID)
+		// 注入面（批次 10）：两段回显都在**双引号**内 ⇒ 整体 Quote。
+		script := fmt.Sprintf(`echo %s && kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --topics-to-move-json-file <(echo '{"topics":[],"version":1}') --broker-list "0,1,2" --generate 2>/dev/null && kafka-server-stop.sh 2>/dev/null && echo %s`, opsEcho("Draining broker %s...", req.BrokerID), opsEcho("Broker %s decommissioned", req.BrokerID))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "scale_decommission")
 		if !ok {
 			return
@@ -144,7 +158,8 @@ func (s *Server) handleKafkaUpgrade(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "targetVersion is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Upgrading to Kafka %s..." && kafka-server-stop.sh 2>/dev/null && sleep 5 && kafka-server-start.sh -daemon /etc/kafka/server.properties && sleep 10 && kafka-broker-api-versions.sh --bootstrap-server localhost:9092 2>/dev/null | head -1 && echo "Upgrade complete"`, req.TargetVersion)
+		// 注入面（批次 10）：回显段在双引号内 ⇒ 整体 Quote。
+		script := fmt.Sprintf(`echo %s && kafka-server-stop.sh 2>/dev/null && sleep 5 && kafka-server-start.sh -daemon /etc/kafka/server.properties && sleep 10 && kafka-broker-api-versions.sh --bootstrap-server localhost:9092 2>/dev/null | head -1 && echo "Upgrade complete"`, opsEcho("Upgrading to Kafka %s...", req.TargetVersion))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "upgrade_apply")
 		if !ok {
 			return
@@ -201,7 +216,16 @@ func (s *Server) handleKafkaLog(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topic is required"})
 			return
 		}
-		script := fmt.Sprintf(`ls -lh /var/lib/kafka/data/%s-%d/ 2>/dev/null || echo "No log segments found"`, req.Topic, req.Partition)
+		// 注入面（批次 10）：topic 落在**路径段**里 ⇒
+		//  ① 路径必须**整体** Quote（只 Quote 片段不行：topic 里带空格会改变参数切分）；
+		//  ② topic 走白名单（不含 `/`），否则路径语义可被改写（`..` 逃逸目录）。
+		topic, err := kafkaTopic(req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		segDir := fmt.Sprintf("/var/lib/kafka/data/%s-%d/", topic, req.Partition)
+		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No log segments found"`, shellquote.Quote(segDir))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "log_list-segments")
 		if !ok {
 			return
@@ -214,7 +238,8 @@ func (s *Server) handleKafkaLog(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 触发日志清理 (通过 kafka-configs 修改 retention)
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name %s --alter --add-config retention.ms=1000 2>/dev/null && sleep 5 && kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name %s --alter --delete-config retention.ms 2>/dev/null && echo "Log cleanup triggered"`, req.Topic, req.Topic)
+		// 注入面（批次 10）：entity-name 是**值** ⇒ 整体 Quote（取值语义不变）。
+		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name %s --alter --add-config retention.ms=1000 2>/dev/null && sleep 5 && kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name %s --alter --delete-config retention.ms 2>/dev/null && echo "Log cleanup triggered"`, shellquote.Quote(req.Topic), shellquote.Quote(req.Topic))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "log_clean")
 		if !ok {
 			return
@@ -230,7 +255,17 @@ func (s *Server) handleKafkaLog(w http.ResponseWriter, r *http.Request) {
 		if partition < 0 {
 			partition = 0
 		}
-		script := fmt.Sprintf(`kafka-dump-log.sh --files /var/lib/kafka/data/%s-%d/*.log --print-data-log 2>/dev/null | head -50`, req.Topic, partition)
+		// 注入面（批次 10）：topic 落在**路径段**里 ⇒ 目录段整体 Quote + topic 白名单。
+		// 注意：末尾的 `*.log` **必须留在引号外**——旧形态里它是**未引号**的，shell 会
+		// 把它展开成多个文件参数；整体 Quote 会把 glob 变成字面量 ⇒ 改变语义。
+		// 故只 Quote 目录前缀，glob 仍由 shell 展开。
+		topic, err := kafkaTopic(req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		segDir := fmt.Sprintf("/var/lib/kafka/data/%s-%d/", topic, partition)
+		script := fmt.Sprintf(`kafka-dump-log.sh --files %s*.log --print-data-log 2>/dev/null | head -50`, shellquote.Quote(segDir))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "log_dump")
 		if !ok {
 			return
@@ -243,7 +278,8 @@ func (s *Server) handleKafkaLog(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 启用 log compaction
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name %s --alter --add-config cleanup.policy=compact 2>/dev/null && echo "Log compaction enabled"`, req.Topic)
+		// 注入面（批次 10）：entity-name 是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name %s --alter --add-config cleanup.policy=compact 2>/dev/null && echo "Log compaction enabled"`, shellquote.Quote(req.Topic))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "log_compact")
 		if !ok {
 			return
@@ -255,7 +291,8 @@ func (s *Server) handleKafkaLog(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topic is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name %s --describe 2>/dev/null | grep -i retention`, req.Topic)
+		// 注入面（批次 10）：entity-name 是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name %s --describe 2>/dev/null | grep -i retention`, shellquote.Quote(req.Topic))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "log_retention")
 		if !ok {
 			return
@@ -302,7 +339,8 @@ func (s *Server) handleKafkaTransaction(w http.ResponseWriter, r *http.Request) 
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "txnId is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-transactions.sh --bootstrap-server localhost:9092 --describe --transactional-id %s 2>/dev/null`, req.TxnID)
+		// 注入面（批次 10）：transactional-id 是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-transactions.sh --bootstrap-server localhost:9092 --describe --transactional-id %s 2>/dev/null`, shellquote.Quote(req.TxnID))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "transaction_describe")
 		if !ok {
 			return
@@ -314,7 +352,8 @@ func (s *Server) handleKafkaTransaction(w http.ResponseWriter, r *http.Request) 
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "txnId is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-transactions.sh --bootstrap-server localhost:9092 --abort --transactional-id %s 2>/dev/null || echo "Abort not available via CLI"`, req.TxnID)
+		// 注入面（批次 10）：transactional-id 是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-transactions.sh --bootstrap-server localhost:9092 --abort --transactional-id %s 2>/dev/null || echo "Abort not available via CLI"`, shellquote.Quote(req.TxnID))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "transaction_abort")
 		if !ok {
 			return
@@ -360,7 +399,12 @@ func (s *Server) handleMirrorMakerFull(w http.ResponseWriter, r *http.Request) {
 		if linkName == "" {
 			linkName = "mm2-link"
 		}
-		script := fmt.Sprintf(`kafka-cluster-links.sh --bootstrap-server %s --create --link %s --config "bootstrap.servers=%s" 2>/dev/null || echo "Cluster linking not available"`, req.Target, linkName, req.Source)
+		// 注入面（批次 10）：三个用户字段都是**值** ⇒ 整体 Quote。
+		// 注意 --config：旧形态的值在**双引号段**内（`--config "bootstrap.servers=%s"`），
+		// 双引号内 $ 与反引号会展开 ⇒ 改由 Go 层拼出完整配置串再**整体** Quote，
+		// 且 Quote 结果放在双引号**外**（放里面会让配置串里多出字面量单引号）。
+		linkCfg := "bootstrap.servers=" + req.Source
+		script := fmt.Sprintf(`kafka-cluster-links.sh --bootstrap-server %s --create --link %s --config %s 2>/dev/null || echo "Cluster linking not available"`, shellquote.Quote(req.Target), shellquote.Quote(linkName), shellquote.Quote(linkCfg))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "mm2_create-link")
 		if !ok {
 			return
@@ -380,7 +424,8 @@ func (s *Server) handleMirrorMakerFull(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "linkName is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-cluster-links.sh --bootstrap-server localhost:9092 --describe --link %s 2>/dev/null`, req.LinkName)
+		// 注入面（批次 10）：link 名是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-cluster-links.sh --bootstrap-server localhost:9092 --describe --link %s 2>/dev/null`, shellquote.Quote(req.LinkName))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "mm2_describe-link")
 		if !ok {
 			return
@@ -392,7 +437,8 @@ func (s *Server) handleMirrorMakerFull(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "linkName is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-cluster-links.sh --bootstrap-server localhost:9092 --delete --link %s --force 2>/dev/null`, req.LinkName)
+		// 注入面（批次 10）：link 名是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-cluster-links.sh --bootstrap-server localhost:9092 --delete --link %s --force 2>/dev/null`, shellquote.Quote(req.LinkName))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "mm2_delete-link")
 		if !ok {
 			return
@@ -454,7 +500,8 @@ func (s *Server) handleKafkaStreams(w http.ResponseWriter, r *http.Request) {
 		if bootstrap == "" {
 			bootstrap = "localhost:9092"
 		}
-		script := fmt.Sprintf(`kafka-streams-application-reset.sh --application-id %s --bootstrap-servers %s --input-topics %s --output-topics %s 2>/dev/null || echo "Streams reset not available"`, req.AppID, bootstrap, req.InputTopic, req.OutputTopic)
+		// 注入面（批次 10）：四个用户字段都是**值** ⇒ 整体 Quote（取值语义不变）。
+		script := fmt.Sprintf(`kafka-streams-application-reset.sh --application-id %s --bootstrap-servers %s --input-topics %s --output-topics %s 2>/dev/null || echo "Streams reset not available"`, shellquote.Quote(req.AppID), shellquote.Quote(bootstrap), shellquote.Quote(req.InputTopic), shellquote.Quote(req.OutputTopic))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "streams_reset")
 		if !ok {
 			return
@@ -466,7 +513,8 @@ func (s *Server) handleKafkaStreams(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "appId is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group %s 2>/dev/null`, req.AppID)
+		// 注入面（批次 10）：group 名是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group %s 2>/dev/null`, shellquote.Quote(req.AppID))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "streams_describe")
 		if !ok {
 			return

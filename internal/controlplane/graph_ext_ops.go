@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleGraphMonitor 处理 POST /api/v1/graph/monitor
@@ -95,7 +96,9 @@ func (s *Server) handleGraphScale(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Adding node %s to graph cluster..." && echo "Node added"`, req.Node)
+		// 注入面（批次 10）：node 是用户字段，旧形态落在回显的**双引号段**内 ⇒
+		// 段内 $ 与反引号照样展开 ⇒ 整条回显消息整体 Quote。
+		script := "echo " + opsEcho("Adding node %s to graph cluster...", req.Node) + ` && echo "Node added"`
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_scale_add-node")
 		if !ok {
 			return
@@ -107,7 +110,8 @@ func (s *Server) handleGraphScale(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Removing node %s from graph cluster..." && echo "Node removed"`, req.Node)
+		// 注入面（批次 10）：同 add-node——回显段整体 Quote。
+		script := "echo " + opsEcho("Removing node %s from graph cluster...", req.Node) + ` && echo "Node removed"`
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_scale_remove-node")
 		if !ok {
 			return
@@ -147,7 +151,15 @@ func (s *Server) handleGraphUpgrade(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "plan":
-		script := fmt.Sprintf(`echo "=== Current Version ===" && %s --version 2>/dev/null || echo "Not installed" && echo "=== Upgrade Plan ===" && echo "1. Backup data" && echo "2. Stop service" && echo "3. Replace binaries" && echo "4. Start service" && echo "5. Verify"`, req.Type)
+		// 注入面（批次 10）：req.Type 在这里是**命令名**（要当二进制执行）⇒ 这是
+		// **命令注入**（比 shell 注入更严重：载荷可以指向任意二进制/脚本），
+		// Quote 挡不住 ⇒ 必须枚举白名单（复用 graph_ops.go 的 allowedGraphTypes）。
+		gt, err := graphCommandType(req.Type)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`echo "=== Current Version ===" && %s --version 2>/dev/null || echo "Not installed" && echo "=== Upgrade Plan ===" && echo "1. Backup data" && echo "2. Stop service" && echo "3. Replace binaries" && echo "4. Start service" && echo "5. Verify"`, gt)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_upgrade_plan")
 		if !ok {
 			return
@@ -159,7 +171,14 @@ func (s *Server) handleGraphUpgrade(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "5.0"
 		}
-		script := fmt.Sprintf(`echo "Upgrading %s to %s..." && echo "Upgrade complete"`, req.Type, version)
+		// 注入面（批次 10）：req.Type 是命令名（须白名单），version 是回显里的用户
+		// 字段（双引号段内 $ / 反引号照样展开）⇒ 两段都收口。
+		gt, err := graphCommandType(req.Type)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := "echo " + opsEcho("Upgrading %s to %s...", gt, version) + ` && echo "Upgrade complete"`
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_upgrade_apply")
 		if !ok {
 			return
@@ -175,7 +194,13 @@ func (s *Server) handleGraphUpgrade(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "rollback"})
 
 	case "version":
-		script := fmt.Sprintf(`%s --version 2>/dev/null || echo "%s not installed"`, req.Type, req.Type)
+		// 注入面（批次 10）：req.Type 在这里是**命令名** ⇒ 白名单；回显段同样整体 Quote。
+		gt, err := graphCommandType(req.Type)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := gt + " --version 2>/dev/null || echo " + opsEcho("%s not installed", gt)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_upgrade_version")
 		if !ok {
 			return
@@ -226,11 +251,25 @@ func (s *Server) handleGraphUser(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
 			return
 		}
+		// 注入面（批次 10）：**双层**注入面——user 是图库层的裸标识符、password 是
+		// 图库层的字符串字面量，而整条语句又落在 shell 的双引号段里。三层各按各的
+		// 规则收口：标识符/密钥走白名单（graphIdent / graphSecret），整条语句走
+		// shellquote.Quote（cypherShell / nebulaConsole）。
+		user, err := graphIdent(req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		secret, err := graphSecret(req.Password)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		var script string
 		if req.Type == "neo4j" {
-			script = fmt.Sprintf(`cypher-shell -u neo4j -p password "CREATE USER %s SET PASSWORD '%s' CHANGE NOT REQUIRED;" 2>/dev/null && echo "User %s created"`, req.User, req.Password, req.User)
+			script = cypherShell(fmt.Sprintf("CREATE USER %s SET PASSWORD '%s' CHANGE NOT REQUIRED;", user, secret)) + " 2>/dev/null && echo " + opsEcho("User %s created", user)
 		} else {
-			script = fmt.Sprintf(`nebula-console -e "CREATE USER %s WITH PASSWORD '%s';" 2>/dev/null && echo "User %s created"`, req.User, req.Password, req.User)
+			script = nebulaConsole(fmt.Sprintf("CREATE USER %s WITH PASSWORD '%s';", user, secret)) + " 2>/dev/null && echo " + opsEcho("User %s created", user)
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_user_create")
 		if !ok {
@@ -243,11 +282,18 @@ func (s *Server) handleGraphUser(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
 			return
 		}
+		// 注入面（批次 10）：user 是图库层裸标识符（无转义空间 ⇒ 白名单），
+		// 整条语句走 shellquote.Quote。
+		user, err := graphIdent(req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		var script string
 		if req.Type == "neo4j" {
-			script = fmt.Sprintf(`cypher-shell -u neo4j -p password "DROP USER %s;" 2>/dev/null && echo "User %s deleted"`, req.User, req.User)
+			script = cypherShell(fmt.Sprintf("DROP USER %s;", user)) + " 2>/dev/null && echo " + opsEcho("User %s deleted", user)
 		} else {
-			script = fmt.Sprintf(`nebula-console -e "DROP USER %s;" 2>/dev/null && echo "User %s deleted"`, req.User, req.User)
+			script = nebulaConsole(fmt.Sprintf("DROP USER %s;", user)) + " 2>/dev/null && echo " + opsEcho("User %s deleted", user)
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_user_delete")
 		if !ok {
@@ -285,11 +331,17 @@ func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index is required"})
 			return
 		}
+		// 注入面（批次 10）：index 是图库层裸标识符（无转义空间 ⇒ 白名单）。
+		idx, err := graphIdent(req.Index)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		var script string
 		if req.Type == "neo4j" {
-			script = fmt.Sprintf(`cypher-shell -u neo4j -p password "CREATE INDEX %s FOR (n:Node) ON (n.id);" 2>/dev/null && echo "Index %s created"`, req.Index, req.Index)
+			script = cypherShell(fmt.Sprintf("CREATE INDEX %s FOR (n:Node) ON (n.id);", idx)) + " 2>/dev/null && echo " + opsEcho("Index %s created", idx)
 		} else {
-			script = fmt.Sprintf(`nebula-console -e "CREATE TAG INDEX %s ON Node(id);" 2>/dev/null && echo "Index %s created"`, req.Index, req.Index)
+			script = nebulaConsole(fmt.Sprintf("CREATE TAG INDEX %s ON Node(id);", idx)) + " 2>/dev/null && echo " + opsEcho("Index %s created", idx)
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_index_create")
 		if !ok {
@@ -302,11 +354,17 @@ func (s *Server) handleGraphIndex(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index is required"})
 			return
 		}
+		// 注入面（批次 10）：index 是图库层裸标识符（无转义空间 ⇒ 白名单）。
+		idx, err := graphIdent(req.Index)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		var script string
 		if req.Type == "neo4j" {
-			script = fmt.Sprintf(`cypher-shell -u neo4j -p password "DROP INDEX %s;" 2>/dev/null && echo "Index %s deleted"`, req.Index, req.Index)
+			script = cypherShell(fmt.Sprintf("DROP INDEX %s;", idx)) + " 2>/dev/null && echo " + opsEcho("Index %s deleted", idx)
 		} else {
-			script = fmt.Sprintf(`nebula-console -e "DROP TAG INDEX %s;" 2>/dev/null && echo "Index %s deleted"`, req.Index, req.Index)
+			script = nebulaConsole(fmt.Sprintf("DROP TAG INDEX %s;", idx)) + " 2>/dev/null && echo " + opsEcho("Index %s deleted", idx)
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_index_delete")
 		if !ok {
@@ -357,11 +415,24 @@ func (s *Server) handleGraphSchema(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
+		// 注入面（批次 10）：name 是图库层裸标识符（白名单）；props 是**属性定义
+		// 片段**（如 `name string, age int`），它落在括号里，能改写语句结构的字符
+		// （括号/分号/引号/美元号…）一律拒收（graphPropDefs）。
+		name, err := graphIdent(req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		props, err := graphPropDefs(req.Props)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		var script string
 		if req.Type == "neo4j" {
-			script = fmt.Sprintf(`cypher-shell -u neo4j -p password "CREATE CONSTRAINT %s IF NOT EXISTS FOR (n:%s) REQUIRE n.id IS UNIQUE;" 2>/dev/null && echo "Tag %s created"`, req.Name, req.Name, req.Name)
+			script = cypherShell(fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR (n:%s) REQUIRE n.id IS UNIQUE;", name, name)) + " 2>/dev/null && echo " + opsEcho("Tag %s created", name)
 		} else {
-			script = fmt.Sprintf(`nebula-console -e "CREATE TAG %s(%s);" 2>/dev/null && echo "Tag %s created"`, req.Name, req.Props, req.Name)
+			script = nebulaConsole(fmt.Sprintf("CREATE TAG %s(%s);", name, props)) + " 2>/dev/null && echo " + opsEcho("Tag %s created", name)
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_schema_create-tag")
 		if !ok {
@@ -374,9 +445,20 @@ func (s *Server) handleGraphSchema(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
+		// 注入面（批次 10）：同 create-tag——name 是标识符、props 是属性定义片段。
+		name, err := graphIdent(req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		props, err := graphPropDefs(req.Props)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		var script string
 		if req.Type == "nebulagraph" {
-			script = fmt.Sprintf(`nebula-console -e "CREATE EDGE %s(%s);" 2>/dev/null && echo "Edge %s created"`, req.Name, req.Props, req.Name)
+			script = nebulaConsole(fmt.Sprintf("CREATE EDGE %s(%s);", name, props)) + " 2>/dev/null && echo " + opsEcho("Edge %s created", name)
 		} else {
 			script = `echo "Neo4j relationships are created inline in Cypher"`
 		}
@@ -429,9 +511,16 @@ func (s *Server) handleGraphBackupExt(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "backup":
+		// 注入面（批次 10）：path 会进 nGQL 的字符串字面量（restore 分支）⇒ 走
+		// 与方言无关的路径白名单（graphPath），再由 shellquote.Quote 收 shell 层。
+		safePath, err := graphPath(path)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		var script string
 		if req.Type == "neo4j" {
-			script = fmt.Sprintf(`neo4j-admin database dump --to-path=%s 2>/dev/null && echo "Neo4j backup created" || echo "Neo4j not available"`, path)
+			script = fmt.Sprintf("neo4j-admin database dump --to-path=%s 2>/dev/null && echo \"Neo4j backup created\" || echo \"Neo4j not available\"", shellquote.Quote(safePath))
 		} else {
 			script = `nebula-console -e "BACKUP;" 2>/dev/null && echo "NebulaGraph backup created" || echo "NebulaGraph not available"`
 		}
@@ -442,11 +531,17 @@ func (s *Server) handleGraphBackupExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "backup"})
 
 	case "restore":
+		// 注入面（批次 10）：path 进 nGQL 字符串字面量 ⇒ 路径白名单 + shell Quote。
+		safePath, err := graphPath(path)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		var script string
 		if req.Type == "neo4j" {
-			script = fmt.Sprintf(`neo4j-admin database load --from-path=%s 2>/dev/null && echo "Neo4j restored" || echo "Neo4j not available"`, path)
+			script = fmt.Sprintf("neo4j-admin database load --from-path=%s 2>/dev/null && echo \"Neo4j restored\" || echo \"Neo4j not available\"", shellquote.Quote(safePath))
 		} else {
-			script = fmt.Sprintf(`nebula-console -e "RESTORE FROM '%s';" 2>/dev/null && echo "NebulaGraph restored" || echo "NebulaGraph not available"`, path)
+			script = nebulaConsole(fmt.Sprintf("RESTORE FROM '%s';", safePath)) + ` 2>/dev/null && echo "NebulaGraph restored" || echo "NebulaGraph not available"`
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_backup_restore")
 		if !ok {
@@ -455,7 +550,8 @@ func (s *Server) handleGraphBackupExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "restore"})
 
 	case "list":
-		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, path)
+		// 注入面（批次 10）：path 进 shell 命令 ⇒ 整体 Quote。
+		script := fmt.Sprintf("ls -lh %s 2>/dev/null || echo \"No backup files found\"", shellquote.Quote(path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "graph_backup_list")
 		if !ok {
 			return
