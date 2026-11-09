@@ -91,7 +91,7 @@ const sseHeartbeatInterval = 15 * time.Second
 // 「尚未入册」的窗口里被 publishEvent 静默丢弃（首连丢第一条事件）。
 func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	// 身份提取 + 防伪校验统一走 requireTenantContext；ok=false 时响应已写入。
@@ -103,7 +103,7 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
 		return
 	}
 	// SSE 标准响应头

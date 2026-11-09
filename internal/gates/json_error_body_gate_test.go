@@ -32,15 +32,10 @@ import (
 // jsonErrorExempt 是「允许出现 http.Error 的文件」白名单：文件 → 允许的原因。
 // 仅两类可入账：① 明确不该 JSON 化的浏览器资产面；② 尚未收编的存量（收编后必须删行）。
 var jsonErrorExempt = map[string]string{
+	// 唯一一条永久豁免：浏览器资产面（embed 静态 UI），非 API 面。
+	// 全仓 56 处存量已由批 A（cmdb/logstore/orchestration，25 处）与批 B
+	// （deploy 20 处 + controlplane 的 device_metrics/federation/sse/system_ops 8 处）收编完毕。
 	"internal/controlplane/enterprise_ui.go": "浏览器资产面（embed 静态 UI），405/503 保持 text/plain 便于浏览器直接显示",
-
-	// —— 未收编存量（批 B 收口后逐行删除，删到只剩上面那行）——
-	"internal/deploy/handler.go":              "待批 B：改走包内 writeJSON 的 JSON 错误体",
-	"internal/deploy/auto_advance.go":         "待批 B：同上",
-	"internal/controlplane/device_metrics.go": "待批 B：同上",
-	"internal/controlplane/federation.go":     "待批 B：同上",
-	"internal/controlplane/sse.go":            "待批 B：同上",
-	"internal/controlplane/system_ops.go":     "待批 B：同上",
 }
 
 // findHTTPErrorSites 返回 content 中**非注释**部分的 `http.Error(` 出现行号（1-based）。
