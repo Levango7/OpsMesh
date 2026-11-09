@@ -117,6 +117,7 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 LEAD: kilo
 ACTIVE CLAIMS:
   docs/api-reference.md                          <- qoder  (ttl=8h by qoder)
+  internal/gates/tenant_store_verdict_gate_test.go <- zcode  (ttl=72h by zcode)
 
 TASKS:
   (无)
@@ -126,6 +127,7 @@ ISSUES:
   CLAIM 过期未闭环：.github/workflows/ci.yml,.github/workflows/release.yml,.github/workflows/_publish-image.yml（认领人 opencode，ttl 8h）
   CLAIM 过期未闭环：CHANGELOG.md（认领人 opencode，ttl 12h）
   CLAIM 过期未闭环：CHANGELOG.md,docs/release-notes.md,internal/version/version.go,deploy/helm/opsmesh/Chart.yaml,deploy/helm/opsmesh/values-production.yaml,deploy/gitops/segments/production-segment.yaml,deploy/docker/docker-compose.prod.yml,deploy/docker/scripts/deploy.sh,deploy/k8s/deploy-opsmesh.sh,deploy/k8s/README.md,deploy/k8s/deployments/alert-svc-deployment.yaml,deploy/k8s/deployments/auth-svc-deployment.yaml,deploy/k8s/deployments/device-svc-deployment.yaml,deploy/k8s/deployments/gpu-svc-deployment.yaml,deploy/k8s/deployments/task-svc-deployment.yaml,deploy/scripts/validate-deploy-assets.sh（认领人 opencode，ttl 8h）
+  CLAIM 过期未闭环：docs/market-gap-analysis-2026-11-09.md（认领人 opencode，ttl 8h）
   CLAIM 过期未闭环：docs/opsmesh-authz-audit-2026-11-04.md（认领人 opencode，ttl 12h）
   CLAIM 过期未闭环：go.mod,go.sum,operator/go.mod,operator/go.sum,services/alert-svc/go.mod,services/alert-svc/go.sum,services/auth-svc/go.mod,services/auth-svc/go.sum,services/config-svc/go.mod,services/config-svc/go.sum,services/device-svc/go.mod,services/device-svc/go.sum,services/gpu-svc/go.mod,services/gpu-svc/go.sum,services/log-svc/go.mod,services/log-svc/go.sum,services/task-svc/go.mod,services/task-svc/go.sum,services/tf-provider/go.mod,services/tf-provider/go.sum（认领人 opencode，ttl 6h）
   CLAIM 过期未闭环：internal/agent/agent.go,internal/automation/engine.go,internal/cmdb/handler.go,internal/cmdb/sql.go,internal/controlplane/auth.go,internal/controlplane/tenant.go,internal/controlplane/git_unix_ops.go（认领人 kilo，ttl 24h）
