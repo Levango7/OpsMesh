@@ -157,7 +157,7 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, e)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
