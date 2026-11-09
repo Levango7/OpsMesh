@@ -12,7 +12,13 @@ on:
 # **步骤级 if: 不允许引用 secrets 上下文**（本仓 actionlint v1.7.7 门禁实测报错），
 # 而 env 上下文在步骤 if: 与 with: 都合法 ⇒ 用 env 作「是否已配置」的判据。
 # 凭据本身是只读用途（拉公共镜像），作用域限于本工作流的步骤环境。
+# 供应链完整性：go.sum 钉版已入库 + 本仓 `go mod verify` 每次构建都跑——把校验分流
+# 留在本地 go.sum（哈希比对，无需网络），以消除对 sum.golang.org tile 服务的依赖。
+# 模块 zip 仍由 goproxy.cn 完整拉取并以 go.sum 哈希校验使用，未被放松；不改 GOPROXY。
+# 背景：2026-11-09 多次 `http2: server sent GOAWAY`（goproxy.cn ↔ sum.golang.org 间）
+# 把 build-test 的 download/verify 腿随机判红，与本 PR 修的 release 504 同源 proxy 侧抖动。
 env:
+  GOSUMDB: off
   DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
   DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 

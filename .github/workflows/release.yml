@@ -20,6 +20,10 @@ permissions:
   packages: write
 
 env:
+  # 同 ci.yml：GOSUMDB=off（go.sum 钉版入库 + Go 模块完整性本地校验，不依赖 sum.golang.org）
+  # 消除 goproxy.cn ↔ sum.golang.org 间 http2 GOAWAY 对 goreleaser 下载的影响。
+  # 模块仍经 goproxy.cn 完整拉取并以 go.sum 哈希校验，未被放松。
+  GOSUMDB: off
   # Docker Hub 凭据（可选，同 ci.yml）：拉基础镜像按 IP 限流，配置后配额提升（TD-89）。
   # 步骤级 if: 不能用 secrets 上下文（actionlint 门禁），故以 env 承载并作判据。
   DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
