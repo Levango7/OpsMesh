@@ -116,7 +116,7 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  (无)
+  internal/deploy/handler.go,internal/deploy/auto_advance.go,internal/controlplane/device_metrics.go,internal/controlplane/federation.go,internal/controlplane/sse.go,internal/controlplane/system_ops.go,internal/gates/json_error_body_gate_test.go <- zcode  (ttl=72h by zcode)
 
 TASKS:
   (无)
