@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -69,10 +71,19 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleServeAgent 处理 GET /bin/opsmesh-agent：分发 agent 二进制本体（双模式同体），
+// handleServeAgent 处理 GET /bin/opsmesh-agent：按 ?os=&arch= 分发 agent 二进制（A1 多架构），
 // 供 install.sh 脚本下载安装。
 //
-// 安全加固：原端点完全开放，现加 token 校验（demo 模式放宽）。
+// 查找顺序（先到先得）：
+//  1. --agent-bin-dir / OPSMESH_AGENT_BIN_DIR 目录下按平台/架构命名产物
+//     opsmesh-agent-{os}-{arch}（如 opsmesh-agent-linux-arm64）；
+//  2. 同目录 generic 产物 opsmesh-agent；
+//  3. 请求未带 ?arch=（旧客户端/未探测）时回退当前进程二进制；
+//  4. 请求带 ?arch= 且与本进程平台不一致、目录又无对应产物 → 404 如实报错，
+//     绝不静默下发错架构二进制。
+//
+// os/arch 仅接受 [a-z0-9] 词元（防路径穿越）；缺省 linux/amd64，
+// 语义对齐 device-svc 的 detectPlatform/resolveAgentBinary。
 func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -87,9 +98,12 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 		TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "bootstrap_serve_agent", Target: "/bin/opsmesh-agent",
 		Detail: "remote=" + r.RemoteAddr,
 	})
-	path, err := os.Executable()
-	if err != nil {
-		paginate.JSONError(w, http.StatusInternalServerError, "cannot resolve agent binary")
+	q := r.URL.Query()
+	archSpecified := q.Get("arch") != ""
+	osName, arch := detectBootstrapPlatform(q.Get("os"), q.Get("arch"))
+	path, actualOS, actualArch := s.resolveAgentBinary(osName, arch, !archSpecified)
+	if path == "" {
+		paginate.JSONError(w, http.StatusNotFound, fmt.Sprintf("agent binary not found for %s/%s (set --agent-bin-dir and place opsmesh-agent-%s-%s there)", osName, arch, osName, arch))
 		return
 	}
 	f, err := os.Open(path)
@@ -103,6 +117,8 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 		paginate.JSONError(w, http.StatusInternalServerError, "cannot stat agent binary")
 		return
 	}
+	w.Header().Set("X-OpsMesh-Agent-OS", actualOS)
+	w.Header().Set("X-OpsMesh-Agent-Arch", actualArch)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=opsmesh-agent")
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
@@ -110,6 +126,62 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(w, f); err != nil {
 		logx.Error(r.Context(), "controlplane: handleServeAgent 写 agent 二进制失败", err)
 	}
+}
+
+// detectBootstrapPlatform 归一化 os/arch 查询参数，缺省 linux/amd64。
+func detectBootstrapPlatform(osName, arch string) (string, string) {
+	if osName == "" {
+		osName = "linux"
+	}
+	if arch == "" {
+		arch = "amd64"
+	}
+	return osName, arch
+}
+
+// resolveAgentBinary 按平台/架构解析 agent 二进制路径；找不到返回 ""。
+// 同时返回实际下发产物的 os/arch（走本进程二进制时为 runtime 值，供响应头如实描述）。
+func (s *Server) resolveAgentBinary(osName, arch string, selfAllowed bool) (string, string, string) {
+	if !bootstrapSafeToken(osName) || !bootstrapSafeToken(arch) {
+		return "", osName, arch
+	}
+	if s.cfg != nil && s.cfg.AgentBinDir != "" {
+		for _, name := range []string{
+			fmt.Sprintf("opsmesh-agent-%s-%s", osName, arch),
+			"opsmesh-agent",
+		} {
+			if p := filepath.Join(s.cfg.AgentBinDir, name); bootstrapFileExists(p) {
+				return p, osName, arch
+			}
+		}
+	}
+	if selfAllowed || (osName == runtime.GOOS && arch == runtime.GOARCH) {
+		if p, err := os.Executable(); err == nil {
+			return p, runtime.GOOS, runtime.GOARCH
+		}
+	}
+	return "", osName, arch
+}
+
+// bootstrapSafeToken 限定 os/arch 词元为小写数字字母，防路径穿越。
+func bootstrapSafeToken(v string) bool {
+	if v == "" {
+		return false
+	}
+	for _, c := range v {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// bootstrapFileExists 判存在且为常规文件（拒绝目录等）。
+//
+//nolint:gosec // 仅检查存在性，不读内容，路径已由 bootstrapSafeToken 约束
+func bootstrapFileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
 }
 
 // handleAutoProvision 处理 POST /api/v1/provision/auto：手动触发 自动纳管编排。

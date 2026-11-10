@@ -155,6 +155,8 @@ jobs:
           bash deploy/scripts/docker-pull-retry.sh "${imgs[@]}"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+      - name: Set up QEMU（A1 多架构：arm64 构建仿真）
+        uses: docker/setup-qemu-action@v3
       - name: 登录镜像仓库
         uses: docker/login-action@v4
         with:
@@ -169,18 +171,45 @@ jobs:
           context: .
           file: ${{ inputs.dockerfile }}
           push: true
+          # A1 多架构：amd64 + arm64 双平台 manifest（arm64 由 QEMU 仿真构建）。
+          # buildx 多平台不支持 load:true（会直接报错），故撤下 load —— Trivy/syft 改为凭
+          # 登录步写好的 docker config 从 registry 拉取（登录步与 Trivy env 已备双路凭据）。
+          platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.check.outputs.date }}
-          # load: true —— 同时载入本地 docker daemon，供随后的 Trivy 扫描直接取用，
-          # 避免扫描步骤依赖"能否凭 docker config 从（默认 private 的）GHCR 拉取"这一不确定条件。
-          load: true
           tags: ${{ steps.check.outputs.tags }}
+      - name: 验 manifest 双平台（A1 验收：amd64+arm64 都在）
+        env:
+          IMAGE: ${{ steps.check.outputs.prefix }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # registry 写后读窗口：与下游 digest 自验步同形的 5 次退避重试。
+          out=""
+          for i in 1 2 3 4 5; do
+            if out="$(docker buildx imagetools inspect "$IMAGE" 2>/dev/null)" && [ -n "$out" ]; then
+              break
+            fi
+            if [ "$i" = 5 ]; then echo "::error::读不到 $IMAGE 的 manifest"; exit 1; fi
+            echo "第 $i 次未读到 manifest（registry 写后读窗口），$((i * 10))s 后重试"; sleep $((i * 10))
+          done
+          echo "$out"
+          missing=0
+          for p in linux/amd64 linux/arm64; do
+            if printf '%s' "$out" | grep -q "$p"; then
+              echo "manifest 含平台: $p"
+            else
+              echo "::error::manifest 缺平台 $p"
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ] || { echo "::error::多架构 manifest 未覆盖双平台，判红"; exit 1; }
       - name: Trivy 镜像扫描
         uses: aquasecurity/trivy-action@v0.36.0
         env:
-          # 兜底：镜像不在本地时应能凭凭证从 registry 拉取（私有路径同用）。
+          # 多平台 manifest 不在本地 daemon：凭登录步写好的 docker config 从 registry 拉取
+          # （私有路径同用；Trivy 默认按 runner 平台 linux/amd64 解析变体）。
           TRIVY_USERNAME: ${{ steps.check.outputs.username }}
           TRIVY_PASSWORD: ${{ steps.check.outputs.mode == 'private' && secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
         with:

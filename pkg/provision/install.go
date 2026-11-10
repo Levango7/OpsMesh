@@ -7,7 +7,7 @@ import (
 // InstallScript 生成 agent 自举安装脚本（bash），由控制面 /install.sh 端点下发。
 // advertise：控制面对外地址（agent 二进制与注册地址来源）；version：agent 版本号（写入脚本便于排查）。
 //
-// 脚本自举流程：解析 --token → 探测 OS/arch → 从 ${ADVERTISE}/bin/opsmesh-agent 下载 agent 二进制
+// 脚本自举流程：解析 --token → 探测 OS/arch → 从 ${ADVERTISE}/bin/opsmesh-agent?os=&arch= 下载 agent 二进制（URL 带 uname 探测结果）
 // → 写入 install.token（agent 启动读取完成注册）→ 注册为 systemd 服务并启动
 // → agent 携带 token 回控制面注册，完成 自动纳管闭环。
 //
@@ -40,8 +40,16 @@ if [ -z "$TOKEN" ]; then
   echo "ERROR: --token is required (curl .../install.sh | sh -s -- --token=XXX)" >&2
   exit 1
 fi
-echo "[opsmesh] downloading agent from $ADVERTISE/bin/opsmesh-agent ..."
-curl -fsSL "$ADVERTISE/bin/opsmesh-agent" -o "$AGENT_BIN"
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64) ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  # 其余架构（loongarch64/mips64 等信创 CPU）原样透传：服务端无对应产物时 404 如实报错，
+  # 绝不静默下发错架构二进制（见 server_bootstrap.go handleServeAgent 与估算文档 §4.1）
+esac
+echo "[opsmesh] downloading agent ($OS/$ARCH) from $ADVERTISE/bin/opsmesh-agent ..."
+curl -fsSL "$ADVERTISE/bin/opsmesh-agent?os=$OS&arch=$ARCH" -o "$AGENT_BIN"
 chmod +x "$AGENT_BIN"
 mkdir -p "$DATA_DIR"
 # : token 写入文件（0600），agent 启动时从 <dataDir>/install.token 读取，
