@@ -5,6 +5,46 @@
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
 
+## [Unreleased-alert-svc 在班查询确定性] — 2026-11-10（裁决③：同租户多排班迭代顺序）
+
+- **缺陷**：`services/alert-svc/internal/escalation/escalation.go` 的 `GetOnCallForTenant`
+  直接 `for range e.schedules`——Go map 遍历顺序随机，同一租户挂多个排班时
+  `/oncall/current`（escalation_http.go 消费面）同一时刻可能返回不同排班的在班人。
+- **修复**：收集匹配租户的排班 ID，`sort.Strings` 升序后取最小 ID 的活动条目；
+  无活动条目时返回 nil 的语义不变。
+- **测试**：`escalation_test.go` 新增同租户三排班用例（注册顺序与字典序刻意相反，
+  连续 20 次查询均须返回最小 ID 排班；删除最小 ID 排班后结果落到次小 ID；他租户排班
+  不参与判定），并以变异验证（排序空转）测试能抓红；`-race` / `go vet` /
+  `golangci-lint --config .golangci.services.yml` 均 0 issues。
+- **文档**：`docs/operations.md:1196` 写面口径 2026-10-30 已按方法矩阵更正（GET+POST 如实），
+  本轮无需再动。
+
+## [Unreleased-knowledge 检索两处缺陷] — 2026-11-10（裁决②：topK 状态污染 + 空 choices panic）
+
+- **缺陷 a（状态污染）**：`internal/knowledge/retrieval.go` 的 `Retrieve` 把 `len(scored)`
+  写回接收者字段 `r.topK`——`HybridRetriever` 是共享单例，首查结果不足 topK 时后续所有查询
+  的上界被永久收窄（实测 topK=5 首查 2 条后恒为 2）。改为局部变量 `limit`。
+- **缺陷 b（空 choices panic）**：`Rerank` 直接取 `resp.Choices[0]`，上游返回空 choices 时
+  panic。补 `len(resp.Choices) == 0` 判空，沿用 LLM 调用失败同一兜底策略（原始顺序返回）。
+- **测试**：`retrieval_test.go` 新增 2 个负向例（首查结果数不得写回 topK / 空 choices 回落
+  原始顺序），并以变异验证两例均能在缺陷还原时抓红；`-race` 全绿，`go vet` /
+  `golangci-lint` 0 issues。
+
+## [Unreleased-审批流创建时快照] — 2026-11-10（裁决①：在途请求与流定义变更解耦）
+
+- **语义选型**：审批流语义取「创建时快照」——`Submit` 把每步的 `Mode`/`Approvers`/`Timeout`
+  快照进 `RequestStep`（`services/task-svc/internal/approval/request.go`），
+  `validateDecision`/`CheckTimeout`/`applyDecision`/`ListPendingApprovals` 全部改读快照。
+  「实时读流定义」与「双语义兼容（RDB/AOF 式）」均不成立：同一字段的裁决权只能有一个来源；
+  「只改注释」会留下注释承诺与实现相反的坑（旧实现实时读 `flow`，`UpdateFlow`/`DeleteFlow`
+  会改变在途请求语义，与 `engine.go` 既有注释承诺相反）。
+- **行为变化**：`UpdateFlow` 不再影响在途请求的审批人/模式/超时；`DeleteFlow` 不再阻断在途请求
+  的审批与超时判定（旧实现在途请求遇流删除返回 `ErrFlowNotFound`）；请求仅内存态、无持久化行，
+  无旧数据迁移面。
+- **测试**：`engine_test.go` 新增 3 个快照语义用例（UpdateFlow 不影响在途 / DeleteFlow 后在途仍活且
+  超时按快照触发 / 待办列表跟快照走）+ `TestSubmit_InitializesState` 快照字段断言；
+  `internal/approval` 包 `-race` 全绿，`go vet` / `golangci-lint` 0 issues。
+
 ## [Unreleased-前端在飞态守卫收尾] — 2026-11-09（P1-8 余项：Alerts / CMDB / Deploys 三视图，条目清零）
 
 - **背景**：`docs/qa-sweep-2026-11-06.md` P1-8 台账——批 2 修了 ScriptsView / APIKeysView 等 9 视图后，
