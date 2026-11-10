@@ -101,12 +101,14 @@ func (r *HybridRetriever) Retrieve(ctx context.Context, query string, filter map
 		return scored[i].score > scored[j].score
 	})
 
-	// 4. Top-K
-	if r.topK > len(scored) {
-		r.topK = len(scored)
+	// 4. Top-K。limit 必须是局部变量：r.topK 是共享实例的检索上界，
+	// 把「本次结果数」写回去会将后续所有查询的上界永久收窄到首查结果数。
+	limit := r.topK
+	if limit > len(scored) {
+		limit = len(scored)
 	}
-	out := make([]KnowledgeDoc, 0, r.topK)
-	for i := 0; i < r.topK; i++ {
+	out := make([]KnowledgeDoc, 0, limit)
+	for i := 0; i < limit; i++ {
 		out = append(out, scored[i].doc)
 	}
 
@@ -195,6 +197,10 @@ func (r *Reranker) Rerank(ctx context.Context, query string, docs []KnowledgeDoc
 
 	// 解析排序结果
 	var order []int
+	if len(resp.Choices) == 0 {
+		// 上游返回空 choices（同为 LLM 侧失败形态）：沿用上方失败兜底，原始顺序返回。
+		return docs, nil
+	}
 	content := resp.Choices[0].Message.Content
 	// 尝试提取 JSON 数组
 	start := strings.Index(content, "[")
