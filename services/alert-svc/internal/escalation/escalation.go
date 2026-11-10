@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -369,16 +370,23 @@ func (e *Escalator) GetOnCall(scheduleID string, at time.Time) *OnCallEntry {
 	return findOnCall(schedule, at)
 }
 
-// GetOnCallForTenant returns the first matching on-call entry for a tenant.
+// GetOnCallForTenant returns the on-call entry for a tenant.
+// A tenant may have multiple schedules; map iteration order is nondeterministic,
+// so matching schedule IDs are collected and visited in ascending order—the
+// first active entry by schedule ID wins, keeping results stable for consumers.
 func (e *Escalator) GetOnCallForTenant(tenantID string, at time.Time) *OnCallEntry {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	for _, s := range e.schedules {
+	ids := make([]string, 0, len(e.schedules))
+	for id, s := range e.schedules {
 		if s.TenantID == tenantID {
-			entry := findOnCall(s, at)
-			if entry != nil {
-				return entry
-			}
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if entry := findOnCall(e.schedules[id], at); entry != nil {
+			return entry
 		}
 	}
 	return nil

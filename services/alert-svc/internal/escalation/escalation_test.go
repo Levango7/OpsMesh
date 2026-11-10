@@ -356,6 +356,56 @@ func TestOnCallRotationWeekly(t *testing.T) {
 	}
 }
 
+// TestGetOnCallForTenant_DeterministicAcrossSchedules 钉住同租户多排班时的确定性：
+// map 遍历顺序随机，旧实现同一查询可能返回不同排班的在班人；
+// 修法为按排班 ID 升序访问，取最小 ID 的活动条目。
+func TestGetOnCallForTenant_DeterministicAcrossSchedules(t *testing.T) {
+	e := NewEscalator()
+	mkSchedule := func(id string) *OnCallSchedule {
+		return &OnCallSchedule{
+			ID:       id,
+			Name:     "sched " + id,
+			TenantID: "tenant-1",
+			Entries: []OnCallEntry{
+				{UserID: "user-" + id, StartTime: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), EndTime: time.Date(2024, 1, 1, 23, 59, 59, 0, time.UTC)},
+			},
+			Rotation: RotationDaily,
+		}
+	}
+	// 注册顺序与 ID 字典序刻意相反，排除「碰巧按插入序」的假绿。
+	for _, id := range []string{"sched-b", "sched-a", "sched-c"} {
+		if err := e.AddSchedule(mkSchedule(id)); err != nil {
+			t.Fatalf("AddSchedule(%s): %v", id, err)
+		}
+	}
+	// 他租户排班不应参与判定。
+	other := mkSchedule("sched-0")
+	other.TenantID = "tenant-2"
+	if err := e.AddSchedule(other); err != nil {
+		t.Fatalf("AddSchedule(sched-0): %v", err)
+	}
+
+	at := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 20; i++ {
+		entry := e.GetOnCallForTenant("tenant-1", at)
+		if entry == nil {
+			t.Fatal("同租户三排班均活动，应返回在班条目")
+		}
+		if entry.UserID != "user-sched-a" {
+			t.Fatalf("第 %d 次查询 UserID = %q，期望最小 ID 排班 sched-a 的 user-sched-a", i, entry.UserID)
+		}
+	}
+
+	// 最小 ID 排班无活动条目（被删）时，结果应落到次小 ID 排班。
+	if deleted := e.DeleteSchedule("sched-a"); !deleted {
+		t.Fatal("DeleteSchedule(sched-a) = false，期望 true")
+	}
+	entry := e.GetOnCallForTenant("tenant-1", at)
+	if entry == nil || entry.UserID != "user-sched-b" {
+		t.Fatalf("删除 sched-a 后应返回 sched-b 的在班条目，得到 %+v", entry)
+	}
+}
+
 func TestEscalatorDeletePolicy(t *testing.T) {
 	e := NewEscalator()
 	_ = e.AddPolicy(&EscalationPolicy{ID: "p1", Enabled: true})
