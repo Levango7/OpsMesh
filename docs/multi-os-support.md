@@ -1,10 +1,12 @@
 # OpsMesh 多操作系统支持设计文档
 
-> 版本：v1.0 · 编制日期：2026-08-17 · 状态：设计稿
+> 版本：v1.0 · 编制日期：2026-08-17 · 状态：设计稿（非现状基线）
 >
 > 适用范围：OpsMesh 控制面（controlplane）与 Agent（agent）双模式二进制在多操作系统、多 CPU 架构、多发行版上的构建、分发、纳管与运行支持。
 >
 > 关联文档：`docs/architecture.md`（整体架构）、`docs/deployment-guide.md`（部署指南）、`docs/operations.md`（运维手册）、`docs/product-roadmap.md`（产品路线图）、`docs/tech-selection.md`（技术选型）。
+>
+> **⚠️ 设计稿声明（2026-11-10 加）**：本文档是设计稿，不是现状基线；正文描述的是目标设计而非已验证能力。平台抽象层 PAL / `PlatformCapability` 接口尚未实现（代码侧无 `internal/agent/platform` 包）；agent 当前仅通用采集 `/etc/os-release`（`internal/agent/agent.go:287`）、无发行版分支；国产 OS/CPU 组合无真机闭环验证记录。引用本文档时请把正文一律当作「规划」对待。
 
 ---
 

@@ -586,9 +586,9 @@ channels.Register("sms", &SMSChannel{apiURL: cfg.SMSAPIURL})
 
 ### 8.1 单控制面容量估算
 
-基于 Go goroutine 调度、gRPC 长连接、MySQL 行锁、Redis 缓存的特性，单控制面（4C8G，MySQL 8C16G，Redis 4C8G）的容量估算：
+基于 Go goroutine 调度、gRPC 长连接、MySQL 行锁、Redis 缓存的特性，单控制面（4C8G，MySQL 8C16G，Redis 4C8G）的容量估算（**设计目标，未实测**：仓库内无压测产物，以下数值为按组件特性推算；实际容量以压测报告为准，2026-11-10 复核）：
 
-#### 表：单控制面容量估算表
+#### 表：单控制面容量估算表（设计目标，未实测）
 
 | 维度 | 估算值 | 依据 |
 |---|---|---|

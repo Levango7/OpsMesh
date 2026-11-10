@@ -45,7 +45,7 @@
 - 分解：device-sim 改复用同一二进制 `--mode=agent` 多实例（每实例独立 --data-dir）；100/500/1000 agent 三档；产出 p50/p99、CPU/内存、固定轮询开销报告；架构文档容量口径同步改「设计目标（未实测）」。
 - 验收判据：报告含三档数据 + 方法 + 版本 SHA；文档口径同步提交。
 
-## 3 两排序方案（待 owner 裁）
+## 3 两排序方案（owner 2026-11-10 裁：方案甲）
 
 | 维度 | 方案甲·信创准入优先 | 方案乙·性价比/交付风险优先 |
 |---|---|---|
@@ -57,20 +57,23 @@
 
 建议：甲（与 owner「信创准入优先」裁同向），但 B1 设插队触发器——等保必测标书出现即提前；此条交 owner 定。
 
+**裁决（2026-11-10，用户）**：按本节建议执行＝方案甲 + B1 插队触发器（等保必测标书出现即提前）。工程启动归属待指派（kilo lead 线/主干敏感区），本文档不改代码。
+
 ## 4 国密话术项（策略性表述，不进工程）
 
 - 可说：支持国密算法演进路径；密码能力以密码机/前置网关卸载为主；按项目交付。
 - 禁语：不得承诺「密评通过」（无密码机/CA 实证）；不得写「已支持 SM2/SM3/SM4」（代码侧国密关键词 0 命中，实测算法仅 AES-GCM/bcrypt/SHA-256/HMAC/Ed25519）。
 - 应答模板：标书问「是否支持国密」→「支持国密演进规划；当前版本加密体系为 AES-256-GCM/SHA-256/Ed25519，国密接入按项目需求单独立项」。
 
-## 5 第 0 步剩余项登记（未授权，不动）
+## 5 第 0 步剩余项登记（2026-11-10 用户裁「可以」，同批执行完毕）
 
-- §4 第 0 步 item 1：scenarios 国密/多 DB/ARM64 tag 完成态口吻 → 待批。
-- item 2：`docs/multi-os-support.md` 标「设计稿，非现状基线」→ 待批。
-- item 3：README 审计（180 天+哈希链）/RBAC（116 点/52 族）/基础镜像（debian-slim）→ 本批快核：README 已无「180 天」「哈希链」「116」「52 族」字样（疑随历史批订正）；`Dockerfile:66` 确为 debian:bookworm-slim。待专批确认后销项。
-- item 4：`docs/architecture.md` 容量指标 → 待核。
-- item 5：可对外版本表（删内部吐槽留证据边界）→ 待批。
-- 本批复核另发现 scenarios :71/:124/:876/:2321（改后行号）四处同类 ≥50000 容量口径 → 不在五处授权内，登记待批。
+- item 1：scenarios 国密/多 DB/ARM64 tag 完成态口吻 → 已改。:892 国产化 DB / :894 密码合规 / :997 数据脱敏 / :1677 等保行 / :2063 传输加密 / :2065 备份加密统一标「规划中，按项目交付」；:74 Store 后端格改 MySQL（国产 DB 规划中）；:1700-1701 arm64 tag 换 .goreleaser.yml 模板 `opsmesh-{{ .Version }}-linux-arm64` 并注 A1 未落地。
+- item 2：`docs/multi-os-support.md` → 已加「设计稿（非现状基线）」状态 + 文首声明水印（PAL/PlatformCapability 未实现、agent 仅采集 /etc/os-release、国产组合无真机记录）。
+- item 3：README 快核 → 免改销项：「180 天/哈希链/116/52 族」grep 0 命中（无假口径；未擅自把审计/RBAC 规模口径加回 README，口径升级属另一决策）；`Dockerfile:66` 实为 `FROM debian:bookworm-slim AS runtime`。
+- item 4：`docs/architecture.md` 容量指标 → 已改：容量估算表引言与标题标「设计目标，未实测」。
+- item 5：可对外版本表 → 已产出 `docs/market-gap-analysis-2026-11-09-external.md`（删话术边界与内部判断，留证据与边界）。
+- 本批复核另发现 scenarios :71/:124/:876/:2321 四处 ≥50000 容量口径 → 已同批改为「设计目标，无压测证据」/「公式估算，非压测实测」。
+- 本批新发现同口径遗留（未改，登记待批）：scenarios :711「支持万级到十万级设备纳管」同无压测证据；architecture.md :115/:904 SSE 事件数写「10 种」实际 11 种（api-specification.md:1108、sse.js:24-36；README 已由 170690b 改 11）；license-compliance-deliverable.md:50 写「控制面/operator=distroless」与 Dockerfile:66 `debian:bookworm-slim` 不符（该行自称由脚本从 FROM 推导）。
 
 ## 6 纪律
 
