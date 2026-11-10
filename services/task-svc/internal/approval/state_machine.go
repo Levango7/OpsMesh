@@ -123,10 +123,14 @@ func stepExpired(step *ApprovalStep, rs *RequestStep, now time.Time) bool {
 //
 // 校验规则：
 //   - 请求状态必须为 pending。
-//   - 当前步骤必须存在于 flow 且对应请求快照存在。
+//   - 当前步骤必须存在于请求快照且对应请求步骤存在。
 //   - userID 必须是当前步骤的审批人。
 //   - sequential 模式下必须按 Approvers 顺序审批。
 //   - 用户不能在同一步骤重复决策。
+//
+// 步骤定义优先取请求创建时的快照（RequestStep.Mode/Approvers/Timeout，由 Submit
+// 写入）：在途请求不随 UpdateFlow/DeleteFlow 改变语义。快照缺失时（直接构造的
+// 请求步骤）回退 live flow。
 func validateDecision(req *ApprovalRequest, flow *ApprovalFlow, userID string, now time.Time) (*ApprovalStep, *RequestStep, error) {
 	if req.Status != StatusPending {
 		return nil, nil, ErrNotPending
@@ -134,12 +138,15 @@ func validateDecision(req *ApprovalRequest, flow *ApprovalFlow, userID string, n
 	if !req.ExpireAt.IsZero() && now.After(req.ExpireAt) {
 		return nil, nil, ErrRequestExpired
 	}
-	step := flow.StepByOrder(req.CurrentStep)
-	if step == nil {
-		return nil, nil, ErrStepNotActive
-	}
 	rs := req.StepByOrder(req.CurrentStep)
 	if rs == nil {
+		return nil, nil, ErrStepNotActive
+	}
+	step := rs.SnapshotStep()
+	if step == nil && flow != nil {
+		step = flow.StepByOrder(req.CurrentStep)
+	}
+	if step == nil {
 		return nil, nil, ErrStepNotActive
 	}
 	if !isApprover(step, userID) {

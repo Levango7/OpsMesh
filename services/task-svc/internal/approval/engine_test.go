@@ -238,6 +238,12 @@ func TestSubmit_InitializesState(t *testing.T) {
 	if len(got.Steps) != 2 {
 		t.Fatalf("步骤快照数量 = %d，期望 2", len(got.Steps))
 	}
+	if got.Steps[0].Mode != StepAnyOf || len(got.Steps[0].Approvers) != 1 || got.Steps[0].Approvers[0] != "u1" || got.Steps[0].Timeout != 10*time.Minute {
+		t.Errorf("第一步快照 = %+v，期望 Mode=anyof Approvers=[u1] Timeout=10m", got.Steps[0])
+	}
+	if got.Steps[1].Mode != StepSequential || len(got.Steps[1].Approvers) != 2 || got.Steps[1].Timeout != 0 {
+		t.Errorf("第二步快照 = %+v，期望 Mode=sequential Approvers=[u2 u3] Timeout=0", got.Steps[1])
+	}
 	if !got.Steps[0].StartedAt.Equal(clock.Now()) {
 		t.Errorf("第一步 StartedAt = %v，期望提交时刻 %v", got.Steps[0].StartedAt, clock.Now())
 	}
@@ -678,6 +684,86 @@ func TestNotifier_CanCallEngine(t *testing.T) {
 	defer mu.Unlock()
 	if called != 1 {
 		t.Fatalf("回调调用次数 = %d，期望 1", called)
+	}
+}
+
+// TestSnapshotSemantics_UpdateFlowDoesNotAffectInFlight 钉住「创建时快照」语义：
+// Submit 后 UpdateFlow 改审批人/模式/超时，在途请求仍按提交时的快照推进；
+// 快照字段（Mode/Approvers/Timeout）随请求携带，不再回查 live flow。
+func TestSnapshotSemantics_UpdateFlowDoesNotAffectInFlightRequest(t *testing.T) {
+	e := New()
+	mustCreateFlow(t, e, newFlow("f1", newStep("s1", 1, StepAnyOf, 10*time.Minute, "u1")))
+	mustSubmit(t, e, newRequest("r1", "f1"))
+
+	if err := e.UpdateFlow(newFlow("f1", newStep("s1", 1, StepSequential, time.Hour, "u9"))); err != nil {
+		t.Fatalf("UpdateFlow: %v", err)
+	}
+
+	if err := e.Approve("r1", "u9", ""); !errors.Is(err, ErrNotApprover) {
+		t.Fatalf("快照外审批人 u9 应返回 ErrNotApprover，得到 %v", err)
+	}
+	if err := e.Approve("r1", "u1", ""); err != nil {
+		t.Fatalf("在途请求应按快照允许原审批人 u1，得到 %v", err)
+	}
+	got := mustGetRequest(t, e, "r1")
+	if got.Steps[0].Timeout != 10*time.Minute {
+		t.Errorf("在途请求步骤 Timeout = %v，期望快照 10m（流定义放宽到 1h 不生效）", got.Steps[0].Timeout)
+	}
+
+	// 提交在更新后的请求按新定义快照。
+	mustSubmit(t, e, newRequest("r2", "f1"))
+	if err := e.Approve("r2", "u1", ""); !errors.Is(err, ErrNotApprover) {
+		t.Errorf("新请求应认新审批人，u1 审批应返回 ErrNotApprover，得到 %v", err)
+	}
+	if err := e.Approve("r2", "u9", ""); err != nil {
+		t.Errorf("新请求新审批人 u9 应可批，得到 %v", err)
+	}
+}
+
+// TestSnapshotSemantics_DeleteFlowKeepsInFlightRequestLive 钉住「删除流不阻断在途请求」：
+// DeleteFlow 后 Approve / CheckTimeout 均按创建时快照继续（旧语义返回 ErrFlowNotFound）。
+func TestSnapshotSemantics_DeleteFlowKeepsInFlightRequestLive(t *testing.T) {
+	clock := newFakeClock()
+	e := New(WithNow(clock.Now))
+	mustCreateFlow(t, e, newFlow("f1", newStep("s1", 1, StepAnyOf, 10*time.Minute, "u1")))
+	mustSubmit(t, e, newRequest("r1", "f1"))
+	if err := e.DeleteFlow("f1"); err != nil {
+		t.Fatalf("DeleteFlow: %v", err)
+	}
+	if err := e.Approve("r1", "u1", ""); err != nil {
+		t.Fatalf("流删除后在途请求应仍可审批，得到 %v", err)
+	}
+
+	mustCreateFlow(t, e, newFlow("f2", newStep("s1", 1, StepAnyOf, 10*time.Minute, "u1")))
+	mustSubmit(t, e, newRequest("r2", "f2"))
+	if err := e.DeleteFlow("f2"); err != nil {
+		t.Fatalf("DeleteFlow: %v", err)
+	}
+	clock.Advance(11 * time.Minute)
+	timedOut, err := e.CheckTimeout("r2")
+	if err != nil || !timedOut {
+		t.Fatalf("流删除后步骤超时应按快照触发，得到 (%v, %v)", timedOut, err)
+	}
+	if got := mustGetRequest(t, e, "r2"); got.Status != StatusRejected {
+		t.Errorf("步骤超时后状态 = %q，期望 rejected", got.Status)
+	}
+}
+
+// TestSnapshotSemantics_PendingApprovalsFollowSnapshot 钉住待办列表的快照口径：
+// UpdateFlow 换审批人后，在途请求的待办仍归快照中的原审批人。
+func TestSnapshotSemantics_PendingApprovalsFollowSnapshot(t *testing.T) {
+	e := New()
+	mustCreateFlow(t, e, newFlow("f1", newStep("s1", 1, StepSequential, 0, "u1", "u2")))
+	mustSubmit(t, e, newRequest("r1", "f1"))
+
+	if err := e.UpdateFlow(newFlow("f1", newStep("s1", 1, StepSequential, 0, "u9"))); err != nil {
+		t.Fatalf("UpdateFlow: %v", err)
+	}
+	if got := e.ListPendingApprovals("u1"); len(got) != 1 || got[0].ID != "r1" {
+		t.Errorf("UpdateFlow 后 u1 待办应仍有 r1，得到 %v", requestIDs(got))
+	}
+	if got := e.ListPendingApprovals("u9"); len(got) != 0 {
+		t.Errorf("快照外审批人 u9 待办应为空，得到 %v", requestIDs(got))
 	}
 }
 
