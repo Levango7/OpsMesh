@@ -111,7 +111,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 | CMDB | Phase1 模型 + CRUD + SQL + 采集 + 关系图谱可视化（力导向图）+ 变更审批 | ✅ | `internal/cmdb/`、`web/enterprise/src/views/CMDBView.vue` |
 | 作业编排 | DAG 引擎 + store 阻塞→释放链路 + 画布 + 子工作流 + 并行/串行/条件分支 + 节点级超时重试 + 执行历史回放 | ✅ | `internal/dag/`、`internal/orchestration/` |
 | 部署编排 | 计划 + fan-out 执行 + Reconcile + Rollback + 蓝绿/金丝雀/滚动 + 发布门禁 + 自动回滚 + 多集群联邦发布 + 灰度指标自适应推进 | ✅ | `internal/deploy/`、`internal/controlplane/server_deploy.go`、`internal/controlplane/factory/` |
-| K8s 管理 | 集群增删查 + 测试连接 + 资源只读/写（namespace/pod/deployment/service/configmap/secret/node）+ scale/restart/rollback + client-go 无 kubectl 依赖 + 租户隔离 | ✅ | `internal/controlplane/k8s_cluster.go`、`k8s_manage.go`、`internal/k8s/` |
+| K8s 管理 | 集群增删查 + 测试连接 + 资源只读/写（namespace/pod/deployment/service/configmap/secret/node）+ scale/restart/rollback + client-go 无 kubectl 依赖 + 租户隔离（upgrade/rollback/cert-rotate 后端 501，internal/k8slifecycle/handler.go:490/553/570） | ⚠️ | `internal/controlplane/k8s_cluster.go`、`k8s_manage.go`、`internal/k8s/` |
 | OS 优化 | 预置模板（内核/网络/安全/时间同步/SSH/磁盘/系统/用户）+ 在线 CRUD + 在指定 agent 执行 + 模板 store 持久化 + 幂等 seed | ✅ | `internal/controlplane/os_optimize.go` |
 | 中间件部署 | 10+ 中间件（MySQL/Redis/Kafka/Nginx/Tomcat/Zookeeper/PostgreSQL/MongoDB/RabbitMQ/Elasticsearch）× docker/systemd 双模式 + CRUD + 实例查询 | ✅ | `internal/controlplane/middleware_deploy.go` |
 
@@ -139,7 +139,7 @@ OpsMesh 不是"另一个 Ansible"。Ansible 是**无中心、推送式、SSH-bas
 
 > **结论**：v0.9.0 基线下，用户要求的核心运维功能模块中 12 个功能完整（CI 验证中）+ 6 个微服务域已接线就绪（聚合层+前端入口+RBAC+部署配置全通）；"生产可用"结论以 CI 真跑通过为准（见 `DELIVERY.md` §7）。AI 增强能力（AI-03~AI-14 共 12 项，见 `docs/ai-design.md`）为独立规划线，不在上述模块范围内。其他深化能力（如等保三级审计 6 月留存、Vault/KMS 远期轮转）见 §8 路线图。
 
-> **2026-11-08 现状核对加注**：§3.4 的「12 功能完整 + 6 已接线就绪」为 v0.9.0 基线口径（历史保留、不删）。现行对外能力矩阵以 `README.md` 为准，现为 **34 ✅ / 1 ⚠️ / 1 ❌**；两者统计粒度不同（README 行更细），不是同一口径的直接相加减。本次按立项书 §4 方案 A 只做现状头与过期行加注，未改动证据表内的 ✅ 判定（如需降级另经 owner 认可）。
+> **2026-11-08 现状核对加注**：§3.4 的「12 功能完整 + 6 已接线就绪」为 v0.9.0 基线口径（历史保留、不删）。现行对外能力矩阵以 `README.md` 为准，2026-11-10 第 0 步纠偏后按功能矩阵节实测重数：14 个主功能行 = **13 ✅ / 1 ⚠️ / 0 ❌**（K8s 管理因 upgrade/rollback/cert-rotate 后端 501 降为 ⚠️），3 个 ↳ 子行 = 2 ✅ / 1 🟡（设备指纹采集仅认证侧）。本节唯一 ✅→⚠️ 降级即 K8s 行，属 2026-11-09 owner 裁可的五处纠偏之一；其余证据表 ✅ 判定未动。两者统计粒度不同（README 行更细），不是同一口径的直接相加减。
 
 ---
 

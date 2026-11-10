@@ -1,0 +1,77 @@
+# P0 投标准入五项估算与排序方案（2026-11-10）
+
+> 依据：`docs/market-gap-analysis-2026-11-09.md` §4「先做到能投标」最小闭环；owner 2026-11-09 裁（CLAIMS.md 2026-11-09T23:47:46Z）：第 0 步五处按 §4 编号 0 改；P0 五项出工时估算再定优先级；信创准入优先；国密按策略性表述不进工程。
+> 口径：本文件只产出估算与排序输入，**不改代码、不升级任何 ✅**；全部锚点为 2026-11-10T00:17Z 前本机实测。
+
+## 1 第 0 步五处纠偏·已落清单（本批证据）
+
+| # | 位置 | 改动 | 实测依据 |
+|---|---|---|---|
+| 1 | scenarios §11.4 国产化矩阵 | 4 组「✅ 已验证」→「❌ 未验证」+ 表注 | `go.mod:8` 唯一 SQL 驱动为 mysql；无国产 DB/OS/CPU 真机闭环记录 |
+| 2 | scenarios §6.7 批量操作 | `opsmesh batch create` 示例 → REST 实态 | `cmd/opsmesh/main.go` 0 命中 batch；真接口 `POST /api/v1/tasks/batch`（api-reference.md:665） |
+| 3 | scenarios §6.12 | ≥50000 台标「设计目标，无压测证据」 | 仓库无压测产物；`cmd/device-sim/main.go:4-12` 自认假成功（已改如实报错） |
+| 4 | README.md:239 SSE 行 | 9 事件名 → 11 事件名 | api-specification.md §7.3:1108「全量 11 种」 |
+| 5 | README.md:235 + product-design.md:114 K8s 行 | ✅→⚠️ + 标 501 | `internal/k8slifecycle/handler.go:490/553/570` writeNotImplemented→501（:465-466） |
+| 6 | product-design.md:142 计数注 | 34/1/1 → 实测重数 | README 功能矩阵节 14 主行 = 13✅/1⚠️/0❌，3 子行 = 2✅/1🟡 |
+
+## 2 P0 五项工程分解（估算沿用 §4 单人周口径）
+
+### 2.1 A1 多架构镜像 + agent 分发（1 周）
+- 证据：`.goreleaser.yml:27-31` 仅 linux/amd64+arm64，loongarch64/mips64 零命中；`server_bootstrap.go:90` 区段 `os.Executable()` 直发控制面自身二进制 ⇒ ARM64 设备拿到 amd64。
+- 分解：① release manifest 双架构产物；② bootstrap 按 `uname -m` 分发对应架构（与 `pkg/provision/install.go` 注释的 arch 探测对齐）；③ ARM64 真机纳管闭环（注册→任务→回执）；④ 龙芯/飞腾仅做「可应答的范围声明」不立项。
+- 验收判据：manifest 工具查双平台；ARM64 真机/QEMU 注册成功且任务回执非 404；x86 行为回归不变。
+- 风险：真机可得性；QEMU 兜底口径须写进投标应答。
+
+### 2.2 D1 全离线安装包（1 周）
+- 证据：无 `docker save`/`helm package`/依赖预拉脚本；`deploy/scripts/docker-pull-retry.sh` 仅 429 重试。
+- 分解：airgap-bundle = 全量镜像 tar + chart + 依赖清单 + 离线安装脚本 + 校验和；断网机安装 SOP。
+- 验收判据：断网机从 bundle 起栈，verify-runtime 整脚本过；校验和比对绿。
+- 风险：纯工程活，无技术不确定性；镜像体积/磁盘是唯一变量。
+
+### 2.3 B1 双因素认证（1~2 周）
+- 证据：`services/auth-svc/internal/http/gateway.go:218` needMFA=true 仍下发 token；全仓无 TOTP/短信/邮箱码实现。
+- 分解：TOTP（RFC 6238）+ 恢复码 + 管理员强制开启开关 + 登录审计；兼容首登强制改密链路。
+- 验收判据：错码 401 且不落 token；恢复码一次性；开关操作进审计；既有会话不踢飞。
+- 备注：§4 称性价比最高准入项。
+
+### 2.4 A3 国产 DB 方言层·第一阶段（2~3 周）
+- 证据：`go.mod:8` 唯一 SQL 驱动 mysql；`internal/store/sqlstore/migrations/001_initial.sql:79/135/152` AUTO_INCREMENT 等 MySQL 专有语法。
+- 分解：方言接口（占位符/UPSERT/分页/DDL 差异）→ PostgreSQL 协议跑通建表/迁移/审计链（openGauss/GaussDB 复用）→ 达梦/金仓专用驱动另立。
+- 验收判据：PG 协议库上全量迁移 + 审计哈希链读写 + 核心 CRUD 用例绿。
+- 风险：五项中最重；**不得承诺「全栈国产 DB」**。
+
+### 2.5 F1 规模压测（1~2 周）
+- 证据：仓库无压测结果；`cmd/device-sim/main.go:4-12` 自认打不存在端点假成功；2s 轮询 ≈1000 agent / 500 req/s 未实测。
+- 分解：device-sim 改复用同一二进制 `--mode=agent` 多实例（每实例独立 --data-dir）；100/500/1000 agent 三档；产出 p50/p99、CPU/内存、固定轮询开销报告；架构文档容量口径同步改「设计目标（未实测）」。
+- 验收判据：报告含三档数据 + 方法 + 版本 SHA；文档口径同步提交。
+
+## 3 两排序方案（待 owner 裁）
+
+| 维度 | 方案甲·信创准入优先 | 方案乙·性价比/交付风险优先 |
+|---|---|---|
+| 顺序 | A1 → A3 → D1 → F1 → B1 | B1 → D1 → A1 → F1 → A3 |
+| 依据 | 信创是准入门槛非加分项；A3 最重先启动 | §4 明文 B1 性价比最高；D1 纯工程无不确定性；A3 最重放最后 |
+| 关键路径（双轨并行） | A1(1w) ∥ A3(2-3w) ∥ D1(1w) → F1 → B1，约 4-5 周 | B1(1-2w) ∥ D1(1w) ∥ A1(1w) → F1 → A3，约 5-6 周 |
+| 首个可应答里程碑 | 第 3 周末：信创标可应答（ARM64 闭环 + PG 协议方言） | 第 2 周末：等保+交付可应答（2FA + 离线包） |
+| 主要风险 | 等保一票否决项（B1）最晚补，遇等保必测标书需插队 | 信创门槛最后补，遇信创标书需插队 |
+
+建议：甲（与 owner「信创准入优先」裁同向），但 B1 设插队触发器——等保必测标书出现即提前；此条交 owner 定。
+
+## 4 国密话术项（策略性表述，不进工程）
+
+- 可说：支持国密算法演进路径；密码能力以密码机/前置网关卸载为主；按项目交付。
+- 禁语：不得承诺「密评通过」（无密码机/CA 实证）；不得写「已支持 SM2/SM3/SM4」（代码侧国密关键词 0 命中，实测算法仅 AES-GCM/bcrypt/SHA-256/HMAC/Ed25519）。
+- 应答模板：标书问「是否支持国密」→「支持国密演进规划；当前版本加密体系为 AES-256-GCM/SHA-256/Ed25519，国密接入按项目需求单独立项」。
+
+## 5 第 0 步剩余项登记（未授权，不动）
+
+- §4 第 0 步 item 1：scenarios 国密/多 DB/ARM64 tag 完成态口吻 → 待批。
+- item 2：`docs/multi-os-support.md` 标「设计稿，非现状基线」→ 待批。
+- item 3：README 审计（180 天+哈希链）/RBAC（116 点/52 族）/基础镜像（debian-slim）→ 本批快核：README 已无「180 天」「哈希链」「116」「52 族」字样（疑随历史批订正）；`Dockerfile:66` 确为 debian:bookworm-slim。待专批确认后销项。
+- item 4：`docs/architecture.md` 容量指标 → 待核。
+- item 5：可对外版本表（删内部吐槽留证据边界）→ 待批。
+- 本批复核另发现 scenarios :71/:124/:876/:2321（改后行号）四处同类 ≥50000 容量口径 → 不在五处授权内，登记待批。
+
+## 6 纪律
+
+不改代码；不升级任何 ✅；降 ✅ 须 owner 逐条认可（本批唯一降级 K8s 行已获 2026-11-09 裁可）；估算随实测刷新不锁死；本批 CLAIM 见 CLAIMS.md 2026-11-09T23:47:46Z（ttl 8h）。

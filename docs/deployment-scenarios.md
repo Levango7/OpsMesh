@@ -809,25 +809,7 @@ controlplane:
 ### 6.7 批量操作（万级设备）
 
 ```bash
-# 全省批量补丁（分批执行，避免同时打满网络）
-opsmesh batch create \
-  --name "province-patch-2026Q3" \
-  --target "tag:province=GD" \
-  --filter "os=centos7,state=online" \
-  --command "yum update -y security" \
-  --batch-size 500 \
-  --batch-interval 60s \
-  --approval required \
-  --rollback-on-failure 10%
-
-# 全省配置下发
-opsmesh batch create \
-  --name "config-sync" \
-  --target "tag:province=GD" \
-  --template "nginx-config" \
-  --variables "env=prod" \
-  --batch-size 1000 \
-  --dry-run false
+批量作业经 REST API 下发：`POST /api/v1/tasks/batch`（批量下发，逐台查找 agent + 租户校验，见 docs/api-reference.md 任务族）；灰度发布按比例/分组/标签分阶段执行，见同文件「批量运维与灰度发布 API」节。CLI 无 `batch` 子命令（cmd/opsmesh/main.go 无该命令）。
 ```
 
 ### 6.8 告警聚合
@@ -914,7 +896,7 @@ controlplane:
 ### 6.12 适用场景
 
 - 电信运营商省级资源池
-- ≥50000 台设备纳管
+- ≥50000 台设备纳管（设计目标，无压测证据）
 - 分层管理（省→市→机房→设备）
 - 等保 2.0 三级合规
 - 全栈国产化要求
@@ -1674,13 +1656,15 @@ agent:
 
 | CPU | OS | DB | 中间件 | Go 编译 | OpsMesh 验证 |
 |---|---|---|---|:---:|:---:|
-| 鲲鹏 920 | openEuler 22.03 | GaussDB | - | ✅ | ✅ 已验证 |
-| 鲲鹏 920 | 统信 UOS V20 | 达梦 DM8 | 东方通 | ✅ | ✅ 已验证 |
-| 飞腾 FT2000+ | 中标麒麟 V10 | 人大金仓 | 中创 | ✅ | ✅ 已验证 |
+| 鲲鹏 920 | openEuler 22.03 | GaussDB | - | ✅ | ❌ 未验证 |
+| 鲲鹏 920 | 统信 UOS V20 | 达梦 DM8 | 东方通 | ✅ | ❌ 未验证 |
+| 飞腾 FT2000+ | 中标麒麟 V10 | 人大金仓 | 中创 | ✅ | ❌ 未验证 |
 | 飞腾 D2000 | openEuler 22.03 | OceanBase | - | ✅ | ⚠ 待验证 |
-| 海光 7000 | 中标麒麟 V10 | 达梦 DM8 | 宝兰德 | ✅ | ✅ 已验证 |
+| 海光 7000 | 中标麒麟 V10 | 达梦 DM8 | 宝兰德 | ✅ | ❌ 未验证 |
 | 兆芯 KX-7000 | 统信 UOS V20 | 人大金仓 | 东方通 | ✅ | ⚠ 待验证 |
 | 龙芯 3A5000 | 统信 UOS V20 | 达梦 DM8 | - | ✅ | ⚠ 待验证 |
+
+> 注：「OpsMesh 验证」列指平台自身在该 CPU/OS/DB/中间件组合上完成安装+纳管+任务下发+回执四段闭环的真机记录。当前平台仅以 MySQL 为默认存储（go.mod 唯一 SQL 驱动为 github.com/go-sql-driver/mysql），国产 DB/国产 OS/国产 CPU 组合均无该记录；「Go 编译」列仅指交叉编译可行性，不代表平台验证。
 
 ### 11.5 等保 2.0 合规
 
