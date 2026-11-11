@@ -21,15 +21,15 @@ import (
 
 // SSH执行配置常量
 const (
-	sshDialTimeout     = 30 * time.Second
-	sshCmdTimeout      = 300 * time.Second // 单命令最长5分钟
-	sshMaxRetries      = 3                 // 最大重试次数
-	sshRetryBackoff    = 5 * time.Second   // 重试间隔
-	drainGracePeriod   = 600               // drain宽限期(秒)
-	nodeReadyWait      = 30 * time.Second  // 节点Ready等待
-	batchHealthWait    = 10 * time.Second  // 批间健康检查等待
-	nodeReadyPollInterval = 10 * time.Second // 节点Ready轮询间隔
-	maxNodeReadyWait   = 5 * time.Minute   // 节点Ready最大等待
+	sshDialTimeout        = 30 * time.Second
+	sshCmdTimeout         = 300 * time.Second // 单命令最长5分钟
+	sshMaxRetries         = 3                 // 最大重试次数
+	sshRetryBackoff       = 5 * time.Second   // 重试间隔
+	drainGracePeriod      = 600               // drain宽限期(秒)
+	nodeReadyWait         = 30 * time.Second  // 节点Ready等待
+	batchHealthWait       = 10 * time.Second  // 批间健康检查等待
+	nodeReadyPollInterval = 10 * time.Second  // 节点Ready轮询间隔
+	maxNodeReadyWait      = 5 * time.Minute   // 节点Ready最大等待
 )
 
 // ErrNotImplemented 表示该动作的真实执行链路尚未实现。
@@ -187,11 +187,11 @@ type RollbackSpec struct {
 // CertRotationSpec 证书轮换规格
 type CertRotationSpec struct {
 	ClusterID  string   `json:"clusterId"`
-	Nodes      []string `json:"nodes"`        // 空=全部
-	RenewAll   bool     `json:"renewAll"`     // 是否续签所有证书
-	Certs      []string `json:"certs"`        // 指定续签的证书列表
-	CACertPath string   `json:"caCertPath"`   // CA 证书路径
-	CAKeyPath  string   `json:"caKeyPath"`    // CA 私钥路径
+	Nodes      []string `json:"nodes"`      // 空=全部
+	RenewAll   bool     `json:"renewAll"`   // 是否续签所有证书
+	Certs      []string `json:"certs"`      // 指定续签的证书列表
+	CACertPath string   `json:"caCertPath"` // CA 证书路径
+	CAKeyPath  string   `json:"caKeyPath"`  // CA 私钥路径
 }
 
 // 证书轮换的执行链路未实现（A 项裁决为显式 501，见 HandleCertRotation）；
@@ -531,9 +531,9 @@ func (h *K8sLifecycleHandler) HandleUpgrade(w http.ResponseWriter, r *http.Reque
 			logx.Error(r.Context(), "检查活跃升级作业失败", err)
 		} else if activeJob != nil {
 			paginate.WriteJSON(w, http.StatusConflict, map[string]string{
-				"error":       "cluster already has an active upgrade job",
-				"jobId":       activeJob.ID,
-				"jobPhase":    activeJob.Phase,
+				"error":    "cluster already has an active upgrade job",
+				"jobId":    activeJob.ID,
+				"jobPhase": activeJob.Phase,
 			})
 			return
 		}
@@ -573,8 +573,8 @@ func (h *K8sLifecycleHandler) HandleUpgrade(w http.ResponseWriter, r *http.Reque
 
 	// 返回 202 Accepted
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]string{
-		"jobId":  jobID,
-		"status": "accepted",
+		"jobId":   jobID,
+		"status":  "accepted",
 		"message": "upgrade job started",
 	})
 }
@@ -661,9 +661,9 @@ func (h *K8sLifecycleHandler) HandleRollback(w http.ResponseWriter, r *http.Requ
 			logx.Error(r.Context(), "检查活跃回滚作业失败", err)
 		} else if activeJob != nil {
 			paginate.WriteJSON(w, http.StatusConflict, map[string]string{
-				"error":       "cluster already has an active rollback job",
-				"jobId":       activeJob.ID,
-				"jobPhase":    activeJob.Phase,
+				"error":    "cluster already has an active rollback job",
+				"jobId":    activeJob.ID,
+				"jobPhase": activeJob.Phase,
 			})
 			return
 		}
@@ -674,10 +674,10 @@ func (h *K8sLifecycleHandler) HandleRollback(w http.ResponseWriter, r *http.Requ
 
 	// 创建作业记录
 	specJSON := map[string]any{
-		"clusterId":     spec.ClusterID,
-		"targetVersion": spec.TargetVersion,
+		"clusterId":      spec.ClusterID,
+		"targetVersion":  spec.TargetVersion,
 		"etcdBackupPath": spec.EtcdBackupPath,
-		"reason":        spec.Reason,
+		"reason":         spec.Reason,
 	}
 
 	if h.store != nil {
@@ -702,8 +702,8 @@ func (h *K8sLifecycleHandler) HandleRollback(w http.ResponseWriter, r *http.Requ
 
 	// 返回 202 Accepted
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]string{
-		"jobId":  jobID,
-		"status": "accepted",
+		"jobId":   jobID,
+		"status":  "accepted",
 		"message": "rollback job started",
 	})
 }
@@ -744,9 +744,9 @@ func (h *K8sLifecycleHandler) HandleCertRotation(w http.ResponseWriter, r *http.
 			logx.Error(r.Context(), "检查活跃证书轮换作业失败", err)
 		} else if activeJob != nil {
 			paginate.WriteJSON(w, http.StatusConflict, map[string]string{
-				"error":       "cluster already has an active cert-rotate job",
-				"jobId":       activeJob.ID,
-				"jobPhase":    activeJob.Phase,
+				"error":    "cluster already has an active cert-rotate job",
+				"jobId":    activeJob.ID,
+				"jobPhase": activeJob.Phase,
 			})
 			return
 		}
@@ -757,11 +757,11 @@ func (h *K8sLifecycleHandler) HandleCertRotation(w http.ResponseWriter, r *http.
 
 	// 创建作业记录
 	specJSON := map[string]any{
-		"clusterId":   spec.ClusterID,
-		"renewAll":    spec.RenewAll,
-		"certs":       spec.Certs,
-		"caCertPath":  spec.CACertPath,
-		"caKeyPath":   spec.CAKeyPath,
+		"clusterId":  spec.ClusterID,
+		"renewAll":   spec.RenewAll,
+		"certs":      spec.Certs,
+		"caCertPath": spec.CACertPath,
+		"caKeyPath":  spec.CAKeyPath,
 	}
 
 	if h.store != nil {
@@ -786,7 +786,7 @@ func (h *K8sLifecycleHandler) HandleCertRotation(w http.ResponseWriter, r *http.
 
 	// 返回 202 Accepted
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]string{
-		"jobId":  jobID,
+		"jobId":   jobID,
 		"status":  "accepted",
 		"message": "cert-rotate job started",
 	})
@@ -1023,7 +1023,7 @@ func (h *K8sLifecycleHandler) getClusterInfo(ctx context.Context, clusterID stri
 type ClusterInfo struct {
 	ClusterID      string
 	CurrentVersion string
-	CPNodes        []NodeSpec  // 支持多 CP 节点
+	CPNodes        []NodeSpec // 支持多 CP 节点
 	WorkerNodes    []string
 }
 
@@ -1398,13 +1398,15 @@ func (h *K8sLifecycleHandler) updateJobPhase(ctx context.Context, jobID, phase s
 	job.Phase = phase
 	job.Progress = progress
 	job.CurrentStep = step
-	h.store.UpdateLifecycleJob(ctx, &sqlstore.LifecycleJob{
+	if err := h.store.UpdateLifecycleJob(ctx, &sqlstore.LifecycleJob{
 		ID:          job.ID,
 		Phase:       job.Phase,
 		Progress:    job.Progress,
 		CurrentStep: job.CurrentStep,
 		Version:     job.Version,
-	})
+	}); err != nil {
+		logx.Warn(ctx, "更新生命周期作业阶段失败（持久化尽力而为）", "job", jobID, "phase", phase, "error", err)
+	}
 }
 
 // failJob 标记作业失败
@@ -1420,14 +1422,16 @@ func (h *K8sLifecycleHandler) failJob(ctx context.Context, jobID, errMsg string)
 	job.Progress = 0
 	job.CurrentStep = ""
 	job.Error = errMsg
-	h.store.UpdateLifecycleJob(ctx, &sqlstore.LifecycleJob{
-		ID:        job.ID,
-		Phase:     job.Phase,
-		Progress:  job.Progress,
+	if err := h.store.UpdateLifecycleJob(ctx, &sqlstore.LifecycleJob{
+		ID:          job.ID,
+		Phase:       job.Phase,
+		Progress:    job.Progress,
 		CurrentStep: job.CurrentStep,
-		Error:     job.Error,
-		Version:   job.Version,
-	})
+		Error:       job.Error,
+		Version:     job.Version,
+	}); err != nil {
+		logx.Warn(ctx, "标记生命周期作业失败状态时持久化失败", "job", jobID, "error", err)
+	}
 }
 
 // completeJob 标记作业完成
@@ -1443,14 +1447,16 @@ func (h *K8sLifecycleHandler) completeJob(ctx context.Context, jobID, msg string
 	job.Progress = 100
 	job.CurrentStep = msg
 	resultJSON := map[string]any{"message": msg}
-	h.store.UpdateLifecycleJob(ctx, &sqlstore.LifecycleJob{
-		ID:         job.ID,
-		Phase:      job.Phase,
-		Progress:   job.Progress,
+	if err := h.store.UpdateLifecycleJob(ctx, &sqlstore.LifecycleJob{
+		ID:          job.ID,
+		Phase:       job.Phase,
+		Progress:    job.Progress,
 		CurrentStep: job.CurrentStep,
-		ResultJSON: resultJSON,
-		Version:    job.Version,
-	})
+		ResultJSON:  resultJSON,
+		Version:     job.Version,
+	}); err != nil {
+		logx.Warn(ctx, "标记生命周期作业完成时持久化失败", "job", jobID, "error", err)
+	}
 }
 
 // isValidVersionJump 检查版本跳跃是否合法
