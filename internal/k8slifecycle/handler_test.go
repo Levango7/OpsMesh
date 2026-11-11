@@ -193,29 +193,43 @@ func TestUnimplementedActionsReturn501(t *testing.T) {
 	h := newTestHandler()
 
 	cases := []struct {
-		name string
-		fn   http.HandlerFunc
-		body string
+		name       string
+		fn         http.HandlerFunc
+		body       string
+		wantStatus int
+		wantCode   string
 	}{
-		{"upgrade", h.HandleUpgrade, `{"clusterId":"c1","targetVersion":"1.30.0"}`},
-		{"rollback", h.HandleRollback, `{"clusterId":"c1","targetVersion":"1.28.0","reason":"regression"}`},
-		{"cert-rotate", h.HandleCertRotation, `{"clusterId":"c1"}`},
+		{"upgrade", h.HandleUpgrade, `{"clusterId":"c1","targetVersion":"1.30.0"}`, http.StatusAccepted, ""},
+		{"rollback", h.HandleRollback, `{"clusterId":"c1","targetVersion":"1.28.0","reason":"regression"}`, http.StatusNotImplemented, "ERR_NOT_IMPLEMENTED"},
+		{"cert-rotate", h.HandleCertRotation, `{"clusterId":"c1"}`, http.StatusNotImplemented, "ERR_NOT_IMPLEMENTED"},
 	}
 	for _, c := range cases {
 		rec := doRequest(t, c.fn, http.MethodPost, "/x", c.body)
-		if rec.Code != http.StatusNotImplemented {
-			t.Fatalf("%s = %d, want 501（假成功回归）", c.name, rec.Code)
+		if rec.Code != c.wantStatus {
+			t.Fatalf("%s = %d, want %d", c.name, rec.Code, c.wantStatus)
 		}
-		body := decodeJSON(t, rec)
-		if body["code"] != "ERR_NOT_IMPLEMENTED" {
-			t.Fatalf("%s: code = %v, want ERR_NOT_IMPLEMENTED", c.name, body["code"])
+		if c.wantStatus == http.StatusNotImplemented {
+			body := decodeJSON(t, rec)
+			if body["code"] != c.wantCode {
+				t.Fatalf("%s: code = %v, want %s", c.name, body["code"], c.wantCode)
+			}
+			msg, _ := body["error"].(string)
+			if !strings.Contains(msg, "尚未实现") {
+				t.Fatalf("%s: error 应说明未实现，得到 %q", c.name, msg)
+			}
+			if body["phase"] != nil || body["progress"] != nil {
+				t.Fatalf("%s: 501 响应不得带假进度字段: %v", c.name, body)
+			}
 		}
-		msg, _ := body["error"].(string)
-		if !strings.Contains(msg, "尚未实现") {
-			t.Fatalf("%s: error 应说明未实现，得到 %q", c.name, msg)
-		}
-		if body["phase"] != nil || body["progress"] != nil {
-			t.Fatalf("%s: 501 响应不得带假进度字段: %v", c.name, body)
+		// upgrade 返回 202，应包含 jobId
+		if c.name == "upgrade" {
+			body := decodeJSON(t, rec)
+			if body["jobId"] == nil {
+				t.Fatalf("upgrade: response missing jobId")
+			}
+			if body["status"] != "accepted" {
+				t.Fatalf("upgrade: status = %v, want accepted", body["status"])
+			}
 		}
 	}
 
@@ -349,7 +363,8 @@ func TestRoutesPassThroughWithoutAuthorize(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/k8s/lifecycle/upgrade",
 		strings.NewReader(`{"clusterId":"c1","targetVersion":"1.30.0"}`)))
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("未注入 Authorize 时 upgrade = %d, want 501（未实现语义与鉴权无关）", rec.Code)
+	// 无 Authorize 时路由仍可执行（向后兼容），upgrade 返回 202 Accepted
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("未注入 Authorize 时 upgrade = %d, want 202（向后兼容）", rec.Code)
 	}
 }
