@@ -63,13 +63,13 @@
   helm chart + 生产 values + 部署树 + 验收脚本打单一 tar，CHECKSUMS.sha256 覆盖包内全部
   文件）+ `deploy/scripts/install-airgap.sh`（解包→`sha256sum -c` 全量比对→按 manifest
   `image` 行 `docker load`→compose 形态 `deploy.sh init` + `up --no-build -y`，离线机不
-  编译不拉取；helm 形态只装本地 chart）+ 双 selftest（假 docker/helm 夹具 20 例：派生/
+  编译不拉取；helm 形态只装本地 chart）+ 双 selftest（假 docker/helm 夹具 22 例：派生/
   代入/缺图判红/守卫图判红/用法错/装载顺序/校验和篡改判红/非空目标拒/helm 形态）。
 - **文档**：`docs/airgap-install-sop.md`（构建机/搬运/断网机三段，退出码与判据表；
   断网机实跑为用户侧步骤）。
 - **验证**：本机真跑构建（4 夹具图真 docker save + helm package 真 tgz + 70M 单一 tar）
   与真跑 install（解包→校验和 10 文件全绿→docker load 4 图真装载→helm 形态提示）全链路
-  通过；selftest 20/20 绿。`latest` 标签禁止（exit 1，同 deploy.sh:239-242 口径）。
+  通过；selftest 22/22 绿。`latest` 标签禁止（exit 1，同 deploy.sh:239-242 口径）。
 - **边界（如实记账）**：只含构建机架构镜像层（龙芯/飞腾属 A1 多架构项，不在本次）；
   第三方图本地缺失时走 docker-pull-retry.sh 有界重试，`AIRGAP_SKIP_PULL=1` 下缺图即红。
 
