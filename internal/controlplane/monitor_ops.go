@@ -197,7 +197,7 @@ func (s *Server) handleMonitorDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s version=%s", req.DeviceID, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -261,7 +261,12 @@ func (s *Server) handleMonitorAction(w http.ResponseWriter, r *http.Request, mon
 	req.Action = action
 
 	script := buildMonitorActionScript(req)
-	taskAction := "monitor_" + action + "_" + monType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "monitor.action."+monType, err)
+		return
+	}
+	taskAction := fmt.Sprintf("monitor_%s_%s", actionV, monType)
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {

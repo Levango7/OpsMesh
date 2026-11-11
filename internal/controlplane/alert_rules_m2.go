@@ -15,8 +15,8 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -80,7 +80,7 @@ func (s *Server) createAlertRuleEngine(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_alert_rule_engine", Target: rule.ID,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("conditions=%d logic=%s severity=%s", len(rule.Conditions), rule.Logic, rule.Severity)),
+		Detail: sanitizeAuditDetail("conditions=" + opsSQLString(strconv.Itoa(len(rule.Conditions))) + " logic=" + opsSQLString(string(rule.Logic)) + " severity=" + opsSQLString(rule.Severity)),
 	})
 	paginate.WriteJSON(w, http.StatusCreated, rule)
 }

@@ -180,7 +180,7 @@ func (s *Server) handleStorageDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s mode=%s", req.DeviceID, req.Mode)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " mode=" + opsSQLString(req.Mode)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -241,7 +241,12 @@ func (s *Server) handleStorageAction(w http.ResponseWriter, r *http.Request, stT
 	req.Action = action
 
 	script := buildStorageActionScript(req)
-	taskAction := "storage_" + action + "_" + stType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "storage.action."+stType, err)
+		return
+	}
+	taskAction := fmt.Sprintf("storage_%s_%s", actionV, stType)
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {
@@ -322,7 +327,7 @@ func (s *Server) handleStorageBucket(w http.ResponseWriter, r *http.Request, stT
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "storage_bucket_" + req.Action, Target: req.Bucket,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s type=%s", req.DeviceID, stType)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " type=" + opsSQLString(stType)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -408,7 +413,7 @@ func (s *Server) handleStorageObject(w http.ResponseWriter, r *http.Request, stT
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "storage_object_" + req.Action, Target: req.Object,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s type=%s bucket=%s", req.DeviceID, stType, req.Bucket)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " type=" + opsSQLString(stType) + " bucket=" + opsSQLString(req.Bucket)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

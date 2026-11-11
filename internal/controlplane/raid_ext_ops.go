@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
+
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
@@ -36,7 +38,12 @@ func (s *Server) handleRAIDExt(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Rebuilding RAID array: %s" && (storcli64 /c0/v%d start rebuild 2>/dev/null || mdadm --assemble --scan 2>/dev/null || echo "Rebuild not available")`, req.Target, 0)
+		targetV, err := opsIdentifier("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && (storcli64 /c0/v%d start rebuild 2>/dev/null || mdadm --assemble --scan 2>/dev/null || echo "Rebuild not available")`, opsEcho("Rebuilding RAID array: %s", targetV), 0)
 	case "health":
 		script = `echo "=== RAID Health ===" && (storcli64 /call show 2>/dev/null | grep -i "status\|health\|degraded" || mdadm --detail /dev/md0 2>/dev/null | grep -i "state\|active" || echo "RAID health not available")`
 	case "add-spare":
@@ -44,13 +51,23 @@ func (s *Server) handleRAIDExt(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (disk) is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Adding spare disk: %s" && (storcli64 /c0/eall/sall add hotsparedrive 2>/dev/null || mdadm --add /dev/md0 %s 2>/dev/null || echo "Add spare not available")`, req.Target, req.Target)
+		targetV, err := mqPath("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && (storcli64 /c0/eall/sall add hotsparedrive 2>/dev/null || mdadm --add /dev/md0 %s 2>/dev/null || echo "Add spare not available")`, opsEcho("Adding spare disk: %s", targetV), shellquote.Quote(targetV))
 	case "remove-disk":
 		if req.Target == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (disk) is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Removing disk: %s" && (storcli64 /c0/eall/sall remove 2>/dev/null || mdadm --remove /dev/md0 %s 2>/dev/null || echo "Remove disk not available")`, req.Target, req.Target)
+		targetV, err := mqPath("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && (storcli64 /c0/eall/sall remove 2>/dev/null || mdadm --remove /dev/md0 %s 2>/dev/null || echo "Remove disk not available")`, opsEcho("Removing disk: %s", targetV), shellquote.Quote(targetV))
 	case "mdadm":
 		script = `echo "=== Software RAID (mdadm) ===" && (cat /proc/mdstat 2>/dev/null || echo "mdadm not available") && echo "---" && (mdadm --detail --scan 2>/dev/null || echo "No md arrays")`
 	case "zfs":

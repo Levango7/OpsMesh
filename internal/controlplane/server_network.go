@@ -767,12 +767,12 @@ func buildDiagnoseCommand(tool, target string, opts diagnoseOptions, os string) 
 					` -Port ` + strconv.Itoa(opts.Port)), nil
 		}
 		// Linux: nc -zv -w {timeout} {target} {port}
-		return fmt.Sprintf("nc -zv -w %d %s %d", opts.Timeout, target, opts.Port), nil
+		return fmt.Sprintf("nc -zv -w %d %s %d", opts.Timeout, shellquote.Quote(target), opts.Port), nil
 	case "nslookup":
-		return fmt.Sprintf("nslookup %s", target), nil
+		return fmt.Sprintf("nslookup %s", shellquote.Quote(target)), nil
 	case "curl":
 		// curl -sS -o /dev/null -w "%{http_code} %{time_total}" --max-time {timeout} {target}
-		return fmt.Sprintf("curl -sS -o /dev/null -w \"%%{http_code} %%{time_total}\" --max-time %d %s", opts.Timeout, target), nil
+		return fmt.Sprintf("curl -sS -o /dev/null -w \"%%{http_code} %%{time_total}\" --max-time %d %s", opts.Timeout, shellquote.Quote(target)), nil
 	default:
 		return "", fmt.Errorf("unsupported tool: %s", tool)
 	}

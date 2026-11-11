@@ -17,6 +17,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/pkg/provision"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
@@ -293,7 +294,7 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 		advertise = fmt.Sprintf("http://127.0.0.1:%d", s.httpPort)
 		logx.Warn(r.Context(), "advertise-addr 未配置，bootstrap 回退本机地址（仅开发，生产务必配置 --advertise-addr）")
 	}
-	bootstrap := fmt.Sprintf("curl -sSL %s/install.sh | sh -s -- --token=%s", advertise, token)
+	bootstrap := fmt.Sprintf("curl -sSL %s/install.sh | sh -s -- --token=%s", shellquote.Quote(advertise), shellquote.Quote(token))
 	// B1 SSH 自动推送：若配置了 SSH 私钥，自动通过 SSH 在候选设备上执行 bootstrap。
 	if s.cfg.ProvisionSSHKey != "" {
 		sshAddr := fmt.Sprintf("%s:22", dev.IP)

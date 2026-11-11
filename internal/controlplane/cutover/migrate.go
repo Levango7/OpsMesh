@@ -484,8 +484,8 @@ func generateOneTimePassword() (string, error) {
 		lower   = "abcdefghijkmnopqrstuvwxyz"
 		digits  = "23456789"
 		special = "!@#$%^&*-_=+"
-		all     = upper + lower + digits + special
 	)
+	all := strings.Join([]string{upper, lower, digits, special}, "")
 	pick := func(set string) (byte, error) {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(set))))
 		if err != nil {

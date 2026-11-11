@@ -184,7 +184,7 @@ func (s *Server) handleTSDBDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s version=%s", req.DeviceID, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -249,7 +249,12 @@ func (s *Server) handleTSDBAction(w http.ResponseWriter, r *http.Request, tsType
 	req.Action = action
 
 	script := buildTSDBActionScript(req)
-	taskAction := "tsdb_" + action + "_" + tsType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "tsdb.action."+tsType, err)
+		return
+	}
+	taskAction := fmt.Sprintf("tsdb_%s_%s", actionV, tsType)
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {
@@ -353,7 +358,7 @@ func (s *Server) handleTSDBDatabase(w http.ResponseWriter, r *http.Request, tsTy
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "tsdb_database_" + req.Action, Target: req.Name,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s type=%s", req.DeviceID, tsType)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " type=" + opsSQLString(tsType)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

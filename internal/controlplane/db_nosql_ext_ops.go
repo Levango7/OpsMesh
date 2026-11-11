@@ -74,15 +74,15 @@ func (s *Server) handleDBHBase(w http.ResponseWriter, r *http.Request) {
 	case "deploy":
 		script = `if command -v hbase >/dev/null 2>&1; then echo 'HBase already installed'; else wget https://archive.apache.org/dist/hbase/stable/hbase.tar.gz -O /tmp/hbase.tar.gz || apt install hbase; fi`
 	case "table", "create-table":
-		script = fmt.Sprintf(`hbase shell <<< "create '%s', '%s'"`, table, cf)
+		script = fmt.Sprintf(`hbase shell <<< %s`, shellquote.Quote(fmt.Sprintf("create '%s', '%s'", table, cf)))
 	case "drop-table":
-		script = fmt.Sprintf(`hbase shell <<< "disable '%s' && drop '%s'"`, table, table)
+		script = fmt.Sprintf(`hbase shell <<< %s`, shellquote.Quote(fmt.Sprintf("disable '%s' && drop '%s'", table, table)))
 	case "scan":
-		script = fmt.Sprintf(`hbase shell <<< "scan '%s'"`, table)
+		script = fmt.Sprintf(`hbase shell <<< %s`, shellquote.Quote(fmt.Sprintf("scan '%s'", table)))
 	case "compact":
-		script = fmt.Sprintf(`hbase shell <<< "compact '%s'"`, table)
+		script = fmt.Sprintf(`hbase shell <<< %s`, shellquote.Quote(fmt.Sprintf("compact '%s'", table)))
 	case "major-compact":
-		script = fmt.Sprintf(`hbase shell <<< "major_compact '%s'"`, table)
+		script = fmt.Sprintf(`hbase shell <<< %s`, shellquote.Quote(fmt.Sprintf("major_compact '%s'", table)))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

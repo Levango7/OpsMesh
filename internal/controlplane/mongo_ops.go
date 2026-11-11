@@ -175,7 +175,7 @@ func (s *Server) handleMongoDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: "mongodb:" + mode,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s version=%s", req.DeviceID, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -204,7 +204,7 @@ func buildMongoDeployScript(req mongoDeployRequest, mode string) string {
 		b.WriteString("mongosh --port $PORT --eval 'rs.initiate()' || echo '副本集需手动 rs.initiate()'\n")
 		b.WriteString("echo 'MongoDB 副本集已就绪'\n")
 	case "sharded":
-		b.WriteString("# 分片集群：需部署 config server + shard + mongos\n")
+		b.WriteString("# 分片集群：需部署 config server/shard/mongos\n")
 		b.WriteString("echo 'MongoDB 分片集群：需部署 configServer(27019) + shard(27018) + mongos(27017)'\n")
 	}
 	return b.String()

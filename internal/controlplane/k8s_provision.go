@@ -150,7 +150,7 @@ func (s *Server) handleK8sProvision(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Tool + ":" + mode,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s version=%s cluster=%s", req.DeviceID, req.Version, req.ClusterName)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version) + " cluster=" + opsSQLString(req.ClusterName)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -297,7 +297,7 @@ func (s *Server) handleK8sProvisionLifecycle(w http.ResponseWriter, r *http.Requ
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: taskAction, Target: req.Tool,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s cluster=%s", req.DeviceID, req.ClusterName)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " cluster=" + opsSQLString(req.ClusterName)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -398,7 +398,7 @@ func (s *Server) handleK8sJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: taskAction, Target: req.Role,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s master=%s", req.DeviceID, req.MasterAddr)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " master=" + opsSQLString(req.MasterAddr)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

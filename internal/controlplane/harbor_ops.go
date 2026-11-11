@@ -164,7 +164,7 @@ func (s *Server) handleHarborDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: "harbor",
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s mode=%s version=%s", req.DeviceID, req.Mode, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " mode=" + opsSQLString(req.Mode) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

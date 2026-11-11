@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -382,7 +383,7 @@ func (s *Server) handleSecurityPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "security_patch_" + req.Action, Target: strings.Join(req.Packages, ","),
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s securityOnly=%v", req.DeviceID, req.SecurityOnly)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " securityOnly=" + opsSQLString(strconv.FormatBool(req.SecurityOnly))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

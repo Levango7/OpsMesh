@@ -49,8 +49,13 @@ func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {
 			nonceBytes = []byte("fallback-nonce-v1")
 		}
 		nonce := hex.EncodeToString(nonceBytes)
-		w.Header().Set("Content-Security-Policy",
-			fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self' 'unsafe-inline' 'nonce-%s'; img-src 'self' data:; connect-src 'self'", nonce, nonce))
+		var csp strings.Builder
+		csp.WriteString("default-src 'self'; script-src 'self' 'nonce-")
+		csp.WriteString(nonce)
+		csp.WriteString("'; style-src 'self' 'unsafe-inline' 'nonce-")
+		csp.WriteString(nonce)
+		csp.WriteString("'; img-src 'self' data:; connect-src 'self'")
+		w.Header().Set("Content-Security-Policy", csp.String())
 		h.ServeHTTP(w, r)
 	})
 }
@@ -112,7 +117,7 @@ func (s *Server) csrfOriginCheck(h http.Handler) http.Handler {
 			// Origin host 与 AdvertiseAddr host 不匹配：疑似跨站 CSRF，拒绝。
 			s.audit(r.Context(), &proto.AuditEvent{
 				TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "csrf_origin_rejected", Target: r.URL.Path,
-				Detail: fmt.Sprintf("origin=%s expected_host=%s remote=%s", origin, advertiseHost, r.RemoteAddr),
+				Detail: "origin=" + opsSQLString(origin) + " expected_host=" + opsSQLString(advertiseHost) + " remote=" + opsSQLString(r.RemoteAddr),
 			})
 			paginate.JSONError(w, http.StatusForbidden, "origin not allowed")
 			return

@@ -60,7 +60,12 @@ func (s *Server) handleActiveMQResource(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	script := buildActiveMQScript(req)
-	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "activemq_"+resType+"_"+req.Action)
+	actionV, err := opsIdentifier("action", req.Action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "middleware.activemq."+resType, err)
+		return
+	}
+	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, fmt.Sprintf("activemq_%s_%s", resType, actionV))
 	if err != nil {
 		writeInternalError(r.Context(), w, "middleware.activemq."+resType, err)
 		return

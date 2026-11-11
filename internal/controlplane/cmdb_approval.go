@@ -153,7 +153,7 @@ func (m *CMDBApprovalManager) SubmitChange(req *CMDBChangeRequest) (string, erro
 	m.audit(context.Background(), &proto.AuditEvent{
 		TenantID: req.TenantID, UserID: req.Requester,
 		Action: "cmdb_change_submit", Target: req.ID,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("submit %s on %s/%s: %s", req.Action, req.CIType, req.CIID, req.Reason)),
+		Detail: sanitizeAuditDetail("submit " + opsSQLString(req.Action) + " on " + opsSQLString(req.CIType) + "/" + opsSQLString(req.CIID) + ": " + opsSQLString(req.Reason)),
 	})
 
 	return req.ID, nil
@@ -189,7 +189,7 @@ func (m *CMDBApprovalManager) ApproveChange(changeID, approver, comment string) 
 		m.audit(ctx, &proto.AuditEvent{
 			TenantID: req.TenantID, UserID: approver,
 			Action: "cmdb_change_approve_failed", Target: changeID,
-			Detail: sanitizeAuditDetail(fmt.Sprintf("approve failed: %v", err)),
+			Detail: sanitizeAuditDetail("approve failed: " + opsSQLString(err.Error())),
 		})
 		// 用 changeApplyError 标记：调用方据此脱敏，避免 SQL 细节回吐客户端。
 		return &changeApplyError{cause: err}
@@ -209,7 +209,7 @@ func (m *CMDBApprovalManager) ApproveChange(changeID, approver, comment string) 
 	m.audit(ctx, &proto.AuditEvent{
 		TenantID: req.TenantID, UserID: approver,
 		Action: "cmdb_change_approve", Target: changeID,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("approve %s on %s/%s: %s", req.Action, req.CIType, req.CIID, comment)),
+		Detail: sanitizeAuditDetail("approve " + opsSQLString(req.Action) + " on " + opsSQLString(req.CIType) + "/" + opsSQLString(req.CIID) + ": " + opsSQLString(comment)),
 	})
 
 	return nil
@@ -246,7 +246,7 @@ func (m *CMDBApprovalManager) RejectChange(changeID, approver, comment string) e
 	m.audit(context.Background(), &proto.AuditEvent{
 		TenantID: req.TenantID, UserID: approver,
 		Action: "cmdb_change_reject", Target: changeID,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("reject %s on %s/%s: %s", req.Action, req.CIType, req.CIID, comment)),
+		Detail: sanitizeAuditDetail("reject " + opsSQLString(req.Action) + " on " + opsSQLString(req.CIType) + "/" + opsSQLString(req.CIID) + ": " + opsSQLString(comment)),
 	})
 
 	return nil

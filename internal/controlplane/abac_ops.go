@@ -33,8 +33,7 @@ func buildABACScript(action, subject, resource, actionAttr, context string) (str
 		if err != nil {
 			return "", http.StatusBadRequest, "subject/resource/context must be JSON-serializable: " + err.Error()
 		}
-		return fmt.Sprintf(`mkdir -p /etc/opsmesh/abac && echo %s >> /etc/opsmesh/abac/policies.json && echo "ABAC policy created"`,
-			shellQuote(string(doc))), 0, ""
+		return fmt.Sprintf(`mkdir -p /etc/opsmesh/abac && echo %s >> /etc/opsmesh/abac/policies.json && echo "ABAC policy created"`, shellQuote(string(doc))), 0, ""
 	case "evaluate":
 		if subject == "" || resource == "" || actionAttr == "" {
 			return "", http.StatusBadRequest, "subject, resource, and actionAttr are required"

@@ -48,7 +48,7 @@ func (s *Server) handleKafkaRebalance(w http.ResponseWriter, r *http.Request) {
 			}
 			topicsFlag = fmt.Sprintf("--topic %s", shellquote.Quote(topics))
 		}
-		script := fmt.Sprintf(`kafka-leader-election.sh --bootstrap-server localhost:9092 --election-type preferred %s`, topicsFlag)
+		script := "kafka-leader-election.sh --bootstrap-server localhost:9092 --election-type preferred " + topicsFlag
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rebalance_preferred-leader-election")
 		if !ok {
 			return
@@ -72,7 +72,7 @@ func (s *Server) handleKafkaRebalance(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid topics: " + err.Error()})
 			return
 		}
-		genScript := fmt.Sprintf(`kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --topics-to-move-json-file <(echo %s) --broker-list "0,1,2" --generate 2>/dev/null`, payload)
+		genScript := fmt.Sprintf(`kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --topics-to-move-json-file <(echo %s) --broker-list "0,1,2" --generate 2>/dev/null`, shellquote.Quote(payload))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, genScript, "rebalance_reassign-generate")
 		if !ok {
 			return
@@ -159,7 +159,7 @@ func (s *Server) handleKafkaDeleteRecords(w http.ResponseWriter, r *http.Request
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid delete-records payload: " + err.Error()})
 		return
 	}
-	script := fmt.Sprintf(`echo %s > /tmp/delete-records.json && kafka-delete-records.sh --bootstrap-server localhost:9092 --offset-json-file /tmp/delete-records.json`, payload)
+	script := fmt.Sprintf(`echo %s > /tmp/delete-records.json && kafka-delete-records.sh --bootstrap-server localhost:9092 --offset-json-file /tmp/delete-records.json`, shellquote.Quote(payload))
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "delete-records")
 	if !ok {
 		return

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleFastDFS 处理 POST /api/v1/storage/fastdfs
@@ -43,7 +44,12 @@ func (s *Server) handleFastDFS(w http.ResponseWriter, r *http.Request) {
 		if tracker == "" {
 			tracker = "localhost"
 		}
-		script := fmt.Sprintf(`docker run -d --name fastdfs-storage -p 23000:23000 -p 8888:8888 -e TRACKER_SERVER=%s:22122 -v /data/fastdfs/storage:/var/fdfs delron/fastdfs:latest storage 2>/dev/null && echo "FastDFS storage deployed"`, tracker)
+		trackerV, err := opsIdentifier("tracker", tracker)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`docker run -d --name fastdfs-storage -p 23000:23000 -p 8888:8888 -e TRACKER_SERVER=%s:22122 -v /data/fastdfs/storage:/var/fdfs delron/fastdfs:latest storage 2>/dev/null && echo %s`, trackerV, opsEcho("FastDFS storage deployed"))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "fastdfs_deploy-storage")
 		if !ok {
 			return
@@ -63,7 +69,12 @@ func (s *Server) handleFastDFS(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "file is required"})
 			return
 		}
-		script := fmt.Sprintf(`fdfs_upload_file /etc/fdfs/client.conf %s 2>/dev/null`, req.File)
+		pathV, err := mqPath("file", req.File)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`fdfs_upload_file /etc/fdfs/client.conf %s 2>/dev/null`, shellquote.Quote(pathV))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "fastdfs_upload")
 		if !ok {
 			return
@@ -75,7 +86,12 @@ func (s *Server) handleFastDFS(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "remote and file are required"})
 			return
 		}
-		script := fmt.Sprintf(`fdfs_download_file /etc/fdfs/client.conf %s %s 2>/dev/null`, req.Remote, req.File)
+		pathV, err := mqPath("file", req.File)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`fdfs_download_file /etc/fdfs/client.conf %s %s 2>/dev/null`, shellquote.Quote(req.Remote), shellquote.Quote(pathV))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "fastdfs_download")
 		if !ok {
 			return
@@ -95,7 +111,7 @@ func (s *Server) handleFastDFS(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "remote file id is required"})
 			return
 		}
-		script := fmt.Sprintf(`fdfs_delete_file /etc/fdfs/client.conf %s 2>/dev/null`, req.Remote)
+		script := fmt.Sprintf(`fdfs_delete_file /etc/fdfs/client.conf %s 2>/dev/null`, shellquote.Quote(req.Remote))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "fastdfs_delete")
 		if !ok {
 			return

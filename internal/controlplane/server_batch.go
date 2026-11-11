@@ -294,7 +294,7 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 		})
 		s.audit(r.Context(), &proto.AuditEvent{
 			TenantID: tenant, UserID: actx.UserID, Action: "batch_exec", Target: task.TaskID,
-			Detail: sanitizeAuditDetail("batch:" + batchID + ":" + body.Command),
+			Detail: sanitizeAuditDetail("batch:" + opsSQLString(batchID) + ":" + opsSQLString(body.Command)),
 		})
 		if s.bus != nil {
 			s.bus.Publish(r.Context(), events.Event{

@@ -30,7 +30,6 @@ package controlplane
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -126,7 +125,7 @@ func (s *Server) evaluateAlertsOnce(ctx context.Context) {
 				// 记录审计：告警被抑制（便于运维溯源为何告警未通知）
 				s.audit(ctx, &proto.AuditEvent{
 					TenantID: ev.TenantID, Action: "alert_inhibited", Target: alert.AlertID,
-					Detail: sanitizeAuditDetail(fmt.Sprintf("ruleID=%s deviceID=%s severity=%s message=%s", ev.RuleID, ev.DeviceID, ev.Severity, ev.Message)),
+					Detail: sanitizeAuditDetail("ruleID=" + opsSQLString(ev.RuleID) + " deviceID=" + opsSQLString(ev.DeviceID) + " severity=" + opsSQLString(ev.Severity) + " message=" + opsSQLString(ev.Message)),
 				})
 				logx.Info(ctx, "告警被抑制，跳过通知", "alertID", alert.AlertID, "ruleID", ev.RuleID, "deviceID", ev.DeviceID)
 				continue
@@ -211,7 +210,7 @@ func (s *Server) evaluateEnvConsistency(ctx context.Context) {
 			TenantID: "system",
 			DeviceID: devices[0].deviceID, // 主设备为第一个
 			Severity: alertengine.SeverityWarning,
-			Message:  fmt.Sprintf("环境依赖 %s 版本不一致：%s", key.depName, strings.Join(deviceIDs, ",")),
+			Message:  "环境依赖 " + opsSQLString(key.depName) + " 版本不一致：" + opsSQLString(strings.Join(deviceIDs, ",")),
 			Labels: map[string]string{
 				"ruleID":   "env-dep-mismatch",
 				"deviceID": devices[0].deviceID,

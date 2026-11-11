@@ -23,7 +23,8 @@ func StripCTA(html []byte) []byte {
 	if endRel < 0 {
 		return html
 	}
-	end := start + endRel + len(CTAEnd)
+	end := start + endRel
+	end += len(CTAEnd)
 	if BundleAvailable() {
 		// 去标记、留内容：HTML 里不再残留内部注释。
 		out := make([]byte, 0, len(html))

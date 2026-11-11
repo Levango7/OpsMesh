@@ -194,7 +194,7 @@ func (s *Server) handleMiddlewareDeploy(w http.ResponseWriter, r *http.Request) 
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type + ":" + req.Mode,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s version=%s", req.DeviceID, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -378,7 +378,12 @@ func (s *Server) handleMiddlewareAction(w http.ResponseWriter, r *http.Request, 
 	req.Action = action
 
 	script := buildMiddlewareActionScript(req)
-	taskAction := "mw_" + action + "_" + mwType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "middleware.action."+mwType, err)
+		return
+	}
+	taskAction := fmt.Sprintf("mw_%s_%s", actionV, mwType)
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {

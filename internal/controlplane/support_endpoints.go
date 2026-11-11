@@ -544,7 +544,7 @@ func (s *Server) renderPrometheus(ctx context.Context) string {
 func jsonIndent(v any) []byte {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return []byte(fmt.Sprintf("序列化失败: %v\n", err))
+		return []byte("序列化失败: " + err.Error() + "\n")
 	}
 	return append(b, '\n')
 }

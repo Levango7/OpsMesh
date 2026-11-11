@@ -60,7 +60,7 @@ func (s *Server) handleMiddlewareRedisSentinel(w http.ResponseWriter, r *http.Re
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "redis_sentinel_" + req.Action, Target: req.Master,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s host=%s", req.DeviceID, req.Host)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " host=" + opsSQLString(req.Host)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

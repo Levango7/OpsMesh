@@ -408,13 +408,13 @@ func (s *Server) handleExecuteOSTemplate(w http.ResponseWriter, r *http.Request,
 		UserID:   actx.UserID,
 		Action:   "execute_os_template",
 		Target:   task.TaskID,
-		Detail:   sanitizeAuditDetail("template=" + id + " agent=" + body.AgentID),
+		Detail:   sanitizeAuditDetail("template=" + opsSQLString(id) + " agent=" + opsSQLString(body.AgentID)),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
 			Action: "execute_os_template", Target: task.TaskID,
-			Detail: sanitizeAuditDetail("template=" + id + " agent=" + body.AgentID), Level: events.LevelInfo,
+			Detail: sanitizeAuditDetail("template=" + opsSQLString(id) + " agent=" + opsSQLString(body.AgentID)), Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {
