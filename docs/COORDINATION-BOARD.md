@@ -120,14 +120,15 @@ CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展�
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  deploy/scripts/build-airgap-bundle.sh,deploy/scripts/build-airgap-bundle.selftest.sh,deploy/scripts/install-airgap.sh,deploy/scripts/install-airgap.selftest.sh,docs/airgap-install-sop.md,CHANGELOG.md <- qoder  (ttl=24h by qoder)
-  go.mod,.github/workflows/ci.yml,.github/workflows/release.yml <- opencode  (ttl=6h by opencode)
   internal/controlplane/cache_ops.go,internal/controlplane/cicd_ops.go,internal/controlplane/server_network.go,internal/controlplane/data_ops.go,internal/controlplane/domestic_ops.go,internal/controlplane/k8s_cluster_deploy.go,internal/controlplane/vector_ops.go,internal/controlplane/db_ops.go,internal/controlplane/iac_ops.go,internal/controlplane/system_ops.go,internal/controlplane/cmdb_approval.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/grpc/grpc.go,internal/controlplane/k8s_gateway_ops.go,internal/controlplane/middleware_deploy_handler.go,internal/controlplane/olap_ops.go,internal/controlplane/storage_fastdfs.go,internal/controlplane/storage_ops.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
   internal/controlplane/env_ops.go,internal/controlplane/zookeeper_middleware_ops.go,internal/controlplane/ntp_ops.go,internal/controlplane/security_ops.go,internal/controlplane/redis_middleware_ops.go,internal/controlplane/rabbitmq_middleware_ops.go,internal/controlplane/kafka_middleware_ops.go,internal/controlplane/monitor_ops.go,internal/controlplane/b14_injection_test.go,scripts/shell-injection-audit.py,CHANGELOG.md <- opencode  (ttl=24h by opencode)
   internal/gates/tenant_store_verdict_gate_test.go <- zcode  (ttl=72h by zcode)
 
 TASKS:
   (无)
+
+ISSUES:
+  CLAIM 过期未闭环：go.mod,.github/workflows/ci.yml,.github/workflows/release.yml（认领人 opencode，ttl 6h）
 ```
 
 ---
