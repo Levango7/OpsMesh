@@ -64,6 +64,8 @@ func initSchema(db *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS incidents (
 			id VARCHAR(64) PRIMARY KEY,
+			-- tenant_id：行级租户隔离键（D4 / issue #27 裁决②）；写入必钉，读取过滤
+			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
 			title VARCHAR(255) NOT NULL,
 			description TEXT,
 			severity VARCHAR(16),
@@ -79,7 +81,8 @@ func initSchema(db *sql.DB) error {
 			created_at DATETIME,
 			updated_at DATETIME,
 			INDEX idx_status (status),
-			INDEX idx_severity (severity)
+			INDEX idx_severity (severity),
+			INDEX idx_tenant (tenant_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS timeline_events (
 			id VARCHAR(64) PRIMARY KEY,
@@ -130,8 +133,10 @@ func ensureIncidentColumns(db *sql.DB) error {
 	return nil
 }
 
+// CreateIncident 写入事件单。租户必须钉住（空租户拒绝写入，D4）。
+// tenant_id 参与 INSERT，但**不参与** ON DUPLICATE KEY UPDATE——归属不允许被后续写覆盖。
 func (m *MySQLStore) CreateIncident(inc *models.Incident) *models.Incident {
-	if inc == nil {
+	if inc == nil || inc.TenantID == "" {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -144,13 +149,13 @@ func (m *MySQLStore) CreateIncident(inc *models.Incident) *models.Incident {
 	deviceIDs, _ := json.Marshal(inc.DeviceIDs)
 	tags, _ := json.Marshal(inc.Tags)
 	_, err := m.db.ExecContext(ctx,
-		`INSERT INTO incidents (id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO incidents (id, tenant_id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE title=VALUES(title), description=VALUES(description), severity=VALUES(severity),
 		   status=VALUES(status), alert_ids=VALUES(alert_ids), device_ids=VALUES(device_ids),
 		   assignee=VALUES(assignee), tags=VALUES(tags), occurred_at=VALUES(occurred_at), detected_at=VALUES(detected_at),
 		   resolved_at=VALUES(resolved_at), closed_at=VALUES(closed_at), updated_at=VALUES(updated_at)`,
-		inc.ID, inc.Title, inc.Description, inc.Severity, inc.Status, alertIDs, deviceIDs, inc.Assignee,
+		inc.ID, inc.TenantID, inc.Title, inc.Description, inc.Severity, inc.Status, alertIDs, deviceIDs, inc.Assignee,
 		tags, nullTimePtr(inc.OccurredAt), nullTime(inc.DetectedAt), nullTimePtr(inc.ResolvedAt), nullTimePtr(inc.ClosedAt), nullTime(inc.CreatedAt), nullTime(inc.UpdatedAt))
 	if err != nil {
 		log.Printf("[store] CreateIncident 失败: %v", err)
@@ -158,16 +163,17 @@ func (m *MySQLStore) CreateIncident(inc *models.Incident) *models.Incident {
 	return inc
 }
 
-func (m *MySQLStore) GetIncident(id string) *models.Incident {
+// GetIncident 按 id + 租户取单；跨租户与不存在同样返回 nil（不泄露"该单存在"）。
+func (m *MySQLStore) GetIncident(id, tenantID string) *models.Incident {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	row := m.db.QueryRowContext(ctx,
-		`SELECT id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents WHERE id=?`, id)
+		`SELECT id, tenant_id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents WHERE id=? AND tenant_id=?`, id, tenantID)
 	inc := &models.Incident{}
 	var alertIDs, deviceIDs, tags []byte
 	var description, severity, assignee sql.NullString
 	var occurredAt, detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&inc.ID, &inc.Title, &description, &severity, &inc.Status, &alertIDs, &deviceIDs, &assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&inc.ID, &inc.TenantID, &inc.Title, &description, &severity, &inc.Status, &alertIDs, &deviceIDs, &assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetIncident 查询失败: %v", err)
 		}
@@ -212,8 +218,9 @@ func (m *MySQLStore) GetIncident(id string) *models.Incident {
 	return inc
 }
 
-func (m *MySQLStore) UpdateIncident(inc *models.Incident) *models.Incident {
-	if inc == nil {
+// UpdateIncident 跨租户不可改；SET 里**不含** tenant_id（归属变更=越权改挂）。
+func (m *MySQLStore) UpdateIncident(inc *models.Incident, tenantID string) *models.Incident {
+	if inc == nil || tenantID == "" {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -223,19 +230,20 @@ func (m *MySQLStore) UpdateIncident(inc *models.Incident) *models.Incident {
 	deviceIDs, _ := json.Marshal(inc.DeviceIDs)
 	tags, _ := json.Marshal(inc.Tags)
 	_, err := m.db.ExecContext(ctx,
-		`UPDATE incidents SET title=?, description=?, severity=?, status=?, alert_ids=?, device_ids=?, assignee=?, tags=?, detected_at=?, resolved_at=?, closed_at=?, updated_at=? WHERE id=?`,
+		`UPDATE incidents SET title=?, description=?, severity=?, status=?, alert_ids=?, device_ids=?, assignee=?, tags=?, detected_at=?, resolved_at=?, closed_at=?, updated_at=? WHERE id=? AND tenant_id=?`,
 		inc.Title, inc.Description, inc.Severity, inc.Status, alertIDs, deviceIDs, inc.Assignee,
-		tags, nullTime(inc.DetectedAt), nullTimePtr(inc.ResolvedAt), nullTimePtr(inc.ClosedAt), nullTime(inc.UpdatedAt), inc.ID)
+		tags, nullTime(inc.DetectedAt), nullTimePtr(inc.ResolvedAt), nullTimePtr(inc.ClosedAt), nullTime(inc.UpdatedAt), inc.ID, tenantID)
 	if err != nil {
 		log.Printf("[store] UpdateIncident 失败: %v", err)
 	}
 	return inc
 }
 
-func (m *MySQLStore) DeleteIncident(id string) bool {
+// DeleteIncident 跨租户删不掉（WHERE 双条件；RowsAffected=0 即"不是你的或不存在"）。
+func (m *MySQLStore) DeleteIncident(id, tenantID string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	res, err := m.db.ExecContext(ctx, `DELETE FROM incidents WHERE id=?`, id)
+	res, err := m.db.ExecContext(ctx, `DELETE FROM incidents WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
 		log.Printf("[store] DeleteIncident 失败: %v", err)
 		return false
@@ -252,12 +260,13 @@ func (m *MySQLStore) DeleteIncident(id string) bool {
 	return n > 0
 }
 
-func (m *MySQLStore) ListIncidents(status string, severity models.Severity) []*models.Incident {
+// ListIncidents 先按租户收窄，再叠加 status/severity 过滤。
+func (m *MySQLStore) ListIncidents(status string, severity models.Severity, tenantID string) []*models.Incident {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	q := `SELECT id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents`
-	var args []interface{}
-	var where []string
+	q := `SELECT id, tenant_id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents`
+	args := []interface{}{tenantID}
+	where := []string{"tenant_id=?"}
 	if status != "" {
 		where = append(where, "status=?")
 		args = append(args, status)
@@ -282,7 +291,7 @@ func (m *MySQLStore) ListIncidents(status string, severity models.Severity) []*m
 		var alertIDs, deviceIDs, tags []byte
 		var description, severity, assignee sql.NullString
 		var occurredAt, detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&inc.ID, &inc.Title, &description, &severity, &inc.Status, &alertIDs, &deviceIDs, &assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&inc.ID, &inc.TenantID, &inc.Title, &description, &severity, &inc.Status, &alertIDs, &deviceIDs, &assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 		inc.Description, inc.Assignee = description.String, assignee.String
@@ -326,8 +335,12 @@ func (m *MySQLStore) ListIncidents(status string, severity models.Severity) []*m
 	return out
 }
 
-func (m *MySQLStore) AddTimelineEvent(ev *models.TimelineEvent) *models.TimelineEvent {
+// AddTimelineEvent 归属由**父事件单**决定：父单不属于该租户 ⇒ 拒收（拿不到别人的单的写入权）。
+func (m *MySQLStore) AddTimelineEvent(ev *models.TimelineEvent, tenantID string) *models.TimelineEvent {
 	if ev == nil {
+		return nil
+	}
+	if m.GetIncident(ev.IncidentID, tenantID) == nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -344,7 +357,11 @@ func (m *MySQLStore) AddTimelineEvent(ev *models.TimelineEvent) *models.Timeline
 	return ev
 }
 
-func (m *MySQLStore) GetTimeline(incidentID string) []models.TimelineEvent {
+// GetTimeline 先校验父单归属；不属于该租户 ⇒ 返回 nil（不泄露「该单存在」）。
+func (m *MySQLStore) GetTimeline(incidentID, tenantID string) []models.TimelineEvent {
+	if m.GetIncident(incidentID, tenantID) == nil {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	rows, err := m.db.QueryContext(ctx,
@@ -371,11 +388,12 @@ func (m *MySQLStore) GetTimeline(incidentID string) []models.TimelineEvent {
 	return out
 }
 
-func (m *MySQLStore) Incidents() []*models.Incident {
+// Incidents 只返回该租户的事件单。
+func (m *MySQLStore) Incidents(tenantID string) []*models.Incident {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	rows, err := m.db.QueryContext(ctx,
-		`SELECT id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents`)
+		`SELECT id, tenant_id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents WHERE tenant_id=?`, tenantID)
 	if err != nil {
 		log.Printf("[store] Incidents 失败: %v", err)
 		return nil
@@ -387,7 +405,7 @@ func (m *MySQLStore) Incidents() []*models.Incident {
 		var alertIDs, deviceIDs, tags []byte
 		var description, severity, assignee sql.NullString
 		var occurredAt, detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&inc.ID, &inc.Title, &description, &severity, &inc.Status, &alertIDs, &deviceIDs, &assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&inc.ID, &inc.TenantID, &inc.Title, &description, &severity, &inc.Status, &alertIDs, &deviceIDs, &assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 		inc.Description, inc.Assignee = description.String, assignee.String
