@@ -4,7 +4,6 @@ package k8slifecycle
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -37,15 +36,6 @@ const (
 // 再由纯内存状态机把 phase 推进到 Completed——前端与运维看到的是"已完成"，
 // 集群侧却没有任何动作（假成功）。真实现见
 // docs/design/k8s-lifecycle-execution-charter.md（C 项立项）。
-var ErrNotImplemented = errors.New("k8s 生命周期动作尚未实现")
-
-func notImplemented(operation, hint string) error {
-	if hint == "" {
-		return fmt.Errorf("%w: %s", ErrNotImplemented, operation)
-	}
-	return fmt.Errorf("%w: %s。%s", ErrNotImplemented, operation, hint)
-}
-
 // NodeSpec 节点规格
 type NodeSpec struct {
 	ID       string `json:"id"`
@@ -487,16 +477,6 @@ func NewK8sLifecycleHandler(store LifecycleJobStore) *K8sLifecycleHandler {
 		etcdMgr:    NewEtcdManager(),
 		store:      store,
 	}
-}
-
-// writeNotImplemented 把"执行链路未实现"写成 501。
-// 这三条入口此前先返回 202、再由纯内存状态机把 phase 推进到 Completed——
-// 调用方看到"升级/回滚/轮换完成"，集群侧却没有任何动作。A 项裁决：能力不存在就必须明说。
-func writeNotImplemented(w http.ResponseWriter, operation, hint string) {
-	paginate.WriteJSON(w, http.StatusNotImplemented, map[string]string{
-		"error": notImplemented(operation, hint).Error(),
-		"code":  "ERR_NOT_IMPLEMENTED",
-	})
 }
 
 // HandleUpgrade 处理 POST /api/v1/k8s/lifecycle/upgrade
@@ -1211,7 +1191,7 @@ func (h *K8sLifecycleHandler) upgradeWorkers(ctx context.Context, jobID string, 
 
 	// 分批次升级，默认每批 1 个节点
 	batchSize := 1
-	if spec.Nodes != nil && len(spec.Nodes) > 0 {
+	if len(spec.Nodes) > 0 {
 		// 如果指定了节点列表，使用指定列表
 		cluster.WorkerNodes = spec.Nodes
 	}
@@ -1627,7 +1607,6 @@ func (h *K8sLifecycleHandler) restoreEtcd(ctx context.Context, jobID, backupPath
 	h.updateJobPhase(context.Background(), "", "etcd_restore", 25, "etcd_restore: stopping etcd")
 
 	// 1. 停止 etcd
-	cmd := "systemctl stop etcd"
 	if _, stderr, code, err := h.execSSH(context.Background(), cluster.CPNodes[0].Host, "systemctl stop etcd"); err != nil || code != 0 {
 		return fmt.Errorf("stop etcd failed: %v, stderr: %s", err, stderr)
 	}
@@ -1635,7 +1614,7 @@ func (h *K8sLifecycleHandler) restoreEtcd(ctx context.Context, jobID, backupPath
 	h.updateJobPhase(context.Background(), "", "etcd_restore", 35, "etcd_restore: restoring from backup")
 
 	// 2. 恢复 etcd 数据
-	cmd = fmt.Sprintf("etcdctl snapshot restore %s --data-dir /var/lib/etcd", backupPath)
+	cmd := fmt.Sprintf("etcdctl snapshot restore %s --data-dir /var/lib/etcd", backupPath)
 	if _, stderr, code, err := h.execSSH(context.Background(), cluster.CPNodes[0].Host, cmd); err != nil || code != 0 {
 		return fmt.Errorf("etcdctl snapshot restore failed: %v, stderr: %s", err, stderr)
 	}

@@ -193,9 +193,10 @@ func TestUpgradeStatusLifecycle(t *testing.T) {
 	}
 }
 
-// A 项裁决：升级/回滚/证书轮换的执行链路未实现，必须显式 501。
-// 回归背景：此前这三条入口先返回 202，再由纯内存状态机把 phase 推进到
-// Completed——调用方看到的是"升级完成"，集群侧却没有任何动作（假成功）。
+// 三条入口（升级/回滚/证书轮换）必须返回 202 + jobId：作业落库、可追溯，
+// 由真实执行链路推进（M2/M3）；不再走 501 占位，也不得在响应里伪造完成态。
+// 回归背景：更早的版本先返回 202、再由纯内存状态机把 phase 推进到 Completed——
+// 调用方看到的是"升级完成"，集群侧却没有任何动作（假成功）。
 func TestUnimplementedActionsReturn501(t *testing.T) {
 	h := newTestHandler()
 
