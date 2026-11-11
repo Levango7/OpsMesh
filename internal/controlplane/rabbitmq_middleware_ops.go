@@ -61,6 +61,10 @@ func (s *Server) handleRabbitMQResource(w http.ResponseWriter, r *http.Request, 
 	if req.Vhost == "" {
 		req.Vhost = "/"
 	}
+	if _, err := opsIdentifier("vhost", req.Vhost); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	allowed := map[string]bool{"create": true, "delete": true, "list": true}
 	if !allowed[req.Action] {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (create/delete/list)"})
@@ -86,8 +90,12 @@ func (s *Server) handleRabbitMQResource(w http.ResponseWriter, r *http.Request, 
 
 func buildRabbitMQScript(req rabbitMQReq, resource string) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	vhostV := req.Vhost
+	actionV := req.Action
 	b.WriteString("set -e\n")
-	fmt.Fprintf(&b, "VHOST=%q\n", req.Vhost)
+	fmt.Fprintf(&b, "VHOST=%q\n", vhostV)
 	switch resource {
 	case "vhost":
 		switch req.Action {
@@ -104,12 +112,12 @@ func buildRabbitMQScript(req rabbitMQReq, resource string) string {
 			if req.Name == "" {
 				b.WriteString("echo 'queue create 需指定 queue 名称' && exit 1\n")
 			} else {
-				fmt.Fprintf(&b, "rabbitmqctl declare_queue name=%s vhost=%s\n", shellQuote(req.Name), req.Vhost)
+				fmt.Fprintf(&b, "rabbitmqctl declare_queue name=%s vhost=%s\n", shellQuote(req.Name), vhostV)
 			}
 		case "delete":
-			fmt.Fprintf(&b, "rabbitmqctl delete_queue name=%s vhost=%s\n", shellQuote(req.Name), req.Vhost)
+			fmt.Fprintf(&b, "rabbitmqctl delete_queue name=%s vhost=%s\n", shellQuote(req.Name), vhostV)
 		case "list":
-			fmt.Fprintf(&b, "rabbitmqctl list_queues -p %s\n", req.Vhost)
+			fmt.Fprintf(&b, "rabbitmqctl list_queues -p %s\n", vhostV)
 		}
 	case "exchange":
 		switch req.Action {
@@ -117,14 +125,14 @@ func buildRabbitMQScript(req rabbitMQReq, resource string) string {
 			if req.Name == "" {
 				b.WriteString("echo 'exchange create 需指定 exchange 名称' && exit 1\n")
 			} else {
-				fmt.Fprintf(&b, "rabbitmqctl declare_exchange name=%s type=direct vhost=%s\n", shellQuote(req.Name), req.Vhost)
+				fmt.Fprintf(&b, "rabbitmqctl declare_exchange name=%s type=direct vhost=%s\n", shellQuote(req.Name), vhostV)
 			}
 		case "delete":
-			fmt.Fprintf(&b, "rabbitmqctl delete_exchange name=%s vhost=%s\n", shellQuote(req.Name), req.Vhost)
+			fmt.Fprintf(&b, "rabbitmqctl delete_exchange name=%s vhost=%s\n", shellQuote(req.Name), vhostV)
 		case "list":
-			fmt.Fprintf(&b, "rabbitmqctl list_exchanges -p %s\n", req.Vhost)
+			fmt.Fprintf(&b, "rabbitmqctl list_exchanges -p %s\n", vhostV)
 		}
 	}
-	fmt.Fprintf(&b, "echo 'RabbitMQ %s %s 操作完成\n", resource, req.Action)
+	fmt.Fprintf(&b, "echo 'RabbitMQ %s %s 操作完成\n", resource, actionV)
 	return b.String()
 }

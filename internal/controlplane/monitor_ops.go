@@ -282,6 +282,10 @@ func (s *Server) handleMonitorAction(w http.ResponseWriter, r *http.Request, mon
 
 func buildMonitorActionScript(req monitorOpsRequest) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	typeV := req.Type
+	actionV := req.Action
 	b.WriteString("set -e\n")
 	switch req.Type {
 	case "zabbix":
@@ -321,8 +325,24 @@ func buildMonitorActionScript(req monitorOpsRequest) string {
 			b.WriteString("pgrep -f oap-server >/dev/null && echo 'running' || echo 'not running'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '监控系统 %s %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '监控系统 %s %s 操作完成\n", typeV, actionV)
 	return b.String()
+}
+
+// skywalkingIDRe 是 SkyWalking traceId / serviceId 的白名单：字母数字与 . _ -（十六进制 traceId 形态）。
+var skywalkingIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// skywalkingID 校验 SkyWalking 标识符（traceId / serviceId）。
+//
+// 为什么不用 Quote：这两个值落在**单引号包着的 JSON 串**里（GraphQL variables.traceId）——
+// Quote 会产出引号字面量，嵌进 JSON 里会破坏结构；而单引号包着的 shell 段里
+// 一个 `'` 就能提前闭合该段 ⇒ 只能白名单（拒绝引号与元字符），不能只转义。
+// 不合法时返回空串，调用方据此走「未指定」分支（不会把非法载荷带进脚本）。
+func skywalkingID(s string) string {
+	if !skywalkingIDRe.MatchString(s) {
+		return ""
+	}
+	return s
 }
 
 // handleZabbixHost 处理 POST /api/v1/monitor/zabbix/host：Zabbix 主机管理。
@@ -355,6 +375,12 @@ func (s *Server) handleZabbixHost(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid host name"})
 		return
 	}
+	if req.Action != "list" {
+		if _, err := opsHost("hostIP", req.HostIP); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 
 	script := buildZabbixHostScript(req)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "zabbix_host_"+req.Action)
@@ -371,6 +397,11 @@ func (s *Server) handleZabbixHost(w http.ResponseWriter, r *http.Request) {
 
 func buildZabbixHostScript(req zabbixHostReq) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	hostV := req.Host
+	hostIPV := req.HostIP
+	actionV := req.Action
 	b.WriteString("set -e\n")
 	b.WriteString("# Zabbix 主机管理（Zabbix JSON-RPC API，凭证从环境变量 ZABBIX_URL / ZABBIX_USER / ZABBIX_PASSWORD 读取）\n")
 	b.WriteString("ZABBIX_URL=${ZABBIX_URL:-http://localhost/zabbix/api_jsonrpc.php}\n")
@@ -378,11 +409,11 @@ func buildZabbixHostScript(req zabbixHostReq) string {
 	case "list":
 		b.WriteString("curl -s -X POST \"$ZABBIX_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"host\",\"status\"]},\"id\":1}'\n")
 	case "create":
-		fmt.Fprintf(&b, "echo 'Zabbix host.create: %s (%s) — 需先 auth 获取 token 后调用 host.create'\n", req.Host, req.HostIP)
+		fmt.Fprintf(&b, "echo 'Zabbix host.create: %s (%s) — 需先 auth 获取 token 后调用 host.create'\n", hostV, hostIPV)
 	case "delete":
-		fmt.Fprintf(&b, "echo 'Zabbix host.delete: %s'\n", req.Host)
+		fmt.Fprintf(&b, "echo 'Zabbix host.delete: %s'\n", hostV)
 	}
-	fmt.Fprintf(&b, "echo 'Zabbix 主机 %s 操作完成\n", req.Action)
+	fmt.Fprintf(&b, "echo 'Zabbix 主机 %s 操作完成\n", actionV)
 	return b.String()
 }
 
@@ -484,6 +515,10 @@ func (s *Server) handleNightingaleQuery(w http.ResponseWriter, r *http.Request) 
 
 func buildNightingaleQueryScript(req nightingaleQueryReq) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	queryV := urlQueryEscape(req.Query)
+	stepV := req.Step
 	b.WriteString("set -e\n")
 	b.WriteString("# 夜莺查询（Prometheus 兼容 API，凭证从环境变量 N9E_URL / N9E_TOKEN 读取）\n")
 	b.WriteString("N9E_URL=${N9E_URL:-http://localhost:17000}\n")
@@ -495,7 +530,7 @@ func buildNightingaleQueryScript(req nightingaleQueryReq) string {
 		end = 0
 	}
 	fmt.Fprintf(&b, "curl -s -H \"Authorization: Bearer $N9E_TOKEN\" \"$N9E_URL/api/v1/query_range?query=%s&start=%d&end=%d&step=%d\"\n",
-		urlQueryEscape(req.Query), start, end, req.Step)
+		urlQueryEscape(queryV), start, end, stepV)
 	b.WriteString("echo '夜莺查询完成'\n")
 	return b.String()
 }
@@ -526,6 +561,18 @@ func (s *Server) handleSkyWalkingTrace(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "traceID or serviceID is required"})
 		return
 	}
+	if req.TraceID != "" {
+		if _, err := opsIdentifier("traceId", req.TraceID); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	if req.ServiceID != "" {
+		if _, err := opsIdentifier("serviceId", req.ServiceID); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 
 	script := buildSkyWalkingTraceScript(req)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "skywalking_trace_query")
@@ -545,10 +592,12 @@ func buildSkyWalkingTraceScript(req skywalkingTraceReq) string {
 	b.WriteString("set -e\n")
 	b.WriteString("# SkyWalking 链路查询（GraphQL API，默认 UI:8080/graphql）\n")
 	b.WriteString("SW_URL=${SW_URL:-http://localhost:8080/graphql}\n")
-	if req.TraceID != "" {
-		fmt.Fprintf(&b, "curl -s -X POST \"$SW_URL\" -H 'Content-Type: application/json' -d '{\"query\":\"query trace($traceId: ID!) { trace(traceId: $traceId) { spans { traceId segmentId spanId parentSpanId serviceCode startTime endTime endpointName type peer } } }\",\"variables\":{\"traceId\":\"%s\"}}'\n", req.TraceID)
+	traceID := skywalkingID(req.TraceID)
+	serviceID := skywalkingID(req.ServiceID)
+	if traceID != "" {
+		fmt.Fprintf(&b, "curl -s -X POST \"$SW_URL\" -H 'Content-Type: application/json' -d '{\"query\":\"query trace($traceId: ID!) { trace(traceId: $traceId) { spans { traceId segmentId spanId parentSpanId serviceCode startTime endTime endpointName type peer } } }\",\"variables\":{\"traceId\":\"%s\"}}'\n", traceID)
 	} else {
-		fmt.Fprintf(&b, "echo 'SkyWalking 服务 %s 查询 — 需先调用 queryBasicTraces 获取 traceId 列表'\n", req.ServiceID)
+		fmt.Fprintf(&b, "echo %s\n", shellQuote("SkyWalking 服务 "+serviceID+" 查询 — 需先调用 queryBasicTraces 获取 traceId 列表"))
 	}
 	b.WriteString("echo 'SkyWalking 链路查询完成'\n")
 	return b.String()

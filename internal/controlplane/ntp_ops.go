@@ -149,6 +149,11 @@ func (s *Server) handleNTP(w http.ResponseWriter, r *http.Request, action string
 
 func buildNTPScript(req ntpReq) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	allowCIDRV := req.AllowCIDR
+	timezoneV := req.Timezone
+	serviceV := req.Service
 	b.WriteString("set -e\n")
 	switch req.Action {
 	case "status":
@@ -199,7 +204,7 @@ func buildNTPScript(req ntpReq) string {
 		b.WriteString("# OpsMesh 托管：chrony 服务端（内网时间源）\n")
 		b.WriteString("local stratum 10\n")
 		if req.AllowCIDR != "" {
-			fmt.Fprintf(&b, "allow %s\n", req.AllowCIDR)
+			fmt.Fprintf(&b, "allow %s\n", allowCIDRV)
 		} else {
 			b.WriteString("allow 0.0.0.0/0\n")
 		}
@@ -215,7 +220,7 @@ func buildNTPScript(req ntpReq) string {
 
 	case "timezone":
 		b.WriteString("# 设置时区\n")
-		fmt.Fprintf(&b, "timedatectl set-timezone %s\n", req.Timezone)
+		fmt.Fprintf(&b, "timedatectl set-timezone %s\n", timezoneV)
 		b.WriteString("timedatectl | grep -E 'Time zone|Local time' || true\n")
 
 	case "service":
@@ -230,7 +235,7 @@ func buildNTPScript(req ntpReq) string {
 		case "status":
 			b.WriteString("systemctl is-active chronyd 2>/dev/null || systemctl is-active chrony 2>/dev/null || echo 'not running'\n")
 		}
-		fmt.Fprintf(&b, "echo 'chronyd %s 操作完成'\n", req.Service)
+		fmt.Fprintf(&b, "echo 'chronyd %s 操作完成'\n", serviceV)
 	}
 	return b.String()
 }

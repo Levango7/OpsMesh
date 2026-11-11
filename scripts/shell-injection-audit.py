@@ -387,12 +387,220 @@ def block_window(lines, i: int, max_back: int = 12) -> str:
     return "\n".join(lines[j : i + 1])
 
 
+# ---- 判据 E / F（raw_arg / raw_fprintf）：**实参级**污点 ----
+# 背景：既有 A/B/C/D 都是**逐行**判定——同一行只要出现一个被 Quote 过的参数，整行即被跳过，
+# 于是同行其余**裸**实参（req.* 直插）逃逸出盘点；且既有判定只认 `fmt.Sprintf(`，
+# **`fmt.Fprintf(&builder, ...)` 这一整类脚本拼装从未被计入**（批次 12/13 的「0」是口径受限的零）。
+#
+# 判据 E：fmt.Sprintf 的**字符串槽**（%s/%v/%q）实参里裸引用 req.<字段> ⇒ 命中。
+# 判据 F：fmt.Fprintf 的**目标**是脚本 builder（&x / x）且格式串含换行（脚本行特征）时，
+#         其**字符串槽**实参里裸引用 req.<字段> ⇒ 命中。
+#
+# 数值槽（%d/%x/%f…）不可能携带 shell 元字符 ⇒ 不报（int 字段在 JSON 解码期即被类型挡掉）。
+#
+# 与 A/B/C/D **独立计数**——历史口径（616→576→575、333/320/269、286）均不受影响。
+#
+# 收口约定（批次 14 起）：脚本拼装里的用户字段**不再直接以 req.* 出现在实参位**——
+# 要么整体 Quote/转义（shellquote.Quote / opsEcho / opsSQLString / strconv.Quote …），
+# 要么用「已校验的局部变量」（xxxV）承接校验结果。校验一旦被误删，判据 E/F 会立刻复红。
+
+RAW_ARG_SAFE_WRAPPERS = (
+    "shellquote.Quote(",
+    "shellquote.QuotePowerShellSingle(",
+    "shellquote.PowerShellEncodedCommand(",
+    "shellQuote(",
+    "opsEcho(",
+    "opsSQLString(",
+    "opsHeredocContent(",
+    "opsQuoteJSONText(",
+    "esEcho(",
+    "esAPIURL(",
+    "opsURL(",
+    "strconv.Quote(",
+    "strconv.Itoa(",
+    "strconv.FormatBool(",
+)
+RAW_ARG_STRING_VERBS = "svq"
+_RAW_ARG_VERB_RE = re.compile(r"%[-+ #0]*[0-9.]*([svqdxobcefg])")
+_RAW_ARG_REQ_RE = re.compile(r"\breq\.[A-Za-z_]\w*")
+
+
+def _raw_arg_split_args(argstr):
+    """按顶层逗号切分实参（处理括号/引号/反引号内的逗号）。"""
+    args, depth, cur, i = [], 0, [], 0
+    in_str = None
+    while i < len(argstr):
+        c = argstr[i]
+        if in_str:
+            if c == "\\" and in_str != "`":
+                cur.append(c)
+                i += 1
+                if i < len(argstr):
+                    cur.append(argstr[i])
+                    i += 1
+                continue
+            if c == in_str:
+                in_str = None
+            cur.append(c)
+            i += 1
+            continue
+        if c in "\"'`":
+            in_str = c
+            cur.append(c)
+            i += 1
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        if c == "," and depth == 0:
+            args.append("".join(cur).strip())
+            cur = []
+            i += 1
+            continue
+        cur.append(c)
+        i += 1
+    if "".join(cur).strip():
+        args.append("".join(cur).strip())
+    return args
+
+
+def _raw_arg_call_end(s, start):
+    """返回调用的匹配右括号位置（跳过字符串字面量）。"""
+    depth, i, in_str = 0, start, None
+    while i < len(s):
+        c = s[i]
+        if in_str:
+            if c == "\\" and in_str != "`":
+                i += 2
+                continue
+            if c == in_str:
+                in_str = None
+            i += 1
+            continue
+        if c in "\"'`":
+            in_str = c
+            i += 1
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _raw_arg_verbs(lit):
+    """抽取格式串里的动词序列（忽略 %%）。"""
+    verbs = []
+    i = 0
+    while i < len(lit):
+        if lit[i] == "%":
+            if i + 1 < len(lit) and lit[i + 1] == "%":
+                i += 2
+                continue
+            m = _RAW_ARG_VERB_RE.match(lit, i)
+            if m:
+                verbs.append(m.group(1))
+                i = m.end()
+                continue
+            i += 1
+            continue
+        i += 1
+    return verbs
+
+
+def _raw_arg_scan_args(args, verbs):
+    """返回字符串槽里裸引用 req.* 的实参列表。"""
+    out = []
+    for idx, a in enumerate(args):
+        if idx >= len(verbs):
+            break
+        if verbs[idx] not in RAW_ARG_STRING_VERBS:
+            continue
+        if not _RAW_ARG_REQ_RE.search(a):
+            continue
+        if any(w in a for w in RAW_ARG_SAFE_WRAPPERS):
+            continue
+        out.append(a)
+    return out
+
+
+def raw_arg_findings(rel, src):
+    """判据 E：fmt.Sprintf 实参里裸引用的 req.*（仅字符串槽）。"""
+    out = []
+    lines = src.split("\n")
+    for m in re.finditer(r"fmt\.Sprintf\(", src):
+        end = _raw_arg_call_end(src, m.end() - 1)
+        if end < 0:
+            continue
+        args = _raw_arg_split_args(src[m.end() : end])
+        if not args:
+            continue
+        verbs = _raw_arg_verbs(args[0])
+        for a in _raw_arg_scan_args(args[1:], verbs):
+            line_no = src[: m.start()].count("\n") + 1
+            out.append(
+                {
+                    "file": rel,
+                    "line": line_no,
+                    "kind": "raw_arg",
+                    "ctx": classify(lines[line_no - 1]) if line_no <= len(lines) else "sh",
+                    "text": a[:200],
+                }
+            )
+    return out
+
+
+_RAW_FPRINT_BUILDER_RE = re.compile(r"&[A-Za-z_]\w*|Builder|builder")
+
+
+def raw_fprintf_findings(rel, src):
+    """判据 F：fmt.Fprintf(&builder, ...) 里的裸 req.*（仅字符串槽）。"""
+    out = []
+    lines = src.split("\n")
+    for m in re.finditer(r"fmt\.Fprintf?\(|fmt\.Fprintln\(", src):
+        end = _raw_arg_call_end(src, m.end() - 1)
+        if end < 0:
+            continue
+        args = _raw_arg_split_args(src[m.end() : end])
+        if len(args) < 2:
+            continue
+        target = args[0]
+        if not _RAW_FPRINT_BUILDER_RE.search(target):
+            continue
+        fmt = args[1]
+        # 脚本行特征：格式串含**换行转义**（Go 源码里是反斜杠+n 两个字符）。
+        # 注意：这里读的是**源码文本**，不是运行时的字符串——所以判据是 "\n"（两字符），
+        # 而不是真换行（写成真换行会让整条判据恒不命中 ⇒ F 永远是 0）。
+        if "\\n" not in fmt:
+            continue
+        verbs = _raw_arg_verbs(fmt)
+        rest = args[2:]
+        for a in _raw_arg_scan_args(rest, verbs):
+            line_no = src[: m.start()].count("\n") + 1
+            out.append(
+                {
+                    "file": rel,
+                    "line": line_no,
+                    "kind": "raw_fprintf",
+                    "ctx": classify(lines[line_no - 1]) if line_no <= len(lines) else "sh",
+                    "text": a[:200],
+                }
+            )
+    return out
+
+
 def scan(root: str):
     if not os.path.isdir(root):
         sys.exit("not a directory: %s" % root)
     findings = []
     raw_findings = []
     derived_findings_list = []
+    raw_arg_list = []
+    raw_fprintf_list = []
     files = []
     for dirpath, _dirnames, filenames in os.walk(root):
         for fn in sorted(filenames):
@@ -441,7 +649,11 @@ def scan(root: str):
         # 判据 D（derived_interp）：派生局部变量形态（按 handler 作用域）。
         # 与 A/B/C **独立计数**——A/B 的历史口径与 C 的 333/320/269 均不受影响。
         derived_findings_list.extend(derived_findings(rel, lines))
-    return findings, raw_findings, derived_findings_list
+        # 判据 E / F（实参级污点；与 A/B/C/D 独立计数）。
+        _src = "\n".join(lines)
+        raw_arg_list.extend(raw_arg_findings(rel, _src))
+        raw_fprintf_list.extend(raw_fprintf_findings(rel, _src))
+    return findings, raw_findings, derived_findings_list, raw_arg_list, raw_fprintf_list
 
 
 def main() -> int:
@@ -450,7 +662,7 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="机器可读输出")
     args = ap.parse_args()
 
-    findings, raw_findings, derived_findings_list = scan(args.root)
+    findings, raw_findings, derived_findings_list, raw_arg_list, raw_fprintf_list = scan(args.root)
 
     if args.json:
         print(
@@ -469,6 +681,12 @@ def main() -> int:
                         Counter(f["file"] for f in derived_findings_list)
                     ),
                     "derived_interp": derived_findings_list,
+                    "raw_arg_total": len(raw_arg_list),
+                    "raw_arg_by_file": dict(Counter(f["file"] for f in raw_arg_list)),
+                    "raw_arg": raw_arg_list,
+                    "raw_fprintf_total": len(raw_fprintf_list),
+                    "raw_fprintf_by_file": dict(Counter(f["file"] for f in raw_fprintf_list)),
+                    "raw_fprintf": raw_fprintf_list,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -520,6 +738,22 @@ def main() -> int:
                 f["text"],
             )
         )
+    print()
+    print("=" * 72)
+    print("判据 E（raw_arg，Sprintf 实参级裸 req.*）合计: %d" % len(raw_arg_list))
+    for fn, n in Counter(f["file"] for f in raw_arg_list).most_common(25):
+        print("  %-52s %d" % (fn, n))
+    print()
+    for f in raw_arg_list:
+        print("  %s:%d [%s/%s] %s" % (f["file"], f["line"], f["kind"], f["ctx"], f["text"]))
+    print()
+    print("=" * 72)
+    print("判据 F（raw_fprintf，Fprintf→脚本 builder 实参级裸 req.*）合计: %d" % len(raw_fprintf_list))
+    for fn, n in Counter(f["file"] for f in raw_fprintf_list).most_common(25):
+        print("  %-52s %d" % (fn, n))
+    print()
+    for f in raw_fprintf_list:
+        print("  %s:%d [%s/%s] %s" % (f["file"], f["line"], f["kind"], f["ctx"], f["text"]))
     return 0
 
 
