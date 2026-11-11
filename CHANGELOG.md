@@ -39,6 +39,7 @@
   只增不改历史口径）。盘点器判据 C/D 口径不变（190 → 0）。
 - **本批也删除 `opsHostAllowEmpty` / `opsDBNameAllowEmpty`**（golangci-lint `unused`，
   与批次 12 `76662f1` 相同——批次 13 自 c5b1ab9 直楼，二者均未被任何调用方引用）。
+- **顺带修复（内容无关红）**：本批 CI 触发 `govulncheck` **GO-2026-6859**（`net/http@go1.26.10` 的 MaxBytesReader header race → HTTP/1 server crash；修于 **go1.26.11**），exit code 3 判红 `security` job。同一 commit 在更早两个 run 里该 job 是 pass ⇒ 判定为**漏洞库刷新**导致的内容无关红（与 0.16.0 记载的 1.26.9→1.26.10 同族）。处置：Go 工具链机械升版 **1.26.10 → 1.26.11**（`go.mod` toolchain + `ci.yml` 7 处 + `release.yml` 1 处），**不改 workflow 逻辑、不改依赖、不改代码**；workflows 属禁区，已在 `docs/INBOX-KILO.md` 留痕请复核。
 - **验证**：`go build ./...` 0 错误；`go vet ./...` 0 警告；`gofmt -l` 干净；
   `go test ./internal/controlplane/ -count=1` **ok 67.8s**（含 TestB12* 守卫）；
   盘点器 `--json` 总数 **0**。
