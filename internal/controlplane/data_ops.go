@@ -33,7 +33,12 @@ func (s *Server) handleDataPipeline(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "2.8.0"
 		}
-		script := fmt.Sprintf(`pip install apache-airflow==%s 2>/dev/null && airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com 2>/dev/null && echo "Airflow %s deployed"`, version, version)
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`pip install apache-airflow==%s 2>/dev/null && airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com 2>/dev/null && echo %s`, versionV, opsEcho("Airflow %s deployed", versionV))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "pipeline_deploy-airflow")
 		if !ok {
 			return
@@ -45,7 +50,12 @@ func (s *Server) handleDataPipeline(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "3.5.0"
 		}
-		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/spark/spark-%s/spark-%s-bin-hadoop3.tgz -O /tmp/spark.tgz && tar -xzf /tmp/spark.tgz -C /opt/ && ln -sfn /opt/spark-%s-bin-hadoop3 /opt/spark && echo "Spark %s deployed"`, version, version, version, version)
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/spark/spark-%s/spark-%s-bin-hadoop3.tgz -O /tmp/spark.tgz && tar -xzf /tmp/spark.tgz -C /opt/ && ln -sfn /opt/spark-%s-bin-hadoop3 /opt/spark && echo %s`, versionV, versionV, versionV, opsEcho("Spark %s deployed", versionV))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "pipeline_deploy-spark")
 		if !ok {
 			return
@@ -57,7 +67,12 @@ func (s *Server) handleDataPipeline(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "1.18.0"
 		}
-		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/flink/flink-%s/flink-%s-bin-scala_2.12.tgz -O /tmp/flink.tgz && tar -xzf /tmp/flink.tgz -C /opt/ && ln -sfn /opt/flink-%s /opt/flink && echo "Flink %s deployed"`, version, version, version, version)
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/flink/flink-%s/flink-%s-bin-scala_2.12.tgz -O /tmp/flink.tgz && tar -xzf /tmp/flink.tgz -C /opt/ && ln -sfn /opt/flink-%s /opt/flink && echo %s`, versionV, versionV, versionV, opsEcho("Flink %s deployed", versionV))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "pipeline_deploy-flink")
 		if !ok {
 			return
@@ -117,7 +132,12 @@ func (s *Server) handleDataLake(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "3.1.3"
 		}
-		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/hive/hive-%s/apache-hive-%s-bin.tar.gz -O /tmp/hive.tgz && tar -xzf /tmp/hive.tgz -C /opt/ && ln -sfn /opt/apache-hive-%s-bin /opt/hive && echo "Hive %s deployed"`, version, version, version, version)
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/hive/hive-%s/apache-hive-%s-bin.tar.gz -O /tmp/hive.tgz && tar -xzf /tmp/hive.tgz -C /opt/ && ln -sfn /opt/apache-hive-%s-bin /opt/hive && echo %s`, versionV, versionV, versionV, opsEcho("Hive %s deployed", versionV))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "lake_deploy-hive")
 		if !ok {
 			return
@@ -177,7 +197,12 @@ func (s *Server) handleDataWarehouse(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "3.2.0"
 		}
-		script := fmt.Sprintf(`wget -q https://releases.starrocks.io/starrocks/StarRocks-%s.tar.gz -O /tmp/starrocks.tgz && tar -xzf /tmp/starrocks.tgz -C /opt/ && ln -sfn /opt/StarRocks-%s /opt/starrocks && echo "StarRocks %s deployed"`, version, version, version)
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`wget -q https://releases.starrocks.io/starrocks/StarRocks-%s.tar.gz -O /tmp/starrocks.tgz && tar -xzf /tmp/starrocks.tgz -C /opt/ && ln -sfn /opt/StarRocks-%s /opt/starrocks && echo %s`, versionV, versionV, opsEcho("StarRocks %s deployed", versionV))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "warehouse_deploy-starrocks")
 		if !ok {
 			return
@@ -189,7 +214,12 @@ func (s *Server) handleDataWarehouse(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "2.1.0"
 		}
-		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/doris/%s/apache-doris-%s-bin-x86_64.tar.gz -O /tmp/doris.tgz && tar -xzf /tmp/doris.tgz -C /opt/ && ln -sfn /opt/apache-doris-%s-bin-x86_64 /opt/doris && echo "Doris %s deployed"`, version, version, version, version)
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/doris/%s/apache-doris-%s-bin-x86_64.tar.gz -O /tmp/doris.tgz && tar -xzf /tmp/doris.tgz -C /opt/ && ln -sfn /opt/apache-doris-%s-bin-x86_64 /opt/doris && echo %s`, versionV, versionV, versionV, opsEcho("Doris %s deployed", versionV))
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "warehouse_deploy-doris")
 		if !ok {
 			return

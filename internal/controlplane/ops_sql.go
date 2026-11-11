@@ -313,3 +313,31 @@ func opsHeredocContent(field, content, delim string) (string, error) {
 	}
 	return content, nil
 }
+
+// opsMemoryValueRe 是 Redis maxmemory 值白名单：数字 + 可选 IEC/SI 后缀（b/kb/mb/gb/tb/pb/%，大小写均可，可含小数）。
+var opsMemoryValueRe = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?([bB]|[kK][bB]|[mM][bB]|[gG][bB]|[tT][bB]|[pP][bB]|%)?$`)
+
+// opsMemoryValue 校验必填的 maxmemory 值（空串放行由调用方套默认值）。
+func opsMemoryValue(field, s string) (string, error) {
+	if s == "" {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	if !opsMemoryValueRe.MatchString(s) {
+		return "", fmt.Errorf("invalid %s %q: must match %s", field, s, opsMemoryValueRe.String())
+	}
+	return s, nil
+}
+
+// opsIdentifierRe 是 CI/CD 的「token」白名单：字母数字开头，仅含字母数字与 . _ / : -（owner/repo 形态 + 版本）。
+var opsIdentifierRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$`)
+
+// opsIdentifier 校验必填的 token（repo / project / job / version 等）。
+func opsIdentifier(field, s string) (string, error) {
+	if s == "" {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	if !opsIdentifierRe.MatchString(s) {
+		return "", fmt.Errorf("invalid %s %q: must match %s", field, s, opsIdentifierRe.String())
+	}
+	return s, nil
+}

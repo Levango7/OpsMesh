@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/pkg/shellquote"
@@ -59,7 +60,7 @@ func (s *Server) handleSynthetic(w http.ResponseWriter, r *http.Request) {
 		if expected <= 0 {
 			expected = 200
 		}
-		msg := fmt.Sprintf("Creating synthetic monitor: %s (%s) -> %s (interval=%ds, timeout=%ds, expected=%d)", req.Name, probeType, req.URL, interval, timeout, expected)
+		msg := "Creating synthetic monitor: " + opsSQLString(req.Name) + " (" + opsSQLString(probeType) + ") -> " + opsSQLString(req.URL) + " (interval=" + strconv.Itoa(interval) + "s, timeout=" + strconv.Itoa(timeout) + "s, expected=" + strconv.Itoa(expected) + ")"
 		script = fmt.Sprintf("echo %s", shellquote.Quote(msg))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "synthetic_create")
 		if !ok {

@@ -142,7 +142,37 @@ QUOTE_MARKERS = (
     "opsSQLString(",
     "vectorType(",
 )
-VALIDATE_MARKERS = ("Validate", "MatchString(", "regexp.")
+VALIDATE_MARKERS = (
+    "Validate",
+    "MatchString(",
+    "regexp.",
+    # 批次 12/13 的校验型白名单助手（internal/controlplane/ops_sql.go 等）。
+    # 这些助手**只在收口后的代码里出现**——扩充本集合**不改变历史口径**。
+    "opsHost(",
+    "opsDBName(",
+    "opsDBNameAllowEmpty(",
+    "opsSQLString(",
+    "opsArgList(",
+    "opsHeredocContent(",
+    "opsOracleName(",
+    "opsFileName(",
+    "opsTableList(",
+    "opsPatchID(",
+    "opsSQLID(",
+    "opsName(",
+    "opsProfile(",
+    "opsModule(",
+    "opsSched(",
+    "opsDeviceName(",
+    "opsDigits(",
+    "opsDomain(",
+    "opsMemoryValue(",
+    "opsSysctlParam(",
+    "opsSysctlValue(",
+    "opsHTTPURL(",
+    "opsIdentifier(",
+    "validateNetworkTarget(",
+)
 SPRINTF_RE = re.compile(r"fmt\.Sprintf\(")
 FMT_VERB_RE = re.compile(r"%[sv]")
 FMT_LITERAL_RE = re.compile(r'fmt\.Sprintf\(\s*[`"]([^`"]*)[`"]')

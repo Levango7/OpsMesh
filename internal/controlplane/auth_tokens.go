@@ -17,7 +17,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -192,7 +191,7 @@ func randHexID(prefix string) string {
 	if _, err := rand.Read(b); err != nil {
 		// panic 合理：crypto/rand 失败意味着系统随机数生成器不可用（如 /dev/urandom 不可读），
 		// 这是不可恢复的系统级错误，无法降级处理。正常环境下不会触发。
-		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+		panic("crypto/rand failed: " + err.Error())
 	}
 	return prefix + "-" + hex.EncodeToString(b)
 }

@@ -322,7 +322,7 @@ func (s *Server) handleKafkaOTel(w http.ResponseWriter, r *http.Request) {
 		// 注入面（批次 10）：endpoint 落在**双引号段**内的配置串里 ⇒ 双引号内 $ 与
 		// 反引号照样展开 ⇒ 改由 Go 层拼出完整配置串再**整体** Quote，且 Quote 结果
 		// 放在双引号**外**（放里面会让配置串里多出字面量单引号）；回显段同理。
-		otelCfg := "otel.exporter.otlp.endpoint=" + endpoint + ",otel.metrics.exporter=otlp,otel.traces.exporter=otlp"
+		otelCfg := "otel.exporter.otlp.endpoint=" + opsSQLString(endpoint) + ",otel.metrics.exporter=otlp,otel.traces.exporter=otlp"
 		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type brokers --entity-name 0 --alter --add-config %s 2>/dev/null && echo %s`, shellquote.Quote(otelCfg), opsEcho("OpenTelemetry enabled: endpoint=%s", endpoint))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "otel_enable")
 		if !ok {

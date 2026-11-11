@@ -134,7 +134,7 @@ func (c *Collector) Collect(deviceID string, metrics *proto.DeviceMetrics) error
 		TenantID:  c.tenantID,
 		Action:    "cmdb_collect",
 		Target:    deviceID,
-		Detail:    auditsafe.Detail(fmt.Sprintf("host=%s services=%d", hostname, len(metrics.Services))),
+		Detail:    auditsafe.Detail("host=" + strconv.Quote(hostname) + " services=" + strconv.Itoa(len(metrics.Services))),
 		TraceID:   otelx.TraceIDFromContext(ctx),
 		CreatedAt: now,
 	})

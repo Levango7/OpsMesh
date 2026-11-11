@@ -5,6 +5,47 @@
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
 
+## [Unreleased-批次 13 注入面收口] — 2026-11-11（余量 75 文件 / 190 处 → 0；310 → 190（批次 12）→ 0）
+
+- **为什么是真缺陷面**：与批次 12 同一张判定表——这 190 处把请求体字段裸拼进要下发到
+  agent 的 shell 脚本，或把用户输入（含 `$(id)` / 反引号 / 分号）直接塞进审计/告警/
+  通知/回显串。agent 以 `sh -c` 执行 ⇒ **已授权调用者可 RCE 到 agent**；双引号不是防护。
+  鉴权面无缺口（均经 `dispatchKafkaTask` → `subsystemAuthorize` 的 `task:write` 闸）。
+- **范围（190 处，`scripts/shell-injection-audit.py --json` 同一口径，310 → 190 → 0）**：
+  本批 75 个文件（含审计/测试/helper）全部收口；余量分类：`sprintf 161 / concat 29`。
+  其中约一半是**非 shell 的审计 Detail 串**（`AuditEvent.Detail` / 告警静默原因 /
+  规则 severity / 通知正文）：经 `opsSQLString`（双写单引号）后同批清零。
+- **做法（按字段角色收口）**：
+  ① **动作/token/版本/repo/job/target 类**⇒ `opsIdentifier`（`^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$`，
+     含元字符一律 400；taskAction 一律从已校验的 `actionV` 派生）。
+  ② **主机/端点**⇒ `opsHost`；**路径**⇒ `mqPath`/`shellquote.ValidatePath`（ehcache 配置）；
+     **Redis maxmemory 值**⇒ `opsMemoryValue`；**文件名**⇒ `opsFileName`。
+  ③ **列表 / 配置 / args**⇒ `opsArgList`（token 字符白名单，元字符 400）；
+     **heredoc 目标**⇒ 整体 `shellquote.Quote`（保 XML / JSON 本体不转义）。
+  ④ **回显消息**⇒ `opsEcho` 整条 Quote；**审计 Detail / 告警正文**⇒ `opsSQLString`。
+  ⑤ **k8s_cluster_deploy**：`generateHAProxyConfig` 改返回 `(string, error)`，端点白名单
+     失败 fail-fast（不再静默拼坏 haproxy.cfg）；kubeadm join 的 master/token/endpoint 同样校验。
+  ⑥ **kafka_ops_ext**：JSON payload（`--topics-to-move-json-file <(echo …)` / delete-records）
+     整体 `shellquote.Quote`。
+- **能力降级点（如实登记）**：
+  - `action` / repo / job / 版本 / target / service / group / username 等字段收窄为
+    `^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$`（含空格/引号/元字符者 400）。
+  - ehcache 配置路径必须为绝对路径且无 shell 元字符（`ValidatePath`），违反 400。
+  - MPI/Hadoop/K8s 侧 `version` 同批白名单（`opsIdentifier`）。
+  - 审计 Detail 里的单引号按 SQL 语义双写（`'` → `''`）——既是注入面收口，也让
+    审计串在含引号时仍可辨。
+- **守卫留痕**：`scripts/shell-injection-audit.py` 的 `VALIDATE_MARKERS` 增列批次 13 新增的
+  校验助手名（`opsMemoryValue(` / `opsHTTPURL(` / `opsIdentifier(` ——此前批次 12 已增列其余；
+  只增不改历史口径）。盘点器判据 C/D 口径不变（190 → 0）。
+- **本批也删除 `opsHostAllowEmpty` / `opsDBNameAllowEmpty`**（golangci-lint `unused`，
+  与批次 12 `76662f1` 相同——批次 13 自 c5b1ab9 直楼，二者均未被任何调用方引用）。
+- **顺带修复（内容无关红）**：本批 CI 触发 `govulncheck` **GO-2026-6859**（`net/http@go1.26.10` 的 MaxBytesReader header race → HTTP/1 server crash；修于 **go1.26.11**），exit code 3 判红 `security` job。同一 commit 在更早两个 run 里该 job 是 pass ⇒ 判定为**漏洞库刷新**导致的内容无关红（与 0.16.0 记载的 1.26.9→1.26.10 同族）。处置：Go 工具链机械升版 **1.26.10 → 1.26.11**（`go.mod` toolchain + `ci.yml` 7 处 + `release.yml` 1 处），**不改 workflow 逻辑、不改依赖、不改代码**；workflows 属禁区，已在 `docs/INBOX-KILO.md` 留痕请复核。
+- **验证**：`go build ./...` 0 错误；`go vet ./...` 0 警告；`gofmt -l` 干净；
+  `go test ./internal/controlplane/ -count=1` **ok 67.8s**（含 TestB12* 守卫）；
+  盘点器 `--json` 总数 **0**。
+- **备注**：本批与批次 12 共享 `ops_sql.go` / 审计脚本 ⇒ 基于批次 12 分支直楼；
+  同时须在批次 12 合入后将本分支 rebase 到 main 上重新过 CI。
+
 ## [Unreleased-批次 12 注入面收口] — 2026-11-10（OLAP/备份/硬件/向量/编译/安全/Oracle/OS 调优 8 文件：120 处用户字段未转义直插 → 白名单/整体 Quote/heredoc 前闭合拒绝三类收口）
 
 - **为什么是真缺陷面**：这 120 处把请求体字段裸拼进要下发到 agent 的 shell 脚本，agent 以

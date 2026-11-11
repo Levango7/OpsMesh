@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,7 +83,7 @@ func (s *Server) createNotifyChannel(w http.ResponseWriter, r *http.Request) {
 	warnPlaintextChannel(created, s.secretProvider)
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_notify_channel", Target: created.ID,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("name=%s type=%s enabled=%v", created.Name, created.Type, created.Enabled)),
+		Detail: sanitizeAuditDetail("name=" + opsSQLString(created.Name) + " type=" + opsSQLString(created.Type) + " enabled=" + opsSQLString(strconv.FormatBool(created.Enabled))),
 	})
 	// 返回时脱敏
 	created.Config = maskSensitiveConfig(created.Config)
@@ -191,7 +192,7 @@ func (s *Server) testNotifyChannel(w http.ResponseWriter, r *http.Request, id st
 		body.Title = "OpsMesh 测试通知"
 	}
 	if body.Body == "" {
-		body.Body = fmt.Sprintf("来自渠道 %s（类型 %s）的测试通知，发送时间 %s", c.Name, c.Type, time.Now().Format("2006-01-02 15:04:05"))
+		body.Body = "来自渠道 " + opsSQLString(c.Name) + "（类型 " + opsSQLString(c.Type) + "）的测试通知，发送时间 " + opsSQLString(time.Now().Format("2006-01-02 15:04:05"))
 	}
 	// 构造渠道实例并发送
 	ch, err := buildChannel(c, s.secretProvider)

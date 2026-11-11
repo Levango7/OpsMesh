@@ -396,7 +396,7 @@ func (s *Server) processPendingPipelineRuns() {
 		}
 
 		// 任务已下发，run 保持 running（终态由 reconcileRunStatus 按子任务状态推导，不再立即 succeeded）。
-		run.Logs = fmt.Sprintf("execution task created: %s", created.TaskID)
+		run.Logs = "execution task created: " + opsSQLString(created.TaskID)
 		s.store.UpdateRun(tenantID, run)
 	}
 }
@@ -438,7 +438,7 @@ func (s *Server) reconcileRunStatus(runID string) string {
 // 若无法解析，回退到第一行非注释内容。
 func extractPipelineCommand(tpl *store.PipelineTemplate) string {
 	if tpl.YAML == "" {
-		return fmt.Sprintf("echo 'pipeline %s started'", tpl.Name)
+		return fmt.Sprintf(`echo %s`, opsEcho("pipeline %s started", tpl.Name))
 	}
 	// 尝试从 YAML 中提取 script/sh/command 字段
 	for _, line := range strings.Split(tpl.YAML, "\n") {
@@ -461,7 +461,7 @@ func extractPipelineCommand(tpl *store.PipelineTemplate) string {
 			return trimmed
 		}
 	}
-	return fmt.Sprintf("echo 'pipeline %s started'", tpl.Name)
+	return fmt.Sprintf(`echo %s`, opsEcho("pipeline %s started", tpl.Name))
 }
 
 // handlePipelineRuns 统一处理 /api/v1/pipeline/runs：

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleNetworkExt 处理 POST /api/v1/network/ext
@@ -40,13 +41,23 @@ func (s *Server) handleNetworkExt(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "vpn type is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "VPN config for %s:" && case %s in wireguard) wg showconf wg0 2>/dev/null || echo "wg0 not found";; openvpn) cat /etc/openvpn/server.conf 2>/dev/null || echo "OpenVPN config not found";; ipsec) cat /etc/ipsec.conf 2>/dev/null || echo "IPsec config not found";; esac`, req.VPN, req.VPN)
+		vpnV, err := opsIdentifier("vpn", req.VPN)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && case %s in wireguard) wg showconf wg0 2>/dev/null || echo %s;; openvpn) cat /etc/openvpn/server.conf 2>/dev/null || echo %s;; ipsec) cat /etc/ipsec.conf 2>/dev/null || echo %s;; esac`, opsEcho("VPN config for %s:", vpnV), vpnV, opsEcho("wg0 not found"), opsEcho("OpenVPN config not found"), opsEcho("IPsec config not found"))
 	case "cdn-purge":
 		if req.URL == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "url is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Purging CDN cache for %s..." && curl -X POST "https://api.cloudflare.com/client/v4/zones/ZONE_ID/purge_cache" -H "Authorization: Bearer TOKEN" -d '{"files":["%s"]}' 2>/dev/null || echo "CDN purge not configured"`, req.URL, req.URL)
+		urlV, err := opsHTTPURL("url", req.URL)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && curl -X POST "https://api.cloudflare.com/client/v4/zones/ZONE_ID/purge_cache" -H "Authorization: Bearer TOKEN" -d '{"files":[%s]}' 2>/dev/null || echo %s`, opsEcho("Purging CDN cache for %s...", urlV), shellquote.Quote(urlV), opsEcho("CDN purge not configured"))
 	case "dns-flush":
 		script = `systemctl restart systemd-resolved 2>/dev/null && echo "DNS cache flushed" || (service nscd restart 2>/dev/null && echo "NSCD restarted") || echo "DNS flush not available"`
 	case "sdwan-status":

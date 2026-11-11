@@ -17,6 +17,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -73,7 +74,7 @@ func (s *Server) handleWeaviate(w http.ResponseWriter, r *http.Request) {
 	case "query":
 		q := req.Query
 		if q == "" {
-			q = fmt.Sprintf("{ Get { %s { title } } }", class)
+			q = fmt.Sprintf("{ Get { %s { title } } }", opsSQLString(class))
 		}
 		script = fmt.Sprintf(`curl -s -X POST %s/graphql -H "Content-Type: application/json" -d '{"query":"%s"}' | head -30 || echo "Weaviate not available"`, shellQuote(base), shellQuote(q))
 	case "nodes":
@@ -255,6 +256,10 @@ func (s *Server) handleEhcache(w http.ResponseWriter, r *http.Request) {
 	cfgPath := req.Path
 	if cfgPath == "" {
 		cfgPath = "/opt/app/ehcache.xml"
+	}
+	if err := shellquote.ValidatePath(cfgPath); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path: " + err.Error()})
+		return
 	}
 	var script string
 	switch req.Action {

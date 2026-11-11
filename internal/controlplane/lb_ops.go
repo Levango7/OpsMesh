@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -202,7 +203,7 @@ func (s *Server) handleLBDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type + ":" + req.Mode,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s version=%s", req.DeviceID, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -301,7 +302,12 @@ func (s *Server) handleLBAction(w http.ResponseWriter, r *http.Request, lbType, 
 	req.Action = action
 
 	script := buildLBActionScript(req)
-	taskAction := "lb_" + action + "_" + lbType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "lb.action."+lbType, err)
+		return
+	}
+	taskAction := fmt.Sprintf("lb_%s_%s", actionV, lbType)
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {
@@ -405,7 +411,7 @@ func (s *Server) handleLBBackend(w http.ResponseWriter, r *http.Request, lbType 
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "lb_backend_" + req.Action, Target: req.Backend,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s type=%s weight=%d", req.DeviceID, lbType, req.Weight)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " type=" + opsSQLString(lbType) + " weight=" + opsSQLString(strconv.Itoa(req.Weight))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

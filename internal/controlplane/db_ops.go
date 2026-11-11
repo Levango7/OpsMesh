@@ -201,7 +201,7 @@ func (s *Server) handleDBDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type + ":" + req.Mode,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s version=%s", req.DeviceID, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -253,7 +253,7 @@ func buildOracleDeployScript(req dbDeployRequest, b *strings.Builder) {
 		b.WriteString("dbstart $ORACLE_HOME || systemctl start oracle || true\n")
 		b.WriteString("echo 'Oracle 单实例已启动'\n")
 	case "rac":
-		b.WriteString("# Oracle RAC 部署：Grid Infrastructure + ASM + RAC 数据库实例\n")
+		b.WriteString("# Oracle RAC 部署：Grid Infrastructure/ASM/RAC 数据库实例\n")
 		b.WriteString("# 1. Grid Infrastructure 检查与安装\n")
 		b.WriteString("if command -v crsctl >/dev/null 2>&1; then echo 'Grid Infrastructure 已安装'; else echo '请先上传 Grid Infrastructure 安装介质并运行 runInstaller (clusterware)' && exit 1; fi\n")
 		b.WriteString("crsctl check crs 2>&1 || (echo 'CRS 未运行，尝试启动'; crsctl start crs 2>&1 || true)\n")
@@ -286,7 +286,7 @@ func buildOracleDeployScript(req dbDeployRequest, b *strings.Builder) {
 }
 
 func buildTiDBDeployScript(req dbDeployRequest, b *strings.Builder) {
-	b.WriteString("# TiDB 部署（依赖 PD + TiKV + TiDB）\n")
+	b.WriteString("# TiDB 部署（依赖 PD/TiKV/TiDB）\n")
 	b.WriteString("if command -v tidb-server >/dev/null 2>&1; then echo 'TiDB 已安装'; else echo '请先安装 TiDB (tiup)' && exit 1; fi\n")
 	switch req.Mode {
 	case "single":
@@ -363,7 +363,12 @@ func (s *Server) handleDBAction(w http.ResponseWriter, r *http.Request, dbType, 
 	req.Action = action
 
 	script := buildDBActionScript(req)
-	taskAction := "db_" + action + "_" + dbType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "db.action."+dbType, err)
+		return
+	}
+	taskAction := fmt.Sprintf("db_%s_%s", actionV, dbType)
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {
@@ -501,7 +506,7 @@ func (s *Server) handleDBInstance(w http.ResponseWriter, r *http.Request, dbType
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_instance_" + req.Action, Target: req.Name,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s type=%s", req.DeviceID, dbType)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " type=" + opsSQLString(dbType)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

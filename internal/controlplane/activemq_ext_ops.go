@@ -240,9 +240,7 @@ func (s *Server) handleActiveMQDurableSub(w http.ResponseWriter, r *http.Request
 		// name/topic/clientId 拼进 echo 的字面参数。这里用转义而非白名单：
 		// 它们是 ActiveMQ 侧的业务名（可含 . - _ 之外的字符取决于部署），
 		// 白名单会误拒合法命名；但绝不能再 %s 裸拼。
-		script = fmt.Sprintf(`echo %s created on topic %s (clientId=%s)`,
-			shellquote.Quote("Durable subscription "+req.Name),
-			shellquote.Quote(req.Topic), shellquote.Quote(req.ClientID))
+		script = fmt.Sprintf(`echo %s created on topic %s (clientId=%s)`, shellquote.Quote("Durable subscription "+req.Name), shellquote.Quote(req.Topic), shellquote.Quote(req.ClientID))
 	case "delete":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})

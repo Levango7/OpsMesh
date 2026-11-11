@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -192,7 +193,7 @@ func (s *Server) handleVectorDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s mode=%s version=%s", req.DeviceID, req.Mode, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " mode=" + opsSQLString(req.Mode) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -254,7 +255,12 @@ func (s *Server) handleVectorAction(w http.ResponseWriter, r *http.Request, vecT
 	req.Action = action
 
 	script := buildVectorActionScript(req)
-	taskAction := "vector_" + action + "_" + vecType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "vector.action."+vecType, err)
+		return
+	}
+	taskAction := "vector_" + actionV + "_" + vecType
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {
@@ -263,7 +269,7 @@ func (s *Server) handleVectorAction(w http.ResponseWriter, r *http.Request, vecT
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: taskAction, Target: vecType,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s replicas=%d", req.DeviceID, req.Replicas)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " replicas=" + opsSQLString(strconv.Itoa(req.Replicas))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -371,7 +377,7 @@ func (s *Server) handleVectorCollection(w http.ResponseWriter, r *http.Request, 
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_collection_" + req.Action, Target: req.Collection,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s type=%s dim=%d", req.DeviceID, vecType, req.Dimension)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " type=" + opsSQLString(vecType) + " dim=" + opsSQLString(strconv.Itoa(req.Dimension))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -465,7 +471,7 @@ func (s *Server) handleVectorWrite(w http.ResponseWriter, r *http.Request, vecTy
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_write", Target: req.Collection,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s id=%s dim=%d", req.DeviceID, req.ID, len(req.Vector))),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " id=" + opsSQLString(req.ID) + " dim=" + opsSQLString(strconv.Itoa(len(req.Vector)))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -536,7 +542,7 @@ func (s *Server) handleVectorSearch(w http.ResponseWriter, r *http.Request, vecT
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_search", Target: req.Collection,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s topK=%d", req.DeviceID, req.TopK)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " topK=" + opsSQLString(strconv.Itoa(req.TopK))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

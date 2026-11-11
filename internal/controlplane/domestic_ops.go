@@ -204,11 +204,21 @@ func (s *Server) handleGaussDB(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "5.0.0"
 		}
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		mode := req.Mode
 		if mode == "" {
 			mode = "single"
 		}
-		script = fmt.Sprintf(`echo "Deploying GaussDB %s (%s mode)..." && echo "Download from Huawei Cloud" && echo "GaussDB %s deployed"`, version, mode, version)
+		modeV, err := opsIdentifier("mode", mode)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && echo "Download from Huawei Cloud" && echo %s`, opsEcho("Deploying GaussDB %s (%s mode)...", versionV, modeV), opsEcho("GaussDB %s deployed", versionV))
 	case "backup":
 		script = `echo "Backing up GaussDB..." && gs_dump -U gaussdb -W password -f /backup/gaussdb_$(date +%Y%m%d).sql 2>/dev/null || echo "GaussDB backup not available"`
 	case "restore":
@@ -300,9 +310,19 @@ func (s *Server) handleDomesticDB(w http.ResponseWriter, r *http.Request) {
 			version = "V9"
 		}
 		if req.Type == "kingbase" {
-			script = fmt.Sprintf(`echo "Deploying Kingbase %s..." && echo "Kingbase %s deployed"`, version, version)
+			versionV, err := opsIdentifier("version", version)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			script = fmt.Sprintf(`echo %s && echo %s`, opsEcho("Deploying Kingbase %s...", versionV), opsEcho("Kingbase %s deployed", versionV))
 		} else {
-			script = fmt.Sprintf(`echo "Deploying Dameng %s..." && echo "Dameng %s deployed"`, version, version)
+			versionV, err := opsIdentifier("version", version)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			script = fmt.Sprintf(`echo %s && echo %s`, opsEcho("Deploying Dameng %s...", versionV), opsEcho("Dameng %s deployed", versionV))
 		}
 	case "backup":
 		if req.Type == "kingbase" {
@@ -360,13 +380,18 @@ func (s *Server) handleDomesticMiddleware(w http.ResponseWriter, r *http.Request
 		if version == "" {
 			version = "8.0"
 		}
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		switch req.Type {
 		case "tongweb":
-			script = fmt.Sprintf(`echo "Deploying TongWeb %s..." && echo "TongWeb %s deployed"`, version, version)
+			script = fmt.Sprintf(`echo %s && echo %s`, opsEcho("Deploying TongWeb %s...", versionV), opsEcho("TongWeb %s deployed", versionV))
 		case "bes":
-			script = fmt.Sprintf(`echo "Deploying BES %s..." && echo "BES %s deployed"`, version, version)
+			script = fmt.Sprintf(`echo %s && echo %s`, opsEcho("Deploying BES %s...", versionV), opsEcho("BES %s deployed", versionV))
 		default:
-			script = fmt.Sprintf(`echo "Deploying InforSuite %s..." && echo "InforSuite %s deployed"`, version, version)
+			script = fmt.Sprintf(`echo %s && echo %s`, opsEcho("Deploying InforSuite %s...", versionV), opsEcho("InforSuite %s deployed", versionV))
 		}
 	case "start":
 		switch req.Type {

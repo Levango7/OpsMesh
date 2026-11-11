@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,7 +67,7 @@ func (s *Server) createNotifyTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_notify_template", Target: created.ID,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("name=%s type=%s format=%s", created.Name, created.Type, created.Format)),
+		Detail: sanitizeAuditDetail("name=" + opsSQLString(created.Name) + " type=" + opsSQLString(created.Type) + " format=" + opsSQLString(created.Format)),
 	})
 	paginate.WriteJSON(w, http.StatusCreated, created)
 }
@@ -173,8 +174,7 @@ func (s *Server) evaluateAnomalyForDevice(deviceID string) []*alertengine.AlertE
 			TenantID: "default",
 			DeviceID: deviceID,
 			Severity: alert.Severity,
-			Message: fmt.Sprintf("异常检测触发：指标 %s=%.2f 偏离基线（均值=%.2f, 标准差=%.2f, Z-Score=%.2f）",
-				alert.MetricName, alert.Value, alert.Mean, alert.StdDev, alert.ZScore),
+			Message:  "异常检测触发：指标 " + opsSQLString(alert.MetricName) + "=" + opsSQLString(strconv.FormatFloat(alert.Value, 'f', 2, 64)) + " 偏离基线（均值=" + opsSQLString(strconv.FormatFloat(alert.Mean, 'f', 2, 64)) + ", 标准差=" + opsSQLString(strconv.FormatFloat(alert.StdDev, 'f', 2, 64)) + ", Z-Score=" + opsSQLString(strconv.FormatFloat(alert.ZScore, 'f', 2, 64)) + "）",
 			Labels: map[string]string{
 				"ruleID":   alert.RuleID,
 				"deviceID": deviceID,

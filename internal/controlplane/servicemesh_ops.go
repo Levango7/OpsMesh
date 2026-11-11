@@ -41,11 +41,11 @@ func (s *Server) handleServiceMesh(w http.ResponseWriter, r *http.Request) {
 		var script string
 		switch mesh {
 		case "istio":
-			script = fmt.Sprintf(`istioctl install --set profile=demo -y 2>/dev/null && echo "Istio %s deployed" || echo "istioctl not available"`, version)
+			script = fmt.Sprintf(`istioctl install --set profile=demo -y 2>/dev/null && echo %s || echo %s`, opsEcho("Istio %s deployed", version), opsEcho("istioctl not available"))
 		case "linkerd":
-			script = fmt.Sprintf(`linkerd install --crds | kubectl apply -f - && linkerd install | kubectl apply -f - && echo "Linkerd %s deployed"`, version)
+			script = fmt.Sprintf(`linkerd install --crds | kubectl apply -f - && linkerd install | kubectl apply -f - && echo %s`, opsEcho("Linkerd %s deployed", version))
 		case "consul":
-			script = fmt.Sprintf(`consul-k8s install --set global.name=consul 2>/dev/null && echo "Consul Connect %s deployed" || echo "consul-k8s not available"`, version)
+			script = fmt.Sprintf(`consul-k8s install --set global.name=consul 2>/dev/null && echo %s || echo %s`, opsEcho("Consul Connect %s deployed", version), opsEcho("consul-k8s not available"))
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "servicemesh_deploy_"+mesh)
 		if !ok {

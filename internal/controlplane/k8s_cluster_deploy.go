@@ -374,7 +374,15 @@ func (d *K8sClusterDeployer) deployControlPlane(ctx context.Context, spec K8sClu
 	endpoints = append(endpoints, firstMaster.Host)
 
 	// 生成 join 命令
-	joinCmd := fmt.Sprintf("kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash sha256:$(openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl pkey -pubin -outform der | sha256sum | cut -d' ' -f1)", firstMaster.Host, token)
+	firstMasterV, err := opsHost("master host", firstMaster.Host)
+	if err != nil {
+		return nil, err
+	}
+	tokenV, err := opsIdentifier("join token", token)
+	if err != nil {
+		return nil, err
+	}
+	joinCmd := fmt.Sprintf("kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash sha256:$(openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl pkey -pubin -outform der | sha256sum | cut -d' ' -f1)", firstMasterV, tokenV)
 
 	// 其余 master join (HA 模式)
 	if spec.HAEnabled && len(cpNodes) > 1 {
@@ -440,7 +448,10 @@ func (d *K8sClusterDeployer) setupLoadBalancer(ctx context.Context, spec K8sClus
 	}
 
 	// 配置 HAProxy
-	haproxyConfig := d.generateHAProxyConfig(cpEndpoints, port)
+	haproxyConfig, err := d.generateHAProxyConfig(cpEndpoints, port)
+	if err != nil {
+		return fmt.Errorf("生成 haproxy 配置失败：%w", err)
+	}
 	// 配置 Keepalived
 	keepalivedConfig := d.generateKeepalivedConfig(lb.VIP, lb.Interface)
 
@@ -475,8 +486,15 @@ func (d *K8sClusterDeployer) joinWorkers(ctx context.Context, spec K8sClusterDep
 	if spec.HAEnabled && spec.LoadBalancer != nil {
 		cpEndpoint = spec.LoadBalancer.VIP
 	}
-
-	joinCmd := fmt.Sprintf("kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash sha256:$(openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl pkey -pubin -outform der | sha256sum | cut -d' ' -f1)", cpEndpoint, token)
+	cpEndpointV, err := opsHost("control-plane endpoint", cpEndpoint)
+	if err != nil {
+		return err
+	}
+	tokenV, err := opsIdentifier("join token", token)
+	if err != nil {
+		return err
+	}
+	joinCmd := fmt.Sprintf("kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash sha256:$(openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl pkey -pubin -outform der | sha256sum | cut -d' ' -f1)", cpEndpointV, tokenV)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -657,10 +675,14 @@ cgroupDriver: systemd
 	return config
 }
 
-func (d *K8sClusterDeployer) generateHAProxyConfig(endpoints []string, port int) string {
+func (d *K8sClusterDeployer) generateHAProxyConfig(endpoints []string, port int) (string, error) {
 	var backendServers string
 	for i, ep := range endpoints {
-		backendServers += fmt.Sprintf("    server k8s-%d %s:6443 check\n", i+1, ep)
+		epV, err := opsHost("haproxy backend endpoint", ep)
+		if err != nil {
+			return "", err
+		}
+		backendServers += fmt.Sprintf("    server k8s-%d %s:6443 check\n", i+1, epV)
 	}
 	return fmt.Sprintf(`global
     log /dev/log local0
@@ -692,7 +714,8 @@ backend k8s-backend
     option tcp-check
     balance roundrobin
 %s
-`, port, backendServers)
+`, port, backendServers),
+		nil
 }
 
 func (d *K8sClusterDeployer) generateKeepalivedConfig(vip, iface string) string {
@@ -765,7 +788,11 @@ func (d *K8sClusterDeployer) installK8sBinaries(ctx context.Context, client *ssh
 	}
 
 	// 安装
-	if _, _, _, err := ssh.Exec(client, fmt.Sprintf("yum install -y kubelet-%s kubeadm-%s kubectl-%s --disableexcludes=kubernetes", version, version, version)); err != nil {
+	versionV, err := opsIdentifier("kubernetes version", version)
+	if err != nil {
+		return fmt.Errorf("kubelet 版本 %q 无效：%w", version, err)
+	}
+	if _, _, _, err := ssh.Exec(client, fmt.Sprintf("yum install -y kubelet-%s kubeadm-%s kubectl-%s --disableexcludes=kubernetes", versionV, versionV, versionV)); err != nil {
 		return fmt.Errorf("安装 kubelet/kubeadm/kubectl 失败: %w", err)
 	}
 	if err := ssh.Systemctl(client, "enable", "kubelet"); err != nil {
@@ -777,13 +804,33 @@ func (d *K8sClusterDeployer) installK8sBinaries(ctx context.Context, client *ssh
 
 func (d *K8sClusterDeployer) applyNodeLabelsAndTaints(client *ssh.Client, node NodeSpec) error {
 	for k, v := range node.Labels {
-		if _, _, _, err := ssh.Exec(client, fmt.Sprintf("kubectl label node $(hostname) %s=%s --overwrite", k, v)); err != nil {
-			return fmt.Errorf("节点 %s 设置标签 %s=%s 失败: %w", node.Host, k, v, err)
+		kV, err := opsIdentifier("label key", k)
+		if err != nil {
+			return fmt.Errorf("节点 %s 标签 key %q 无效：%w", node.Host, k, err)
+		}
+		vV, err := opsIdentifier("label value", v)
+		if err != nil {
+			return fmt.Errorf("节点 %s 标签 value %q 无效：%w", node.Host, v, err)
+		}
+		if _, _, _, err := ssh.Exec(client, fmt.Sprintf("kubectl label node $(hostname) %s=%s --overwrite", kV, vV)); err != nil {
+			return fmt.Errorf("节点 %s 设置标签 %s=%s 失败: %w", node.Host, kV, vV, err)
 		}
 	}
 	for _, t := range node.Taints {
-		if _, _, _, err := ssh.Exec(client, fmt.Sprintf("kubectl taint node $(hostname) %s=%s:%s --overwrite", t.Key, t.Value, t.Effect)); err != nil {
-			return fmt.Errorf("节点 %s 设置污点 %s=%s:%s 失败: %w", node.Host, t.Key, t.Value, t.Effect, err)
+		keyV, err := opsIdentifier("taint key", t.Key)
+		if err != nil {
+			return fmt.Errorf("节点 %s 污点 key %q 无效：%w", node.Host, t.Key, err)
+		}
+		valV, err := opsIdentifier("taint value", t.Value)
+		if err != nil {
+			return fmt.Errorf("节点 %s 污点 value %q 无效：%w", node.Host, t.Value, err)
+		}
+		effectV, err := opsIdentifier("taint effect", t.Effect)
+		if err != nil {
+			return fmt.Errorf("节点 %s 污点 effect %q 无效：%w", node.Host, t.Effect, err)
+		}
+		if _, _, _, err := ssh.Exec(client, fmt.Sprintf("kubectl taint node $(hostname) %s=%s:%s --overwrite", keyV, valV, effectV)); err != nil {
+			return fmt.Errorf("节点 %s 设置污点 %s=%s:%s 失败: %w", node.Host, keyV, valV, effectV, err)
 		}
 	}
 	return nil

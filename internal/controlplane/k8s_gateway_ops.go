@@ -31,19 +31,24 @@ func (s *Server) handleK8sGatewayAPI(w http.ResponseWriter, r *http.Request) {
 	if ns == "" {
 		ns = "default"
 	}
+	nsV, err := opsIdentifier("namespace", ns)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	var script string
 	switch req.Action {
 	case "list-gatewayclasses":
 		script = `kubectl get gatewayclasses 2>/dev/null || echo "Gateway API not installed"`
 	case "list-gateways":
-		script = fmt.Sprintf(`kubectl get gateways -n %s 2>/dev/null || echo "No gateways in namespace %s"`, ns, ns)
+		script = fmt.Sprintf(`kubectl get gateways -n %s 2>/dev/null || echo %s`, nsV, opsEcho("No gateways in namespace %s", nsV))
 	case "list-httproutes":
-		script = fmt.Sprintf(`kubectl get httproutes -n %s 2>/dev/null || echo "No HTTPRoutes in namespace %s"`, ns, ns)
+		script = fmt.Sprintf(`kubectl get httproutes -n %s 2>/dev/null || echo %s`, nsV, opsEcho("No HTTPRoutes in namespace %s", nsV))
 	case "list-grpcroutes":
-		script = fmt.Sprintf(`kubectl get grpcroutes -n %s 2>/dev/null || echo "No GRPCRoutes in namespace %s"`, ns, ns)
+		script = fmt.Sprintf(`kubectl get grpcroutes -n %s 2>/dev/null || echo %s`, nsV, opsEcho("No GRPCRoutes in namespace %s", nsV))
 	case "list-tcproutes":
-		script = fmt.Sprintf(`kubectl get tcproutes -n %s 2>/dev/null || echo "No TCPRoutes in namespace %s"`, ns, ns)
+		script = fmt.Sprintf(`kubectl get tcproutes -n %s 2>/dev/null || echo %s`, nsV, opsEcho("No TCPRoutes in namespace %s", nsV))
 	case "status":
 		script = `echo "=== Gateway API Status ===" && kubectl get crd | grep gateway.networking.k8s.io 2>/dev/null && echo "Gateway API installed" || echo "Gateway API not installed" && echo "---" && kubectl get gatewayclasses 2>/dev/null || echo "No GatewayClasses"`
 	case "install":

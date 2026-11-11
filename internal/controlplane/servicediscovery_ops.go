@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
+
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
@@ -42,19 +44,34 @@ func (s *Server) handleServiceDiscovery(w http.ResponseWriter, r *http.Request) 
 				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key is required"})
 				return
 			}
-			script = fmt.Sprintf(`consul kv get %s 2>/dev/null || echo "Key not found"`, req.Key)
+			keyV, err := opsIdentifier("key", req.Key)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			script = fmt.Sprintf(`consul kv get %s 2>/dev/null || echo %s`, keyV, opsEcho("Key not found"))
 		case "kv-set":
 			if req.Key == "" || req.Value == "" {
 				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key and value are required"})
 				return
 			}
-			script = fmt.Sprintf(`consul kv put %s %s 2>/dev/null && echo "Key set"`, req.Key, req.Value)
+			keyV, err := opsIdentifier("key", req.Key)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			script = fmt.Sprintf(`consul kv put %s %s 2>/dev/null && echo %s`, keyV, shellquote.Quote(req.Value), opsEcho("Key set"))
 		case "kv-delete":
 			if req.Key == "" {
 				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "key is required"})
 				return
 			}
-			script = fmt.Sprintf(`consul kv delete %s 2>/dev/null && echo "Key deleted"`, req.Key)
+			keyV, err := opsIdentifier("key", req.Key)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			script = fmt.Sprintf(`consul kv delete %s 2>/dev/null && echo %s`, keyV, opsEcho("Key deleted"))
 		case "health":
 			script = `consul monitor 2>/dev/null | head -10 || echo "Consul not available"`
 		default:

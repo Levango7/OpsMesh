@@ -40,7 +40,12 @@ func (s *Server) handleJenkins(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "lts-jdk17"
 		}
-		script = fmt.Sprintf(`docker run -d --name jenkins -p 8080:8080 -p 50000:50000 -v jenkins-data:/var/jenkins_home jenkins/jenkins:%s 2>/dev/null && echo "Jenkins %s deployed"`, version, version)
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`docker run -d --name jenkins -p 8080:8080 -p 50000:50000 -v jenkins-data:/var/jenkins_home jenkins/jenkins:%s 2>/dev/null && echo %s`, versionV, opsEcho("Jenkins %s deployed", versionV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "jenkins_deploy")
 		if !ok {
 			return
@@ -68,7 +73,13 @@ func (s *Server) handleJenkins(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:8080/job/%s/build" 2>/dev/null && echo "Build triggered for %s" || echo "Jenkins not available"`, req.Job, req.Job)
+
+		jobV, err := opsIdentifier("job", req.Job)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X POST "http://localhost:8080/job/%s/build" 2>/dev/null && echo %s || echo "Jenkins not available"`, jobV, opsEcho("Build triggered for %s", jobV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "jenkins_job-build")
 		if !ok {
 			return
@@ -80,7 +91,13 @@ func (s *Server) handleJenkins(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:8080/job/%s/disable" 2>/dev/null && echo "Job %s disabled" || echo "Jenkins not available"`, req.Job, req.Job)
+
+		jobV, err := opsIdentifier("job", req.Job)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X POST "http://localhost:8080/job/%s/disable" 2>/dev/null && echo %s || echo "Jenkins not available"`, jobV, opsEcho("Job %s disabled", jobV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "jenkins_job-disable")
 		if !ok {
 			return
@@ -92,7 +109,13 @@ func (s *Server) handleJenkins(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s -X POST "http://localhost:8080/job/%s/enable" 2>/dev/null && echo "Job %s enabled" || echo "Jenkins not available"`, req.Job, req.Job)
+
+		jobV, err := opsIdentifier("job", req.Job)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s -X POST "http://localhost:8080/job/%s/enable" 2>/dev/null && echo %s || echo "Jenkins not available"`, jobV, opsEcho("Job %s enabled", jobV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "jenkins_job-enable")
 		if !ok {
 			return
@@ -145,13 +168,23 @@ func (s *Server) handleGitLab(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "project is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s "http://localhost/api/v4/projects/%s/pipelines" 2>/dev/null | head -20 || echo "GitLab not available"`, req.Project)
+		projectV, err := opsIdentifier("project", req.Project)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s "http://localhost/api/v4/projects/%s/pipelines" 2>/dev/null | head -20 || echo %s`, projectV, opsEcho("GitLab not available"))
 	case "jobs":
 		if req.Project == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "project is required"})
 			return
 		}
-		script = fmt.Sprintf(`curl -s "http://localhost/api/v4/projects/%s/jobs" 2>/dev/null | head -20 || echo "GitLab not available"`, req.Project)
+		projectV, err := opsIdentifier("project", req.Project)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`curl -s "http://localhost/api/v4/projects/%s/jobs" 2>/dev/null | head -20 || echo %s`, projectV, opsEcho("GitLab not available"))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -194,13 +227,23 @@ func (s *Server) handleGitHubActions(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "repo is required"})
 			return
 		}
-		script = fmt.Sprintf(`gh workflow list -R %s 2>/dev/null || echo "GitHub CLI not available"`, req.Repo)
+		repoV, err := opsIdentifier("repo", req.Repo)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`gh workflow list -R %s 2>/dev/null || echo %s`, repoV, opsEcho("GitHub CLI not available"))
 	case "runs":
 		if req.Repo == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "repo is required"})
 			return
 		}
-		script = fmt.Sprintf(`gh run list -R %s 2>/dev/null | head -20 || echo "GitHub CLI not available"`, req.Repo)
+		repoV, err := opsIdentifier("repo", req.Repo)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`gh run list -R %s 2>/dev/null | head -20 || echo %s`, repoV, opsEcho("GitHub CLI not available"))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

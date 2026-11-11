@@ -422,7 +422,7 @@ func (s *Server) handleFederationForwardTask(w http.ResponseWriter, r *http.Requ
 		UserID:   actx.UserID,
 		Action:   "federation_forward_task",
 		Target:   created.TaskID,
-		Detail:   sanitizeAuditDetail(fmt.Sprintf("forwarded to %s, agentID=%s", body.PeerURL, body.Task.AgentID)),
+		Detail:   sanitizeAuditDetail("forwarded to " + opsSQLString(body.PeerURL) + ", agentID=" + opsSQLString(body.Task.AgentID)),
 	})
 	paginate.WriteJSON(w, http.StatusCreated, created)
 }

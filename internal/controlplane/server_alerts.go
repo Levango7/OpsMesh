@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -286,7 +287,7 @@ func (s *Server) handleSilenceAlert(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
-	s.audit(r.Context(), &proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Detail: sanitizeAuditDetail(fmt.Sprintf("silenced %dm: %s", body.DurationMinutes, body.Comment))})
+	s.audit(r.Context(), &proto.AuditEvent{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Detail: sanitizeAuditDetail("silenced " + strconv.Itoa(body.DurationMinutes) + "m: " + opsSQLString(body.Comment))})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{TenantID: actx.TenantID, UserID: actx.UserID, Action: "silence_alert", Target: id, Level: events.LevelInfo})
 	}
@@ -417,7 +418,7 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_alert_rule", Target: rule.ID,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("metric=%s op=%s threshold=%g severity=%s", rule.Metric, rule.Op, rule.Threshold, rule.Severity)),
+		Detail: sanitizeAuditDetail("metric=" + opsSQLString(rule.Metric) + " op=" + opsSQLString(rule.Op) + " threshold=" + opsSQLString(strconv.FormatFloat(rule.Threshold, 'f', -1, 64)) + " severity=" + opsSQLString(rule.Severity)),
 	})
 	paginate.WriteJSON(w, http.StatusCreated, rule)
 }
@@ -565,7 +566,7 @@ func (s *Server) updateAlertRule(w http.ResponseWriter, r *http.Request, id stri
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "update_alert_rule", Target: rule.ID,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("metric=%s op=%s threshold=%g severity=%s", rule.Metric, rule.Op, rule.Threshold, rule.Severity)),
+		Detail: sanitizeAuditDetail("metric=" + opsSQLString(rule.Metric) + " op=" + opsSQLString(rule.Op) + " threshold=" + opsSQLString(strconv.FormatFloat(rule.Threshold, 'f', -1, 64)) + " severity=" + opsSQLString(rule.Severity)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, resp)
 }

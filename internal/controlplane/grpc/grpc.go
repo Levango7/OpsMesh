@@ -461,7 +461,7 @@ func (g *GrpcServerImpl) verifyAgentSignature(ctx context.Context, agentID strin
 		}
 	default:
 		g.incSig(alg, "rejected")
-		return status.Error(codes.Unauthenticated, fmt.Sprintf("unknown agent-signature-alg %q (supported: %s, %s)", alg, grpcx.AgentSignatureAlgV1, grpcx.AgentSignatureAlgV2))
+		return status.Error(codes.Unauthenticated, "unknown agent-signature-alg "+alg+" (supported: "+grpcx.AgentSignatureAlgV1+", "+grpcx.AgentSignatureAlgV2+")")
 	}
 
 	// 解析 timestamp（Unix 秒）
@@ -474,7 +474,7 @@ func (g *GrpcServerImpl) verifyAgentSignature(ctx context.Context, agentID strin
 	now := time.Now()
 	if skew := now.Sub(tsTime); skew > agentSignatureMaxSkew || skew < -agentSignatureMaxSkew {
 		g.incSig(alg, "rejected")
-		return status.Error(codes.Unauthenticated, fmt.Sprintf("agent-timestamp out of skew (max %v): got %v, now %v", agentSignatureMaxSkew, tsTime, now))
+		return status.Error(codes.Unauthenticated, "agent-timestamp out of skew (max "+agentSignatureMaxSkew.String()+"): got "+tsTime.String()+", now "+now.String())
 	}
 
 	// 密钥选择（P1-2）：per-agent 密钥优先，预共享密钥兜底（命中即告警）。
@@ -750,7 +750,7 @@ func (g *GrpcServerImpl) ReportLogs(ctx context.Context, req *grpcx.ReportLogsRe
 	report.TenantID = tenantID
 	if err := g.svc().SaveLogs(tenantID, &report); err != nil {
 		logx.Error(ctx, "agent 日志落库失败", err, "agentID", agentID, "logName", req.Report.LogName)
-		return nil, status.Error(codes.Internal, fmt.Sprintf("save logs failed: %v", err))
+		return nil, status.Error(codes.Internal, "save logs failed: "+err.Error())
 	}
 
 	// M6 日志检索桥接：把每行日志转发到 logstore 后端（若注入），供 /api/v1/logs 统一检索。
@@ -787,7 +787,7 @@ func (g *GrpcServerImpl) ReportLogs(ctx context.Context, req *grpcx.ReportLogsRe
 		TenantID: tenantID,
 		Action:   "report_logs",
 		Target:   agentID,
-		Detail:   fmt.Sprintf("logName=%s lines=%d", req.Report.LogName, len(req.Report.Lines)),
+		Detail:   "logName=" + req.Report.LogName + " lines=" + strconv.Itoa(len(req.Report.Lines)),
 	})
 
 	// SSE：通知前端有新日志到达（前端日志面板可刷新）。

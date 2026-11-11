@@ -40,8 +40,7 @@ func (s *Server) handleActiveMQDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/activemq/%s/apache-activemq-%s-bin.tar.gz -O /tmp/activemq.tgz && tar -xzf /tmp/activemq.tgz -C /opt/ && ln -sfn /opt/apache-activemq-%s /opt/activemq && /opt/activemq/bin/activemq start && echo %s`,
-		version, version, version, shellquote.Quote("ActiveMQ "+version+" deployed"))
+	script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/activemq/%s/apache-activemq-%s-bin.tar.gz -O /tmp/activemq.tgz && tar -xzf /tmp/activemq.tgz -C /opt/ && ln -sfn /opt/apache-activemq-%s /opt/activemq && /opt/activemq/bin/activemq start && echo %s`, version, version, version, shellquote.Quote("ActiveMQ "+version+" deployed"))
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "activemq_deploy")
 	if !ok {
 		return

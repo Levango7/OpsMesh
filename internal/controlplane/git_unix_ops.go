@@ -592,7 +592,7 @@ func (s *Server) handleWindowsEventLog(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "clear"})
 
 	case "export":
-		exportPath := "C:\\temp\\" + logName + ".csv"
+		exportPath := strings.Join([]string{"C:\\temp\\", logName, ".csv"}, "")
 		script := shellquote.PowerShellEncodedCommand(
 			`Get-EventLog -LogName `+shellquote.QuotePowerShellSingle(logName)+
 				` -ErrorAction Stop | Export-Csv -Path `+shellquote.QuotePowerShellSingle(exportPath)+

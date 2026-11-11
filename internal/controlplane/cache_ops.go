@@ -221,7 +221,8 @@ func (s *Server) handleCacheDeploy(w http.ResponseWriter, r *http.Request) {
 				"error": "invalid version: expected x.y.z, got " + version})
 			return
 		}
-		script := fmt.Sprintf(`wget -q https://archive.apache.org/dist/ignite/%s/apache-ignite-%s-bin.zip -O /tmp/ignite.zip && unzip -q /tmp/ignite.zip -d /opt/ && ln -sfn /opt/apache-ignite-%s-bin /opt/ignite && echo %s`,
+		script := fmt.Sprintf(
+			`wget -q https://archive.apache.org/dist/ignite/%s/apache-ignite-%s-bin.zip -O /tmp/ignite.zip && unzip -q /tmp/ignite.zip -d /opt/ && ln -sfn /opt/apache-ignite-%s-bin /opt/ignite && echo %s`,
 			version, version, version, shellquote.Quote("Apache Ignite "+version+" deployed"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "cache_deploy_ignite")
 		if !ok {
@@ -380,7 +381,17 @@ func (s *Server) handleRedisCluster(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "slot, fromNode, toNode are required"})
 			return
 		}
-		script := fmt.Sprintf(`redis-cli --cluster reshard localhost:6379 --cluster-from %s --cluster-to %s --cluster-slots %d --cluster-yes 2>/dev/null && echo "Resharded %d slots"`, req.FromNode, req.ToNode, req.Slot, req.Slot)
+		fromV, err := opsHost("fromNode", req.FromNode)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		toV, err := opsHost("toNode", req.ToNode)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`redis-cli --cluster reshard localhost:6379 --cluster-from %s --cluster-to %s --cluster-slots %d --cluster-yes 2>/dev/null && echo "Resharded %d slots"`, shellquote.Quote(fromV), shellquote.Quote(toV), req.Slot, req.Slot)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_cluster_reshard")
 		if !ok {
 			return
@@ -524,7 +535,12 @@ func (s *Server) handleRedisSentinel(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "master is required"})
 			return
 		}
-		script := fmt.Sprintf(`redis-cli -p 26379 sentinel slaves %s 2>/dev/null`, req.Master)
+		masterV, err := opsHost("master", req.Master)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`redis-cli -p 26379 sentinel slaves %s 2>/dev/null`, shellquote.Quote(masterV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_sentinel_slaves")
 		if !ok {
 			return
@@ -651,10 +667,15 @@ func (s *Server) handleRedisTuning(w http.ResponseWriter, r *http.Request) {
 		}
 		configs := ""
 		if req.MaxMemory != "" {
-			configs += fmt.Sprintf("maxmemory %s ", req.MaxMemory)
+			maxMemV, err := opsMemoryValue("maxMemory", req.MaxMemory)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			configs += fmt.Sprintf("maxmemory %s ", opsSQLString(maxMemV))
 		}
 		if req.Eviction != "" {
-			configs += fmt.Sprintf("maxmemory-policy %s ", req.Eviction)
+			configs += fmt.Sprintf("maxmemory-policy %s ", opsSQLString(req.Eviction))
 		}
 		if req.MaxClients > 0 {
 			if req.MaxClients > 1000000 {
@@ -672,6 +693,10 @@ func (s *Server) handleRedisTuning(w http.ResponseWriter, r *http.Request) {
 		}
 		if configs == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one config is required"})
+			return
+		}
+		if err := shellquote.ValidateArgList(configs, 2048); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid config: " + err.Error()})
 			return
 		}
 		script := fmt.Sprintf(`redis-cli config set %s 2>/dev/null && redis-cli config rewrite 2>/dev/null && echo "Tuning applied"`, configs)
@@ -828,8 +853,14 @@ func (s *Server) handleRedisSecurity(w http.ResponseWriter, r *http.Request) {
 				"error": "invalid acl rules: " + rules})
 			return
 		}
-		script := fmt.Sprintf(`redis-cli acl setuser %s on >%s %s 2>/dev/null && echo %s`,
-			req.User, shellquote.Quote(req.Password), rules, shellquote.Quote("User "+req.User+" created"))
+		userV, err := opsDBName("user", req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(
+			`redis-cli acl setuser %s on >%s %s 2>/dev/null && echo %s`,
+			shellquote.Quote(userV), shellquote.Quote(req.Password), shellquote.Quote(rules), opsEcho("User %s created", userV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_security_add-user")
 		if !ok {
 			return
@@ -903,10 +934,15 @@ func (s *Server) handleRedisBackup(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/var/lib/redis/dump.rdb"
 	}
+	pathV, err := mqPath("path", path)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	switch req.Action {
 	case "backup":
-		script := fmt.Sprintf(`redis-cli save 2>/dev/null && cp /var/lib/redis/dump.rdb %s && echo "Backup saved to %s"`, path, path)
+		script := fmt.Sprintf(`redis-cli save 2>/dev/null && cp /var/lib/redis/dump.rdb %s && echo "Backup saved to %s"`, shellquote.Quote(pathV), shellquote.Quote(pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_backup_backup")
 		if !ok {
 			return
@@ -914,7 +950,7 @@ func (s *Server) handleRedisBackup(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "backup"})
 
 	case "restore":
-		script := fmt.Sprintf(`cp %s /var/lib/redis/dump.rdb && systemctl restart redis-server && echo "Restored from %s"`, path, path)
+		script := fmt.Sprintf(`cp %s /var/lib/redis/dump.rdb && systemctl restart redis-server && echo "Restored from %s"`, shellquote.Quote(pathV), shellquote.Quote(pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_backup_restore")
 		if !ok {
 			return
@@ -922,7 +958,7 @@ func (s *Server) handleRedisBackup(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "restore"})
 
 	case "list":
-		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, path)
+		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, shellquote.Quote(pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_backup_list")
 		if !ok {
 			return

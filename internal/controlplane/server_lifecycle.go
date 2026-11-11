@@ -563,7 +563,7 @@ func (s *Server) Start() error {
 	go s.archiveLoop(ctx)               // F5 离线超龄自动归档（仅 leader）
 	go s.auditMaintenanceLoop(ctx)      // P1-3 审计归档保留 + 哈希链自检（仅 leader）
 	go s.notifyLoop(ctx)                // M7 告警 Webhook 推送：周期检查新 critical 告警并推送到 webhook URL
-	go s.alertEngineLoop(ctx)           // M2 告警评估循环：alertengine.Engine + Silencer + Aggregator + Notifier
+	go s.alertEngineLoop(ctx)           // M2 告警评估循环：alertengine.Engine、Silencer、Aggregator、Notifier
 	go s.autoProvisionLoop(ctx)         // 自动纳管：--discover + --auto-provision 时周期扫描网段并推送 agent
 	go s.deployReconcileLoop(ctx)       // M3 部署对账：周期把 running 部署按底层任务结果翻终态（仅 leader）
 	go s.workflowScheduleLoop(ctx)      // M5 作业编排：周期按 cron 触发 active 工作流并 reconcile 运行态（仅 leader）

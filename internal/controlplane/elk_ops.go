@@ -54,7 +54,7 @@ func (s *Server) handleElasticsearchDeploy(w http.ResponseWriter, r *http.Reques
 	// - ES_JAVA_OPTS 的值旧形态在**双引号段**内 ⇒ 直接塞 Quote 结果会让单引号变字面量
 	//   （双引号内单引号是字面量），故整个 env 值在 Go 层拼好后整体 Quote。
 	// - 镜像 tag 与回显文本同样要防：裸拼可被执行；回显的双引号段内 $ / 反引号会展开。
-	javaOpts := fmt.Sprintf("ES_JAVA_OPTS=-Xms%s -Xmx%s", memLimit, memLimit)
+	javaOpts := "ES_JAVA_OPTS=-Xms" + opsSQLString(memLimit) + " -Xmx" + opsSQLString(memLimit)
 	var script string
 	if mode == "cluster" {
 		script = fmt.Sprintf(`docker run -d --name elasticsearch -p %d:9200 -p 9300:9300 -e "discovery.type=zen" -e %s -e "xpack.security.enabled=false" docker.elastic.co/elasticsearch/elasticsearch:%s 2>/dev/null && %s`, port, shellquote.Quote(javaOpts), shellquote.Quote(version), esEcho("Elasticsearch "+version+" deployed (cluster mode)"))

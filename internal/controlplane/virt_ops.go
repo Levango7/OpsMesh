@@ -296,7 +296,12 @@ func (s *Server) handleVirtAction(w http.ResponseWriter, r *http.Request, vType,
 	req.Action = action
 
 	script := buildVirtActionScript(req)
-	taskAction := "virt_" + action + "_" + vType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "virt.action."+vType, err)
+		return
+	}
+	taskAction := fmt.Sprintf("virt_%s_%s", actionV, vType)
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -147,7 +148,7 @@ func (s *Server) handleEnvInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type + ":" + req.Version,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s version=%s", req.DeviceID, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -219,7 +220,12 @@ func (s *Server) handleEnvAction(w http.ResponseWriter, r *http.Request, envType
 	req.Type = envType
 
 	script := buildEnvActionScript(req)
-	taskAction := "env_" + action + "_" + envType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "env.action."+envType, err)
+		return
+	}
+	taskAction := fmt.Sprintf("env_%s_%s", actionV, envType)
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {
@@ -297,7 +303,7 @@ func (s *Server) handleFdLimit(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "env_fdlimit_" + req.Action, Target: "fdlimit",
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s limit=%d", req.DeviceID, req.Limit)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " limit=" + opsSQLString(strconv.Itoa(req.Limit))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

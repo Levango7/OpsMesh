@@ -170,7 +170,7 @@ func (s *Server) handleKernelParam(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "kernel_param_" + req.Action, Target: req.Name,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s value=%s", req.DeviceID, req.Value)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " value=" + opsSQLString(req.Value)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
