@@ -16,7 +16,7 @@ import (
 // （Rollback / CertRotation 的 execute* 不触达 SSH）。
 
 func newTestHandler() *K8sLifecycleHandler {
-	return NewK8sLifecycleHandler()
+	return NewK8sLifecycleHandler(nil)
 }
 
 func doRequest(t *testing.T, h http.HandlerFunc, method, target, body string) *httptest.ResponseRecorder {
@@ -230,7 +230,7 @@ func TestUnimplementedActionsReturn501(t *testing.T) {
 
 func TestRouteRegistration(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterK8sLifecycleRoutes(mux, NewK8sLifecycleHandler())
+	RegisterK8sLifecycleRoutes(mux, NewK8sLifecycleHandler(nil))
 
 	// 路由模式带方法前缀：GET 打到 POST 专属路径必须 405（而非 404）。
 	rec := httptest.NewRecorder()

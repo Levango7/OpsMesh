@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1045,3 +1046,156 @@ func (s *SQLStore) IsLeader() bool {
 }
 
 // CancelledTaskIDs 返回该 agent 当前 cancelled 状态的任务 ID（F3 取消信号下发用）。
+
+// LifecycleJob 生命周期作业记录
+type LifecycleJob struct {
+	ID          string         `json:"id"`
+	ClusterID   string         `json:"clusterId"`
+	Kind        string         `json:"kind"` // upgrade/rollback/cert-rotate
+	TenantID    string         `json:"tenantId"`
+	Phase       string         `json:"phase"` // pending/precheck/running/control_plane_upgrading/worker_upgrading/verifying/completed/failed/cancelled
+	Progress    int            `json:"progress"`
+	CurrentStep string         `json:"currentStep"`
+	SpecJSON    map[string]any `json:"specJson"`
+	ResultJSON  map[string]any `json:"resultJson,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	LockOwner   string         `json:"lockOwner,omitempty"`
+	Version     int            `json:"version"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
+}
+
+// CreateLifecycleJob 创建生命周期作业（幂等：同一 cluster+kind 仅允许一个非终态）
+func (s *SQLStore) CreateLifecycleJob(ctx context.Context, job *LifecycleJob) error {
+	specJSON, _ := json.Marshal(job.SpecJSON)
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO lifecycle_jobs (id, cluster_id, kind, tenant_id, phase, progress, current_step, spec_json, lock_owner, version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+		ON DUPLICATE KEY UPDATE
+			id=VALUES(id), phase=VALUES(phase), progress=VALUES(progress), current_step=VALUES(current_step),
+			spec_json=VALUES(spec_json), lock_owner=VALUES(lock_owner), version=VALUES(version)
+	`, job.ID, job.ClusterID, job.Kind, job.TenantID, job.Phase, job.Progress, job.CurrentStep, specJSON, job.LockOwner)
+	return err
+}
+
+// GetLifecycleJob 获取生命周期作业
+func (s *SQLStore) GetLifecycleJob(ctx context.Context, id string) (*LifecycleJob, error) {
+	var job LifecycleJob
+	var specJSON, resultJSON sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, cluster_id, kind, tenant_id, phase, progress, current_step, spec_json, result_json, error, lock_owner, version, created_at, updated_at
+		FROM lifecycle_jobs WHERE id = ?
+	`, id).Scan(&job.ID, &job.ClusterID, &job.Kind, &job.TenantID, &job.Phase, &job.Progress, &job.CurrentStep, &specJSON, &resultJSON, &job.Error, &job.LockOwner, &job.Version, &job.CreatedAt, &job.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if specJSON.Valid {
+		json.Unmarshal([]byte(specJSON.String), &job.SpecJSON)
+	}
+	if resultJSON.Valid {
+		json.Unmarshal([]byte(resultJSON.String), &job.ResultJSON)
+	}
+	return &job, nil
+}
+
+// UpdateLifecycleJob 更新生命周期作业（乐观锁）
+func (s *SQLStore) UpdateLifecycleJob(ctx context.Context, job *LifecycleJob) error {
+	specJSON, _ := json.Marshal(job.SpecJSON)
+	resultJSON, _ := json.Marshal(job.ResultJSON)
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE lifecycle_jobs
+		SET phase=?, progress=?, current_step=?, spec_json=?, result_json=?, error=?, lock_owner=?, version=version+1, updated_at=NOW()
+		WHERE id=? AND version=?
+	`, job.Phase, job.Progress, job.CurrentStep, specJSON, resultJSON, job.Error, job.LockOwner, job.ID, job.Version)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("lifecycle job %s: version conflict or not found", job.ID)
+	}
+	job.Version++
+	return nil
+}
+
+// ListLifecycleJobs 列出生命周期作业
+func (s *SQLStore) ListLifecycleJobs(ctx context.Context, clusterID, tenantID, kind, phase string, limit, offset int) ([]*LifecycleJob, error) {
+	query := `SELECT id, cluster_id, kind, tenant_id, phase, progress, current_step, spec_json, result_json, error, lock_owner, version, created_at, updated_at FROM lifecycle_jobs WHERE 1=1`
+	args := []any{}
+	if clusterID != "" {
+		query += " AND cluster_id = ?"
+		args = append(args, clusterID)
+	}
+	if tenantID != "" {
+		query += " AND tenant_id = ?"
+		args = append(args, tenantID)
+	}
+	if kind != "" {
+		query += " AND kind = ?"
+		args = append(args, kind)
+	}
+	if phase != "" {
+		query += " AND phase = ?"
+		args = append(args, phase)
+	}
+	query += " ORDER BY created_at DESC"
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	if offset > 0 {
+		query += " OFFSET ?"
+		args = append(args, offset)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []*LifecycleJob
+	for rows.Next() {
+		var job LifecycleJob
+		var specJSON, resultJSON sql.NullString
+		if err := rows.Scan(&job.ID, &job.ClusterID, &job.Kind, &job.TenantID, &job.Phase, &job.Progress, &job.CurrentStep, &specJSON, &resultJSON, &job.Error, &job.LockOwner, &job.Version, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if specJSON.Valid {
+			json.Unmarshal([]byte(specJSON.String), &job.SpecJSON)
+		}
+		if resultJSON.Valid {
+			json.Unmarshal([]byte(resultJSON.String), &job.ResultJSON)
+		}
+		jobs = append(jobs, &job)
+	}
+	return jobs, rows.Err()
+}
+
+// GetActiveLifecycleJob 获取集群的活跃作业（非终态）
+func (s *SQLStore) GetActiveLifecycleJob(ctx context.Context, clusterID, kind string) (*LifecycleJob, error) {
+	var job LifecycleJob
+	var specJSON, resultJSON sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, cluster_id, kind, tenant_id, phase, progress, current_step, spec_json, result_json, error, lock_owner, version, created_at, updated_at
+		FROM lifecycle_jobs
+		WHERE cluster_id = ? AND kind = ? AND phase NOT IN ('completed','failed','cancelled')
+		ORDER BY created_at DESC LIMIT 1
+	`, clusterID, kind).Scan(&job.ID, &job.ClusterID, &job.Kind, &job.TenantID, &job.Phase, &job.Progress, &job.CurrentStep, &specJSON, &resultJSON, &job.Error, &job.LockOwner, &job.Version, &job.CreatedAt, &job.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if specJSON.Valid {
+		json.Unmarshal([]byte(specJSON.String), &job.SpecJSON)
+	}
+	if resultJSON.Valid {
+		json.Unmarshal([]byte(resultJSON.String), &job.ResultJSON)
+	}
+	return &job, nil
+}

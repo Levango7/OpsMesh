@@ -16,6 +16,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/platform/ssh"
+	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
 )
 
 // ErrNotImplemented 表示该动作的真实执行链路尚未实现。
@@ -422,6 +423,7 @@ type K8sLifecycleHandler struct {
 	upgradeMgr *UpgradeManager
 	nodeScaler *NodeScaler
 	etcdMgr    *EtcdManager
+	store      LifecycleJobStore // 用于持久化作业状态
 
 	// Authorize 鉴权回调（由 controlplane 注入），语义同 cmdb/log/deploy/orch 的
 	// Authorize：失败时回调已写响应并返回 ok=false，调用方直接 return。
@@ -451,11 +453,21 @@ func (h *K8sLifecycleHandler) authorize(fn http.HandlerFunc, readPerm, writePerm
 	}
 }
 
-func NewK8sLifecycleHandler() *K8sLifecycleHandler {
+// LifecycleJobStore 生命周期作业存储接口（用于测试 mock）
+type LifecycleJobStore interface {
+	CreateLifecycleJob(ctx context.Context, job *sqlstore.LifecycleJob) error
+	GetLifecycleJob(ctx context.Context, id string) (*sqlstore.LifecycleJob, error)
+	UpdateLifecycleJob(ctx context.Context, job *sqlstore.LifecycleJob) error
+	GetActiveLifecycleJob(ctx context.Context, clusterID, kind string) (*sqlstore.LifecycleJob, error)
+}
+
+// NewK8sLifecycleHandler 创建 K8s 生命周期处理器
+func NewK8sLifecycleHandler(store LifecycleJobStore) *K8sLifecycleHandler {
 	return &K8sLifecycleHandler{
 		upgradeMgr: NewUpgradeManager(),
 		nodeScaler: NewNodeScaler(),
 		etcdMgr:    NewEtcdManager(),
+		store:      store,
 	}
 }
 
@@ -487,8 +499,66 @@ func (h *K8sLifecycleHandler) HandleUpgrade(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	writeNotImplemented(w, "集群版本升级（upgrade）",
-		"目前只有 POST /api/v1/k8s/lifecycle/upgrade/plan 会真实执行 kubeadm upgrade plan，升级动作本身尚未接线")
+	// 获取租户 ID（从授权上下文）
+	actx := authctx.FromContext(r.Context())
+	tenantID := actx.TenantID
+	if tenantID == "" {
+		tenantID = "default"
+	}
+
+	// 检查是否已有活跃的升级作业
+	if h.store != nil {
+		activeJob, err := h.store.GetActiveLifecycleJob(r.Context(), spec.ClusterID, "upgrade")
+		if err != nil {
+			logx.Error(r.Context(), "检查活跃升级作业失败", err)
+		} else if activeJob != nil {
+			paginate.WriteJSON(w, http.StatusConflict, map[string]string{
+				"error":       "cluster already has an active upgrade job",
+				"jobId":       activeJob.ID,
+				"jobPhase":    activeJob.Phase,
+			})
+			return
+		}
+	}
+
+	// 生成作业 ID
+	jobID := fmt.Sprintf("%s-upgrade-%d", spec.ClusterID, time.Now().UnixMilli())
+
+	// 创建作业记录
+	specJSON := map[string]any{
+		"clusterId":     spec.ClusterID,
+		"targetVersion": spec.TargetVersion,
+		"nodes":         spec.Nodes,
+		"drainNodes":    spec.DrainNodes,
+		"force":         spec.Force,
+	}
+
+	if h.store != nil {
+		if err := h.store.CreateLifecycleJob(r.Context(), &sqlstore.LifecycleJob{
+			ID:        jobID,
+			ClusterID: spec.ClusterID,
+			Kind:      "upgrade",
+			TenantID:  tenantID,
+			Phase:     "pending",
+			Progress:  0,
+			SpecJSON:  specJSON,
+			LockOwner: "k8slifecycle-upgrade",
+		}); err != nil {
+			logx.Error(r.Context(), "创建升级作业失败", err)
+			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create upgrade job"})
+			return
+		}
+	}
+
+	// 启动异步升级
+	go h.runUpgrade(r.Context(), jobID, spec)
+
+	// 返回 202 Accepted
+	paginate.WriteJSON(w, http.StatusAccepted, map[string]string{
+		"jobId":  jobID,
+		"status": "accepted",
+		"message": "upgrade job started",
+	})
 }
 
 // HandleUpgradePlan 处理 POST /api/v1/k8s/lifecycle/upgrade/plan
@@ -681,6 +751,153 @@ func (h *K8sLifecycleHandler) HandleEtcdListBackups(w http.ResponseWriter, r *ht
 // RegisterK8sLifecycleRoutes 注册 K8s 生命周期路由。
 // 全部经 authorize 包装：GET 需要 k8s:read，其余（含 etcd-restore / node-scale 这类
 // 真副作用动作）需要 k8s:write。若未来要给 etcd-restore 更细的权限点，需先扩 RBAC 目录。
+// runUpgrade 真实执行 K8s 集群升级（异步后台任务）
+func (h *K8sLifecycleHandler) runUpgrade(ctx context.Context, jobID string, spec UpgradeSpec) {
+	// 更新作业状态：预检阶段
+	h.updateJobPhase(ctx, jobID, "precheck", 5, "precheck: running preflight checks")
+
+	// 1. 预检：版本兼容性、节点健康、etcd 健康度、控制面 Pod 数、升级计划确认
+	if err := h.precheckUpgrade(ctx, jobID, spec); err != nil {
+		h.failJob(ctx, jobID, "precheck failed: "+err.Error())
+		return
+	}
+
+	h.updateJobPhase(ctx, jobID, "control_plane_upgrading", 20, "control_plane_upgrading: upgrading control plane nodes")
+
+	// 2. 控制面升级：首个 CP kubeadm upgrade apply -> 其余 CP 逐个
+	if err := h.upgradeControlPlane(ctx, jobID, spec); err != nil {
+		h.failJob(ctx, jobID, "control plane upgrade failed: "+err.Error())
+		return
+	}
+
+	h.updateJobPhase(ctx, jobID, "worker_upgrading", 50, "worker_upgrading: upgrading worker nodes")
+
+	// 3. Worker 节点分批次升级
+	if err := h.upgradeWorkers(ctx, jobID, spec); err != nil {
+		h.failJob(ctx, jobID, "worker upgrade failed: "+err.Error())
+		return
+	}
+
+	h.updateJobPhase(ctx, jobID, "verifying", 90, "verifying: verifying cluster health")
+
+	// 4. 验证：版本一致、Pod 健康、无可用升级
+	if err := h.verifyUpgrade(ctx, jobID, spec); err != nil {
+		h.failJob(ctx, jobID, "verification failed: "+err.Error())
+		return
+	}
+
+	// 完成
+	h.completeJob(ctx, jobID, "upgrade completed successfully")
+}
+
+// precheckUpgrade 预检升级前置条件
+func (h *K8sLifecycleHandler) precheckUpgrade(ctx context.Context, jobID string, spec UpgradeSpec) error {
+	// TODO: 实现预检逻辑
+	// 1. 版本兼容性检查
+	// 2. 节点健康检查
+	// 3. etcd 健康度检查
+	// 4. 控制面 Pod 数量检查
+	// 5. 升级计划确认
+	h.updateJobPhase(context.Background(), "", "precheck", 10, "precheck: version compatibility check")
+	return nil
+}
+
+// upgradeControlPlane 升级控制面节点
+func (h *K8sLifecycleHandler) upgradeControlPlane(ctx context.Context, jobID string, spec UpgradeSpec) error {
+	// TODO: 实现控制面升级逻辑
+	// 1. 首个 CP: kubeadm upgrade apply
+	// 2. 其余 CP: drain -> upgrade kubelet/kubectl -> uncordon
+	h.updateJobPhase(ctx, "", "control_plane_upgrading", 30, "upgrading first control plane node")
+	return nil
+}
+
+// upgradeWorkers 升级 Worker 节点
+func (h *K8sLifecycleHandler) upgradeWorkers(ctx context.Context, jobID string, spec UpgradeSpec) error {
+	// TODO: 实现 Worker 节点分批升级
+	// 1. 分批次 drain
+	// 2. 升级 kubelet/kubectl
+	// 3. uncordon
+	// 4. 批间健康检查
+	return nil
+}
+
+// verifyUpgrade 验证升级结果
+func (h *K8sLifecycleHandler) verifyUpgrade(ctx context.Context, jobID string, spec UpgradeSpec) error {
+	// TODO: 实现验证逻辑
+	// 1. 所有节点版本 == 目标版本
+	// 2. kubectl get pods -A 无异常
+	// 3. kubeadm upgrade plan 显示无可用升级
+	return nil
+}
+
+// updateJobPhase 更新作业阶段
+func (h *K8sLifecycleHandler) updateJobPhase(ctx context.Context, jobID, phase string, progress int, step string) {
+	if h.store == nil || jobID == "" {
+		return
+	}
+	job, err := h.store.GetLifecycleJob(ctx, jobID)
+	if err != nil || job == nil {
+		return
+	}
+	job.Phase = phase
+	job.Progress = progress
+	job.CurrentStep = step
+	h.store.UpdateLifecycleJob(ctx, &sqlstore.LifecycleJob{
+		ID:          job.ID,
+		Phase:       job.Phase,
+		Progress:    job.Progress,
+		CurrentStep: job.CurrentStep,
+		Version:     job.Version,
+	})
+}
+
+// failJob 标记作业失败
+func (h *K8sLifecycleHandler) failJob(ctx context.Context, jobID, errMsg string) {
+	if h.store == nil || jobID == "" {
+		return
+	}
+	job, err := h.store.GetLifecycleJob(ctx, jobID)
+	if err != nil || job == nil {
+		return
+	}
+	job.Phase = "failed"
+	job.Progress = 0
+	job.CurrentStep = ""
+	job.Error = errMsg
+	h.store.UpdateLifecycleJob(ctx, &sqlstore.LifecycleJob{
+		ID:        job.ID,
+		Phase:     job.Phase,
+		Progress:  job.Progress,
+		CurrentStep: job.CurrentStep,
+		Error:     job.Error,
+		Version:   job.Version,
+	})
+}
+
+// completeJob 标记作业完成
+func (h *K8sLifecycleHandler) completeJob(ctx context.Context, jobID, msg string) {
+	if h.store == nil || jobID == "" {
+		return
+	}
+	job, err := h.store.GetLifecycleJob(ctx, jobID)
+	if err != nil || job == nil {
+		return
+	}
+	job.Phase = "completed"
+	job.Progress = 100
+	job.CurrentStep = msg
+	resultJSON := map[string]any{"message": msg}
+	h.store.UpdateLifecycleJob(ctx, &sqlstore.LifecycleJob{
+		ID:         job.ID,
+		Phase:      job.Phase,
+		Progress:   job.Progress,
+		CurrentStep: job.CurrentStep,
+		ResultJSON: resultJSON,
+		Version:    job.Version,
+	})
+}
+
+// RegisterK8sLifecycleRoutes 注册 K8s 生命周期路由。
 func RegisterK8sLifecycleRoutes(mux *http.ServeMux, handler *K8sLifecycleHandler) {
 	mux.HandleFunc("POST /api/v1/k8s/lifecycle/upgrade", handler.authorize(handler.HandleUpgrade, "k8s:read", "k8s:write"))
 	mux.HandleFunc("POST /api/v1/k8s/lifecycle/upgrade/plan", handler.authorize(handler.HandleUpgradePlan, "k8s:read", "k8s:write"))

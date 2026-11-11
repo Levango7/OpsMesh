@@ -48,6 +48,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/secrets"
 	"github.com/Levango7/OpsMesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
 	"github.com/Levango7/OpsMesh/internal/tlsutil"
 )
 
@@ -415,7 +416,12 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		aiGatewayHandler:     newBudgetedAIGatewayHandler(),
 		agentHandler:         newBudgetedAgentHandler(),
 		knowledgeHandler:     newBudgetedKnowledgeHandler(),
-		k8sLifecycleHandler:  k8slifecycle.NewK8sLifecycleHandler(),
+		k8sLifecycleHandler:  func() *k8slifecycle.K8sLifecycleHandler {
+			if sqlStore, ok := st.(*sqlstore.SQLStore); ok {
+				return k8slifecycle.NewK8sLifecycleHandler(sqlStore)
+			}
+			return nil
+		}(),
 		cloudProviderFactory: cloudprovider.NewAdapterFactory(),
 		eventSubs:            make(map[chan SSEEvent]struct{}), // SSE 订阅者集合
 		alertAggr:            notify.NewAlertAggregator(),      // 告警聚合器
