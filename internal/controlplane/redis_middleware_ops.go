@@ -47,6 +47,16 @@ func (s *Server) handleMiddlewareRedisSentinel(w http.ResponseWriter, r *http.Re
 	if req.Host == "" {
 		req.Host = "localhost:26379"
 	}
+	if _, err := opsHost("host", req.Host); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if req.Master != "" {
+		if _, err := opsIdentifier("master", req.Master); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	allowed := map[string]bool{"monitor": true, "failover": true}
 	if !allowed[req.Action] {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (monitor/failover)"})
@@ -67,22 +77,26 @@ func (s *Server) handleMiddlewareRedisSentinel(w http.ResponseWriter, r *http.Re
 
 func buildRedisSentinelScript(req redisSentinelReq) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	hostV := req.Host
+	masterV := req.Master
 	b.WriteString("set -e\n")
-	fmt.Fprintf(&b, "SENTINEL_HOST=%q\n", req.Host)
+	fmt.Fprintf(&b, "SENTINEL_HOST=%q\n", hostV)
 	switch req.Action {
 	case "monitor":
 		if req.Master == "" {
 			b.WriteString("echo 'sentinel monitor 需指定 master 名称' && exit 1\n")
 		} else {
-			fmt.Fprintf(&b, "redis-cli -h %s SENTINEL monitor %s 127.0.0.1 6379 2\n", req.Host, req.Master)
-			fmt.Fprintf(&b, "echo 'Sentinel 已监控 master: %s'\n", req.Master)
+			fmt.Fprintf(&b, "redis-cli -h %s SENTINEL monitor %s 127.0.0.1 6379 2\n", hostV, masterV)
+			fmt.Fprintf(&b, "echo 'Sentinel 已监控 master: %s'\n", masterV)
 		}
 	case "failover":
 		if req.Master == "" {
 			b.WriteString("echo 'sentinel failover 需指定 master 名称' && exit 1\n")
 		} else {
-			fmt.Fprintf(&b, "redis-cli -h %s SENTINEL failover %s\n", req.Host, req.Master)
-			fmt.Fprintf(&b, "echo 'Sentinel 已触发 master %s 故障转移'\n", req.Master)
+			fmt.Fprintf(&b, "redis-cli -h %s SENTINEL failover %s\n", hostV, masterV)
+			fmt.Fprintf(&b, "echo 'Sentinel 已触发 master %s 故障转移'\n", masterV)
 		}
 	}
 	return b.String()
@@ -144,16 +158,20 @@ func (s *Server) handleMiddlewareRedisCluster(w http.ResponseWriter, r *http.Req
 
 func buildRedisClusterScript(req redisClusterReq) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	hostV := req.Host
+	actionV := req.Action
 	b.WriteString("set -e\n")
-	fmt.Fprintf(&b, "CLUSTER_HOST=%q\n", req.Host)
+	fmt.Fprintf(&b, "CLUSTER_HOST=%q\n", hostV)
 	switch req.Action {
 	case "nodes":
-		fmt.Fprintf(&b, "redis-cli -h %s CLUSTER NODES\n", req.Host)
+		fmt.Fprintf(&b, "redis-cli -h %s CLUSTER NODES\n", hostV)
 	case "slots":
-		fmt.Fprintf(&b, "redis-cli -h %s CLUSTER SLOTS\n", req.Host)
+		fmt.Fprintf(&b, "redis-cli -h %s CLUSTER SLOTS\n", hostV)
 	case "rebalance":
-		fmt.Fprintf(&b, "echo 'rebalance 需在 redis-cli --cluster rebalance 中手动执行，host=%s'\n", req.Host)
+		fmt.Fprintf(&b, "echo 'rebalance 需在 redis-cli --cluster rebalance 中手动执行，host=%s'\n", hostV)
 	}
-	fmt.Fprintf(&b, "echo 'Redis Cluster %s 操作完成 (host=%s)\n", req.Action, req.Host)
+	fmt.Fprintf(&b, "echo 'Redis Cluster %s 操作完成 (host=%s)\n", actionV, hostV)
 	return b.String()
 }

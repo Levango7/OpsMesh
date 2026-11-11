@@ -5,6 +5,36 @@
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
 
+## [Unreleased-批次 14 注入面扩面收口] — 2026-11-11（口径扩面：Sprintf 实参级 + Fprintf→builder 整类；P0 切片 8 文件；剩余面登记在册）
+
+- **先纠偏（如实登记）**：批次 9–13 的注入面盘点器（`scripts/shell-injection-audit.py`）有**两个结构性盲区**——
+  ① **逐行判定**：同一行只要出现一个被 Quote 过的参数，整行即被跳过 ⇒ 同行其余**裸**实参（`req.*` 直插）逃逸出盘点；
+  ② **只认 `fmt.Sprintf(`**：以 `fmt.Fprintf(&builder, ...)` 拼脚本的**整类**从未被计入。
+  ⇒ 批次 12/13 CHANGELOG 里的「190 → 0」是**该口径下**的零（口径未动、数字可复算），**不是全仓注入面的零**。本批把口径扩到实参级 + Fprintf 级，并给出真实基线。
+- **口径扩展（只增不改历史口径）**：
+  - **判据 E（raw_arg）**：`fmt.Sprintf` 的**字符串槽**（`%s`/`%v`/`%q`）实参里裸引用 `req.<字段>` ⇒ 命中。数值槽（`%d`/`%x`/`%f`…）在 JSON 解码期即被类型挡掉，不可能携带 shell 元字符 ⇒ 不报。
+  - **判据 F（raw_fprintf）**：`fmt.Fprintf` 的**目标**是脚本 builder（`&x`）且格式串含换行（脚本行特征）时，其字符串槽实参里裸引用 `req.<字段>` ⇒ 命中。
+  - A/B（`sprintf`/`concat`）、C（`raw_interp`）、D（`derived_interp`）的判定与计数**一字未动**，历史数字（616→576→575、333/320/269、286）仍可比。
+- **扩面后的真实基线（本批开工前，同一脚本同一口径）**：
+  - 判据 E：**65 处 / 12 文件**（Sprintf 实参级）
+  - 判据 F：**286 处 / 27 文件**（Fprintf→builder 实参级；其中 248 处落在**命令位**）
+  - 注：E 与 F **互相重叠计数**（同一字段可能两处都出现），**不可相加**。
+- **本批（P0 切片）收口 8 文件**：`env_ops` / `zookeeper_middleware_ops` / `ntp_ops` / `security_ops` / `redis_middleware_ops` / `rabbitmq_middleware_ops` / `kafka_middleware_ops` / `monitor_ops`。
+  - **真实 RCE 面（此前未被任何判据计入）**：
+    - `env_ops` 的 IPVS：`ipvsadm -A -t <VIP>:<port>` —— VIP 仅校验非空（`1.2.3.4; id` 可在 agent 上执行）⇒ 改 **IP 字面量白名单 + 整体 Quote**；
+    - `zookeeper` 的 `HOST=` / `echo <cmd> | nc`：Host 未校验 ⇒ **主机白名单 + Quote**（cmd 本身早已是四字命令白名单）；
+    - `redis sentinel` 的 host/master、`kafka` 的 group、`rabbitmq` 的 vhost、`monitor`（zabbix）的 hostIP ⇒ 补白名单；
+    - `ntp`（timezone/allowCIDR/servers）、`security`（CVE/事务号）、`env`（版本）—— **原已有白名单**，本批把「已校验但仍直引」改成 Quote（双引号段转义 `\ " $ \``，POSIX 语义不变）。
+  - **能力降级点（如实登记）**：
+    - IPVS 的 VIP 必须是 **IP 字面量**（此前任意串）；
+    - redis sentinel 的 host 必须是主机名/`host:port`（`opsHost`），master 必须是标识符（`opsIdentifier`）；
+    - rabbitmq 的 vhost 必须是标识符形态（`/` 与 `a.b` 可，其余 400）；
+    - kafka consumer group 的 group 必须是标识符（`opsIdentifier`）；
+    - zabbix 的 hostIP 必须是主机/IP 形态；
+    - 上述字段此前可携带任意字符（含 `;`、`$( )`、反引号）⇒ 现一律 **400**。
+- **守卫**：`internal/controlplane/b14_injection_test.go` —— ①**实参级** AST 守卫（Sprintf/Fprintf 的字符串槽实参不得裸引用 `req.*`）；②白名单拒收语义判据（注入载荷 ⇒ 400 且不下发脚本）；③盘点器判据 E/F 接入断言。由 CI 的 `go test ./internal/controlplane/` 兜底。
+- **未收口面（如实登记，留待批次 15+）**：本批收口后，全仓判据 E 剩 **64** 处、判据 F 剩 **344** 处（E/F 重叠计数，不可相加）；F 的文件分布（Top10）：virt_ops.go=45; vector_ops.go=39; dns_ops.go=37; storage_ops.go=29; fileshare_ops.go=25; olap_ops.go=23; lb_ops.go=21; mongo_ops.go=17; harbor_ops.go=16; kernel_ops.go=16。集中在数据面与虚拟化面文件，按文件组分批推进。**盘点器口径已铺开 ⇒ 不再有"看不见的面"**，数字可复算。
+
 ## [Unreleased-批次 13 注入面收口] — 2026-11-11（余量 75 文件 / 190 处 → 0；310 → 190（批次 12）→ 0）
 
 - **为什么是真缺陷面**：与批次 12 同一张判定表——这 190 处把请求体字段裸拼进要下发到
