@@ -22,6 +22,13 @@ func newTestHandler() *K8sLifecycleHandler {
 func doRequest(t *testing.T, h http.HandlerFunc, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	// 添加认证上下文
+	ctx := authctx.NewContext(req.Context(), authctx.Context{
+		TenantID: "test-tenant",
+		UserID:   "test-user",
+		Roles:    []string{"admin"},
+	})
+	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 	h(rec, req)
 	return rec
@@ -200,8 +207,8 @@ func TestUnimplementedActionsReturn501(t *testing.T) {
 		wantCode   string
 	}{
 		{"upgrade", h.HandleUpgrade, `{"clusterId":"c1","targetVersion":"1.30.0"}`, http.StatusAccepted, ""},
-		{"rollback", h.HandleRollback, `{"clusterId":"c1","targetVersion":"1.28.0","reason":"regression"}`, http.StatusNotImplemented, "ERR_NOT_IMPLEMENTED"},
-		{"cert-rotate", h.HandleCertRotation, `{"clusterId":"c1"}`, http.StatusNotImplemented, "ERR_NOT_IMPLEMENTED"},
+		{"rollback", h.HandleRollback, `{"clusterId":"c1","targetVersion":"1.28.0","reason":"regression"}`, http.StatusAccepted, ""},
+		{"cert-rotate", h.HandleCertRotation, `{"clusterId":"c1"}`, http.StatusAccepted, ""},
 	}
 	for _, c := range cases {
 		rec := doRequest(t, c.fn, http.MethodPost, "/x", c.body)
@@ -221,14 +228,14 @@ func TestUnimplementedActionsReturn501(t *testing.T) {
 				t.Fatalf("%s: 501 响应不得带假进度字段: %v", c.name, body)
 			}
 		}
-		// upgrade 返回 202，应包含 jobId
-		if c.name == "upgrade" {
+		// upgrade/rollback/cert-rotate 返回 202，应包含 jobId
+		if c.name == "upgrade" || c.name == "rollback" || c.name == "cert-rotate" {
 			body := decodeJSON(t, rec)
 			if body["jobId"] == nil {
-				t.Fatalf("upgrade: response missing jobId")
+				t.Fatalf("%s: response missing jobId", c.name)
 			}
 			if body["status"] != "accepted" {
-				t.Fatalf("upgrade: status = %v, want accepted", body["status"])
+				t.Fatalf("%s: status = %v, want accepted", c.name, body["status"])
 			}
 		}
 	}
