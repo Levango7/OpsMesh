@@ -416,11 +416,15 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		aiGatewayHandler:     newBudgetedAIGatewayHandler(),
 		agentHandler:         newBudgetedAgentHandler(),
 		knowledgeHandler:     newBudgetedKnowledgeHandler(),
-		k8sLifecycleHandler:  func() *k8slifecycle.K8sLifecycleHandler {
+		k8sLifecycleHandler: func() *k8slifecycle.K8sLifecycleHandler {
 			if sqlStore, ok := st.(*sqlstore.SQLStore); ok {
 				return k8slifecycle.NewK8sLifecycleHandler(sqlStore)
 			}
-			return nil
+			// memory 模式同样构造（store=nil）：handler 的持久化调用点全部
+			// h.store != nil 守卫（仅跳过作业持久化）；且接线测试
+			// （ai_agent / k8s_lifecycle）在 memory 模式断言 handler 非空，
+			// 此前返回 nil 直接在 NewServer 接线处 panic（main 自 846208a 连红）。
+			return k8slifecycle.NewK8sLifecycleHandler(nil)
 		}(),
 		cloudProviderFactory: cloudprovider.NewAdapterFactory(),
 		eventSubs:            make(map[chan SSEEvent]struct{}), // SSE 订阅者集合
@@ -601,7 +605,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	s.orchHandler.Authorize = s.subsystemAuthorize
 	// 同款 G1 缺口：k8s 生命周期 9 条路由（含 etcd-restore / node-scale 这类真副作用动作）
 	// 此前无任何鉴权闸，匿名即可触发；本文件只做接线，升级/回滚/轮换的占位语义另行裁决。
-	s.k8sLifecycleHandler.Authorize = s.subsystemAuthorize
+	if s.k8sLifecycleHandler != nil { // 防御：构造恒非空，此守卫与路由注册处对齐
+		s.k8sLifecycleHandler.Authorize = s.subsystemAuthorize
+	}
 	// 同款 G1 缺口：AI Agent 六条路由（execute/classify/decompose/memory×2/tools）
 	// 由此前完全无闸变为按 ai:read/ai:write 把关；execute 还会驱动 execute_command
 	// （远程 shell）这类工具，匿名可触发等于把远程执行入口挂在公网上。
