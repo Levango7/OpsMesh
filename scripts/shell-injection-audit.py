@@ -128,6 +128,19 @@ QUOTE_MARKERS = (
     "mqRocketTopic(",
     "mqRocketTopicAllowEmpty(",
     "mqPath(",
+    # 批次 12 新增的收口助手（internal/controlplane/ops_sql.go、vector_ext_ops.go）。
+    # 这些名字**只在收口后的代码里出现**⇒ 扩充 marker 集合**不改变历史口径**。
+    # opsHost           —— 主机名白名单（字母数字开头；._:-，: 放行 IPv6）
+    # opsDBName         —— 库名/表名白名单（字母数字/_ 开头；含 . _ -）
+    # opsDBNameAllowEmpty —— 可选库名/表名（空串放行）
+    # opsSQLString      —— SQL 字符串字面量里的单引号双写（' -> ''）
+    # vectorType        —— 向量库类型枚举白名单（milvus/qdrant/pgvector）
+    "opsHost(",
+    "opsHostAllowEmpty(",
+    "opsDBName(",
+    "opsDBNameAllowEmpty(",
+    "opsSQLString(",
+    "vectorType(",
 )
 VALIDATE_MARKERS = ("Validate", "MatchString(", "regexp.")
 SPRINTF_RE = re.compile(r"fmt\.Sprintf\(")

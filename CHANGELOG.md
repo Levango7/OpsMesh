@@ -5,6 +5,57 @@
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
 
+## [Unreleased-批次 12 注入面收口] — 2026-11-10（OLAP/备份/硬件/向量/编译/安全/Oracle/OS 调优 8 文件：120 处用户字段未转义直插 → 白名单/整体 Quote/heredoc 前闭合拒绝三类收口）
+
+- **为什么是真缺陷面**：这 120 处把请求体字段裸拼进要下发到 agent 的 shell 脚本，agent 以
+  `sh -c` 执行 ⇒ `$(id)` / 反引号 / 分号被**真实执行**。鉴权面无缺口（均经 `dispatchKafkaTask`
+  → `subsystemAuthorize` 的 `task:write` 闸）⇒ **已授权调用者可直接打到 agent 的 RCE**。
+  **双引号不是防护**：POSIX 双引号内 `$` 与反引号照样展开。
+- **范围（120 处）**：盘点器 `scripts/shell-injection-audit.py --json`（同一份审计脚本，
+  合上批次 11 后的基线 **310 → 190**）。本批 8 文件、判据 C/D 命中 **120 → 0**：
+  `olap_ext_ops.go 20 / script_compile_ops.go 20 / security_ext_ops.go 18 /
+  oracle_ops.go 14 / os_tuning_ops.go 14 / db_backup_ops.go 12 / hardware_ops.go 11 /
+  vector_ext_ops.go 11`。
+- **做法（不能一律 Quote，按字段角色收口）**：
+  ① **标识符/资源名/对象名**（user / db / table / view / name / module / scheduler /
+     diskgroup / tablespace / profile / SQL_ID / 补丁号 / sysctl 参数 / 模板名 / 设备名 /
+     限额 / 文件名 / 表名列表 / 域名 / 主机）⇒ **字符集白名单**，非法 400（`ops_sql.go`
+     新增 `opsHostRe` / `opsDBNameRe` / `opsOracleNameRe` / `opsFileNameRe` / `opsTableListRe` /
+     `opsPatchIDRe` / `opsSQLIDRe` / `opsSysctlParamRe` / `opsSysctlValueRe` / `opsModuleRe` /
+     `opsDeviceNameRe` / `opsSchedRe` / `opsDigitsRe` / `opsDomainRe` / `opsNameRe` +
+     `opsHTTPURL`（仅 http/https，消灭 file:// 协议面）；复用 `mqName` / `mqPath` / `mqVersion`）。
+  ② **用户代码/脚本内容**（script/exec、compile、template create）⇒ 走 heredoc 且**拒绝含
+     单独一行 `SCRIPT_EOF` 的内容**（`opsHeredocContent`，否则 heredoc 提前闭合 ⇒ 其后的
+     内容被 shell 当命令执行）。
+  ③ **整条 SQL 语句**（Create/Drop Materialized View、ALTER SYSTEM、EXPORT TABLE、SQL Tuning
+     Advisor、Trino 自由查询）⇒ **Go 层拼语句、整体 `shellquote.Quote`**（`trino --execute %s`、
+     `-e %s`、`--query %s` 一律 Quote 后透传——SQL 层是方言任意的，shell 层才有边界）。
+  ④ **CLI 选项/目标参数串**（maven/gradle/npm/yarn/cargo/make/cmake/go/python 的
+     `goal|task|target|cmd`、exec 的 `args`、sysctl 值、ULIMIT、profile）⇒ 复用
+     `shellquote.ValidateArgList`（token 字符白名单，空格拆分；任何 shell 元字符 400）；
+     构建 `cmd` 的字符串必须从**已校验的** `actionV` 派生。
+  ⑤ **回显消息**⇒ `opsEcho` 整条 Quote（双引号内 `$`/反引号会展开）。
+- **能力降级点（如实登记）**：
+  - 主机名收窄为 `^[A-Za-z0-9][A-Za-z0-9.:_-]*$`（`:` 放行 IPv6；不再接受空格/引号/元字符）。
+  - 库名/表名/视图名/用户名/磁盘组名/表空间名/角色名/OBJECT 名/补丁号/SQL_ID 收窄为
+    各自白名单（不再接受 `*` 之外以外的符号；表列表允许 `SCOTT.EMP,*DEPT,ORDERS@remote`）。
+  - sysctl `param/value` 收窄为 `^[A-Za-z0-9_.-]*$` / `^[A-Za-z0-9_.,:%=-]*$`（无空格）。
+  - `ulimit -n` 仅接受纯数字。
+  - 扫描目标（sqlmap/xsser/curl）仅放行 `http://` / `https://`（消灭 `file://` /
+    `javascript:` 等协议面）；trivy fs/semgrep/gosec/bandit 的路径必须为**绝对路径**。
+  - `OracleHome` 非默认 `$ORACLE_HOME` 时必须为**绝对路径**；补丁号必须 5–15 位纯数字；
+    `TargetVersion` 走 `mqVersion` 白名单。
+  - maven profile 白名单 `^[A-Za-z0-9][A-Za-z0-9._,:@-]{0,255}$`；`SCRIPT_EOF` 单独成行的
+    源码内容 400（heredoc 提前闭合拒绝）。
+  - WAF delete-rule 语义由 sed 正则删除改为**字面整行删除**（`grep -vxF`）——与
+    add-rule 逐字回写自定义规则的形态一致。
+  - 参数串/目标字段含 shell 元字符者一律 `400`（此前可执行）。
+- **测试**：新增 `b12_injection_test.go`（TestB12×6 / AST 污点传播复用批次 9 机制、
+  error-checked 助手断言、值位置 `$(touch marker)` 语义判据经真 sh 证明不落地、白名单单点
+  用例、`ValidateArgList` 拒收用例）；`TestB12*` 全绿；`go vet` / `gofmt` 干净。
+- **守卫留痕**：`scripts/shell-injection-audit.py` 的 `QUOTE_MARKERS` 增列批次 12 的 8 个
+  收口助手名（只增不改历史口径）。盘点器判据 C/D 口径不变（310 → 190；批次 12 面 120 → 0）。
+
 ## [Unreleased-TD-89 残余表述对齐] — 2026-11-10（裁决⑤：service containers 换源已闭环，更正台账过期表述）
 
 - **背景**：TD-89 工程面已被 bf48ad76 闭环（ci.yml 三处 service containers 换

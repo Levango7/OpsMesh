@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -47,13 +48,13 @@ func (s *Server) handleWAF(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "rule is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo '%s' >> /etc/modsecurity/rules/custom.conf 2>/dev/null && echo "Rule added" || echo "Failed to add rule"`, req.Rule)
+		script = fmt.Sprintf(`echo %s >> /etc/modsecurity/rules/custom.conf 2>/dev/null && echo "Rule added" || echo "Failed to add rule"`, shellquote.Quote(req.Rule))
 	case "delete-rule":
 		if req.Rule == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "rule is required"})
 			return
 		}
-		script = fmt.Sprintf(`sed -i '/%s/d' /etc/modsecurity/rules/custom.conf 2>/dev/null && echo "Rule deleted" || echo "Failed to delete rule"`, req.Rule)
+		script = fmt.Sprintf(`grep -vxF %s /etc/modsecurity/rules/custom.conf > /etc/modsecurity/rules/custom.conf.tmp; mv /etc/modsecurity/rules/custom.conf.tmp /etc/modsecurity/rules/custom.conf && echo "Rule deleted" || echo "Failed to delete rule"`, shellquote.Quote(req.Rule))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -143,25 +144,45 @@ func (s *Server) handleInjectionDetect(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (URL) is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "=== SQL Injection Scan ===" && (sqlmap -u "%s" --batch --level=1 --risk=1 2>/dev/null || echo "sqlmap not available")`, req.Target)
+		targetV, err := opsHTTPURL("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo "=== SQL Injection Scan ===" && (sqlmap -u %s --batch --level=1 --risk=1 2>/dev/null || echo "sqlmap not available")`, shellquote.Quote(targetV))
 	case "scan-xss":
 		if req.Target == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (URL) is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "=== XSS Scan ===" && (xsser -u "%s" 2>/dev/null || echo "xsser not available")`, req.Target)
+		targetV, err := opsHTTPURL("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo "=== XSS Scan ===" && (xsser -u %s 2>/dev/null || echo "xsser not available")`, shellquote.Quote(targetV))
 	case "scan-headers":
 		if req.Target == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (URL) is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "=== Security Headers Check ===" && curl -sI "%s" 2>/dev/null | grep -iE "x-frame-options|x-content-type-options|strict-transport-security|content-security-policy|x-xss-protection" || echo "No security headers found"`, req.Target)
+		targetV, err := opsHTTPURL("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo "=== Security Headers Check ===" && curl -sI %s 2>/dev/null | grep -iE "x-frame-options|x-content-type-options|strict-transport-security|content-security-policy|x-xss-protection" || echo "No security headers found"`, shellquote.Quote(targetV))
 	case "scan-all":
 		if req.Target == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (URL) is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "=== Full Security Scan ===" && echo "--- Headers ---" && curl -sI "%s" 2>/dev/null | grep -iE "x-frame-options|x-content-type-options|strict-transport-security|content-security-policy" && echo "--- SQLi ---" && (sqlmap -u "%s" --batch --level=1 2>/dev/null | tail -5 || echo "sqlmap not available") && echo "--- XSS ---" && (xsser -u "%s" 2>/dev/null | tail -5 || echo "xsser not available")`, req.Target, req.Target, req.Target)
+		targetV, err := opsHTTPURL("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo "=== Full Security Scan ===" && echo "--- Headers ---" && curl -sI %s 2>/dev/null | grep -iE "x-frame-options|x-content-type-options|strict-transport-security|content-security-policy" && echo "--- SQLi ---" && (sqlmap -u %s --batch --level=1 2>/dev/null | tail -5 || echo "sqlmap not available") && echo "--- XSS ---" && (xsser -u %s 2>/dev/null | tail -5 || echo "xsser not available")`, shellquote.Quote(targetV), shellquote.Quote(targetV), shellquote.Quote(targetV))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -208,19 +229,24 @@ func (s *Server) handleVulnScan(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (image name) is required"})
 			return
 		}
-		script = fmt.Sprintf(`trivy image %s 2>/dev/null || echo "Trivy not available"`, req.Target)
+		script = fmt.Sprintf(`trivy image %s 2>/dev/null || echo "Trivy not available"`, shellquote.Quote(req.Target))
 	case "scan-fs":
 		if req.Target == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (path) is required"})
 			return
 		}
-		script = fmt.Sprintf(`trivy fs %s 2>/dev/null || echo "Trivy not available"`, req.Target)
+		pathV, err := mqPath("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`trivy fs %s 2>/dev/null || echo "Trivy not available"`, shellquote.Quote(pathV))
 	case "scan-repo":
 		if req.Target == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (repo URL) is required"})
 			return
 		}
-		script = fmt.Sprintf(`trivy repo %s 2>/dev/null || echo "Trivy not available"`, req.Target)
+		script = fmt.Sprintf(`trivy repo %s 2>/dev/null || echo "Trivy not available"`, shellquote.Quote(req.Target))
 	case "scan-code":
 		if req.Target == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (path) is required"})
@@ -228,13 +254,33 @@ func (s *Server) handleVulnScan(w http.ResponseWriter, r *http.Request) {
 		}
 		switch scanner {
 		case "semgrep":
-			script = fmt.Sprintf(`semgrep scan --config auto %s 2>/dev/null || echo "Semgrep not available"`, req.Target)
+			pathV, err := mqPath("target", req.Target)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			script = fmt.Sprintf(`semgrep scan --config auto %s 2>/dev/null || echo "Semgrep not available"`, shellquote.Quote(pathV))
 		case "gosec":
-			script = fmt.Sprintf(`gosec %s 2>/dev/null || echo "Gosec not available"`, req.Target)
+			pathV, err := mqPath("target", req.Target)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			script = fmt.Sprintf(`gosec %s 2>/dev/null || echo "Gosec not available"`, shellquote.Quote(pathV))
 		case "bandit":
-			script = fmt.Sprintf(`bandit -r %s 2>/dev/null || echo "Bandit not available"`, req.Target)
+			pathV, err := mqPath("target", req.Target)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			script = fmt.Sprintf(`bandit -r %s 2>/dev/null || echo "Bandit not available"`, shellquote.Quote(pathV))
 		default:
-			script = fmt.Sprintf(`trivy fs %s 2>/dev/null || echo "Trivy not available"`, req.Target)
+			pathV, err := mqPath("target", req.Target)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			script = fmt.Sprintf(`trivy fs %s 2>/dev/null || echo "Trivy not available"`, shellquote.Quote(pathV))
 		}
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
@@ -276,7 +322,7 @@ func (s *Server) handleSecurityHardening(w http.ResponseWriter, r *http.Request)
 		if level == "" {
 			level = "level1"
 		}
-		script = fmt.Sprintf(`echo "=== CIS Baseline (%s) ===" && echo "1. Ensure /tmp is separate partition" && echo "2. Ensure nodev/nosuid/noexec on /tmp" && echo "3. Ensure SELinux/AppArmor enabled" && echo "4. Ensure firewall configured" && echo "5. Ensure SSH root login disabled" && echo "6. Ensure password complexity" && echo "7. Ensure auditd enabled" && echo "8. Ensure time sync configured"`, level)
+		script = fmt.Sprintf(`echo %s && echo "1. Ensure /tmp is separate partition" && echo "2. Ensure nodev/nosuid/noexec on /tmp" && echo "3. Ensure SELinux/AppArmor enabled" && echo "4. Ensure firewall configured" && echo "5. Ensure SSH root login disabled" && echo "6. Ensure password complexity" && echo "7. Ensure auditd enabled" && echo "8. Ensure time sync configured"`, opsEcho("=== CIS Baseline (%s) ===", level))
 	case "stig-baseline":
 		script = `echo "=== DISA STIG Baseline ===" && echo "1. Account lockout policy" && echo "2. Password complexity" && echo "3. Audit logging" && echo "4. SELinux enforcing" && echo "5. Firewall rules" && echo "6. SSH hardening" && echo "7. Kernel parameters" && echo "8. File permissions"`
 	case "ssh-harden":
@@ -327,7 +373,12 @@ func (s *Server) handleCertManagement(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "certPath is required"})
 			return
 		}
-		script = fmt.Sprintf(`openssl x509 -in %s -noout -subject -issuer -dates -serial 2>/dev/null || echo "Certificate not found"`, req.CertPath)
+		pathV, err := mqPath("certPath", req.CertPath)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`openssl x509 -in %s -noout -subject -issuer -dates -serial 2>/dev/null || echo "Certificate not found"`, shellquote.Quote(pathV))
 	case "generate":
 		days := req.Days
 		if days <= 0 {
@@ -337,19 +388,34 @@ func (s *Server) handleCertManagement(w http.ResponseWriter, r *http.Request) {
 		if domain == "" {
 			domain = "localhost"
 		}
-		script = fmt.Sprintf(`openssl req -x509 -nodes -days %d -newkey rsa:2048 -keyout /tmp/%s.key -out /tmp/%s.crt -subj "/CN=%s" 2>/dev/null && echo "Certificate generated: /tmp/%s.crt (valid %d days)"`, days, domain, domain, domain, domain, days)
+		domainV, err := opsDomain("domain", domain)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`openssl req -x509 -nodes -days %d -newkey rsa:2048 -keyout /tmp/%s.key -out /tmp/%s.crt -subj "/CN=%s" 2>/dev/null && echo %s`, days, domainV, domainV, domainV, opsEcho("Certificate generated: /tmp/%s.crt (valid %d days)", domainV, days))
 	case "renew":
 		if req.Domain == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "domain is required"})
 			return
 		}
-		script = fmt.Sprintf(`certbot renew --cert-name %s 2>/dev/null && echo "Certificate renewed for %s" || echo "Certbot not available"`, req.Domain, req.Domain)
+		domainV, err := opsDomain("domain", req.Domain)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`certbot renew --cert-name %s 2>/dev/null && echo %s || echo "Certbot not available"`, domainV, opsEcho("Certificate renewed for %s", domainV))
 	case "revoke":
 		if req.CertPath == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "certPath is required"})
 			return
 		}
-		script = fmt.Sprintf(`openssl revoke -in %s 2>/dev/null && echo "Certificate revoked" || echo "Revocation failed"`, req.CertPath)
+		pathV, err := mqPath("certPath", req.CertPath)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`openssl revoke -in %s 2>/dev/null && echo "Certificate revoked" || echo "Revocation failed"`, shellquote.Quote(pathV))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

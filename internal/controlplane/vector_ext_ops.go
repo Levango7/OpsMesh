@@ -7,7 +7,17 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
+
+// vectorType 校验必填的向量库类型（命令名位置必须先于一切 Sprintf）。
+// allowedVectorTypes（vector_ops.go）是向量库类型的统一枚举。
+func vectorType(s string) (string, error) {
+	if !allowedVectorTypes[s] {
+		return "", fmt.Errorf("invalid type %q: must be milvus/qdrant/pgvector", s)
+	}
+	return s, nil
+}
 
 // handleVectorMonitor 处理 POST /api/v1/vector/monitor
 func (s *Server) handleVectorMonitor(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +108,11 @@ func (s *Server) handleVectorBackup(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/var/backups/vector"
 	}
+	pathV, err := mqPath("path", path)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	var script string
 	switch req.Action {
@@ -108,7 +123,7 @@ func (s *Server) handleVectorBackup(w http.ResponseWriter, r *http.Request) {
 		case "qdrant":
 			script = `curl -s -X POST http://localhost:6333/snapshots 2>/dev/null && echo "Qdrant snapshot created" || echo "Qdrant not available"`
 		case "pgvector":
-			script = fmt.Sprintf(`pg_dump -Fc -f %s/vector_backup.dump 2>/dev/null && echo "pgvector backup created" || echo "pgvector not available"`, path)
+			script = fmt.Sprintf(`pg_dump -Fc -f %s/vector_backup.dump 2>/dev/null && echo "pgvector backup created" || echo "pgvector not available"`, shellquote.Quote(pathV))
 		default:
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + req.Type})
 			return
@@ -126,7 +141,7 @@ func (s *Server) handleVectorBackup(w http.ResponseWriter, r *http.Request) {
 		case "qdrant":
 			script = `echo "Qdrant restore: use snapshot recovery API"`
 		case "pgvector":
-			script = fmt.Sprintf(`pg_restore -d postgres %s/vector_backup.dump 2>/dev/null && echo "pgvector restored" || echo "pgvector not available"`, path)
+			script = fmt.Sprintf(`pg_restore -d postgres %s/vector_backup.dump 2>/dev/null && echo "pgvector restored" || echo "pgvector not available"`, shellquote.Quote(pathV))
 		default:
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + req.Type})
 			return
@@ -138,7 +153,7 @@ func (s *Server) handleVectorBackup(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "restore"})
 
 	case "list":
-		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, path)
+		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, shellquote.Quote(pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "vector_backup_list")
 		if !ok {
 			return
@@ -174,7 +189,7 @@ func (s *Server) handleVectorScale(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Adding node %s to vector cluster..." && echo "Node added"`, req.Node)
+		script := fmt.Sprintf(`echo %s && echo "Node added"`, opsEcho("Adding node %s to vector cluster...", req.Node))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "vector_scale_add-node")
 		if !ok {
 			return
@@ -186,7 +201,7 @@ func (s *Server) handleVectorScale(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Removing node %s from vector cluster..." && echo "Node removed"`, req.Node)
+		script := fmt.Sprintf(`echo %s && echo "Node removed"`, opsEcho("Removing node %s from vector cluster...", req.Node))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "vector_scale_remove-node")
 		if !ok {
 			return
@@ -226,7 +241,13 @@ func (s *Server) handleVectorUpgrade(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "plan":
-		script := fmt.Sprintf(`echo "=== Current Version ===" && %s --version 2>/dev/null || echo "Not installed" && echo "=== Upgrade Plan ===" && echo "1. Backup data" && echo "2. Stop service" && echo "3. Replace binaries" && echo "4. Start service" && echo "5. Verify"`, req.Type)
+		vType, verr := vectorType(req.Type)
+		if verr != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+			return
+		}
+		script := fmt.Sprintf(
+			`echo "=== Current Version ===" && %s --version 2>/dev/null || echo "Not installed" && echo "=== Upgrade Plan ===" && echo "1. Backup data" && echo "2. Stop service" && echo "3. Replace binaries" && echo "4. Start service" && echo "5. Verify"`, vType)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "vector_upgrade_plan")
 		if !ok {
 			return
@@ -234,11 +255,21 @@ func (s *Server) handleVectorUpgrade(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "plan"})
 
 	case "upgrade":
+		vType, verr := vectorType(req.Type)
+		if verr != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+			return
+		}
 		version := req.TargetVersion
 		if version == "" {
 			version = "2.4.0"
 		}
-		script := fmt.Sprintf(`echo "Upgrading %s to %s..." && echo "Upgrade complete"`, req.Type, version)
+		versionV, verr := mqVersion("targetVersion", version)
+		if verr != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+			return
+		}
+		script := fmt.Sprintf(`echo %s && echo "Upgrade complete"`, opsEcho("Upgrading %s to %s...", vType, versionV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "vector_upgrade_apply")
 		if !ok {
 			return
@@ -254,7 +285,12 @@ func (s *Server) handleVectorUpgrade(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "rollback"})
 
 	case "version":
-		script := fmt.Sprintf(`%s --version 2>/dev/null || echo "%s not installed"`, req.Type, req.Type)
+		vType, verr := vectorType(req.Type)
+		if verr != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+			return
+		}
+		script := fmt.Sprintf(`%s --version 2>/dev/null || echo %s`, vType, opsEcho("%s not installed", vType))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "vector_upgrade_version")
 		if !ok {
 			return
@@ -286,9 +322,15 @@ func (s *Server) handleVectorUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	vType, verr := vectorType(req.Type)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
+
 	switch req.Action {
 	case "list":
-		script := fmt.Sprintf(`echo "Listing users for %s..."`, req.Type)
+		script := fmt.Sprintf(`echo %s`, opsEcho("Listing users for %s...", vType))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "vector_user_list")
 		if !ok {
 			return
@@ -300,7 +342,12 @@ func (s *Server) handleVectorUser(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Creating user %s for %s..."`, req.User, req.Type)
+		userV, verr2 := mqName("user", req.User)
+		if verr2 != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr2.Error()})
+			return
+		}
+		script := fmt.Sprintf(`echo %s`, opsEcho("Creating user %s for %s...", userV, vType))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "vector_user_create")
 		if !ok {
 			return
@@ -312,7 +359,12 @@ func (s *Server) handleVectorUser(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Deleting user %s from %s..."`, req.User, req.Type)
+		userV, verr2 := mqName("user", req.User)
+		if verr2 != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr2.Error()})
+			return
+		}
+		script := fmt.Sprintf(`echo %s`, opsEcho("Deleting user %s from %s...", userV, vType))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "vector_user_delete")
 		if !ok {
 			return
