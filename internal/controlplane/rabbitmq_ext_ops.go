@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -38,7 +39,12 @@ func (s *Server) handleRabbitMQHA(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "nodes is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Setting up RabbitMQ HA cluster..." && rabbitmqctl stop_app && for node in %s; do ssh $node "rabbitmqctl stop_app && rabbitmqctl join_cluster rabbit@$(hostname -s) && rabbitmqctl start_app" ; done && rabbitmqctl start_app && echo "HA cluster setup complete"`, req.Nodes)
+		nodes, err := mqNodeList("nodes", req.Nodes)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`echo %s && rabbitmqctl stop_app && for node in %s; do ssh $node "rabbitmqctl stop_app && rabbitmqctl join_cluster rabbit@$(hostname -s) && rabbitmqctl start_app" ; done && rabbitmqctl start_app && echo %s`, opsEcho("Setting up RabbitMQ HA cluster..."), nodes, opsEcho("HA cluster setup complete"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rabbitmq_ha_setup")
 		if !ok {
 			return
@@ -58,7 +64,12 @@ func (s *Server) handleRabbitMQHA(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
 			return
 		}
-		script := fmt.Sprintf(`rabbitmqctl stop_app && rabbitmqctl join_cluster %s && rabbitmqctl start_app && echo "Joined cluster: %s"`, req.Node, req.Node)
+		node, err := mqNode("node", req.Node)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`rabbitmqctl stop_app && rabbitmqctl join_cluster %s && rabbitmqctl start_app && echo %s`, shellquote.Quote(node), opsEcho("Joined cluster: %s", node))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rabbitmq_ha_join")
 		if !ok {
 			return
@@ -105,7 +116,12 @@ func (s *Server) handleRabbitMQScale(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
 			return
 		}
-		script := fmt.Sprintf(`ssh %s "apt-get install -y rabbitmq-server && systemctl enable rabbitmq-server && systemctl start rabbitmq-server" && rabbitmqctl stop_app && rabbitmqctl join_cluster rabbit@%s && rabbitmqctl start_app && echo "Node %s added"`, req.Node, req.Node, req.Node)
+		node, err := mqNode("node", req.Node)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`ssh %s "apt-get install -y rabbitmq-server && systemctl enable rabbitmq-server && systemctl start rabbitmq-server" && rabbitmqctl stop_app && rabbitmqctl join_cluster rabbit@%s && rabbitmqctl start_app && echo %s`, shellquote.Quote(node), shellquote.Quote(node), opsEcho("Node %s added", node))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rabbitmq_scale_add-node")
 		if !ok {
 			return
@@ -117,7 +133,12 @@ func (s *Server) handleRabbitMQScale(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
 			return
 		}
-		script := fmt.Sprintf(`rabbitmqctl forget_cluster_node %s && echo "Node %s removed"`, req.Node, req.Node)
+		node, err := mqNode("node", req.Node)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`rabbitmqctl forget_cluster_node %s && echo %s`, shellquote.Quote(node), opsEcho("Node %s removed", node))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rabbitmq_scale_remove-node")
 		if !ok {
 			return
@@ -168,11 +189,15 @@ func (s *Server) handleRabbitMQUpgrade(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "plan"})
 
 	case "upgrade":
-		version := req.TargetVersion
+		version, err := mqVersion("targetVersion", req.TargetVersion)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		if version == "" {
 			version = "3.13.0"
 		}
-		script := fmt.Sprintf(`rabbitmqctl export_definitions /tmp/rabbitmq_defs.json && systemctl stop rabbitmq-server && apt-get install -y rabbitmq-server=%s 2>/dev/null || yum install -y rabbitmq-server-%s 2>/dev/null && systemctl start rabbitmq-server && rabbitmqctl import_definitions /tmp/rabbitmq_defs.json && echo "Upgraded to %s"`, version, version, version)
+		script := fmt.Sprintf(`rabbitmqctl export_definitions /tmp/rabbitmq_defs.json && systemctl stop rabbitmq-server && apt-get install -y rabbitmq-server=%s 2>/dev/null || yum install -y rabbitmq-server-%s 2>/dev/null && systemctl start rabbitmq-server && rabbitmqctl import_definitions /tmp/rabbitmq_defs.json && echo %s`, version, version, opsEcho("Upgraded to %s", version))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rabbitmq_upgrade_apply")
 		if !ok {
 			return
@@ -225,10 +250,15 @@ func (s *Server) handleRabbitMQBackup(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/tmp/rabbitmq_backup.json"
 	}
+	path, err := mqPath("path", path)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	switch req.Action {
 	case "export":
-		script := fmt.Sprintf(`rabbitmqctl export_definitions %s && echo "Definitions exported to %s"`, path, path)
+		script := fmt.Sprintf(`rabbitmqctl export_definitions %s && echo %s`, shellquote.Quote(path), opsEcho("Definitions exported to %s", path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rabbitmq_backup_export")
 		if !ok {
 			return
@@ -236,7 +266,7 @@ func (s *Server) handleRabbitMQBackup(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "export"})
 
 	case "import":
-		script := fmt.Sprintf(`rabbitmqctl import_definitions %s && echo "Definitions imported from %s"`, path, path)
+		script := fmt.Sprintf(`rabbitmqctl import_definitions %s && echo %s`, shellquote.Quote(path), opsEcho("Definitions imported from %s", path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rabbitmq_backup_import")
 		if !ok {
 			return
@@ -244,7 +274,7 @@ func (s *Server) handleRabbitMQBackup(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "import"})
 
 	case "list":
-		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, path)
+		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, shellquote.Quote(path))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rabbitmq_backup_list")
 		if !ok {
 			return
@@ -331,6 +361,24 @@ func (s *Server) handleRabbitMQSecurity(w http.ResponseWriter, r *http.Request) 
 
 	switch req.Action {
 	case "enable-tls":
+		// 注入面（批次 11，人工补录）：三个路径落在 heredoc 的**配置文件内容**里——
+		// 换行可追加任意配置行，一行 `EOF` 可提前闭合 heredoc 让其后的内容被当命令执行。
+		// 故走绝对路径白名单（mqPath），且**不能**在这里 Quote（引号会成为配置文件的字面内容）。
+		caCert, err := mqPath("caCert", req.CACert)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		certPath, err := mqPath("certPath", req.CertPath)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		keyPath, err := mqPath("keyPath", req.KeyPath)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		script := fmt.Sprintf(`cat >> /etc/rabbitmq/rabbitmq.conf << 'EOF'
 listeners.ssl.default = 5671
 ssl_options.cacertfile = %s
@@ -339,7 +387,7 @@ ssl_options.keyfile = %s
 ssl_options.verify = verify_peer
 ssl_options.fail_if_no_peer_cert = true
 EOF
-systemctl restart rabbitmq-server && echo "TLS enabled"`, req.CACert, req.CertPath, req.KeyPath)
+systemctl restart rabbitmq-server && echo "TLS enabled"`, caCert, certPath, keyPath)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "rabbitmq_security_enable-tls")
 		if !ok {
 			return

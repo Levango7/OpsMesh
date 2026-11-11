@@ -182,7 +182,7 @@ func (s *Server) handleGraphDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s mode=%s version=%s", req.DeviceID, req.Mode, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " mode=" + opsSQLString(req.Mode) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -238,7 +238,12 @@ func (s *Server) handleGraphAction(w http.ResponseWriter, r *http.Request, gType
 	req.Action = action
 
 	script := buildGraphActionScript(req)
-	taskAction := "graph_" + action + "_" + gType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "graph.action."+gType, err)
+		return
+	}
+	taskAction := fmt.Sprintf("graph_%s_%s", actionV, gType)
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {

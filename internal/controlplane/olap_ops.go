@@ -220,7 +220,7 @@ func (s *Server) handleOLAPDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type + ":" + mode,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s version=%s", req.DeviceID, req.Version)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -293,7 +293,12 @@ func (s *Server) handleOLAPAction(w http.ResponseWriter, r *http.Request, olapTy
 	req.Action = action
 
 	script := buildOLAPActionScript(req)
-	taskAction := "olap_" + action + "_" + olapType
+	actionV, err := opsIdentifier("action", action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "olap.action."+olapType, err)
+		return
+	}
+	taskAction := fmt.Sprintf("olap_%s_%s", actionV, olapType)
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {
@@ -396,7 +401,7 @@ func (s *Server) handleOLAPDatabase(w http.ResponseWriter, r *http.Request, olap
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "olap_database_" + req.Action, Target: req.Name,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s type=%s", req.DeviceID, olapType)),
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " type=" + opsSQLString(olapType)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -501,7 +506,7 @@ func buildOLAPTableScript(req olapTableReq) string {
 		case "create":
 			schema := req.Schema
 			if schema == "" {
-				schema = fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (id UInt64, ts DateTime, data String) ENGINE = MergeTree() ORDER BY id", req.Database, req.Table)
+				schema = fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (id UInt64, ts DateTime, data String) ENGINE = MergeTree() ORDER BY id", opsSQLString(req.Database), opsSQLString(req.Table))
 			}
 			if strings.ContainsAny(schema, "\x00\n") {
 				b.WriteString("echo '建表语句不能包含换行' && exit 1\n")

@@ -2,6 +2,8 @@ package factory
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -209,5 +211,34 @@ func TestSubStoreOrFallback_NonProductionFallsBack(t *testing.T) {
 	}
 	if got != "memory" {
 		t.Fatalf("非生产模式应回退到 memory，got=%q", got)
+	}
+}
+
+// TestNewDeployHandler_AutoAdvanceWired 锁生产接线：NewDeployHandler 后 /auto-advance 不得恒 501
+// （2026-11-09 深度复核批暴露：AutoAdvanceManager 实现+测试齐全但装配零调用）。
+// 变异验证：删 newDeployHandlerWired 的 SetAutoAdvance 行 → 本用例红（501）。
+func TestNewDeployHandler_AutoAdvanceWired(t *testing.T) {
+	st, err := SelectStore(&config.Config{Store: "memory", Demo: true}, nil)
+	if err != nil {
+		t.Fatalf("SelectStore(memory) error: %v", err)
+	}
+	h, err := NewDeployHandler(st, false)
+	if err != nil {
+		t.Fatalf("NewDeployHandler error: %v", err)
+	}
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/deploys/999/auto-advance", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	// 精确断言 404（而非仅 ≠501）：501=未接线；404=已接线且同步预检生效。
+	if w.Code == http.StatusNotImplemented {
+		t.Fatalf("POST /auto-advance 恒 501：生产装配未注入 AutoAdvanceManager")
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("POST /auto-advance 期望 404（deploy 999 不存在），实际 %d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "deploy 999") {
+		t.Fatalf("404 body 应含 deploy 999 标识，实际 body=%s", w.Body.String())
 	}
 }

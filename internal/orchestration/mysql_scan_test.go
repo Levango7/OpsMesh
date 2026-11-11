@@ -38,7 +38,7 @@ const judgedSitesFloor = 1
 // scanSiteExemptions 登记「参数≥3 但不参与判定」的站点及理由。
 // 键是 "文件名:行号"。没有条目可留空——空表本身也是合法状态。
 var scanSiteExemptions = map[string]string{
-	"sql.go:169": "SELECT 列清单由 wfCols 常量拼接（sql.go:27），门禁静态解析不了；11 列与 Scan 目标一一对应，可空列 dag/cron/last_run_at/last_run_status/created_at/updated_at 均已走 sql.Null* 中转",
+	"sql.go:181": "SELECT 列清单由 wfCols 常量拼接（sql.go:69），门禁静态解析不了；11 列与 Scan 目标一一对应，可空列 dag/cron/last_run_at/last_run_status/created_at/updated_at 均已走 sql.Null* 中转",
 }
 
 // riskyNullableColumns 解析建表来源，得到 table → {可空且无 DEFAULT 的列}。

@@ -147,9 +147,9 @@ func DeliverAdminCredential(cfg *config.Config, st store.Store) error {
 	cp.MustChangePassword = true
 	st.UpdateUser(&cp)
 	if generated {
-	logx.Info(context.Background(), "controlplane: 安全提示：内置 admin 的公开弱口令已替换（首登仍须改密）。")
+		logx.Info(context.Background(), "controlplane: 安全提示：内置 admin 的公开弱口令已替换（首登仍须改密）。")
 	} else {
-	logx.Info(context.Background(), "controlplane: 安全提示：admin 口令已按 --admin-password 设置（口令遗失后的强制重置；首登仍须改密）。")
+		logx.Info(context.Background(), "controlplane: 安全提示：admin 口令已按 --admin-password 设置（口令遗失后的强制重置；首登仍须改密）。")
 	}
 	return nil
 }

@@ -34,7 +34,12 @@ func (s *Server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 		if target == "" {
 			target = "all"
 		}
-		script = fmt.Sprintf(`echo "=== Capacity Analysis (%s) ===" && echo "CPU: $(nproc) cores" && echo "Memory: $(free -h | grep Mem | awk '{print $2}')" && echo "Disk: $(df -h / | awk 'NR==2 {print $2}')" && echo "Network: $(ip -s link show 2>/dev/null | head -5)"`, target)
+		targetV, err := opsIdentifier("target", target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && echo %s && echo %s && echo %s && echo %s`, opsEcho("=== Capacity Analysis (%s) ===", targetV), opsEcho("CPU: $(nproc) cores"), opsEcho("Memory: $(free -h | grep Mem | awk '{print $2}')"), opsEcho("Disk: $(df -h / | awk 'NR==2 {print $2}')"), opsEcho("Network: $(ip -s link show 2>/dev/null | head -5)"))
 	case "forecast":
 		days := req.Days
 		if days <= 0 {

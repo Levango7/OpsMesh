@@ -66,15 +66,20 @@ func (s *Server) handleRabbitMQResource(w http.ResponseWriter, r *http.Request, 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (create/delete/list)"})
 		return
 	}
+	actionV, err := opsIdentifier("action", req.Action)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	script := buildRabbitMQScript(req, resource)
-	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "rabbitmq_"+resource+"_"+req.Action)
+	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, fmt.Sprintf("rabbitmq_%s_%s", resource, actionV))
 	if err != nil {
 		writeInternalError(r.Context(), w, "middleware.rabbitmq."+resource, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "rabbitmq_" + resource + "_" + req.Action, Target: req.Name,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("deviceID=%s vhost=%s", req.DeviceID, req.Vhost)),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: fmt.Sprintf("rabbitmq_%s_%s", resource, actionV), Target: req.Name,
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " vhost=" + opsSQLString(req.Vhost)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

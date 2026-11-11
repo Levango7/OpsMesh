@@ -68,10 +68,10 @@
 | 单机 | ≤100 | ❌ | 本地演示、PoC、开发调试 | ★ | 1 | memory |
 | 集群 | ≤500 | ✅ | 单机房生产、中小型企业 | ★★ | 3 | mysql+redis |
 | 分布式 | ≤10000 | ✅ | 多机房/多 DC、大规模企业 | ★★★ | 每机房 3 | 各机房 mysql+redis |
-| 联邦 | ≥50000 | ✅ | 电信资源池、全国级运营商 | ★★★★ | 每网段 3 | 各网段 mysql+redis + 联邦同步 |
+| 联邦 | ≥50000（设计目标，无压测证据） | ✅ | 电信资源池、全国级运营商 | ★★★★ | 每网段 3 | 各网段 mysql+redis + 联邦同步 |
 | 云原生 | 弹性 | ✅ | 公有云/私有云 K8s、SaaS | ★★★ | HPA 2-10 | mysql+redis (PVC) |
 | 边缘 | ≤100/边缘 | 部分 | IoT、CDN 节点、门店 | ★★★ | 中心 3 + 边缘 1 | 中心 mysql + 边缘 sqlite |
-| 国产化 | 任意 | ✅ | 党政军、金融、能源 | ★★★★ | 3 | 达梦/人大金仓+redis |
+| 国产化 | 任意 | ✅ | 党政军、金融、能源 | ★★★★ | 3 | MySQL（国产 DB 适配规划中，按项目交付） |
 | 灾备 | 任意 | ✅✅ | 关键业务、监管要求 | ★★★★ | 主+备+DR | 主从复制 + 异地备份 |
 
 ### 2.2 部署架构总览
@@ -121,7 +121,7 @@
 | 是否 ≤100 台设备且仅用于演示？ | 单机模式 |
 | 是否 ≤500 台且单机房？ | 集群模式（场景一） |
 | 是否多机房且需异地容灾？ | 分布式模式（场景二/三） |
-| 是否 ≥50000 台且分多级管理？ | 联邦模式（场景四） |
+| 是否 ≥50000 台且分多级管理？ | 联邦模式（场景四；规模为设计目标，无压测证据） |
 | 是否部署在公有云 K8s？ | 云原生模式（场景六） |
 | 是否部署在 OpenStack/VMware？ | 私有云模式（场景七） |
 | 是否有边缘节点？ | 边缘模式（场景八） |
@@ -809,25 +809,7 @@ controlplane:
 ### 6.7 批量操作（万级设备）
 
 ```bash
-# 全省批量补丁（分批执行，避免同时打满网络）
-opsmesh batch create \
-  --name "province-patch-2026Q3" \
-  --target "tag:province=GD" \
-  --filter "os=centos7,state=online" \
-  --command "yum update -y security" \
-  --batch-size 500 \
-  --batch-interval 60s \
-  --approval required \
-  --rollback-on-failure 10%
-
-# 全省配置下发
-opsmesh batch create \
-  --name "config-sync" \
-  --target "tag:province=GD" \
-  --template "nginx-config" \
-  --variables "env=prod" \
-  --batch-size 1000 \
-  --dry-run false
+批量作业经 REST API 下发：`POST /api/v1/tasks/batch`（批量下发，逐台查找 agent + 租户校验，见 docs/api-reference.md 任务族）；灰度发布按比例/分组/标签分阶段执行，见同文件「批量运维与灰度发布 API」节。CLI 无 `batch` 子命令（cmd/opsmesh/main.go 无该命令）。
 ```
 
 ### 6.8 告警聚合
@@ -891,7 +873,7 @@ controlplane:
 
 ### 6.10 容量规划
 
-表：电信资源池容量规划（≥50000 台）
+表：电信资源池容量规划（≥50000 台，公式估算，非压测实测）
 
 | 指标 | 公式 | 50000 台估算 |
 |---|---|---|
@@ -907,14 +889,14 @@ controlplane:
 - **等保 2.0 三级**：身份鉴别、访问控制、安全审计、入侵防范、恶意代码防范、数据完整性、数据保密性
 - **国产化 CPU**：鲲鹏 920 / 飞腾 FT2000+ / 海光 / 兆芯 / 龙芯
 - **国产化 OS**：中标麒麟 / 统信 UOS / openEuler
-- **国产化 DB**：达梦 DM8 / 人大金仓 KingbaseES / OceanBase / GaussDB
+- **国产化 DB**：达梦 DM8 / 人大金仓 KingbaseES / OceanBase / GaussDB（规划中，按项目交付；当前仅 MySQL 驱动）
 - **国产化中间件**：东方通 TongWeb / 中创 InforSuite / 宝兰德 BES
-- **密码合规**：商密 SM2/SM3/SM4 算法，密码产品认证
+- **密码合规**：商密 SM2/SM3/SM4 算法与密码产品认证（规划中，按项目交付；当前加密体系为 AES-256-GCM / SHA-256 / Ed25519）
 
 ### 6.12 适用场景
 
 - 电信运营商省级资源池
-- ≥50000 台设备纳管
+- ≥50000 台设备纳管（设计目标，无压测证据）
 - 分层管理（省→市→机房→设备）
 - 等保 2.0 三级合规
 - 全栈国产化要求
@@ -1012,7 +994,7 @@ controlplane:
 - **VPN 加密**：公有云 ↔ 边缘 VPN 使用 IPSec/L2TP
 - **mTLS 联邦**：所有控制面之间 mTLS 双向认证
 - **API 网关**：公有云控制面经云 API 网关暴露，WAF 防护
-- **数据脱敏**：跨云同步的敏感数据经 SM4/AES-256 加密
+- **数据脱敏**：跨云同步的敏感数据经加密处理（商密 SM4 规划中，按项目交付）
 
 ### 7.7 网络策略
 
@@ -1674,13 +1656,15 @@ agent:
 
 | CPU | OS | DB | 中间件 | Go 编译 | OpsMesh 验证 |
 |---|---|---|---|:---:|:---:|
-| 鲲鹏 920 | openEuler 22.03 | GaussDB | - | ✅ | ✅ 已验证 |
-| 鲲鹏 920 | 统信 UOS V20 | 达梦 DM8 | 东方通 | ✅ | ✅ 已验证 |
-| 飞腾 FT2000+ | 中标麒麟 V10 | 人大金仓 | 中创 | ✅ | ✅ 已验证 |
+| 鲲鹏 920 | openEuler 22.03 | GaussDB | - | ✅ | ❌ 未验证 |
+| 鲲鹏 920 | 统信 UOS V20 | 达梦 DM8 | 东方通 | ✅ | ❌ 未验证 |
+| 飞腾 FT2000+ | 中标麒麟 V10 | 人大金仓 | 中创 | ✅ | ❌ 未验证 |
 | 飞腾 D2000 | openEuler 22.03 | OceanBase | - | ✅ | ⚠ 待验证 |
-| 海光 7000 | 中标麒麟 V10 | 达梦 DM8 | 宝兰德 | ✅ | ✅ 已验证 |
+| 海光 7000 | 中标麒麟 V10 | 达梦 DM8 | 宝兰德 | ✅ | ❌ 未验证 |
 | 兆芯 KX-7000 | 统信 UOS V20 | 人大金仓 | 东方通 | ✅ | ⚠ 待验证 |
 | 龙芯 3A5000 | 统信 UOS V20 | 达梦 DM8 | - | ✅ | ⚠ 待验证 |
+
+> 注：「OpsMesh 验证」列指平台自身在该 CPU/OS/DB/中间件组合上完成安装+纳管+任务下发+回执四段闭环的真机记录。当前平台仅以 MySQL 为默认存储（go.mod 唯一 SQL 驱动为 github.com/go-sql-driver/mysql），国产 DB/国产 OS/国产 CPU 组合均无该记录；「Go 编译」列仅指交叉编译可行性，不代表平台验证。
 
 ### 11.5 等保 2.0 合规
 
@@ -1690,7 +1674,7 @@ agent:
 |---|---|---|
 | 安全物理环境 | 物理访问控制 | 由机房提供 |
 | 安全通信网络 | 网络架构 | 分区隔离（DMZ/内网/核心区） |
-| 安全通信网络 | 通信加密 | TLS/mTLS + 商密 SM2/SM4 |
+| 安全通信网络 | 通信加密 | TLS/mTLS（已实现）；商密 SM2/SM4（规划中，按项目交付） |
 | 安全区域边界 | 边界防护 | NetworkPolicy + WAF |
 | 安全区域边界 | 访问控制 | RBAC + ABAC |
 | 安全计算环境 | 身份鉴别 | JWT + 多因素 + 密码复杂度 |
@@ -1713,8 +1697,8 @@ global:
 
 controlplane:
   image:
-    repository: opsmesh-binary          # → registry.domestic.example.com/opsmesh/opsmesh-binary:v1.0.0-linux-arm64
-    tag: "v1.0.0-linux-arm64"  # 鲲鹏 ARM64
+    repository: opsmesh-binary          # → registry.domestic.example.com/opsmesh/opsmesh-binary:opsmesh-0.18.0-linux-arm64
+    tag: "opsmesh-0.18.0-linux-arm64"  # 鲲鹏 ARM64；名按 .goreleaser.yml 模板 {{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}。注：多架构镜像与 ARM64 真机纳管闭环属 P0 项 A1，未落地（2026-11-10）
   replicaCount: 3
   store: mysql
   production: true
@@ -1722,26 +1706,21 @@ controlplane:
     kubernetes.io/arch: arm64
     kubernetes.io/os: linux
   extraEnv:
-    - name: OPSMESH_DOMESTIC_MODE
-      value: "true"
-    - name: OPSMESH_DB_DRIVER
-      value: "gaussdb"  # 使用 GaussDB
+    # 注：OPSMESH_DOMESTIC_MODE/OPSMESH_DB_DRIVER/OPSMESH_CRYPTO_ALGORITHM/OPSMESH_TLS_CIPHER
+    # 在代码中无消费方（2026-11-08 核实），国密与多 DB 驱动未实现，勿配。
+    # GaussDB 仅经 MySQL 兼容协议以 OPSMESH_MYSQL_DSN 接入，SQL 方言未审计。
     - name: OPSMESH_MYSQL_DSN
       valueFrom:
         secretKeyRef:
           name: gaussdb-secret
           key: dsn
-    - name: OPSMESH_CRYPTO_ALGORITHM
-      value: "sm4"  # 商密 SM4 加密
-    - name: OPSMESH_TLS_CIPHER
-      value: "ECDHE-SM2-SM4-SM3"  # 商密 TLS 套件
     - name: OPSMESH_AUDIT_RETENTION_DAYS
       value: "365"  # 等保要求 365 天
     - name: OPSMESH_RBAC_DOMAIN_ENABLED
       value: "true"  # 分权分域
 
 mysql:
-  enabled: false  # 使用外部 GaussDB
+  enabled: false  # 使用外部 GaussDB（须 MySQL 兼容模式；OpsMesh SQL 方言未审计）
 
 # 国产化中间件（如使用东方通 TongWeb 替代 Tomcat）
 # 注：OpsMesh 控制面是 Go 二进制，不依赖 Java 中间件
@@ -2081,9 +2060,9 @@ podAnnotations:
 
 ### 13.6 数据安全
 
-- **传输加密**：TLS 1.3 + 商密 SM2/SM4
+- **传输加密**：TLS 1.3（商密 SM2/SM4 规划中，按项目交付）
 - **存储加密**：MySQL 透明加密（TDE）+ Redis 加密
-- **备份加密**：备份文件经 SM4/AES-256 加密后存储
+- **备份加密**：备份文件加密后存储（商密 SM4 规划中，按项目交付）
 - **数据脱敏**：日志/审计中敏感数据脱敏
 - **数据销毁**：退役设备数据安全销毁（多次覆写）
 
@@ -2125,11 +2104,7 @@ controlplane:
       value: "2555"  # 7 年留存
     - name: OPSMESH_AUDIT_DESENSITIZE
       value: "true"  # 审计脱敏
-    # 商密
-    - name: OPSMESH_CRYPTO_ALGORITHM
-      value: "sm4"
-    - name: OPSMESH_TLS_CIPHER
-      value: "ECDHE-SM2-SM4-SM3"
+    # 商密（未实现：代码中无消费方，2026-11-08 核实，勿配）
     # 三员分立
     - name: OPSMESH_RBAC_THREE_ADMIN
       value: "true"
@@ -2343,7 +2318,7 @@ mysql:
 | 单机房 | ≤500 | ✅ | ★★ | ≤30min | ≤24h | 低 | 中小企业 |
 | 异地多机房 | ≤6000 | ✅ | ★★★ | ≤30min | ≤1s | 中 | 跨城市企业 |
 | 多数据中心 | ≤10000 | ✅ | ★★★ | ≤30min | ≤0 | 中高 | 大型企业 |
-| 电信资源池 | ≥50000 | ✅ | ★★★★ | ≤15min | ≤0 | 高 | 运营商 |
+| 电信资源池 | ≥50000（设计目标，无压测证据） | ✅ | ★★★★ | ≤15min | ≤0 | 高 | 运营商 |
 | 混合云 | 弹性 | ✅ | ★★★ | ≤30min | ≤1s | 中 | 混合架构 |
 | 公有云 | 弹性 | ✅ | ★★ | ≤5min | ≤0 | 低 | 云原生 |
 | 私有云 | ≤5000 | ✅ | ★★★ | ≤30min | ≤24h | 中高 | 私有云 |

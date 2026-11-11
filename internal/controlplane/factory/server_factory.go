@@ -53,7 +53,7 @@ func subStoreOrFallback[T any](production bool, what string, build func() (T, er
 func NewDeployHandler(st store.Store, production bool) (*deploy.Handler, error) {
 	ss, ok := st.(*store.SQLStore)
 	if !ok {
-		return deploy.NewHandler(deploy.NewMemory(), &StoreDispatcher{Store: st}), nil
+		return newDeployHandlerWired(deploy.NewMemory(), st), nil
 	}
 	ds, err := subStoreOrFallback(production, "M3 部署后端(MySQL)",
 		func() (deploy.DeployStore, error) { return deploy.NewSQL(ss.DB()) },
@@ -64,7 +64,19 @@ func NewDeployHandler(st store.Store, production bool) (*deploy.Handler, error) 
 	if _, isSQL := ds.(*deploy.SQLDeployStore); isSQL {
 		logx.Info(context.Background(), "M3 部署后端=mysql", "reason", "数据本地化")
 	}
-	return deploy.NewHandler(ds, &StoreDispatcher{Store: st}), nil
+	return newDeployHandlerWired(ds, st), nil
+}
+
+// newDeployHandlerWired 构造部署 handler 并注入灰度自动推进（用户 2026-11-09 裁决：
+// AutoAdvanceManager 此前实现+测试齐全但生产装配零调用，/auto-advance 恒 501）。
+// store 未实现 TaskResultProvider 时退回未接线形态（向后兼容）。
+func newDeployHandlerWired(ds deploy.DeployStore, st store.Store) *deploy.Handler {
+	h := deploy.NewHandler(ds, &StoreDispatcher{Store: st})
+	if tasks, ok := st.(deploy.TaskResultProvider); ok {
+		h.SetAutoAdvance(deploy.NewAutoAdvanceManager(
+			deploy.DefaultAutoAdvanceConfig(), ds, tasks, h.AdvanceCanary, h.Promote, h.Rollback))
+	}
+	return h
 }
 
 // NewOrchestrationHandler 构造 M5 作业编排处理器：按 store 类型选 SQL/Memory 后端，

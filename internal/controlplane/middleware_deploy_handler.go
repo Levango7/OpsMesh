@@ -156,13 +156,13 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		UserID:   actx.UserID,
 		Action:   "deploy_middleware",
 		Target:   task.TaskID,
-		Detail:   sanitizeAuditDetail("template=" + id + " deployType=" + body.DeployType + " agent=" + body.AgentID + " version=" + resolvedVersion + " instance=" + instKey),
+		Detail:   sanitizeAuditDetail("template=" + opsSQLString(id) + " deployType=" + opsSQLString(body.DeployType) + " agent=" + opsSQLString(body.AgentID) + " version=" + opsSQLString(resolvedVersion) + " instance=" + opsSQLString(instKey)),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
 			Action: "deploy_middleware", Target: task.TaskID,
-			Detail: sanitizeAuditDetail("template=" + id + " deployType=" + body.DeployType + " agent=" + body.AgentID + " version=" + resolvedVersion + " instance=" + instKey), Level: events.LevelInfo,
+			Detail: sanitizeAuditDetail("template=" + opsSQLString(id) + " deployType=" + opsSQLString(body.DeployType) + " agent=" + opsSQLString(body.AgentID) + " version=" + opsSQLString(resolvedVersion) + " instance=" + opsSQLString(instKey)), Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {
@@ -337,13 +337,13 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		UserID:   actx.UserID,
 		Action:   "uninstall_middleware",
 		Target:   task.TaskID,
-		Detail:   sanitizeAuditDetail("instance=" + instKey + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID + " version=" + resolvedVersion),
+		Detail:   sanitizeAuditDetail("instance=" + opsSQLString(instKey) + " template=" + opsSQLString(body.TemplateID) + " deployType=" + opsSQLString(body.DeployType) + " agent=" + opsSQLString(body.AgentID) + " version=" + opsSQLString(resolvedVersion)),
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
 			Action: "uninstall_middleware", Target: task.TaskID,
-			Detail: sanitizeAuditDetail("instance=" + instKey + " template=" + body.TemplateID + " deployType=" + body.DeployType + " agent=" + body.AgentID + " version=" + resolvedVersion), Level: events.LevelInfo,
+			Detail: sanitizeAuditDetail("instance=" + opsSQLString(instKey) + " template=" + opsSQLString(body.TemplateID) + " deployType=" + opsSQLString(body.DeployType) + " agent=" + opsSQLString(body.AgentID) + " version=" + opsSQLString(resolvedVersion)), Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {

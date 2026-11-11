@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -52,29 +53,53 @@ func (s *Server) handleScriptExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 构建执行脚本
-	var script string
-	ext := getScriptExtension(req.Language)
-	filename := fmt.Sprintf("/tmp/script_%d.%s", nowUnix(), ext)
-
-	// 写入脚本文件
-	script = fmt.Sprintf(`cat > %s << 'SCRIPT_EOF'
-%s
-SCRIPT_EOF
-chmod +x %s
-`, filename, req.Content, filename)
-
-	// 执行
+	// 注入面收口（批次 12）：workDir 绝对路径白名单；args 走 shellquote.ValidateArgList
+	// （参数串原样透传，空格拆分，但禁止一切 shell 元字符）；content 含「恰好等于分隔符的行」
+	// ⇒ 400（heredoc 会提前闭合并把其后内容当命令执行）。
 	workDir := req.WorkDir
 	if workDir == "" {
 		workDir = "/tmp"
 	}
+	workDirV, err := mqPath("workDir", workDir)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	argsV, err := opsArgList("args", req.Args)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	contentV, err := opsHeredocContent("content", req.Content, "SCRIPT_EOF")
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// 构建执行脚本
+	var script string
+	ext := getScriptExtension(req.Language)
+	filename := fmt.Sprintf("/tmp/script_%d.%s", nowUnix(), ext)
+	filenameV, err := mqPath("filename", filename)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// 写入脚本文件
+	script = fmt.Sprintf(
+		`cat > %s << 'SCRIPT_EOF'
+%s
+SCRIPT_EOF
+chmod +x %s
+`, shellquote.Quote(filenameV), contentV, shellquote.Quote(filenameV))
+
 	timeout := req.Timeout
 	if timeout <= 0 {
 		timeout = 120
 	}
 
-	script += fmt.Sprintf(`cd %s && timeout %d %s %s %s 2>&1; echo "EXIT_CODE=$?"`, workDir, timeout, interpreter, filename, req.Args)
+	script += fmt.Sprintf(`cd %s && timeout %d %s %s %s 2>&1; echo "EXIT_CODE=$?"`, shellquote.Quote(workDirV), timeout, interpreter, shellquote.Quote(filenameV), argsV)
 
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "script_exec_"+req.Language)
 	if !ok {
@@ -196,39 +221,66 @@ func (s *Server) handleScriptCompile(w http.ResponseWriter, r *http.Request) {
 		workDir = "/tmp"
 	}
 
+	outputV, err := mqPath("output", output)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	workDirV, err := mqPath("workDir", workDir)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	argsV, err := opsArgList("args", req.Args)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	sourceV, err := opsHeredocContent("source", req.Source, "SCRIPT_EOF")
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
 	var script string
 	switch req.Language {
 	case "go":
-		script = fmt.Sprintf(`cat > %s/main.go << 'SCRIPT_EOF'
+		script = fmt.Sprintf(
+			`cat > %s/main.go << 'SCRIPT_EOF'
 %s
 SCRIPT_EOF
-cd %s && go build -o %s %s main.go && echo "Go compilation successful: %s"`, workDir, req.Source, workDir, output, req.Args, output)
+cd %s && go build -o %s %s main.go && echo "Go compilation successful: %s"`, workDirV, sourceV, workDirV, outputV, argsV, outputV)
 	case "rust", "rs":
 		ext := "rs"
-		script = fmt.Sprintf(`cat > %s/main.%s << 'SCRIPT_EOF'
+		script = fmt.Sprintf(
+			`cat > %s/main.%s << 'SCRIPT_EOF'
 %s
 SCRIPT_EOF
-cd %s && rustc %s -o %s main.%s && echo "Rust compilation successful: %s"`, workDir, ext, req.Source, workDir, req.Args, output, ext, output)
+cd %s && rustc %s -o %s main.%s && echo "Rust compilation successful: %s"`, workDirV, ext, sourceV, workDirV, argsV, outputV, ext, outputV)
 	case "java":
-		script = fmt.Sprintf(`cat > %s/Main.java << 'SCRIPT_EOF'
+		script = fmt.Sprintf(
+			`cat > %s/Main.java << 'SCRIPT_EOF'
 %s
 SCRIPT_EOF
-cd %s && javac %s Main.java && jar cvf %s.jar Main.class && echo "Java compilation successful: %s.jar"`, workDir, req.Source, workDir, req.Args, output, output)
+cd %s && javac %s Main.java && jar cvf %s.jar Main.class && echo "Java compilation successful: %s.jar"`, workDirV, sourceV, workDirV, argsV, outputV, outputV)
 	case "c":
-		script = fmt.Sprintf(`cat > %s/main.c << 'SCRIPT_EOF'
+		script = fmt.Sprintf(
+			`cat > %s/main.c << 'SCRIPT_EOF'
 %s
 SCRIPT_EOF
-cd %s && gcc %s -o %s main.c && echo "C compilation successful: %s"`, workDir, req.Source, workDir, req.Args, output, output)
+cd %s && gcc %s -o %s main.c && echo "C compilation successful: %s"`, workDirV, sourceV, workDirV, argsV, outputV, outputV)
 	case "cpp", "c++":
-		script = fmt.Sprintf(`cat > %s/main.cpp << 'SCRIPT_EOF'
+		script = fmt.Sprintf(
+			`cat > %s/main.cpp << 'SCRIPT_EOF'
 %s
 SCRIPT_EOF
-cd %s && g++ %s -o %s main.cpp && echo "C++ compilation successful: %s"`, workDir, req.Source, workDir, req.Args, output, output)
+cd %s && g++ %s -o %s main.cpp && echo "C++ compilation successful: %s"`, workDirV, sourceV, workDirV, argsV, outputV, outputV)
 	case "csharp", "cs":
-		script = fmt.Sprintf(`cat > %s/main.cs << 'SCRIPT_EOF'
+		script = fmt.Sprintf(
+			`cat > %s/main.cs << 'SCRIPT_EOF'
 %s
 SCRIPT_EOF
-cd %s && mcs %s -out:%s main.cs && echo "C# compilation successful: %s"`, workDir, req.Source, workDir, req.Args, output, output)
+cd %s && mcs %s -out:%s main.cs && echo "C# compilation successful: %s"`, workDirV, sourceV, workDirV, argsV, outputV, outputV)
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported language: " + req.Language})
 		return
@@ -274,16 +326,40 @@ func (s *Server) handleBuildTool(w http.ResponseWriter, r *http.Request) {
 	if project == "" {
 		project = "/tmp/project"
 	}
+	projectV, err := mqPath("project", project)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	action := req.Action
 	if action == "" {
 		action = "build"
 	}
+	actionV, err := opsArgList("action", action)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	argsV, err := opsArgList("args", req.Args)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	var profileV string
+	if req.Profile != "" {
+		v, err := opsProfile("profile", req.Profile)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		profileV = v
+	}
 
 	var script string
 	switch req.Tool {
 	case "maven", "mvn":
-		goal := action
+		goal := actionV
 		if goal == "build" {
 			goal = "package"
 		}
@@ -297,13 +373,13 @@ func (s *Server) handleBuildTool(w http.ResponseWriter, r *http.Request) {
 			goal = "install"
 		}
 		profile := ""
-		if req.Profile != "" {
-			profile = "-P " + req.Profile
+		if profileV != "" {
+			profile = "-P " + profileV
 		}
-		script = fmt.Sprintf(`cd %s && mvn %s %s %s 2>&1 | tail -30`, project, goal, profile, req.Args)
+		script = fmt.Sprintf(`cd %s && mvn %s %s %s 2>&1 | tail -30`, shellquote.Quote(projectV), goal, profile, argsV)
 
 	case "gradle", "gradlew":
-		task := action
+		task := actionV
 		if task == "build" {
 			task = "build"
 		}
@@ -313,98 +389,98 @@ func (s *Server) handleBuildTool(w http.ResponseWriter, r *http.Request) {
 		if task == "clean" {
 			task = "clean"
 		}
-		script = fmt.Sprintf(`cd %s && ./gradlew %s %s 2>&1 | tail -30`, project, task, req.Args)
+		script = fmt.Sprintf(`cd %s && ./gradlew %s %s 2>&1 | tail -30`, shellquote.Quote(projectV), task, argsV)
 
 	case "npm":
-		cmd := "npm run " + action
-		if action == "build" {
+		cmd := "npm run " + actionV
+		if actionV == "build" {
 			cmd = "npm run build"
 		}
-		if action == "test" {
+		if actionV == "test" {
 			cmd = "npm test"
 		}
-		if action == "install" {
+		if actionV == "install" {
 			cmd = "npm install"
 		}
-		if action == "clean" {
+		if actionV == "clean" {
 			cmd = "npm run clean 2>/dev/null || rm -rf node_modules dist"
 		}
-		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, project, cmd, req.Args)
+		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, shellquote.Quote(projectV), cmd, argsV)
 
 	case "yarn":
-		cmd := "yarn " + action
-		if action == "build" {
+		cmd := "yarn " + actionV
+		if actionV == "build" {
 			cmd = "yarn build"
 		}
-		if action == "test" {
+		if actionV == "test" {
 			cmd = "yarn test"
 		}
-		if action == "install" {
+		if actionV == "install" {
 			cmd = "yarn install"
 		}
-		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, project, cmd, req.Args)
+		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, shellquote.Quote(projectV), cmd, argsV)
 
 	case "cargo":
 		cmd := "cargo build"
-		if action == "test" {
+		if actionV == "test" {
 			cmd = "cargo test"
 		}
-		if action == "clean" {
+		if actionV == "clean" {
 			cmd = "cargo clean"
 		}
-		if action == "install" {
+		if actionV == "install" {
 			cmd = "cargo install --path ."
 		}
-		if action == "package" {
+		if actionV == "package" {
 			cmd = "cargo package"
 		}
-		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, project, cmd, req.Args)
+		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, shellquote.Quote(projectV), cmd, argsV)
 
 	case "make":
-		target := action
-		if action == "build" {
+		target := actionV
+		if actionV == "build" {
 			target = "all"
 		}
-		script = fmt.Sprintf(`cd %s && make %s %s 2>&1 | tail -30`, project, target, req.Args)
+		script = fmt.Sprintf(`cd %s && make %s %s 2>&1 | tail -30`, shellquote.Quote(projectV), target, argsV)
 
 	case "cmake":
 		cmd := "cmake --build ."
-		if action == "configure" {
+		if actionV == "configure" {
 			cmd = "cmake -B build -S ."
 		}
-		if action == "clean" {
+		if actionV == "clean" {
 			cmd = "rm -rf build && cmake -B build -S ."
 		}
-		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, project, cmd, req.Args)
+		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, shellquote.Quote(projectV), cmd, argsV)
 
 	case "go":
 		cmd := "go build ./..."
-		if action == "test" {
+		if actionV == "test" {
 			cmd = "go test ./..."
 		}
-		if action == "clean" {
+		if actionV == "clean" {
 			cmd = "go clean ./..."
 		}
-		if action == "install" {
+		if actionV == "install" {
 			cmd = "go install ./..."
 		}
-		if action == "mod" {
+		if actionV == "mod" {
 			cmd = "go mod tidy"
 		}
-		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, project, cmd, req.Args)
+		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, shellquote.Quote(projectV), cmd, argsV)
 
 	case "python":
 		cmd := "python3 setup.py build"
-		if action == "test" {
+		if actionV == "test" {
 			cmd = "python3 -m pytest"
 		}
-		if action == "install" {
+		if actionV == "install" {
 			cmd = "pip install -e ."
 		}
-		if action == "clean" {
+		if actionV == "clean" {
 			cmd = "rm -rf build dist *.egg-info"
 		}
-		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, project, cmd, req.Args)
+		script = fmt.Sprintf(`cd %s && %s %s 2>&1 | tail -30`, shellquote.Quote(projectV), cmd, argsV)
 
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown tool: " + req.Tool})
@@ -446,26 +522,39 @@ func (s *Server) handleScriptTemplate(w http.ResponseWriter, r *http.Request) {
 	case "list":
 		script = `ls /opt/opsmesh/scripts/ 2>/dev/null || echo "No script templates"`
 	case "get":
-		if req.Name == "" {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		nameV, err := opsName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		script = fmt.Sprintf(`cat /opt/opsmesh/scripts/%s 2>/dev/null || echo "Script not found"`, req.Name)
+		script = fmt.Sprintf(`cat /opt/opsmesh/scripts/%s 2>/dev/null || echo "Script not found"`, shellquote.Quote(nameV))
 	case "create":
-		if req.Name == "" || req.Content == "" {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name and content are required"})
+		nameV, err := opsName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		script = fmt.Sprintf(`mkdir -p /opt/opsmesh/scripts && cat > /opt/opsmesh/scripts/%s << 'SCRIPT_EOF'
+		if req.Content == "" {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "content is required"})
+			return
+		}
+		contentV, err := opsHeredocContent("content", req.Content, "SCRIPT_EOF")
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(
+			`mkdir -p /opt/opsmesh/scripts && cat > /opt/opsmesh/scripts/%s << 'SCRIPT_EOF'
 %s
 SCRIPT_EOF
-echo "Script template %s created"`, req.Name, req.Content, req.Name)
+echo "Script template %s created"`, nameV, contentV, nameV)
 	case "delete":
-		if req.Name == "" {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		nameV, err := opsName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		script = fmt.Sprintf(`rm -f /opt/opsmesh/scripts/%s && echo "Script template %s deleted"`, req.Name, req.Name)
+		script = fmt.Sprintf(`rm -f /opt/opsmesh/scripts/%s && echo "Script template %s deleted"`, shellquote.Quote(nameV), shellquote.Quote(nameV))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

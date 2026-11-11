@@ -132,8 +132,8 @@ func alertToNotifyMessage(a *proto.Alert) *notify.Message {
 		severity = "info"
 	}
 	return &notify.Message{
-		Title:     fmt.Sprintf("[OpsMesh][%s] %s", severity, a.Message),
-		Body:      fmt.Sprintf("告警 %s：%s（设备 %s，租户 %s）", a.AlertID, a.Message, a.DeviceID, a.TenantID),
+		Title:     "[OpsMesh][" + opsSQLString(severity) + "] " + opsSQLString(a.Message),
+		Body:      "告警 " + opsSQLString(a.AlertID) + "：" + opsSQLString(a.Message) + "（设备 " + opsSQLString(a.DeviceID) + "，租户 " + opsSQLString(a.TenantID) + "）",
 		Format:    "text",
 		Severity:  severity,
 		Source:    a.DeviceID,

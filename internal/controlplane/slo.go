@@ -75,8 +75,7 @@ func sloSLIValidationError(slis []store.SLI) string {
 	if len(bad) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("unsupported SLI metric(s): %s（受支持：%s）",
-		strings.Join(bad, ", "), strings.Join(store.SupportedSLIMetrics(), ", "))
+	return fmt.Sprintf("unsupported SLI metric(s): %s（受支持：%s）", opsSQLString(strings.Join(bad, ", ")), opsSQLString(strings.Join(store.SupportedSLIMetrics(), ", ")))
 }
 
 // handleCreateSLO 处理 POST /api/v1/slos：创建 SLO。

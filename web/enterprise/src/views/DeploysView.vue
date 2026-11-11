@@ -38,7 +38,7 @@
               </div>
             </div>
             <div class="btnbar">
-              <Button variant="primary" size="md" native-type="submit" data-testid="deploys-register-btn">{{ $t('deploys.register_btn') }}</Button>
+              <Button variant="primary" size="md" native-type="submit" :disabled="submitting" :title="submitting ? $t('common.loading') : ''" data-testid="deploys-register-btn">{{ $t('deploys.register_btn') }}</Button>
               <Button variant="primary" size="md" native-type="button" data-testid="deploys-demo-btn" @click="loadDemo">{{ $t('deploys.demo_btn') }}</Button>
             </div>
             <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']" data-testid="deploys-msg">{{ store.msg }}</p>
@@ -72,8 +72,8 @@
             </template>
             <template #cell-actions="{ row }">
               <div class="row-actions" :data-testid="'deploys-row-' + row.id">
-                <Button variant="primary" size="sm" data-testid="btn-row-execute" @click.stop="onExec(row.id)">▶ {{ $t('deploys.execute') }}</Button>
-                <Button variant="ghost" size="sm" data-testid="btn-row-rollback" @click.stop="onRollback(row.id)">↩ {{ $t('deploys.rollback') }}</Button>
+                <Button variant="primary" size="sm" :disabled="isActing(row.id)" :title="isActing(row.id) ? $t('common.loading') : ''" data-testid="btn-row-execute" @click.stop="onExec(row.id)">▶ {{ $t('deploys.execute') }}</Button>
+                <Button variant="ghost" size="sm" :disabled="isActing(row.id)" :title="isActing(row.id) ? $t('common.loading') : ''" data-testid="btn-row-rollback" @click.stop="onRollback(row.id)">↩ {{ $t('deploys.rollback') }}</Button>
                 <Button variant="ghost" size="sm" data-testid="btn-row-detail" @click.stop="onOpen(row.id)">{{ $t('deploys.detail_btn') }}</Button>
               </div>
             </template>
@@ -109,7 +109,7 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
-import { computed, onMounted, reactive } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useDeployStore } from '@/stores/deploy'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -126,6 +126,11 @@ const form = reactive({
 
 // 执行/回滚确认弹窗（替代 confirm）：pending 回调存待执行动作
 const actionConfirm = reactive({ show: false, id: null, action: null, title: '', message: '' })
+// 在飞态（P1-8 余项）：注册请求与行级 execute/rollback 未返回前禁用对应按钮 + handler 重入守卫——
+// 部署的 execute/rollback 非幂等（连击 = 对生产机重复下发/重复回滚）。
+const submitting = ref(false)
+const actingIds = reactive(new Set())
+function isActing(id) { return actingIds.has(id) }
 
 const columns = [
   { key: 'id', title: 'ID', slot: 'cell-id' },
@@ -150,11 +155,14 @@ function loadDemo() {
   store.msg = t('deploys.demo_loaded_msg'); store.error = ''
 }
 async function onCreate() {
+  if (submitting.value) return
+  submitting.value = true
   try {
     const r = await store.create({ ...form })
     store.msg = `[${r.s}] ${JSON.stringify(r.j)}`; store.error = r.s >= 400 ? 'create' : ''
     if (r.s < 400) { form.name = ''; form.target_ids = ''; form.repo_url = ''; form.content = ''; form.path = '' }
   } catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'create' }
+  finally { submitting.value = false }
 }
 function onExec(id) {
   actionConfirm.id = id
@@ -164,8 +172,11 @@ function onExec(id) {
   actionConfirm.show = true
 }
 async function doExec(id) {
+  if (actingIds.has(id)) return          // 重入守卫：同一部署的执行请求在飞时不重复下发
+  actingIds.add(id)
   try { const r = await store.execute(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.executed_msg', { id })}`; store.error = r.s >= 400 ? 'exec' : '' }
   catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'exec' }
+  finally { actingIds.delete(id) }
 }
 function onRollback(id) {
   actionConfirm.id = id
@@ -175,8 +186,11 @@ function onRollback(id) {
   actionConfirm.show = true
 }
 async function doRollback(id) {
+  if (actingIds.has(id)) return          // 重入守卫：同一部署的回滚请求在飞时不重复下发
+  actingIds.add(id)
   try { const r = await store.rollback(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.rolled_back_msg', { id })}`; store.error = r.s >= 400 ? 'rb' : '' }
   catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'rb' }
+  finally { actingIds.delete(id) }
 }
 async function onActionConfirm() {
   const { id, action } = actionConfirm

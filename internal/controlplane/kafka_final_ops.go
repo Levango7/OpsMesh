@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -57,7 +58,9 @@ func (s *Server) handleKafkaTieredStorage(w http.ResponseWriter, r *http.Request
 		if region == "" {
 			region = "us-east-1"
 		}
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type brokers --entity-name 0 --alter --add-config remote.log.storage.manager.class.path=/opt/kafka/libs,remote.log.storage.manager.class.name=org.apache.kafka.server.log.remote.storage.RemoteLogManager,remote.log.metadata.manager.class.name=org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager 2>/dev/null && echo "Tiered storage configured: bucket=%s region=%s"`, req.Bucket, region)
+		// 注入面（批次 10）：回显段在**双引号**内 ⇒ 段内 $ 与反引号照样展开 ⇒
+		// 整条回显消息整体 Quote（shell 剥掉引号后输出与旧形态逐字相同）。
+		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type brokers --entity-name 0 --alter --add-config remote.log.storage.manager.class.path=/opt/kafka/libs,remote.log.storage.manager.class.name=org.apache.kafka.server.log.remote.storage.RemoteLogManager,remote.log.metadata.manager.class.name=org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager 2>/dev/null && echo %s`, opsEcho("Tiered storage configured: bucket=%s region=%s", req.Bucket, region))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "tiered-storage_configure")
 		if !ok {
 			return
@@ -170,7 +173,8 @@ func (s *Server) handleKafkaKRaftMigration(w http.ResponseWriter, r *http.Reques
 		if zk == "" {
 			zk = "localhost:2181"
 		}
-		script := fmt.Sprintf(`echo "=== ZK Connection ===" && echo "zk: %s" && echo "=== Kafka Version ===" && kafka-broker-api-versions.sh --bootstrap-server localhost:9092 2>/dev/null | head -1 && echo "=== KRaft Ready ===" && echo "KRaft migration requires Kafka 3.3+ with ZK mode" && echo "Check: process.roles=broker,controller (KRaft) or process.roles=broker (ZK)"`, zk)
+		// 注入面（批次 10）：zk 连接串落在**双引号**回显段内 ⇒ 整条消息整体 Quote。
+		script := fmt.Sprintf(`echo "=== ZK Connection ===" && echo %s && echo "=== Kafka Version ===" && kafka-broker-api-versions.sh --bootstrap-server localhost:9092 2>/dev/null | head -1 && echo "=== KRaft Ready ===" && echo "KRaft migration requires Kafka 3.3+ with ZK mode" && echo "Check: process.roles=broker,controller (KRaft) or process.roles=broker (ZK)"`, opsEcho("zk: %s", zk))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "kraft-migration_check")
 		if !ok {
 			return
@@ -245,7 +249,8 @@ func (s *Server) handleKafkaStreamsFull(w http.ResponseWriter, r *http.Request) 
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "appId is required"})
 			return
 		}
-		script := fmt.Sprintf(`kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group %s 2>/dev/null`, req.AppID)
+		// 注入面（批次 10）：group 名是**值** ⇒ 整体 Quote。
+		script := fmt.Sprintf(`kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group %s 2>/dev/null`, shellquote.Quote(req.AppID))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "streams_describe")
 		if !ok {
 			return
@@ -265,7 +270,9 @@ func (s *Server) handleKafkaStreamsFull(w http.ResponseWriter, r *http.Request) 
 		if !req.ToEarliest {
 			resetFlag = "--to-latest"
 		}
-		script := fmt.Sprintf(`kafka-streams-application-reset.sh --application-id %s --bootstrap-servers %s --input-topics %s --output-topics %s %s 2>/dev/null || echo "Streams reset not available"`, req.AppID, bootstrap, req.InputTopic, req.OutputTopic, resetFlag)
+		// 注入面（批次 10）：四个用户字段都是**值** ⇒ 整体 Quote（取值语义不变）；
+		// resetFlag 是代码里的固定字面量（--to-earliest / --to-latest），不是用户字段。
+		script := fmt.Sprintf(`kafka-streams-application-reset.sh --application-id %s --bootstrap-servers %s --input-topics %s --output-topics %s %s 2>/dev/null || echo "Streams reset not available"`, shellquote.Quote(req.AppID), shellquote.Quote(bootstrap), shellquote.Quote(req.InputTopic), shellquote.Quote(req.OutputTopic), resetFlag)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "streams_reset")
 		if !ok {
 			return
@@ -312,7 +319,11 @@ func (s *Server) handleKafkaOTel(w http.ResponseWriter, r *http.Request) {
 		if endpoint == "" {
 			endpoint = "http://localhost:4317"
 		}
-		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type brokers --entity-name 0 --alter --add-config "otel.exporter.otlp.endpoint=%s,otel.metrics.exporter=otlp,otel.traces.exporter=otlp" 2>/dev/null && echo "OpenTelemetry enabled: endpoint=%s"`, endpoint, endpoint)
+		// 注入面（批次 10）：endpoint 落在**双引号段**内的配置串里 ⇒ 双引号内 $ 与
+		// 反引号照样展开 ⇒ 改由 Go 层拼出完整配置串再**整体** Quote，且 Quote 结果
+		// 放在双引号**外**（放里面会让配置串里多出字面量单引号）；回显段同理。
+		otelCfg := "otel.exporter.otlp.endpoint=" + opsSQLString(endpoint) + ",otel.metrics.exporter=otlp,otel.traces.exporter=otlp"
+		script := fmt.Sprintf(`kafka-configs.sh --bootstrap-server localhost:9092 --entity-type brokers --entity-name 0 --alter --add-config %s 2>/dev/null && echo %s`, shellquote.Quote(otelCfg), opsEcho("OpenTelemetry enabled: endpoint=%s", endpoint))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "otel_enable")
 		if !ok {
 			return
@@ -391,8 +402,24 @@ func (s *Server) handleKafkaKEDA(w http.ResponseWriter, r *http.Request) {
 		if lag <= 0 {
 			lag = 100
 		}
-		script := fmt.Sprintf(`cat > /tmp/scaledobject.yaml << 'EOF'
-apiVersion: keda.sh/v1alpha1
+		// 注入面（批次 10）：**heredoc** 形态。内容在 `<< 'EOF'` 里本应字面，但载荷里
+		// 出现**一行恰好等于 EOF** 就会让 heredoc **提前闭合** ⇒ 其后的内容被 shell
+		// 当**命令**执行（已用真 sh 实测：标记文件真的落地）⇒ 整段交给 kafkaHeredocf。
+		//
+		// 另注：consumerGroup / topic 落在 YAML 的**标量**位置 ⇒ 另走白名单（不含
+		// 换行/引号/冒号），否则可改写 YAML 结构（K8s API 字段注入——不是 shell 注入，
+		// 但同属「用户字段直接进配置文件」，一并收口）。
+		consumerGroup, err := kafkaResource(req.ConsumerGroup)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		topic, err := kafkaTopic(req.Topic)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		heredoc, err := kafkaHeredocf("/tmp/scaledobject.yaml", `apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
   name: kafka-consumer-scaler
@@ -407,9 +434,12 @@ spec:
       bootstrapServers: localhost:9092
       consumerGroup: %s
       topic: %s
-      lagThreshold: "%d"
-EOF
-kubectl apply -f /tmp/scaledobject.yaml && echo "KEDA ScaledObject created"`, minR, maxR, req.ConsumerGroup, req.Topic, lag)
+      lagThreshold: "%d"`, minR, maxR, consumerGroup, topic, lag)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := heredoc + "\nkubectl apply -f /tmp/scaledobject.yaml && echo \"KEDA ScaledObject created\""
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "keda_create-scaledobject")
 		if !ok {
 			return

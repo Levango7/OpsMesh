@@ -58,9 +58,13 @@
 ### 2. 认领（CLAIM）与完成（DONE）
 
 - `scope` 必须是**目录或单个文件**，不许 `internal/` 这种粒度；多 scope 就多行。
-- `ttl` 到期无 DONE/RELEASE，任何一线可单方面 TAKEOVER（见 §6）。
+- `ttl` 到期无 DONE/RELEASE/LANDED，任何一线可单方面 TAKEOVER（见 §6）。
 - 同一 scope 只允许一个 CLAIM 存活；重复认领 = 撞车（§5）。
 - DISPATCH 含 scope 时**等价于一次性 CLAIM**（有效期到 ddl），无需再补 CLAIM。
+- 闭环销号认 `DONE`/`RELEASE`/`TAKEOVER`/`LANDED`，均须带 `scope=`；与 CLAIM 的
+  scope 逐字一致或集合同一（顺序/空格差异不算撞车；候选唯一才销，部分重叠不销）。
+- `[LANDED]` 是「PR 合入 main」回执；缺 `scope=` 的存量 LANDED 行由任一线 append
+  带 scope 的补配对行（from=代登线，note 注明代登，原行不动）。
 
 ### 3. 层级：派遣（DISPATCH）与上报（BLOCKED）
 
@@ -91,7 +95,7 @@
 
 ### 6. 接管（TAKEOVER）
 
-CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
+CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展：
 
 ```
 [TAKEOVER] 2026-10-26T06:00:00Z from=kilo scope=... reason=ttl-expired
@@ -116,26 +120,14 @@ CLAIM ttl 过期且无 DONE/RELEASE，或 DISPATCH 过了 ddl 无进展：
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  internal/agent/agent.go,internal/automation/engine.go,internal/cmdb/handler.go,internal/cmdb/sql.go,internal/controlplane/auth.go,internal/controlplane/tenant.go,internal/controlplane/git_unix_ops.go <- kilo  (ttl=24h by kilo)
-  web/enterprise/src/views/**/*.vue,web/enterprise/src/views/__tests__/FluxView.spec.js,web/enterprise/src/i18n/locales/{zh,en}/delivery.json,CHANGELOG.md <- zcode  (ttl=48h by zcode)
+  deploy/scripts/build-airgap-bundle.sh,deploy/scripts/build-airgap-bundle.selftest.sh,deploy/scripts/install-airgap.sh,deploy/scripts/install-airgap.selftest.sh,docs/airgap-install-sop.md,CHANGELOG.md <- qoder  (ttl=24h by qoder)
+  go.mod,.github/workflows/ci.yml,.github/workflows/release.yml <- opencode  (ttl=6h by opencode)
+  internal/controlplane/cache_ops.go,internal/controlplane/cicd_ops.go,internal/controlplane/server_network.go,internal/controlplane/data_ops.go,internal/controlplane/domestic_ops.go,internal/controlplane/k8s_cluster_deploy.go,internal/controlplane/vector_ops.go,internal/controlplane/db_ops.go,internal/controlplane/iac_ops.go,internal/controlplane/system_ops.go,internal/controlplane/cmdb_approval.go,internal/controlplane/db_nosql_ext_ops.go,internal/controlplane/grpc/grpc.go,internal/controlplane/k8s_gateway_ops.go,internal/controlplane/middleware_deploy_handler.go,internal/controlplane/olap_ops.go,internal/controlplane/storage_fastdfs.go,internal/controlplane/storage_ops.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/controlplane/env_ops.go,internal/controlplane/zookeeper_middleware_ops.go,internal/controlplane/ntp_ops.go,internal/controlplane/security_ops.go,internal/controlplane/redis_middleware_ops.go,internal/controlplane/rabbitmq_middleware_ops.go,internal/controlplane/kafka_middleware_ops.go,internal/controlplane/monitor_ops.go,internal/controlplane/b14_injection_test.go,scripts/shell-injection-audit.py,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/gates/tenant_store_verdict_gate_test.go <- zcode  (ttl=72h by zcode)
 
 TASKS:
   (无)
-
-ISSUES:
-  CLAIM 过期未闭环：.github/workflows/ci.yml,.github/workflows/mirror-digest-check.yml（认领人 opencode，ttl 12h）
-  CLAIM 过期未闭环：CHANGELOG.md（认领人 opencode，ttl 12h）
-  CLAIM 过期未闭环：CHANGELOG.md,docs/release-notes.md,internal/version/version.go,deploy/helm/opsmesh/Chart.yaml,deploy/helm/opsmesh/values-production.yaml,deploy/gitops/segments/production-segment.yaml,deploy/docker/docker-compose.prod.yml,deploy/docker/scripts/deploy.sh,deploy/k8s/deploy-opsmesh.sh,deploy/k8s/README.md,deploy/k8s/deployments/alert-svc-deployment.yaml,deploy/k8s/deployments/auth-svc-deployment.yaml,deploy/k8s/deployments/device-svc-deployment.yaml,deploy/k8s/deployments/gpu-svc-deployment.yaml,deploy/k8s/deployments/task-svc-deployment.yaml,deploy/scripts/validate-deploy-assets.sh（认领人 opencode，ttl 8h）
-  CLAIM 过期未闭环：docs/opsmesh-authz-audit-2026-11-04.md（认领人 opencode，ttl 12h）
-  CLAIM 过期未闭环：go.mod,go.sum,operator/go.mod,operator/go.sum,services/alert-svc/go.mod,services/alert-svc/go.sum,services/auth-svc/go.mod,services/auth-svc/go.sum,services/config-svc/go.mod,services/config-svc/go.sum,services/device-svc/go.mod,services/device-svc/go.sum,services/gpu-svc/go.mod,services/gpu-svc/go.sum,services/log-svc/go.mod,services/log-svc/go.sum,services/task-svc/go.mod,services/task-svc/go.sum,services/tf-provider/go.mod,services/tf-provider/go.sum（认领人 opencode，ttl 6h）
-  CLAIM 过期未闭环：internal/ai/gateway/rag.go,internal/ai/gateway/prompt.go,internal/knowledge/retrieval.go,internal/ai/gateway/gateway.go,internal/ai/gateway/handler.go,internal/ai/gateway/circuitbreaker.go,internal/cost/handler.go,internal/controlplane/authctx*.go,internal/config/config.go,internal/gates,CHANGELOG.md,docs/tech-debt.md（认领人 zcode，ttl 48h）
-  CLAIM 过期未闭环：internal/controlplane/git_unix_ops.go,internal/controlplane/os_ext_ops.go,internal/controlplane/server_network.go,internal/controlplane/shellquote_security_test.go,internal/controlplane/server_network_extra_test.go,internal/controlplane/coverage_extra_test.go,CHANGELOG.md（认领人 opencode，ttl 6h）
-  CLAIM 过期未闭环：internal/controlplane/netdiag_ops.go,internal/controlplane/synthetic_ops.go,internal/controlplane/probe_injection_test.go,scripts/shell-injection-audit.py,CHANGELOG.md（认领人 opencode，ttl 8h）
-  CLAIM 过期未闭环：internal/controlplane/os_ext_ops.go（认领人 opencode，ttl 12h）
-  CLAIM 过期未闭环：internal/controlplane/shellquote_security_test.go（认领人 opencode，ttl 12h）
-  CLAIM 过期未闭环：web/enterprise/src/api/*.js,web/enterprise/src/views/*.vue,web/enterprise/src/stores/auth*.js,web/enterprise/src/router/index.js,web/enterprise/src/composables/*,web/enterprise/src/i18n/locales/{zh,en}/*.json,CHANGELOG.md（认领人 zcode，ttl 24h）
-  CLAIM 过期未闭环：web/enterprise/src/views/AdminConsoleView.vue,web/enterprise/src/api/admin.js,web/enterprise/src/i18n/en.json,web/enterprise/src/i18n/locales/en/common.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/i18n/locales/zh/common.json,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/zh.json,web/enterprise/src/api/__tests__/api-usage.test.js（认领人 kilo，ttl 24h）
-  CLAIM 过期未闭环：web/enterprise/src/views/CostView.vue,web/enterprise/src/i18n/locales/zh/ops.json,web/enterprise/src/i18n/locales/en/ops.json,web/enterprise/src/views/__tests__/CostView.spec.js,docs/CLAIMS.md（认领人 qoder，ttl 4h）
 ```
 
 ---

@@ -24,6 +24,7 @@ package controlplane
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -115,7 +116,7 @@ func (a *automationExecutor) Scale(tenantID, service string, replicas int, param
 	}
 	task := &proto.Task{
 		Type:     "scale",
-		Command:  fmt.Sprintf("scale %s to %d replicas", service, replicas),
+		Command:  "scale " + opsSQLString(service) + " to " + strconv.Itoa(replicas) + " replicas",
 		AgentID:  params["device_id"],
 		TenantID: tenantID,
 		Status:   "pending",
@@ -137,7 +138,7 @@ func (a *automationExecutor) Restart(tenantID, target string, params map[string]
 	}
 	task := &proto.Task{
 		Type:     "restart",
-		Command:  fmt.Sprintf("restart %s", target),
+		Command:  "restart " + opsSQLString(target),
 		AgentID:  params["device_id"],
 		TenantID: tenantID,
 		Status:   "pending",
@@ -159,7 +160,7 @@ func (a *automationExecutor) Isolate(tenantID, deviceID string, params map[strin
 	}
 	task := &proto.Task{
 		Type:     "isolate",
-		Command:  fmt.Sprintf("isolate device %s", deviceID),
+		Command:  "isolate device " + opsSQLString(deviceID),
 		AgentID:  deviceID,
 		TenantID: tenantID,
 		Status:   "pending",

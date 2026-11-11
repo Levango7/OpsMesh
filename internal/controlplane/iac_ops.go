@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleIaC 处理 POST /api/v1/iac
@@ -32,23 +33,37 @@ func (s *Server) handleIaC(w http.ResponseWriter, r *http.Request) {
 	if tool == "" {
 		tool = "terraform"
 	}
+	if tool != "terraform" && tool != "pulumi" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported tool: " + tool})
+		return
+	}
 	workDir := req.WorkDir
 	if workDir == "" {
 		workDir = "/tmp/terraform"
+	}
+	workDirV, err := mqPath("workDir", workDir)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	argsV, err := opsArgList("args", req.Args)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
 
 	var script string
 	switch req.Action {
 	case "init":
-		script = fmt.Sprintf(`cd %s && %s init %s 2>&1 | tail -20`, workDir, tool, req.Args)
+		script = fmt.Sprintf(`cd %s && %s init %s 2>&1 | tail -20`, shellquote.Quote(workDirV), tool, argsV)
 	case "plan":
-		script = fmt.Sprintf(`cd %s && %s plan %s 2>&1 | tail -30`, workDir, tool, req.Args)
+		script = fmt.Sprintf(`cd %s && %s plan %s 2>&1 | tail -30`, shellquote.Quote(workDirV), tool, argsV)
 	case "apply":
-		script = fmt.Sprintf(`cd %s && %s apply -auto-approve %s 2>&1 | tail -30`, workDir, tool, req.Args)
+		script = fmt.Sprintf(`cd %s && %s apply -auto-approve %s 2>&1 | tail -30`, shellquote.Quote(workDirV), tool, argsV)
 	case "destroy":
-		script = fmt.Sprintf(`cd %s && %s destroy -auto-approve %s 2>&1 | tail -30`, workDir, tool, req.Args)
+		script = fmt.Sprintf(`cd %s && %s destroy -auto-approve %s 2>&1 | tail -30`, shellquote.Quote(workDirV), tool, argsV)
 	case "status":
-		script = fmt.Sprintf(`cd %s && %s show 2>&1 | head -30 || echo "%s not available"`, workDir, tool, tool)
+		script = fmt.Sprintf(`cd %s && %s show 2>&1 | head -30 || echo %s`, shellquote.Quote(workDirV), tool, opsEcho("%s not available", tool))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleOracleBackup 处理 POST /api/v1/db/oracle/backup
@@ -50,20 +52,63 @@ func (s *Server) handleOracleBackup(w http.ResponseWriter, r *http.Request) {
 		req.BackupType = "full"
 	}
 
+	pathV, err := mqPath("path", req.Path)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	userV, err := mqName("user", req.User)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	dbV, err := opsHost("db", req.DB)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	directoryV, err := opsOracleName("directory", req.Directory)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	dumpV := req.DumpFile
+	if dumpV != "oracle_$(date +%Y%m%d).dmp" {
+		var verr error
+		dumpV, verr = opsFileName("dumpFile", dumpV)
+		if verr != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+			return
+		}
+	}
+
+	conn := shellquote.Quote(userV + "/" + req.Password + "@" + dbV)
+	logV := dumpV + ".log"
+
 	var script string
 	switch req.Action {
 	case "expdp":
-		scope := "FULL=Y"
+		scopeArg := " FULL=Y"
 		if req.Tables != "" {
-			scope = "TABLES=" + req.Tables
+			tablesV, err := opsTableList("tables", req.Tables)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			scopeArg = " TABLES=" + tablesV
 		}
-		script = fmt.Sprintf(`mkdir -p %s && expdp %s/%s@%s DIRECTORY=%s DUMPFILE=%s LOGFILE=%s.log %s && echo "Oracle Data Pump export completed"`, req.Path, req.User, req.Password, req.DB, req.Directory, req.DumpFile, req.DumpFile, scope)
+		script = fmt.Sprintf(`mkdir -p %s && expdp %s DIRECTORY=%s DUMPFILE=%s LOGFILE=%s %s && echo "Oracle Data Pump export completed"`, shellquote.Quote(pathV), conn, shellquote.Quote(directoryV), dumpV, logV, scopeArg)
 	case "impdp":
-		scope := ""
+		scopeArg := ""
 		if req.Tables != "" {
-			scope = "TABLES=" + req.Tables
+			tablesV, err := opsTableList("tables", req.Tables)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			scopeArg = " TABLES=" + tablesV
 		}
-		script = fmt.Sprintf(`impdp %s/%s@%s DIRECTORY=%s DUMPFILE=%s LOGFILE=%s.log %s && echo "Oracle Data Pump import completed"`, req.User, req.Password, req.DB, req.Directory, req.DumpFile, req.DumpFile, scope)
+		script = fmt.Sprintf(`impdp %s DIRECTORY=%s DUMPFILE=%s LOGFILE=%s %s && echo "Oracle Data Pump import completed"`, conn, shellquote.Quote(directoryV), dumpV, logV, scopeArg)
 	case "rman":
 		if req.BackupType == "incremental" {
 			script = `rman target / <<EOF
@@ -146,7 +191,18 @@ EOF`
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "primary and standby are required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Configuring Data Guard: primary=%s standby=%s"; sqlplus / as sysdba <<EOF
+		primaryV, err := opsOracleName("primary", req.Primary)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		standbyV, err := opsOracleName("standby", req.Standby)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(
+			`echo %s; sqlplus / as sysdba <<EOF
 ALTER SYSTEM SET log_archive_config='DG_CONFIG=(%s,%s)' SCOPE=BOTH;
 ALTER SYSTEM SET log_archive_dest_2='SERVICE=%s ASYNC VALID_FOR=(ONLINE_LOGFILES,PRIMARY_ROLE) DB_UNIQUE_NAME=%s' SCOPE=BOTH;
 ALTER SYSTEM SET fal_server='%s' SCOPE=BOTH;
@@ -155,7 +211,7 @@ ALTER DATABASE FORCE LOGGING;
 ALTER DATABASE ADD STANDBY LOGFILE GROUP 4 SIZE 100M;
 EXIT;
 EOF
-echo "Data Guard configuration applied"`, req.Primary, req.Standby, req.Primary, req.Standby, req.Standby, req.Standby, req.Standby, req.Primary)
+echo "Data Guard configuration applied"`, opsEcho("Configuring Data Guard: primary=%s standby=%s", primaryV, standbyV), primaryV, standbyV, standbyV, standbyV, standbyV, primaryV)
 	case "switchover":
 		script = `dgmgrl -silent / "switchover to standby" 2>/dev/null && echo "Switchover completed" || echo "Switchover failed"`
 	case "failover":
@@ -236,7 +292,13 @@ echo "ADDM analysis completed"`, req.BeginSnap, req.EndSnap)
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "sqlId is required"})
 			return
 		}
-		script = fmt.Sprintf(`sqlplus / as sysdba <<EOF
+		sqlidV, err := opsSQLID("sqlId", req.SQLID)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(
+			`sqlplus / as sysdba <<EOF
 DECLARE
   tname VARCHAR2(30);
 BEGIN
@@ -247,7 +309,7 @@ END;
 /
 EXIT;
 EOF
-echo "SQL Tuning Advisor completed for %s"`, req.SQLID, req.SQLID, req.SQLID, req.SQLID, req.SQLID)
+echo %s`, sqlidV, sqlidV, sqlidV, sqlidV, opsEcho("SQL Tuning Advisor completed for %s", sqlidV))
 	case "top-sql":
 		script = fmt.Sprintf(`sqlplus -s / as sysdba <<EOF
 SET LINESIZE 200 PAGESIZE 50
@@ -294,37 +356,73 @@ func (s *Server) handleOracleUpgrade(w http.ResponseWriter, r *http.Request) {
 	if req.OracleHome == "" {
 		req.OracleHome = "$ORACLE_HOME"
 	}
+	oracleHomeV := req.OracleHome
+	if oracleHomeV != "$ORACLE_HOME" {
+		home, err := mqPath("oracleHome", oracleHomeV)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		oracleHomeV = home
+	}
+	patchIDV := req.PatchID
+	if patchIDV != "" {
+		v, err := opsPatchID("patchId", patchIDV)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		patchIDV = v
+	}
 
 	var script string
 	switch req.Action {
 	case "precheck":
-		script = fmt.Sprintf(`echo "=== Oracle Upgrade Precheck ==="; %s/bin/sqlplus / as sysdba <<< "SELECT * FROM v$version;"; echo "---"; %s/OPatch/opatch prereq CheckConflictAgainstOHWithDetail -ph %s 2>/dev/null || echo "OPatch prereq check done"; echo "---"; %s/bin/dbua -preupgrade -silent 2>/dev/null || echo "DBUA precheck done"`, req.OracleHome, req.OracleHome, req.PatchID, req.OracleHome)
+		script = fmt.Sprintf(`echo "=== Oracle Upgrade Precheck ==="; %s/bin/sqlplus / as sysdba <<< "SELECT * FROM v$version;"; echo "---"; %s/OPatch/opatch prereq CheckConflictAgainstOHWithDetail -ph %s 2>/dev/null || echo "OPatch prereq check done"; echo "---"; %s/bin/dbua -preupgrade -silent 2>/dev/null || echo "DBUA precheck done"`, oracleHomeV, oracleHomeV, shellquote.Quote(patchIDV), oracleHomeV)
 	case "patch":
-		if req.PatchID == "" {
+		if patchIDV == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "patchId is required"})
 			return
 		}
-		script = fmt.Sprintf(`cd %s && %s/OPatch/opatch apply -silent %s && echo "Patch %s applied"`, req.PatchID, req.OracleHome, req.PatchID, req.PatchID)
+		script = fmt.Sprintf(`cd %s && %s/OPatch/opatch apply -silent %s && echo "Patch %s applied"`, shellquote.Quote(patchIDV), oracleHomeV, patchIDV, patchIDV)
 	case "ru":
-		if req.Version == "" {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "version is required"})
-			return
-		}
-		script = fmt.Sprintf(`cd %s && %s/OPatch/opatch apply -silent %s && echo "Release Update %s applied"`, req.PatchID, req.OracleHome, req.PatchID, req.Version)
-	case "rur":
-		if req.Version == "" {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "version is required"})
-			return
-		}
-		script = fmt.Sprintf(`cd %s && %s/OPatch/opatch apply -silent %s && echo "Release Update Revision %s applied"`, req.PatchID, req.OracleHome, req.PatchID, req.Version)
-	case "rollback":
-		if req.PatchID == "" {
+		if patchIDV == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "patchId is required"})
 			return
 		}
-		script = fmt.Sprintf(`%s/OPatch/opatch rollback -silent -id %s && echo "Patch %s rolled back"`, req.OracleHome, req.PatchID, req.PatchID)
+		versionV, err := mqVersion("version", req.Version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if versionV == "" {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "version is required"})
+			return
+		}
+		script = fmt.Sprintf(`cd %s && %s/OPatch/opatch apply -silent %s && echo "Release Update %s applied"`, shellquote.Quote(patchIDV), oracleHomeV, patchIDV, versionV)
+	case "rur":
+		if patchIDV == "" {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "patchId is required"})
+			return
+		}
+		versionV, err := mqVersion("version", req.Version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if versionV == "" {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "version is required"})
+			return
+		}
+		script = fmt.Sprintf(`cd %s && %s/OPatch/opatch apply -silent %s && echo "Release Update Revision %s applied"`, shellquote.Quote(patchIDV), oracleHomeV, patchIDV, versionV)
+	case "rollback":
+		if patchIDV == "" {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "patchId is required"})
+			return
+		}
+		script = fmt.Sprintf(`%s/OPatch/opatch rollback -silent -id %s && echo "Patch %s rolled back"`, oracleHomeV, shellquote.Quote(patchIDV), patchIDV)
 	case "version":
-		script = fmt.Sprintf(`echo "=== Oracle Version ==="; %s/bin/sqlplus -s / as sysdba <<< "SELECT * FROM v$version; SELECT * FROM v$instance;"; echo "=== OPatch Inventory ==="; %s/OPatch/opatch lsinventory 2>/dev/null | head -30`, req.OracleHome, req.OracleHome)
+		script = fmt.Sprintf(`echo %s; %s/bin/sqlplus -s / as sysdba <<< "SELECT * FROM v$version; SELECT * FROM v$instance;"; echo "=== OPatch Inventory ==="; %s/OPatch/opatch lsinventory 2>/dev/null | head -30`, opsEcho("=== Oracle Version ==="), oracleHomeV, oracleHomeV)
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -369,13 +467,46 @@ func (s *Server) handleOracleMigration(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch req.Action {
 	case "datapump":
-		script = fmt.Sprintf(`echo "Migrating via Data Pump: %s -> %s"; expdp %s/%s@%s DIRECTORY=%s NETWORK_LINK=%s FULL=Y && impdp %s/%s@%s DIRECTORY=%s NETWORK_LINK=%s FULL=Y && echo "Data Pump migration completed"`, req.Source, req.Target, req.User, req.Password, req.Source, req.Directory, req.Target, req.User, req.Password, req.Target, req.Directory, req.Source)
+		srcV, err := opsHost("source", req.Source)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		tgtV, err := opsHost("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		userV, err := mqName("user", req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		directoryV, err := opsOracleName("directory", req.Directory)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		connSrc := shellquote.Quote(userV + "/" + req.Password + "@" + srcV)
+		connTgt := shellquote.Quote(userV + "/" + req.Password + "@" + tgtV)
+		script = fmt.Sprintf(`echo %s; expdp %s DIRECTORY=%s NETWORK_LINK=%s FULL=Y && impdp %s DIRECTORY=%s NETWORK_LINK=%s FULL=Y && echo "Data Pump migration completed"`, opsEcho("Migrating via Data Pump: %s -> %s", srcV, tgtV), connSrc, shellquote.Quote(directoryV), shellquote.Quote(tgtV), connTgt, shellquote.Quote(directoryV), shellquote.Quote(srcV))
 	case "rman":
-		script = fmt.Sprintf(`echo "Migrating via RMAN: %s -> %s"; rman target / auxiliary /@%s <<EOF
+		srcV, err := opsHost("source", req.Source)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		tgtV, err := opsHost("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(
+			`echo %s; rman target / auxiliary /@%s <<EOF
 DUPLICATE TARGET DATABASE TO %s FROM ACTIVE DATABASE;
 EXIT;
 EOF
-echo "RMAN migration completed"`, req.Source, req.Target, req.Target, req.Target)
+echo "RMAN migration completed"`, opsEcho("Migrating via RMAN: %s -> %s", srcV, tgtV), tgtV, tgtV)
 	case "goldengate":
 		script = `echo "=== GoldenGate Status ==="; ggsci <<EOF
 INFO ALL
@@ -436,7 +567,12 @@ func (s *Server) handleOracleRAC(w http.ResponseWriter, r *http.Request) {
 	case "grid":
 		script = "echo \"=== Grid Infrastructure ===\"; crsctl check crs; crsctl query crs activeversion; crsctl stat res -t | head -40"
 	case "asm":
-		script = fmt.Sprintf(`echo "=== ASM Disk Groups ==="; asmcmd lsdg; echo "---"; asmcmd ls /%s 2>/dev/null || true`, req.DiskGroup)
+		dgV, err := opsOracleName("diskGroup", req.DiskGroup)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo "=== ASM Disk Groups ==="; asmcmd lsdg; echo "---"; asmcmd ls /%s 2>/dev/null || true`, shellquote.Quote(dgV))
 	case "voting":
 		script = "echo \"=== Voting Disks ===\"; crsctl query css votedisk"
 	case "scanvip":
@@ -446,13 +582,23 @@ func (s *Server) handleOracleRAC(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Adding node %s"; addnode.sh -silent "CLUSTER_NEW_NODES={%s}" 2>&1 | tail -20 && echo "Node %s added"`, req.Node, req.Node, req.Node)
+		nodeV, err := opsHost("node", req.Node)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s; addnode.sh -silent "CLUSTER_NEW_NODES={%s}" 2>&1 | tail -20 && echo "Node %s added"`, opsEcho("Adding node %s", nodeV), nodeV, nodeV)
 	case "node-remove":
 		if req.Node == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "node is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Removing node %s"; crsctl delete node -n %s 2>/dev/null; srvctl remove nodeapps -n %s -f 2>/dev/null; echo "Node %s removed"`, req.Node, req.Node, req.Node, req.Node)
+		nodeV, err := opsHost("node", req.Node)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s; crsctl delete node -n %s 2>/dev/null; srvctl remove nodeapps -n %s -f 2>/dev/null; echo "Node %s removed"`, opsEcho("Removing node %s", nodeV), nodeV, nodeV, nodeV)
 	case "health":
 		script = "echo \"=== RAC Health Check ===\"; crsctl check crs; echo \"--- Cluster Resources ---\"; crsctl stat res -t; echo \"--- Nodes ---\"; olsnodes -n"
 	default:
@@ -517,16 +663,31 @@ echo "Audit configured"`
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
 			return
 		}
+		userV, err := opsOracleName("user", req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		ts := req.Tablespace
 		if ts == "" {
 			ts = "USERS"
 		}
-		script = fmt.Sprintf(`sqlplus / as sysdba <<EOF
-CREATE USER %s IDENTIFIED BY "%s" DEFAULT TABLESPACE %s QUOTA UNLIMITED ON %s;
+		tsV, err := opsOracleName("tablespace", ts)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if strings.ContainsAny(req.Password, "\r\n") {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "password must not contain newlines"})
+			return
+		}
+		script = fmt.Sprintf(
+			`sqlplus / as sysdba <<EOF
+CREATE USER %s IDENTIFIED BY '%s' DEFAULT TABLESPACE %s QUOTA UNLIMITED ON %s;
 GRANT CONNECT, RESOURCE TO %s;
 EXIT;
 EOF
-echo "User %s created"`, req.User, req.Password, ts, ts, req.User, req.User)
+echo %s`, userV, opsSQLString(req.Password), tsV, tsV, userV, opsEcho("User %s created", userV))
 	case "password":
 		script = `sqlplus / as sysdba <<EOF
 CREATE OR REPLACE FUNCTION verify_function(username VARCHAR2, password VARCHAR2, old_password VARCHAR2) RETURN BOOLEAN IS
@@ -548,12 +709,26 @@ echo "Password policy configured"`
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "role is required"})
 			return
 		}
-		script = fmt.Sprintf(`sqlplus / as sysdba <<EOF
+		roleV, err := opsOracleName("role", req.Role)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		grantLine := ""
+		if req.User != "" {
+			userV, err := opsOracleName("user", req.User)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			grantLine = "GRANT " + opsSQLString(roleV) + " TO " + opsSQLString(userV) + ";\n"
+		}
+		script = fmt.Sprintf(
+			`sqlplus / as sysdba <<EOF
 CREATE ROLE %s;
-GRANT %s TO %s;
-EXIT;
+%sEXIT;
 EOF
-echo "Role %s created and granted"`, req.Role, req.Role, req.User, req.Role)
+echo %s`, roleV, grantLine, opsEcho("Role %s created and granted", roleV))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

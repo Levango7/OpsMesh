@@ -208,9 +208,12 @@ func (e *Engine) Submit(req *ApprovalRequest) error {
 	cp.Steps = make([]RequestStep, len(flow.Steps))
 	for i := range flow.Steps {
 		cp.Steps[i] = RequestStep{
-			StepID: flow.Steps[i].ID,
-			Order:  flow.Steps[i].Order,
-			Status: StatusPending,
+			StepID:    flow.Steps[i].ID,
+			Order:     flow.Steps[i].Order,
+			Status:    StatusPending,
+			Mode:      flow.Steps[i].Mode,
+			Approvers: append([]string(nil), flow.Steps[i].Approvers...),
+			Timeout:   flow.Steps[i].Timeout,
 		}
 		if flow.Steps[i].Order == 1 {
 			cp.Steps[i].StartedAt = now
@@ -251,13 +254,9 @@ func (e *Engine) applyDecision(requestID, userID, comment, action string) (*Appr
 		e.mu.Unlock()
 		return nil, ErrNotPending
 	}
-	flow, ok := e.flows[req.FlowID]
-	if !ok {
-		// 流被删除：拒绝继续审批。
-		e.mu.Unlock()
-		return nil, ErrFlowNotFound
-	}
-	step, rs, err := validateDecision(req, flow, userID, now)
+	// flow 传 nil：决策只认 Submit 写入的创建时快照，在途请求不随
+	// UpdateFlow/DeleteFlow 改变语义（快照缺失由 validateDecision 兜底报错）。
+	step, rs, err := validateDecision(req, nil, userID, now)
 	if err != nil {
 		e.mu.Unlock()
 		return nil, err
@@ -286,7 +285,7 @@ func (e *Engine) applyDecision(requestID, userID, comment, action string) (*Appr
 		if passed {
 			rs.Status = StatusApproved
 			// 推进到下一步或完成。
-			if step.Order >= flow.LastOrder() {
+			if step.Order >= req.LastOrder() {
 				req.Status = StatusApproved
 				req.CurrentStep = step.Order + 1 // 标记越界=已完成
 			} else {
@@ -398,18 +397,14 @@ func (e *Engine) CheckTimeout(requestID string) (bool, error) {
 		e.notify(&snapshot, HistoryTimeout)
 		return true, nil
 	}
-	flow, ok := e.flows[req.FlowID]
-	if !ok {
-		e.mu.Unlock()
-		return false, ErrFlowNotFound
-	}
-	step := flow.StepByOrder(req.CurrentStep)
-	if step == nil {
+	// 步骤超时按创建时快照的 Timeout 判定，流定义此后变更不影响在途请求。
+	rs := req.StepByOrder(req.CurrentStep)
+	if rs == nil {
 		e.mu.Unlock()
 		return false, nil
 	}
-	rs := req.StepByOrder(req.CurrentStep)
-	if rs == nil {
+	step := rs.SnapshotStep()
+	if step == nil {
 		e.mu.Unlock()
 		return false, nil
 	}
@@ -488,19 +483,19 @@ func (e *Engine) ListPendingApprovals(userID string) []*ApprovalRequest {
 		if r.Status != StatusPending {
 			continue
 		}
-		flow, ok := e.flows[r.FlowID]
-		if !ok {
+		// 待办可见性按创建时快照的审批人与模式判定，流定义此后变更不影响在途请求。
+		rs := r.StepByOrder(r.CurrentStep)
+		if rs == nil {
 			continue
 		}
-		step := flow.StepByOrder(r.CurrentStep)
+		step := rs.SnapshotStep()
 		if step == nil {
 			continue
 		}
 		if !isApprover(step, userID) {
 			continue
 		}
-		rs := r.StepByOrder(r.CurrentStep)
-		if rs == nil || rs.HasDecided(userID) {
+		if rs.HasDecided(userID) {
 			continue
 		}
 		// sequential 模式：仅当前应审批人可见。
@@ -542,7 +537,7 @@ func (e *Engine) notify(req *ApprovalRequest, action string) {
 	e.notifier(req, action)
 }
 
-// cloneRequest 深拷贝请求（含 Steps 与 Decisions）。
+// cloneRequest 深拷贝请求（含 Steps、Decisions 与快照审批人列表）。
 func cloneRequest(r *ApprovalRequest) *ApprovalRequest {
 	out := *r
 	if r.Steps != nil {
@@ -551,6 +546,9 @@ func cloneRequest(r *ApprovalRequest) *ApprovalRequest {
 			out.Steps[i] = r.Steps[i]
 			if r.Steps[i].Decisions != nil {
 				out.Steps[i].Decisions = append([]Decision(nil), r.Steps[i].Decisions...)
+			}
+			if r.Steps[i].Approvers != nil {
+				out.Steps[i].Approvers = append([]string(nil), r.Steps[i].Approvers...)
 			}
 		}
 	}

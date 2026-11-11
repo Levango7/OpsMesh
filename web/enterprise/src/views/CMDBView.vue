@@ -51,7 +51,7 @@
               <label>{{ $t('cmdb.attrs_label') }}</label>
               <textarea v-model="form.attrsRaw" rows="3" placeholder='{"env":"prod"}' style="width:100%" data-testid="cmdb-create-attrs" />
             </div>
-            <Button variant="primary" size="md" native-type="submit" data-testid="cmdb-create-btn">{{ $t('cmdb.create_btn') }}</Button>
+            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" :title="submitting ? $t('common.loading') : ''" data-testid="cmdb-create-btn">{{ $t('cmdb.create_btn') }}</Button>
             <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']">{{ store.msg }}</p>
           </form>
         </div>
@@ -116,6 +116,9 @@ const RelationGraph = defineAsyncComponent(() => import('@/components/RelationGr
 
 const store = useCmdbStore()
 const form = reactive({ ciType: '', name: '', attrsRaw: '' })
+// 在飞态（P1-8 余项）：CI 创建请求未返回前禁用提交 + handler 重入守卫——
+// 表单回车/连击会重复创建配置项（CMDB 的 create 不幂等）。
+const submitting = ref(false)
 
 // 关系图视图模式：force 力导向 / topology 网络拓扑 / list 列表
 const graphMode = ref('force')
@@ -143,11 +146,13 @@ const hasAttrs = computed(() => center.value.attrs && Object.keys(center.value.a
 
 function onOpenCI(row) { store.openGraph(row.id) }
 async function onCreate() {
+  if (submitting.value) return
   let attrs = {}
   if (form.attrsRaw.trim()) {
     try { attrs = JSON.parse(form.attrsRaw) }
     catch (e) { store.msg = t('cmdb.attrs_parse_failed') + e; store.error = 'json'; return }
   }
+  submitting.value = true
   try {
     const r = await store.create({ ciType: form.ciType, name: form.name, attrs })
     store.msg = `[${r.s}] ${JSON.stringify(r.j)}`
@@ -156,6 +161,8 @@ async function onCreate() {
   } catch (e) {
     store.msg = 'error: ' + (e.j?.error || e.message)
     store.error = 'create'
+  } finally {
+    submitting.value = false
   }
 }
 

@@ -4,6 +4,497 @@
 
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
+
+## [Unreleased-批次 13 注入面收口] — 2026-11-11（余量 75 文件 / 190 处 → 0；310 → 190（批次 12）→ 0）
+
+- **为什么是真缺陷面**：与批次 12 同一张判定表——这 190 处把请求体字段裸拼进要下发到
+  agent 的 shell 脚本，或把用户输入（含 `$(id)` / 反引号 / 分号）直接塞进审计/告警/
+  通知/回显串。agent 以 `sh -c` 执行 ⇒ **已授权调用者可 RCE 到 agent**；双引号不是防护。
+  鉴权面无缺口（均经 `dispatchKafkaTask` → `subsystemAuthorize` 的 `task:write` 闸）。
+- **范围（190 处，`scripts/shell-injection-audit.py --json` 同一口径，310 → 190 → 0）**：
+  本批 75 个文件（含审计/测试/helper）全部收口；余量分类：`sprintf 161 / concat 29`。
+  其中约一半是**非 shell 的审计 Detail 串**（`AuditEvent.Detail` / 告警静默原因 /
+  规则 severity / 通知正文）：经 `opsSQLString`（双写单引号）后同批清零。
+- **做法（按字段角色收口）**：
+  ① **动作/token/版本/repo/job/target 类**⇒ `opsIdentifier`（`^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$`，
+     含元字符一律 400；taskAction 一律从已校验的 `actionV` 派生）。
+  ② **主机/端点**⇒ `opsHost`；**路径**⇒ `mqPath`/`shellquote.ValidatePath`（ehcache 配置）；
+     **Redis maxmemory 值**⇒ `opsMemoryValue`；**文件名**⇒ `opsFileName`。
+  ③ **列表 / 配置 / args**⇒ `opsArgList`（token 字符白名单，元字符 400）；
+     **heredoc 目标**⇒ 整体 `shellquote.Quote`（保 XML / JSON 本体不转义）。
+  ④ **回显消息**⇒ `opsEcho` 整条 Quote；**审计 Detail / 告警正文**⇒ `opsSQLString`。
+  ⑤ **k8s_cluster_deploy**：`generateHAProxyConfig` 改返回 `(string, error)`，端点白名单
+     失败 fail-fast（不再静默拼坏 haproxy.cfg）；kubeadm join 的 master/token/endpoint 同样校验。
+  ⑥ **kafka_ops_ext**：JSON payload（`--topics-to-move-json-file <(echo …)` / delete-records）
+     整体 `shellquote.Quote`。
+- **能力降级点（如实登记）**：
+  - `action` / repo / job / 版本 / target / service / group / username 等字段收窄为
+    `^[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}$`（含空格/引号/元字符者 400）。
+  - ehcache 配置路径必须为绝对路径且无 shell 元字符（`ValidatePath`），违反 400。
+  - MPI/Hadoop/K8s 侧 `version` 同批白名单（`opsIdentifier`）。
+  - 审计 Detail 里的单引号按 SQL 语义双写（`'` → `''`）——既是注入面收口，也让
+    审计串在含引号时仍可辨。
+- **守卫留痕**：`scripts/shell-injection-audit.py` 的 `VALIDATE_MARKERS` 增列批次 13 新增的
+  校验助手名（`opsMemoryValue(` / `opsHTTPURL(` / `opsIdentifier(` ——此前批次 12 已增列其余；
+  只增不改历史口径）。盘点器判据 C/D 口径不变（190 → 0）。
+- **本批也删除 `opsHostAllowEmpty` / `opsDBNameAllowEmpty`**（golangci-lint `unused`，
+  与批次 12 `76662f1` 相同——批次 13 自 c5b1ab9 直楼，二者均未被任何调用方引用）。
+- **顺带修复（内容无关红）**：本批 CI 触发 `govulncheck` **GO-2026-6859**（`net/http@go1.26.10` 的 MaxBytesReader header race → HTTP/1 server crash；修于 **go1.26.11**），exit code 3 判红 `security` job。同一 commit 在更早两个 run 里该 job 是 pass ⇒ 判定为**漏洞库刷新**导致的内容无关红（与 0.16.0 记载的 1.26.9→1.26.10 同族）。处置：Go 工具链机械升版 **1.26.10 → 1.26.11**（`go.mod` toolchain + `ci.yml` 7 处 + `release.yml` 1 处），**不改 workflow 逻辑、不改依赖、不改代码**；workflows 属禁区，已在 `docs/INBOX-KILO.md` 留痕请复核。
+- **验证**：`go build ./...` 0 错误；`go vet ./...` 0 警告；`gofmt -l` 干净；
+  `go test ./internal/controlplane/ -count=1` **ok 67.8s**（含 TestB12* 守卫）；
+  盘点器 `--json` 总数 **0**。
+- **备注**：本批与批次 12 共享 `ops_sql.go` / 审计脚本 ⇒ 基于批次 12 分支直楼；
+  同时须在批次 12 合入后将本分支 rebase 到 main 上重新过 CI。
+
+## [Unreleased-批次 12 注入面收口] — 2026-11-10（OLAP/备份/硬件/向量/编译/安全/Oracle/OS 调优 8 文件：120 处用户字段未转义直插 → 白名单/整体 Quote/heredoc 前闭合拒绝三类收口）
+
+- **为什么是真缺陷面**：这 120 处把请求体字段裸拼进要下发到 agent 的 shell 脚本，agent 以
+  `sh -c` 执行 ⇒ `$(id)` / 反引号 / 分号被**真实执行**。鉴权面无缺口（均经 `dispatchKafkaTask`
+  → `subsystemAuthorize` 的 `task:write` 闸）⇒ **已授权调用者可直接打到 agent 的 RCE**。
+  **双引号不是防护**：POSIX 双引号内 `$` 与反引号照样展开。
+- **范围（120 处）**：盘点器 `scripts/shell-injection-audit.py --json`（同一份审计脚本，
+  合上批次 11 后的基线 **310 → 190**）。本批 8 文件、判据 C/D 命中 **120 → 0**：
+  `olap_ext_ops.go 20 / script_compile_ops.go 20 / security_ext_ops.go 18 /
+  oracle_ops.go 14 / os_tuning_ops.go 14 / db_backup_ops.go 12 / hardware_ops.go 11 /
+  vector_ext_ops.go 11`。
+- **做法（不能一律 Quote，按字段角色收口）**：
+  ① **标识符/资源名/对象名**（user / db / table / view / name / module / scheduler /
+     diskgroup / tablespace / profile / SQL_ID / 补丁号 / sysctl 参数 / 模板名 / 设备名 /
+     限额 / 文件名 / 表名列表 / 域名 / 主机）⇒ **字符集白名单**，非法 400（`ops_sql.go`
+     新增 `opsHostRe` / `opsDBNameRe` / `opsOracleNameRe` / `opsFileNameRe` / `opsTableListRe` /
+     `opsPatchIDRe` / `opsSQLIDRe` / `opsSysctlParamRe` / `opsSysctlValueRe` / `opsModuleRe` /
+     `opsDeviceNameRe` / `opsSchedRe` / `opsDigitsRe` / `opsDomainRe` / `opsNameRe` +
+     `opsHTTPURL`（仅 http/https，消灭 file:// 协议面）；复用 `mqName` / `mqPath` / `mqVersion`）。
+  ② **用户代码/脚本内容**（script/exec、compile、template create）⇒ 走 heredoc 且**拒绝含
+     单独一行 `SCRIPT_EOF` 的内容**（`opsHeredocContent`，否则 heredoc 提前闭合 ⇒ 其后的
+     内容被 shell 当命令执行）。
+  ③ **整条 SQL 语句**（Create/Drop Materialized View、ALTER SYSTEM、EXPORT TABLE、SQL Tuning
+     Advisor、Trino 自由查询）⇒ **Go 层拼语句、整体 `shellquote.Quote`**（`trino --execute %s`、
+     `-e %s`、`--query %s` 一律 Quote 后透传——SQL 层是方言任意的，shell 层才有边界）。
+  ④ **CLI 选项/目标参数串**（maven/gradle/npm/yarn/cargo/make/cmake/go/python 的
+     `goal|task|target|cmd`、exec 的 `args`、sysctl 值、ULIMIT、profile）⇒ 复用
+     `shellquote.ValidateArgList`（token 字符白名单，空格拆分；任何 shell 元字符 400）；
+     构建 `cmd` 的字符串必须从**已校验的** `actionV` 派生。
+  ⑤ **回显消息**⇒ `opsEcho` 整条 Quote（双引号内 `$`/反引号会展开）。
+- **能力降级点（如实登记）**：
+  - 主机名收窄为 `^[A-Za-z0-9][A-Za-z0-9.:_-]*$`（`:` 放行 IPv6；不再接受空格/引号/元字符）。
+  - 库名/表名/视图名/用户名/磁盘组名/表空间名/角色名/OBJECT 名/补丁号/SQL_ID 收窄为
+    各自白名单（不再接受 `*` 之外以外的符号；表列表允许 `SCOTT.EMP,*DEPT,ORDERS@remote`）。
+  - sysctl `param/value` 收窄为 `^[A-Za-z0-9_.-]*$` / `^[A-Za-z0-9_.,:%=-]*$`（无空格）。
+  - `ulimit -n` 仅接受纯数字。
+  - 扫描目标（sqlmap/xsser/curl）仅放行 `http://` / `https://`（消灭 `file://` /
+    `javascript:` 等协议面）；trivy fs/semgrep/gosec/bandit 的路径必须为**绝对路径**。
+  - `OracleHome` 非默认 `$ORACLE_HOME` 时必须为**绝对路径**；补丁号必须 5–15 位纯数字；
+    `TargetVersion` 走 `mqVersion` 白名单。
+  - maven profile 白名单 `^[A-Za-z0-9][A-Za-z0-9._,:@-]{0,255}$`；`SCRIPT_EOF` 单独成行的
+    源码内容 400（heredoc 提前闭合拒绝）。
+  - WAF delete-rule 语义由 sed 正则删除改为**字面整行删除**（`grep -vxF`）——与
+    add-rule 逐字回写自定义规则的形态一致。
+  - 参数串/目标字段含 shell 元字符者一律 `400`（此前可执行）。
+- **测试**：新增 `b12_injection_test.go`（TestB12×6 / AST 污点传播复用批次 9 机制、
+  error-checked 助手断言、值位置 `$(touch marker)` 语义判据经真 sh 证明不落地、白名单单点
+  用例、`ValidateArgList` 拒收用例）；`TestB12*` 全绿；`go vet` / `gofmt` 干净。
+- **守卫留痕**：`scripts/shell-injection-audit.py` 的 `QUOTE_MARKERS` 增列批次 12 的 8 个
+  收口助手名（只增不改历史口径）。盘点器判据 C/D 口径不变（310 → 190；批次 12 面 120 → 0）。
+## [Unreleased-airgap 全离线安装包] — 2026-11-11（D1：构建机打 bundle、断网机直接起栈）
+
+- **交付**：`deploy/scripts/build-airgap-bundle.sh`（镜像清单从 compose prod +
+  prod-proxy overlay 的 `image:` 行机械派生，`${OPSMESH_VERSION}` 两种变体代入后去重；
+  守卫图 `opsmesh/controlplane:${VERSION}` 缺即判红；镜像 `docker save` + 逐图 sha256 +
+  helm chart + 生产 values + 部署树 + 验收脚本打单一 tar，CHECKSUMS.sha256 覆盖包内全部
+  文件）+ `deploy/scripts/install-airgap.sh`（解包→`sha256sum -c` 全量比对→按 manifest
+  `image` 行 `docker load`→compose 形态 `deploy.sh init` + `up --no-build -y`，离线机不
+  编译不拉取；helm 形态只装本地 chart）+ 双 selftest（假 docker/helm 夹具 22 例：派生/
+  代入/缺图判红/守卫图判红/用法错/装载顺序/校验和篡改判红/非空目标拒/helm 形态）。
+- **文档**：`docs/airgap-install-sop.md`（构建机/搬运/断网机三段，退出码与判据表；
+  断网机实跑为用户侧步骤）。
+- **验证**：本机真跑构建（4 夹具图真 docker save + helm package 真 tgz + 70M 单一 tar）
+  与真跑 install（解包→校验和 10 文件全绿→docker load 4 图真装载→helm 形态提示）全链路
+  通过；selftest 22/22 绿。`latest` 标签禁止（exit 1，同 deploy.sh:239-242 口径）。
+- **边界（如实记账）**：只含构建机架构镜像层（龙芯/飞腾属 A1 多架构项，不在本次）；
+  第三方图本地缺失时走 docker-pull-retry.sh 有界重试，`AIRGAP_SKIP_PULL=1` 下缺图即红。
+
+## [Unreleased-TD-89 残余表述对齐] — 2026-11-10（裁决⑤：service containers 换源已闭环，更正台账过期表述）
+
+- **背景**：TD-89 工程面已被 bf48ad76 闭环（ci.yml 三处 service containers 换
+  `mirror.gcr.io/library/*`、新增 mirror-digest-check.yml 以 docker.io 与 mirror.gcr.io
+  manifest digest 相等为硬判据、首证 run 42296613969 success；b600459 随 run
+  42728964139 12 腿全绿含 integration/services），但 `docs/tech-debt.md` 的 TD-89 行
+  （:161）与 TD-94 行（:142）仍写「已知残余面…仍待选项②」的过期表述。
+- **更正**：两行各追加带日期更新段（TD-89 行：残余面闭环 + ci.yml:469/:706/:1045
+  三处同口径过期注释属 FROZEN 区只报不改 + 选项 A 仍待 owner 配置；TD-94 行：「仍未
+  覆盖」的 service containers 一处随换源闭环）。行数/结构不变（td-ledger-check 标记
+  rows=66 不动），不改代码、不动 .github/workflows/。
+
+## [Unreleased-alert-svc 在班查询确定性] — 2026-11-10（裁决③：同租户多排班迭代顺序）
+
+- **缺陷**：`services/alert-svc/internal/escalation/escalation.go` 的 `GetOnCallForTenant`
+  直接 `for range e.schedules`——Go map 遍历顺序随机，同一租户挂多个排班时
+  `/oncall/current`（escalation_http.go 消费面）同一时刻可能返回不同排班的在班人。
+- **修复**：收集匹配租户的排班 ID，`sort.Strings` 升序后取最小 ID 的活动条目；
+  无活动条目时返回 nil 的语义不变。
+- **测试**：`escalation_test.go` 新增同租户三排班用例（注册顺序与字典序刻意相反，
+  连续 20 次查询均须返回最小 ID 排班；删除最小 ID 排班后结果落到次小 ID；他租户排班
+  不参与判定），并以变异验证（排序空转）测试能抓红；`-race` / `go vet` /
+  `golangci-lint --config .golangci.services.yml` 均 0 issues。
+- **文档**：`docs/operations.md:1196` 写面口径 2026-10-30 已按方法矩阵更正（GET+POST 如实），
+  本轮无需再动。
+
+## [Unreleased-knowledge 检索两处缺陷] — 2026-11-10（裁决②：topK 状态污染 + 空 choices panic）
+
+- **缺陷 a（状态污染）**：`internal/knowledge/retrieval.go` 的 `Retrieve` 把 `len(scored)`
+  写回接收者字段 `r.topK`——`HybridRetriever` 是共享单例，首查结果不足 topK 时后续所有查询
+  的上界被永久收窄（实测 topK=5 首查 2 条后恒为 2）。改为局部变量 `limit`。
+- **缺陷 b（空 choices panic）**：`Rerank` 直接取 `resp.Choices[0]`，上游返回空 choices 时
+  panic。补 `len(resp.Choices) == 0` 判空，沿用 LLM 调用失败同一兜底策略（原始顺序返回）。
+- **测试**：`retrieval_test.go` 新增 2 个负向例（首查结果数不得写回 topK / 空 choices 回落
+  原始顺序），并以变异验证两例均能在缺陷还原时抓红；`-race` 全绿，`go vet` /
+  `golangci-lint` 0 issues。
+
+## [Unreleased-审批流创建时快照] — 2026-11-10（裁决①：在途请求与流定义变更解耦）
+
+- **语义选型**：审批流语义取「创建时快照」——`Submit` 把每步的 `Mode`/`Approvers`/`Timeout`
+  快照进 `RequestStep`（`services/task-svc/internal/approval/request.go`），
+  `validateDecision`/`CheckTimeout`/`applyDecision`/`ListPendingApprovals` 全部改读快照。
+  「实时读流定义」与「双语义兼容（RDB/AOF 式）」均不成立：同一字段的裁决权只能有一个来源；
+  「只改注释」会留下注释承诺与实现相反的坑（旧实现实时读 `flow`，`UpdateFlow`/`DeleteFlow`
+  会改变在途请求语义，与 `engine.go` 既有注释承诺相反）。
+- **行为变化**：`UpdateFlow` 不再影响在途请求的审批人/模式/超时；`DeleteFlow` 不再阻断在途请求
+  的审批与超时判定（旧实现在途请求遇流删除返回 `ErrFlowNotFound`）；请求仅内存态、无持久化行，
+  无旧数据迁移面。
+- **测试**：`engine_test.go` 新增 3 个快照语义用例（UpdateFlow 不影响在途 / DeleteFlow 后在途仍活且
+  超时按快照触发 / 待办列表跟快照走）+ `TestSubmit_InitializesState` 快照字段断言；
+  `internal/approval` 包 `-race` 全绿，`go vet` / `golangci-lint` 0 issues。
+
+## [Unreleased-前端在飞态守卫收尾] — 2026-11-09（P1-8 余项：Alerts / CMDB / Deploys 三视图，条目清零）
+
+- **背景**：`docs/qa-sweep-2026-11-06.md` P1-8 台账——批 2 修了 ScriptsView / APIKeysView 等 9 视图后，
+  余下这三个视图的写入口**零在飞态**：点一次能连点，连击 = 重复下发。
+- **修复（PR #26，merge `46b14fb9`）**：
+  - `AlertsView`：单条告警的 ack / silence 在飞时该行两按钮禁用 + handler 重入守卫（两接口都不幂等，
+    连击会重复 ack / 重复静默并重复写审计）；
+  - `CMDBView`：CI 创建表单提交期间禁用提交按钮 + 重入守卫（回车/连击会重复创建配置项）；
+  - `DeploysView`：注册表单 `submitting` + 行级 execute/rollback 按 id 在飞态禁用 + 重入守卫
+    （部署执行/回滚非幂等，连击 = 对生产机重复下发/重复回滚）。
+- **形态与批 2 一致**：`:disabled` + `:title` 说明 + `finally` 复位 + handler 首行 `if (inFlight) return`；
+  行级操作按 id 用 `Set` 记录在飞，同一视图的其它行不受阻。
+- **P1-8 前端在飞态条目至此清零**（后续新增写入口按同一判据扫描）。
+- 验证：eslint 三文件 0 告警；`vite build`（全量模板编译）通过；全量前端 74 文件 / 1379 用例全过。
+
+## [Unreleased-HTTP 错误体统一] — 2026-11-09（BB-03 批 A：25 处 text/plain 错误体 → JSON + 静态棘轮门禁）
+
+- **为什么是真缺陷面**：仓内非测试代码有 56 处 `http.Error(w, msg, code)`——写的是 **text/plain 裸文本**，
+  与对外契约（`docs/api-specification.md` 勘误后的错误体 `{"error":"<msg>"}`）不一致；同族路由两套错误形状，
+  客户端要写两种解析分支（本轮五维排查 BB-03 立条）。
+- **批 A（PR #21，merge `3062af7e`，3 文件 25 处）**：`internal/cmdb/handler.go`(17) + `internal/logstore/handler.go`(1)
+  + `internal/orchestration/handler.go`(7) → 一律改走**各包既有** `writeJSON`（实现已设 `Content-Type: application/json`），
+  **HTTP 状态码与错误文案逐字不变**（纯形状收敛，零行为语义变化）。
+- **新增静态棘轮门禁**（`internal/gates`）：白名单外出现任何 `http.Error(` 即判红；含**探测器自证**（注释/字符串里的不算、
+  真实调用必判）与**扫描面自证**（非测试 `.go` 文件数地板 + 永久豁免文件必须真被扫到，防「扫描器坏了导致假绿」）；
+  **豁免过期判红**（债务不许藏在豁免里）；**变异电池已实测**（注入探针 ⇒ 红并点名 offender；删除 ⇒ 复绿）。
+- **批 B（PR #24，merge `c22cdc3e`，收口）**：`internal/deploy/handler.go`(17) + `auto_advance.go`(3)
+  + `internal/controlplane/device_metrics.go`(1) + `federation.go`(4) + `sse.go`(2) + `system_ops.go`(1)
+  → 同上处理；门禁白名单同步从 7 行收到 **1 行**。
+- **收编结果 56 → 3**：唯一剩余的 `internal/controlplane/enterprise_ui.go`（3 处）为**永久豁免**——
+  浏览器资产面（embed 静态 UI），405/503 保持 text/plain 便于浏览器直接显示，改 JSON 反而更差；
+  该文件即门禁唯一白名单条目，**此后新增任何一处 `http.Error` 都会 CI 判红**。
+- **本地门教训（已入本线记忆）**：本仓 `build-test` 第 10 步 `golangci-lint` 零容忍——本批首推就栽在
+  `QF1001: could apply De Morgan's law`（本地 build/test/gofmt 全绿也看不见它），修后本地 lint 0 issues、CI 27/27 全绿。
+
+## [Unreleased-SSE 取消帧契约] — 2026-11-08（task_cancel 补进前端事件契约 + 取消即时刷新，issue #16）
+
+- **真缺陷（客户可见面）**：服务端 `internal/controlplane/server_tasks.go` 的 `publishTaskCancel` 发
+  `task_cancel`（data 键 `taskID`/`agentID`；`docs/sse-protocol.md` 事件枚举第 11 种），
+  但前端 `web/enterprise/src/api/sse.js` 的 `EVENT_CONTRACT` 只登记 10 种 ⇒ `validateEnvelope` 判否**丢帧**，
+  UI 永远收不到取消信号（全仓 `grep -rn task_cancel web/enterprise/src` 命中 0）。
+- **修复（PR #20，merge `42991b3f`）**：契约补 `task_cancel: ['taskID','agentID']`（头注 10 → 11 种）；
+  `App.vue` 新增 `case 'task_cancel'` → 派发 `opsmesh:task-cancel`（同 `task_status` 的事件总线范式，
+  视图懒加载也能收）；`TasksView` 复用既有 2s 节流 refetch（trailing，保证最后一次必刷）+
+  待审批计数刷新（`onUnmounted` 对称退订）。
+- **UI 消费面裁决（issue #16 §3 交 zcode 线定夺）**：**取消必须即时反映在任务列表**——事件驱动 refetch，
+  **不做乐观改行**（服务端为准；取消事件稀疏，refetch 成本可接受），避免「已取消仍显示 running」这类陈旧态
+  （与本轮五维排查 D2/D4 命中的同类缺陷同源）。
+- **顺带修正**：`sse.test.js` 的 `device_online` 夹具删掉服务端从不发的 `addr`
+  （`internal/controlplane/grpc/grpc.go` 实发 `deviceID/segment/agentID/hostname`）。
+- 测试：`sse.test.js` 新增 task_cancel 帧解析 + 契约在位/字段校验（缺 `agentID` 拒绝）两例，
+  契约枚举断言 10 → 11 种（本地 **17/17 通过**）。
+
+## [Unreleased-复核批执行] — 2026-11-09（深度复核批执行：D1 执行历史回放实现 + D2 灰度自适应推进生产接线 + W1-W5 文档措辞）
+
+- **D1 执行历史回放（此前 README 登记为 ❌「有历史无回放」）**：新增
+  `POST /api/v1/workflows/{id}/runs/{run_id}/replay`（`internal/orchestration/handler.go`
+  replayRun → `ReplayRun` → 内部 `trigger(..., originRunID)`）。以历史运行为血缘起点重放：
+  新 run 的 `origin_run_id` 指向原 run（`WorkflowRun.OriginRunID`），写库后不可变
+  （`UpdateRun` 不回写该列）；origin 按租户过滤查找，原 run 不存在或跨租户一律 404，不泄露存在性。
+  `workflow_runs` 为代码自建表，`origin_run_id` 列建表即含 + 旧库幂等 ALTER 兜底
+  （`isDupColumnErr` 容忍 1060，模式同 `internal/deploy/sql.go`）。测试
+  `internal/orchestration/replay_test.go` 4 组（血缘建立/不可变/origin 缺失与跨租户/HTTP 形态
+  201/404/400/405）；变异验证：断血缘写 ⇒ 3 例红，恢复后绿。
+- **D2 灰度指标自适应推进（实现齐全但生产未接线，`POST /auto-advance` 恒 501）**：
+  `NewDeployHandler` 两分支统一经 `newDeployHandlerWired` 装配 `AutoAdvanceManager`
+  （`internal/controlplane/factory/server_factory.go`）；端点先做同步预检（404/400）再 202 异步推进
+  （`internal/deploy/auto_advance.go`）。测试 `TestNewDeployHandler_AutoAdvanceWired` 断言 404 +
+  body 含 "deploy 999"（未接线时恒 501）；变异验证：删装配块 ⇒ 该例红，恢复后绿。
+- **W1-W5 文档措辞**（`docs/product-design.md`）：等保三级报告→对照表；商业支持标注
+  「商务洽谈项，未交付」；Dockerfile×5→共享 Dockerfile.service × 5 域；单网段 200-2000 台加注
+  「设计目标，压测证据待 P3」；审计 6 月留存规划→已实现（默认 180 天，可调）。
+  README 编排部署/工作流两行的 D1/D2 宣称随实现转正并补证据锚点。
+
+## [Unreleased-Kafka图库GPU面收口] — 2026-11-08（Kafka/Graph/GPU 运维面：90 处用户字段未转义直插 → 五类收口：命令名白名单 / 图库语句双层收口 / Kafka CLI 选项枚举 / URL-JSON-回显整体 Quote / heredoc 提前闭合拒绝）
+
+- **为什么是真缺陷面**：这 90 处把请求体字段**裸拼**进要下发到 agent 的 shell 脚本，
+  agent 以 `sh -c` 执行 ⇒ `$(id)` / 反引号 / 分号被**真实执行**。鉴权面无缺口（均经
+  `dispatchKafkaTask` → `subsystemAuthorize` 的 `task:write` 闸）⇒ 这是**已授权调用者
+  可直接打到 agent 的 RCE**。**双引号不是防护**：POSIX 双引号内 `$` 与反引号照样展开
+  （`echo "…$(id)…"` 一样被执行）。
+- **范围（90 处）**：判据 C **71 行** ∪ 判据 D **26 行**（去重后的行；D 的**条目数**是 35）
+  ⇒ **并集 87 行**，另加 **3 处多行 `fmt.Sprintf` 的 heredoc 形态**（判据 C/D 是**行级**
+  文本判据 ⇒ 多行 Sprintf 全部漏判，已逐处实测）⇒ 实际 **90 处**。
+  `kafka_ops.go` 14 / `kafka_ops_ext.go` 8 / `kafka_scale_ops.go` 15 /
+  `kafka_advanced_ops.go` 7 / `kafka_final_ops.go` 5 / `graph_ext_ops.go` 20 /
+  `gpu_ext_ops.go` 18。
+- **做法分五类（不能一律 Quote）**：
+  ① **命令名**（Graph 的 `req.Type`，在 `%s --version` 里要**当二进制执行**）⇒ 这是
+     **命令注入**（比 shell 注入更严重：载荷可指向任意二进制/脚本），Quote 挡不住 ⇒
+     **枚举白名单**，复用同包 `graph_ops.go` 已有的 `allowedGraphTypes`
+     （neo4j/nebulagraph），非法值 400 拒收。
+  ② **双层注入**（Cypher / nGQL 语句：`cypher-shell … "CREATE USER %s SET PASSWORD
+     '%s'"`）⇒ 图库层是字符串字面量、shell 层是双引号段，**两层都得收**：标识符走
+     `graphIdent`（复用既有 `graphDatabaseRe`）、属性定义片段走 `graphPropDefs`、密钥走
+     `graphSecret`、路径走 `graphPath`；整条语句再由 `cypherShell` / `nebulaConsole`
+     做 shell 层 Quote。**密钥用白名单而不是 Cypher 层转义**：Cypher 与 nGQL 的 `\'`
+     规则不一致 ⇒ 转义不可证 ⇒ 改用**方言无关**的字符集白名单。
+  ③ **CLI 选项名 / 选项值**（Kafka ACL 的 `--operation %s` 与 `--%s`）⇒ Quote 只保证
+     shell 层安全，`Operation=All --add-config x` 这类载荷在 **Kafka CLI 层**仍是
+     「多传了一个选项」⇒ **枚举白名单**（`kafkaACLOperation` / `kafkaACLResourceFlag`）；
+     资源名走 `kafkaACLResourceName`（放行 `*` = 全部资源）。
+  ④ **URL 段 / 内嵌 JSON / 自由 JSON / 回显段** ⇒ URL 在 Go 层拼完整后**整体** Quote
+     （**不能**把 Quote 结果塞回双引号段：双引号内单引号是字面量 ⇒ URL 会带上 %27 ⇒
+     必然 404）；内嵌 JSON 的字段值改由 Go 层 map + `json.Marshal` 构造后整体 Quote；
+     用户提供的**自由 JSON** 文本先 `json.Valid` 校验（不合法 ⇒ 400）再整体 Quote
+     （保留用户 JSON **原字节**）；回显段整条消息整体 Quote（双引号内 `$` / 反引号会展开）。
+  ⑤ **heredoc 提前闭合** ⇒ `cat > f << 'EOF'` 的内容本应字面，但载荷里出现**一行恰好
+     等于 EOF** 就会让 heredoc **提前闭合** ⇒ 其后内容被 shell 当**命令**执行（已用真 sh
+     实测：标记文件真的落地）⇒ `kafkaHeredoc` / `kafkaHeredocf` 拒绝「含一行恰好等于
+     分隔符的内容」（400）；目标路径也整体 Quote（助手自洽）。
+- **新增三个收口助手文件**（避免 90 处各写一遍）：
+  - `internal/controlplane/ops_script.go` —— 域无关：`opsURL` / `opsQuoteJSONText` /
+    `opsJSONPayload` / `opsEcho` / `opsPositiveInt` / `opsNonNegativeInt`
+  - `internal/controlplane/graph_script.go` —— 图库面：`graphCommandType` / `graphIdent` /
+    `graphPropDefs` / `graphSecret` / `graphPath` / `cypherShell` / `nebulaConsole`
+  - `internal/controlplane/kafka_script.go` —— Kafka 面：`kafkaACLOperation` /
+    `kafkaACLResourceFlag` / `kafkaACLResourceName` / `kafkaResource` / `kafkaTopic` /
+    `kafkaTopicList` / `kafkaHeredoc` / `kafkaHeredocf`
+- **int 字段不是注入面**：gpu 序号 / 功率上限 / throttle / partition / offset 等是
+  **int** 字段——JSON 解码阶段类型已定（传字符串 ⇒ 400）⇒ 请求体**无法**携带 shell
+  元字符。而盘点器判据 C/D 是**行级文本**判据、不区分字段类型 ⇒ 本批用
+  `opsPositiveInt` / `opsNonNegativeInt` 把「这是整数」显式写进代码（语义与旧逻辑
+  逐字一致：`v<=0` ⇒ 不带该参数；`v<0` ⇒ 0）。
+- **⚠️ 能力降级清单（如实登记）**：
+  - **新增 400**（旧形态是把垃圾原样发下去，由下游自己报错）：
+    - Graph：`type` 非白名单、`user` / `index` / `name` 非法标识符、`props` 非法属性
+      定义片段、`password` 非法密钥、`path` 非法路径
+    - Kafka：ACL 的 `operation` / `resource` / 资源名非法、topic 列表含非法项、
+      connector / schema / realm / clientId / entity / entityName 非法、**自由 JSON**
+      （connector config / schema）非法、KEDA 的 consumerGroup / topic 非法
+    - GPU：kubectl 节点名非法
+    - heredoc：内容含一行恰好 `EOF`
+  - **图库口令字符集收窄**：口令走**方言无关**白名单 ⇒ 含引号 / 反斜杠 / 空白的口令
+    被 400 拒收（换取「图库层注入可证」——Cypher 与 nGQL 的转义规则不一致 ⇒ 不可用
+    转义）；用 `cypher-shell` / `nebula-console` 自带的密码参数传口令不受此限。
+  - **内嵌 JSON 的键序**改由 `json.Marshal` 决定（下游 API 不关心键序，语义等价）；
+    其余取值语义与回显输出**均不变**（Quote 后 shell 剥掉引号，参数与旧形态逐字相同）。
+- **✅ 能力提升（顺带修一个既有 bug）**：旧 mirror-maker 的 heredoc 写在 Go 的
+  **raw string** 里，其中的 `\n` 是**字面**反斜杠+n ⇒ 分隔符被拼成 `EOFnclusters`、
+  heredoc 永不闭合 ⇒ 该功能**今天就跑不起来**（实测：cat 报 "No such file or directory"、
+  配置文件根本没生成）。本批改用**真换行** ⇒ **功能首次可用**；相应的「提前闭合」面
+  随之显性化，已由 `kafkaHeredoc` 收口。
+- **回归测试**（`internal/controlplane/kafka_injection_test.go`，**12 个用例**；38 个
+  「值位置」handler×字段组合 + 23 个「白名单拒收」组合，载荷×用例共 **457 条**）：
+  ①**AST 级污点传播**（**权威口径**，类型感知 + 多行/拼接感知）：污点源 = 请求结构体里
+  **字符串类型**字段，传播 = 局部变量赋值 / 字符串拼接 / Sprintf 实参，净化 = 收口助手
+  返回值；断言 `script = <任意表达式>` 的**整体**都不得携带未净化污点（**拼接形态**也
+  覆盖——本批收口后大量是 `cypherShell(...) + " … " + opsEcho(...)`，只盯 Sprintf 会漏）。
+  ②**白名单助手的 error 必须被检查**（否则 `x, _ := kafkaTopic(req.Topic)` 会把字段
+  **静默清空** ⇒ 白名单形同虚设）。③载荷只以**字面量**形态出现在脚本里（「引号外文本」
+  不含载荷 / 非双引号直插形态）。④白名单字段的载荷必须 **400 拒收且不下发任何脚本**
+  （先用**合法值**证明该路径本身是通的 ⇒ 否则 400 可能来自别的分支 ⇒ 假通过）。
+  ⑤用户提供的**自由 JSON** 非法 ⇒ 400；合法仍受理（能力不误伤）。⑥**真 sh 语义级
+  证明**：把脚本交给真 shell 执行，注入载荷不得产生副作用（标记文件不得落地）。
+  ⑦**URL 整体 Quote 的语义等价证明**：交给真 shell 求值后 URL 与原 URL **逐字相同**
+  （专治「把 Quote 结果塞回双引号段」——文本断言看不出来，因为引号是配对的，但 URL
+  会带 %27 而必然 404）。⑧**命令名白名单**：`req.Type` 非白名单必须 400 且不下发脚本。
+  ⑨**heredoc 提前闭合**：内容含一行恰好 `EOF` ⇒ 400 且不下发脚本。⑩**heredoc 提前闭合
+  向量真实可执行**（真 sh 实测旧形态 ⇒ 标记文件真的落地）——这是判据⑨存在的前提。
+  ⑪**mirror-maker heredoc 形态正确**（含真换行的定界符行 + 闭合行，且不含字面 `\n`）。
+  ⑫**int 字段携带不了元字符**（传字符串 ⇒ JSON 类型校验 400）。
+  **变异验证（旧码必红）**：把 7 个生产文件回退到本批前 ⇒ **12 个用例中 8 个判红**
+  （`NoRawReqInterpolation` / `InjectionQuoted` / `RejectedByWhitelist` /
+  `FreeFormJSONRejected` / **`SemanticNoSideEffect`（语义级：注入载荷真的被执行、标记
+  文件真的落地）** / `CommandNameRejected` / `HeredocEarlyCloseRejected` /
+  `MirrorMakerHeredocIsWellFormed`），共 **491 条错误行**（其中 **235 条**「携带未净化的
+  用户字段」、**116 条**「应 400 拒收」）。剩余 4 个仍绿是**设计如此**：② 盯的是调用方
+  是否检查 error（旧码也没用这些助手）、⑦ 只验 Quote 语义、⑩ 只验 shell 语义、⑫ 验
+  JSON 类型校验——它们**不依赖**本批的收口代码。
+- **守卫机制复用而非复制**：批次 9 的 AST 污点传播机制被**参数化**
+  （`newB9TaintState(safe, strict)`：收口助手集合可注入 + 新增 `strict` 开关做整体断言），
+  批次 10 复用**同一份**实现 ⇒ 污点传播机制只有一份，不会两套实现漂移。批次 9 自身用
+  `newB9TaintState(b9SafeHelpers, false)`（行为不变，已复验 TestB9 5/5 绿）。
+  `cypherShell` / `nebulaConsole` 在批次 10 的 safe 集合中**故意排除**——它们只封 shell
+  层、挡不住图库层注入 ⇒ 排除之后 AST 守卫才能抓到「图库层注入」。
+- **盘点器复算（判据 C `raw_interp` / 判据 D `derived_interp`，与 A/B 独立计数）**：本批
+  在 `QUOTE_MARKERS` 增列批次 10 的 **19 个**收口助手名。这些名字**只在收口后的代码里
+  出现**（旧代码没有它们）⇒ **不改变历史口径**。同口径复算（基线 = `origin/main` @
+  `4737466`，用**同一份** `audit.py`）：
+
+  | 指标 | main 基线 | 批次 10 后 | 差 |
+  | --- | --- | --- | --- |
+  | A/B 总数 | 454 | 371 | **-83** |
+  | 判据 C（raw_interp） | 230 | 159 | **-71** |
+  | 判据 D（derived_interp） | 252 | 217 | **-35 条目** |
+
+  批次 10 面（`kafka_*` / `graph_ext_ops.go` / `gpu_ext_ops.go`）：判据 C **71 行** ∪
+  判据 D **26 行** ⇒ **并集 87 行** ⇒ **0**（C、D 两个判据下均归零）。
+  另（旧基线 `6857c3e` 口径）：A/B 505 → 422、C 269 → 198、D 286 → 251。
+- **CI 同口径复验**：`golangci-lint run ./...`（**全仓**，与 CI 同一口径）**0 issues**；
+  `gofmt -l .` 无输出；`go build ./...` 干净；`go vet ./internal/controlplane/` 干净；
+  `go test ./internal/controlplane/` **整包绿**（含批次 9 的 TestB9 5/5）。
+- **附带清零 main 自带的 lint 债**（8 个文件，与 `origin/main` **逐字相同** ⇒ **不是本批
+  引入**，是 main 自带的 gofmt/goimports 债，本批独立清零，零语义变更）：
+  `internal/controlplane/credentials/password.go` / `internal/controlplane/server_netsec.go` /
+  `internal/cron/schedule.go` / `internal/grpcx/codec.go` / `internal/store/memory/memory.go` /
+  `internal/store/sqlstore/sql.go` / `internal/store/sqlstore/sql_tasks.go` /
+  `internal/tlsutil/reloader.go`。
+- **本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），随下一版归版。
+
+## [Unreleased-ELK面收口] — 2026-11-08（ELK/Elasticsearch 运维面：39 处用户字段未转义直插 → URL/JSON/回显三类整体 Quote）
+
+- **为什么是真缺陷面**：这 39 处把请求体字段**裸拼**进要下发到 agent 的 shell 脚本，
+  agent 以 `sh -c` 执行（`internal/agent/agent.go` 的 `shellCommand`）⇒ `$(id)` / 反引号 /
+  分号被**真实执行**。鉴权面无缺口（均经 `dispatchKafkaTask` → `subsystemAuthorize` 的
+  `task:write` 闸）⇒ 这是**已授权调用者可直接打到 agent 的 RCE**。
+- **范围（39 处）**：`elk_ops.go` 18（index 5 / ilm 3 / snapshot 5 / reindex 1 / security 3 /
+  upgrade 1 / logstash pipeline 1 / opensearch index 1 —— 含派生局部变量
+  `body`/`indices`/`roles`/`index`/`version`/`config` 的溯源收口）；
+  `elk_ext_ops.go` 21（pipeline 4 / template 3 / alias 2 / datastream 3 / maintenance 6 /
+  cluster-settings 1 / ccr 3 / watcher 5）。
+- **做法分三类（不能一刀切）**：
+  ① **URL path 段插值**（index/name/policy/repo/snapshot/watchId/alias/leader/remote…）→
+     在 **Go 层**拼出**完整 URL**，再对**整个 URL** 做 `shellquote.Quote`。
+     **为什么不能把 Quote 结果塞回原处**：旧形态 URL 在**双引号段**内（`"http://…/%s"`），
+     而**双引号内单引号是字面量**——Quote 产出的 `'x'` 会变成 URL 里的 %27 ⇒ 请求必然 404。
+     整体 Quote 后 shell 剥掉外层单引号，curl 收到的 URL 与旧形态**逐字相同** ⇒ 取值语义不变。
+     另有旧形态的 URL **根本没有引号**（如 `_ilm/policy/%s?pretty`），`&`（后台执行符）与空格
+     会被 shell 直接解释 ⇒ 同样是可执行注入。
+  ② **JSON 载荷插值**（`req.Body` / `req.Config` / 嵌在 JSON 字面量里的
+     index/alias/location/indices/source/dest/password/roles）→ 分两种：
+     - 用户提供的**自由 JSON 文本**（`req.Body`、roles）：先用 `json.Valid` 校验
+       （不合法 ⇒ **400 拒收**），再**整体 Quote**（保留用户 JSON 原字节，不重排）。
+       旧形态 `-d '%s'` 在单引号段内，payload 里出现单引号即**破段** ⇒ 可执行注入。
+     - **内嵌 JSON 的字段值**：改由 Go 层 `map` + `json.Marshal` 构造 JSON，再整体 Quote。
+       JSON 转义交给标准库（顺带修掉旧形态 `"` 破坏 JSON 结构的问题）。
+  ③ **回显段**（`echo "…%s…"`）→ 整体 Quote 整条消息（**双引号内 `$` 与反引号照样展开**，
+     `echo "Upgraded to $(id)"` 一样被执行）。Quote 后 shell 剥引号，输出不变。
+- **新增 `internal/controlplane/elk_script.go`**：`esAPIURL`（拼完整 URL 并整体 Quote）/
+  `esQuoteJSONText`（校验 + 整体 Quote）/ `esJSONPayload`（Go 构造 JSON 并整体 Quote）/
+  `esEcho`（整体 Quote 回显消息）四个小助手，避免 39 处各写一遍。
+- **⚠️ 能力降级清单（如实登记）**：
+  - **新增 400**：用户提供的 JSON body / roles **非法 JSON 时在控制面拒收**（旧形态是把垃圾
+    原样发给 ES，由 ES 自己报错）。合法 JSON 的行为与旧形态一致（含字节与键序）。
+  - **内嵌 JSON 的键序改由 Go `json.Marshal` 决定**（ES API 不关心键序，语义等价）。
+  - 其余取值语义与回显输出**均不变**。
+- **回归测试**（`internal/controlplane/elk_injection_test.go`，5 个用例，**68 个**
+  handler×字段组合，载荷×用例共 **270 条断言**（59×4 + 8×4 + 1×2））：
+  ①载荷只以单引号字面量形态出现（「引号外文本」不含载荷 / `$(` / 反引号）；
+  ②自由 JSON 字段非法 ⇒ 400 拒收、合法仍受理（能力不误伤）；
+  ③**真 sh 语义级证明**——把脚本交给真 shell 执行一遍，注入载荷不得产生
+  任何副作用（标记文件不得落地）；④**URL 整体 Quote 的语义等价证明**——交给真 shell 求值后
+  URL 与原 URL **逐字相同**（这一条专治「把 Quote 结果塞回双引号段」的做错方式：文本断言
+  看不出来，因为引号是配对的，但 URL 会带 %27 而必然 404）；
+  ⑤**源码级兜底**——两个文件里不得再有未经 `shellquote.Quote`/`esAPIURL`/
+  `esQuoteJSONText`/`esJSONPayload`/`esEcho` 的用户字段直插脚本。
+  **变异验证（旧码必红）**：把两个生产文件回退到本批前，**4 个用例判红**（第 4 条不依赖
+  这两个文件故仍绿）；其中语义用例实测标记文件**真的落地**
+  （`curl -s "http://localhost:9200/$(touch …)/_mapping?pretty"` 在旧形态下被 sh 真实执行）
+  ——这是可执行注入的证明，不是文本比对。
+- **守卫判据从「行级」升级为「AST 级污点传播」**（本批修正的一个真漏洞）：
+  ⑤原先是**行级**判据（「整行含任意收口 marker 即放过」），有两个漏判口子：
+  ① 同一行里既有已收口的 `req.A`、又有未收口的 `req.B` 时整行被放过；
+  ② **派生局部变量**（`body := req.Body` 之后的 `body`/`version`/`index`/`payload`…）
+     完全不在判据内——而真正的注入点恰恰常是这些派生变量。
+  改为 AST 级污点传播：污点源 = 请求结构体里**字符串类型**字段，传播 = 局部变量赋值 /
+  字符串拼接 / Sprintf 实参，净化 = 收口助手返回值；断言脚本赋值的**每个**实参都不得
+  携带未净化的污点。int 字段（`port`/`maxSegments`）不构成注入面（JSON 解码阶段即 400）。
+  变异验证：旧码下该用例判红并**逐个点名**未收口实参（含 `memLimit`/`version`/`body`
+  等派生变量）；新码下 5/5 绿。
+- **盘点器复算（判据 C `raw_interp`，与 A/B 独立计数）**：本批在判据 C 的 `QUOTE_MARKERS`
+  增列 `esAPIURL(` / `esQuoteJSONText(` / `esJSONPayload(` / `esEcho(` 四个收口助手。
+  这四个名字**只在收口后的代码里出现**（旧代码没有它们）⇒ **不改变历史口径**，
+  批次 7/8 的 333 / 320 / 269 仍可比。同口径复算（批次 8 基线树）：
+  **raw_interp 269 → 230（-39）**，两个 elk 文件全部归零（elk_ops 18 → 0、elk_ext_ops 21 → 0）；
+  A/B 口径 505 → 454（-51）。剩余 230 条散在 50+ 文件，是后续批次的可复算队列。
+- **盘点器新增判据 D（`derived_interp`，派生局部变量形态）**：本批收口过程中发现判据 C 的
+  盲区——C 只抓「`req.*` 字面量**直接**作为 Sprintf 实参」，而真实代码里更常见的是
+  `body := req.Body` 之后再用 `body` 的**派生局部变量**形态（批次 8/9 都要求逐处溯源到
+  派生变量才能确认覆盖完整）。新增判据 D：污点源 = `x := req.Field`，
+  作用域 = **按 Go 函数（handler）边界切块**（避免纯文件级扫描把 A handler 的变量配到
+  B handler 的脚本行），净化 = Quote marker 与 Validate marker 均算已处理，
+  **独立计数** ⇒ A/B 的历史口径（575→563→505）与判据 C 的 333/320/269 **均不受影响**。
+  实测（批次 8 基线树）：**derived_interp 286**，其中 elk_ops 25 + elk_ext_ops 9 = **34 处**
+  为本批待收口面，批次 9 收口后两个文件在 **C 与 D 两个判据下均归零**；
+  批次 8 已收口的 `docker_ops`/`container_ops`/`distfs_ops` 三文件在 D 下亦**归零**（无误报）。
+- **批次拆分说明**：raw_interp 剩余队列的头部六文件共 94 处，其中 **Graph 面的 `req.Type` 是
+  命令名**（要当二进制执行 ⇒ **命令注入**，比 shell 注入更严重，必须枚举白名单），与
+  Kafka/GPU 的 token-Quote 不是同一类改动，混在一批会让 PR 语义模糊。故本批只做 ELK 面 39 处，
+  Kafka/Graph/GPU 另起批次 10（实测口径：判据 C 71 处 = kafka 45 / graph 16 / gpu 10）。
+- **本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），随下一版归版。
+
+## [Unreleased-容器存储面收口] — 2026-11-08（容器/存储运维面：51 处用户字段未转义直插 → `shellquote.Quote` + 新增 `ValidateArgList`）
+
+- **为什么是真缺陷面**：这 51 处把请求体字段**裸拼**进要下发到 agent 的 shell 脚本，
+  agent 以 `sh -c` 执行（`internal/agent/agent.go` 的 `shellCommand`）⇒ `$(id)` / 反引号 /
+  分号被**真实执行**。鉴权面无缺口（均经 `dispatchKafkaTask` / `dispatchFastDFSTask` →
+  `subsystemAuthorize` 的 `task:write` 闸）⇒ 这是**已授权调用者可直接打到 agent 的 RCE**。
+- **范围（51 处）**：`docker_ops.go` 24（compose 7 + network 6 + volume 3 + debug 7 + registry 4）、
+  `container_ops.go` 13（inspect/start/stop/restart/rm/logs/pull/push/build/trivy/sign/tag/rmi）、
+  `distfs_ops.go` 14（ceph pool/fs/rbd、gluster volume/peer/mount、hdfs、seaweedfs）。
+- **做法分两类（不搞一刀切）**：
+  ① **单 token 字段**（name / container / driver / alias / subnet / gateway / image / tag /
+     source / dest / registry / username / password / project / file / service / pool / volume /
+     host / path / remote / version …）→ 一律 `shellquote.Quote`（POSIX 单引号字面量，取值语义不变）。
+     另含 6 处**字符串拼接**面（`opts += " --subnet " + req.Subnet`、`alias = " --alias " + req.Alias`
+     等）——盘点器按 `Sprintf` 实参抓不到，但同样是注入面，本批一并收口。
+  ② **多词形态**字段（docker compose 的 `args`、docker debug exec 的 `command`、gluster 的
+     `mode`「replica 3」与 `bricks`「srv1:/v1 srv2:/v2」）→ 新增 `pkg/shellquote.ValidateArgList`
+     白名单校验（只允许字母数字与 `- _ . , : / = + @` 及空格，**任何 shell 元字符一律 400 拒收**）。
+     为什么不能用 `Quote`：`Quote` 会把 `--scale web=3` 压成**一个**词，改变命令语义。
+- **⚠️ 能力降级清单（如实登记）**：
+  - `POST /api/v1/docker/debug` 的 `action=exec`：`command` 命令串经白名单校验，**含引号 /
+    管道 / 重定向的命令串会被 400 拒收**（如 `sh -c "df -h | head"`）。这是有意收窄——命令串
+    若原样裸拼，注入会落在 **agent 宿主**上（越出容器边界）；容器内执行命令的原语义不变，
+    复杂命令请改走「先落脚本文件、再执行文件」。
+  - `POST /api/v1/docker/compose` 的 `args`：同样只接受白名单内的参数串。
+  - `POST /api/v1/storage/distfs`（glusterfs `create-volume`）的 `mode` / `bricks`：同样白名单化。
+- **新增 `pkg/shellquote.ValidateArgList`**：白名单而非黑名单——没进白名单的字节一律拒绝，
+  新出现的 shell 语法（`$(...)`、反引号、`<(...)`、brace expansion）不会被漏网。
+  语义边界：通过校验的参数串**仍按原样**拼接（不改写、不加引号），故空格分隔的多个参数词
+  仍被 shell 正常拆分——这正是「自由参数串」形态的语义要求。单元测试含真 shell 对拍
+  （放行集保持词拆分、拒绝集确实拦得住会执行的载荷、且反证裸拼确实会执行）。
+- **回归测试**（`internal/controlplane/container_injection_test.go`，4 个用例，覆盖 67 个
+  handler × 字段组合 × 4 个载荷 = 268 条断言）：①载荷只以单引号字面量形态出现（「引号外文本」
+  不含载荷 / `$(` / 反引号）；
+  ②多词形态字段含元字符 ⇒ 400 拒收，合法值仍受理（能力不误伤）；③**真 sh 语义级证明**——
+  把脚本交给真 shell 执行一遍，注入载荷不得产生任何副作用（标记文件不得落地）；
+  ④源码级兜底——三个文件里不得再有未经 `Quote`/`ValidateArgList` 的
+  「`script = fmt.Sprintf(..., req.*, ...)`」形态。
+  **变异验证（旧码必红）**：把三个生产文件回退到本批前，**4 个用例全部判红**；其中语义用例
+  实测标记文件**真的落地**（`docker volume inspect v1; touch …; echo y` 在旧形态下被 sh
+  真实执行）——这是可执行注入的证明，不是文本比对。
+- **盘点器复算（判据 C `raw_interp`，与 A/B 独立计数）**：同口径
+  **raw_interp 320 → 269（-51）**，三个文件全部归零（docker 24 / container 13 / distfs 14 → 0）；
+  A/B 口径 563 → 505。剩余 269 条散在 50+ 文件，是后续批次的可复算队列。
+- **本批落在 v0.18.0 切版之后**（tag v0.18.0 → f4e08f2），随下一版归版。
+
 ## [Unreleased-探测面收口] — 2026-11-08（网络诊断/合成监控面：13 处用户字段未转义直插 → `shellquote.Quote`）
 
 - **为什么是真缺陷面**：这 13 处把请求体字段（`req.Target` / `req.URL` / `req.Name`）**裸拼**进
@@ -97,6 +588,36 @@
   TestSSEContract_* 守代码↔文档事件名双向对齐）；`go build ./...` / `go vet` / `gofmt` 干净。
 - **前端缺口（只报告，不在本批修）**：`web/enterprise/src/api/sse.js` 的 EVENT_CONTRACT 未含
   `task_cancel`，ALLOWED_TYPES 会静默丢弃该帧——web/enterprise 为 zcode 只读域，随收口报告一并提示。
+## [Unreleased-五维生产力排查] — 2026-11-06（方法论 + 全量矩阵 + 批 1：15 视图写门）
+
+- **方法论与执行记录（活文档）**：`docs/qa-sweep-2026-11-06.md` —— 五维度（后端接口/前端体验/前后端契约/数据流/方法论自身）
+  各给可复算判据表、证据标准（只认当前 HEAD 可复现的证据、静态匹配只是线索、反向证伪优先）、P0/P1/P2 分诊矩阵与批次规则。
+- **三级矩阵脚本**：`scripts/qa-matrix.py`（只读）。路由（控制面 + `services/*-svc` + `svcproxy` 代理表） × 前端 api 函数
+  × infra 动作目录 × 视图 × 权限目录，一次产出 GHOST/METHOD/DEAD/PERM-GAP/WRITE-NOGATE 五类台账。
+  基线实测：**GHOST 0 / METHOD 错配 0 / PERM-GAP 0**（无回归：与 11-02 契约对账结论一致）；
+  DEAD 96 条（未接前端的后端能力面，待产品裁决）；**WRITE-NOGATE 54 视图 → 本批后 39**。
+- **批 1（本批）＝按钮级写权限门 15 视图**：`APIKeysView(apikey:write) / AutomationView(automation:write) / BillingView(billing:write) /
+  GatewayRoutesView(gateway:write) / SLOsView(slo:write) / SchedulesView(schedule:write) / ScriptsView(script:write) /
+  TicketsView(ticket:write) / TrafficPoliciesView(traffic:write) / WebhooksView(webhook:write) / K8sClusterDeployView +
+  K8sLifecycleView + K8sResourcesView(k8s:write) / SystemOpsView(system:write) / secrets/SecretsView(secrets:write)`。
+  范式同 InfraConsole/Flux：`hasPerm` → `canWrite` → 写按钮 `:disabled` + `:title` + `data-testid` → 页首/表前常驻提示；
+  新增共享双语键 **`common.write_denied`**（zh/en）。
+- **新棘轮**：`src/views/__tests__/write-gate-ledger.test.js` —— GATED 掉门判红、PENDING 挂完必须挪出（欠账只许减）、
+  台账文件消失判红、共享键缺一边判红。余 39 视图按台账续作（每视图缺哪些权限点已写在台账里）。
+- **既有 spec 适配**：`K8sResourcesView.spec.js` / `SystemOpsView.spec.js` / `secrets/SecretsView.spec.js` 补 `@/stores/auth`
+  替身（视图 setup 现在取 auth store，无 Pinia 会抛 `[🍍]`）；全量 **74 文件 / 1375 用例全过**。
+- **审计方法论的两处自我修正（已写回脚本）**：①"后端"必须含 `services/**` 与网关代理表（否则 autoscaler/portal/device-svc 出 30 条假幽灵，修后 0）；
+  ②权限点只从**守卫调用实参**里取（函数体内其它 `x:y` 字面量会把 HBase 的 action 名 `ns:table` 误记成权限点）。
+- **去伪（供下一轮省时）**：删除确认已是全站规范（`onDelete`→`ConfirmModal`→`onDeleteConfirm`）；三态由 `DataTable`/`PageShell`
+  共享组件承担（按字面计数会大量误报）；`v-for` 缺 `:key` 与 `v-if`+`v-for` 同元素各 0 条。
+- **批 2 / 批 3（本块补记，已随 PR #8 合并入 main，merge `a7973d8`）**：重复提交守卫 + 死信清除确认 + 页内失败态（9 视图）；
+  破坏性操作接 `ConfirmModal`（四视图）+ AIOps 原生 `alert()` 换 toast；后端 **abac 注入 P0**（`internal/controlplane/abac_ops.go`
+  真注入 + 假 ALLOWED 判定改 501）+ knowledge 列表上界 + `cost/budget` 进程内口径字段；`docs/api-specification.md` /
+  `docs/api-reference.md` 勘误（错误体形状 / 过滤排序实现状态 / 分页信封）。
+- **账目口径说明（本块为何后置）**：本线先前两笔 `[DONE]` 用了 `paths=` 而非 `scope=`，机器（`scripts/coord-gate.py` 只认
+  scope 逐字匹配）一直未销号；本次随本提交以**逐字 `scope=`** 的 `[RELEASE]/[DONE]` 一并闭环。CHANGELOG/CLAIMS/板面
+  属主线高频写入文件，故账目不再随 PR 携带，改由合并后的单父提交直推 main（同 `chore(coord): … LANDED` 先例）。
+
 ## [0.18.0] — 2026-11-07（本版汇总：派发口鉴权收口 + 注入面清扫 + AI 预算执法与租户隔离 + 交付链换源与 CVE 修复）
 
 - **鉴权（覆盖面最大）**：派发路径 599 个调用点（去注释口径，冻结点 06b78c9）补 `task:write`

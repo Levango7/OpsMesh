@@ -11,6 +11,7 @@
           <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
         </Button>
       </div>
+      <div v-if="!canOperate" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
 
       <DataTable
         :columns="columns"
@@ -29,31 +30,52 @@
         <template #cell-failureReason="{ row }">{{ failureReason(row) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <Button variant="ghost" size="sm" data-testid="dead-letter-retry-btn" @click.stop="onRetry(row.taskID)">
+            <Button variant="ghost" size="sm" data-testid="dead-letter-retry-btn" :disabled="!canOperate"
+                    :title="canOperate ? '' : $t('common.write_denied')" @click.stop="onRetry(row.taskID)">
               {{ $t('dead_letter.retry') }}
             </Button>
-            <Button variant="danger" size="sm" data-testid="dead-letter-purge-btn" @click.stop="onPurge(row.taskID)">
+            <Button variant="danger" size="sm" data-testid="dead-letter-purge-btn" :disabled="!canOperate"
+                    :title="canOperate ? '' : $t('common.write_denied')" @click.stop="askPurge(row.taskID)">
               {{ $t('dead_letter.purge') }}
             </Button>
           </div>
         </template>
       </DataTable>
     </div>
+
+    <ConfirmModal
+      v-model="purgeConfirm.show"
+      data-testid="dead-letter-purge-confirm-modal"
+      :title="$t('dead_letter.purge')"
+      :message="$t('dead_letter.purge_confirm')"
+      @confirm="onPurgeConfirm"
+    />
   </PageShell>
 </template>
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 
-import { onMounted } from 'vue'
+import { computed, onMounted, reactive } from 'vue'
 import { useDeadLetterStore } from '@/stores/dead-letter'
+import { useAuthStore } from '@/stores/auth'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 import { Button } from '@/components/ui'
 import { t } from '@/i18n'
+import { toast } from '@/utils/toast'
 
 const store = useDeadLetterStore()
+const auth = useAuthStore()
+
+// 死信处置门（2026-11-06 五维排查批 2）：后端 retry=task:write、purge=task:cancel。
+// 只读者点 purge 是**永久删除**（不可逆），此前按钮既不禁用也不确认。
+const canOperate = computed(() => auth.hasPerm('task:write') || auth.hasPerm('task:cancel'))
+
+// 清除确认（此前一键直删，无任何拦截）
+const purgeConfirm = reactive({ show: false, id: null })
 
 const columns = [
   { key: 'taskID', title: t('dead_letter.col_task_id'), slot: 'cell-taskID' },
@@ -75,10 +97,18 @@ function failureReason(row) {
 }
 
 async function onRetry(id) {
-  try { await store.retry(id) } catch (e) { console.error('retry dead letter failed:', e) }
+  try { await store.retry(id); toast.success(t('dead_letter.retry_ok')) }
+  catch (e) { store.error = (e && e.j && e.j.error) || t('dead_letter.retry_failed') }
 }
-async function onPurge(id) {
-  try { await store.purge(id) } catch (e) { console.error('purge dead letter failed:', e) }
+function askPurge(id) {
+  purgeConfirm.id = id
+  purgeConfirm.show = true
+}
+async function onPurgeConfirm() {
+  const id = purgeConfirm.id
+  purgeConfirm.show = false
+  try { await store.purge(id); toast.success(t('dead_letter.purge_ok')) }
+  catch (e) { store.error = (e && e.j && e.j.error) || t('dead_letter.purge_failed') }
 }
 
 onMounted(() => {

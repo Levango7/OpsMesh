@@ -100,10 +100,10 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <Button variant="ghost" size="sm" data-testid="task-approve-btn" @click.stop="onApprove(row.taskID)">
+            <Button variant="ghost" size="sm" data-testid="task-approve-btn" @click.stop="askAction('approve', row.taskID)">
               {{ $t('tasks.approve') }}
             </Button>
-            <Button variant="danger" size="sm" data-testid="task-reject-btn" @click.stop="onReject(row.taskID)">
+            <Button variant="danger" size="sm" data-testid="task-reject-btn" @click.stop="askAction('reject', row.taskID)">
               {{ $t('tasks.reject') }}
             </Button>
           </div>
@@ -118,6 +118,15 @@
       :title="$t('tasks.cancel')"
       :message="$t('tasks.confirm_cancel')"
       @confirm="onCancelConfirm"
+    />
+
+    <!-- 审批动作确认（替代直达 API） -->
+    <ConfirmModal
+      v-model="actionConfirm.show"
+      data-testid="task-action-confirm-modal"
+      :title="actionConfirm.kind === 'approve' ? $t('tasks.approve') : $t('tasks.reject')"
+      :message="$t('tasks.confirm_action')"
+      @confirm="onActionConfirm"
     />
   </PageShell>
 </template>
@@ -146,6 +155,25 @@ const submitting = ref(false)
 
 // 取消确认弹窗（替代 confirm）
 const cancelConfirm = reactive({ show: false, id: null })
+
+// 审批动作确认弹窗（2026-11-06 五维排查批 3）：approve/reject 是审批终态动作，此前
+// @click 直达 API——误点不可逆且无确认。复用页内 ConfirmModal 体系（与 cancel 同款）。
+const actionConfirm = reactive({ show: false, kind: '', id: null })
+function askAction(kind, id) {
+  actionConfirm.kind = kind
+  actionConfirm.id = id
+  actionConfirm.show = true
+}
+async function onActionConfirm() {
+  const id = actionConfirm.id
+  const kind = actionConfirm.kind
+  actionConfirm.show = false
+  if (!id) return
+  try {
+    if (kind === 'approve') await store.approve(id)
+    else await store.reject(id)
+  } catch (e) { console.error(kind + ' task failed:', e) }
+}
 
 // SSE 事件刷新节流：2s 内多个 task-status 事件只 refetch 一次，
 // 最后一次事件必须执行（trailing），避免批量回执时全量 refetch 轰炸。
@@ -219,26 +247,24 @@ async function onCancelConfirm() {
   if (!id) return
   try { await store.cancel(id) } catch (e) { console.error('cancel task failed:', e) }
 }
-async function onApprove(id) {
-  try { await store.approve(id) } catch (e) { console.error('approve task failed:', e) }
-}
-async function onReject(id) {
-  try { await store.reject(id) } catch (e) { console.error('reject task failed:', e) }
-}
 
 onMounted(async () => {
   try { agents.value = await getAgents() || [] } catch (e) { console.error('fetch agents failed:', e) }
   store.fetchTasks()
   store.fetchPendingApprovals()
-  // SSE 实时推送：任务状态变更（创建/领取/取消/回执）到达即刷新列表（App.vue 事件总线）。
+  // SSE 实时推送：任务状态变更（创建/领取/回执）到达即刷新列表（App.vue 事件总线）。
   window.addEventListener('opsmesh:task-status', onTaskStatus)
+  // 任务取消（issue #16 裁决：取消必须即时反映在列表）——独立事件名，复用同一节流刷新。
+  window.addEventListener('opsmesh:task-cancel', onTaskStatus)
 })
 onUnmounted(() => {
   window.removeEventListener('opsmesh:task-status', onTaskStatus)
+  window.removeEventListener('opsmesh:task-cancel', onTaskStatus)
   clearTimeout(sseTimer)
   sseTimer = null
 })
 
+// 状态事件与取消事件共用：节流 refetch 任务列表 + 同步刷新待审批计数。
 function onTaskStatus() {
   scheduleSSEFetch()
   store.fetchPendingApprovals()

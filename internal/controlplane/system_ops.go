@@ -48,7 +48,7 @@ var (
 // 租户隔离：仅返回本租户设备。
 func (s *Server) handleDeviceSystemInfo(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx, ok := s.requireTenantContext(w, r)
@@ -129,7 +129,12 @@ func (s *Server) handleSystemUsers(w http.ResponseWriter, r *http.Request) {
 		script = buildUserAddScript(req)
 	case http.MethodDelete:
 		action = "user_del"
-		script = fmt.Sprintf("set -e\nif id %q >/dev/null 2>&1; then userdel -r %q; echo 'user deleted: %s'; else echo 'user not found: %s'; fi\n", req.Username, req.Username, req.Username, req.Username)
+		userV, err := opsIdentifier("username", req.Username)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf("set -e\nif id %s >/dev/null 2>&1; then userdel -r %s; echo %s; else echo %s; fi\n", opsSQLString(userV), opsSQLString(userV), opsSQLString("user deleted: "+userV), opsSQLString("user not found: "+userV))
 	default:
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -149,7 +154,7 @@ func (s *Server) handleSystemUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Username,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("agentID=%s group=%s", req.AgentID, req.Group)),
+		Detail: sanitizeAuditDetail("agentID=" + opsSQLString(req.AgentID) + " group=" + opsSQLString(req.Group)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
@@ -203,10 +208,20 @@ func (s *Server) handleSystemGroups(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		action = "group_add"
-		script = fmt.Sprintf("set -e\nif getent group %q >/dev/null 2>&1; then echo 'group already exists: %s'; exit 0; fi\ngroupadd %q\necho 'group created: %s'\n", req.GroupName, req.GroupName, req.GroupName, req.GroupName)
+		groupV, err := opsIdentifier("group", req.GroupName)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf("set -e\nif getent group %s >/dev/null 2>&1; then echo %s; exit 0; fi\ngroupadd %s\necho %s\n", opsSQLString(groupV), opsSQLString("group already exists: "+groupV), opsSQLString(groupV), opsSQLString("group created: "+groupV))
 	case http.MethodDelete:
 		action = "group_del"
-		script = fmt.Sprintf("set -e\nif getent group %q >/dev/null 2>&1; then groupdel %q; echo 'group deleted: %s'; else echo 'group not found: %s'; fi\n", req.GroupName, req.GroupName, req.GroupName, req.GroupName)
+		groupV, err := opsIdentifier("group", req.GroupName)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf("set -e\nif getent group %s >/dev/null 2>&1; then groupdel %s; echo %s; else echo %s; fi\n", opsSQLString(groupV), opsSQLString(groupV), opsSQLString("group deleted: "+groupV), opsSQLString("group not found: "+groupV))
 	default:
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -441,7 +456,7 @@ func (s *Server) handleSystemPackages(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Package,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("agentID=%s manager=%s", req.AgentID, req.Manager)),
+		Detail: sanitizeAuditDetail("agentID=" + opsSQLString(req.AgentID) + " manager=" + opsSQLString(req.Manager)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }

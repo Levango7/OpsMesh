@@ -34,7 +34,12 @@ func (s *Server) handleObservability(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "10.4.0"
 		}
-		script = fmt.Sprintf(`docker run -d --name grafana -p 3000:3000 grafana/grafana:%s 2>/dev/null && echo "Grafana %s deployed"`, version, version)
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`docker run -d --name grafana -p 3000:3000 grafana/grafana:%s 2>/dev/null && echo %s`, versionV, opsEcho("Grafana %s deployed", versionV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "observability_deploy-grafana")
 		if !ok {
 			return
@@ -46,7 +51,12 @@ func (s *Server) handleObservability(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "0.35.0"
 		}
-		script = fmt.Sprintf(`docker run -d --name thanos -p 10902:10902 thanosio/thanos:%s query 2>/dev/null && echo "Thanos %s deployed"`, version, version)
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`docker run -d --name thanos -p 10902:10902 thanosio/thanos:%s query 2>/dev/null && echo %s`, versionV, opsEcho("Thanos %s deployed", versionV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "observability_deploy-thanos")
 		if !ok {
 			return
@@ -58,7 +68,12 @@ func (s *Server) handleObservability(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "2.24"
 		}
-		script = fmt.Sprintf(`docker run -d --name zipkin -p 9411:9411 openzipkin/zipkin:%s 2>/dev/null && echo "Zipkin %s deployed"`, version, version)
+		versionV, err := opsIdentifier("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`docker run -d --name zipkin -p 9411:9411 openzipkin/zipkin:%s 2>/dev/null && echo %s`, versionV, opsEcho("Zipkin %s deployed", versionV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "observability_deploy-zipkin")
 		if !ok {
 			return

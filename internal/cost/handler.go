@@ -607,6 +607,14 @@ func NewCostHandler(bm *BudgetManager, mr *ModelRouter, ct *CostTracker) *CostHa
 	}
 }
 
+// budgetView 是 GET /cost/budget 的响应体：在预算数之上补「计量口径」两键。
+// 嵌入 *TokenBudget（字段提升）⇒ JSON 仍是旧扁平形状 + 新增 enforcement/scope，非破坏。
+type budgetView struct {
+	*TokenBudget
+	Enforcement string `json:"enforcement"` // 固定 "in-process"
+	Scope       string `json:"scope"`       // 固定 "per-tenant, per-replica"
+}
+
 // HandleBudget 处理 GET/POST /api/v1/cost/budget
 //
 // 权限点按动词分支就近声明（不在「先算 perm 再统一 authorize」的辅助函数里）：
@@ -620,7 +628,14 @@ func (h *CostHandler) HandleBudget(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		budget := h.budget.GetBudget(scopedTenant(actx, r))
-		paginate.WriteJSON(w, http.StatusOK, budget)
+		// 口径随响应体走（qoder 2026-11-05T16:55 交接的缺口）：usedToday/usedMonth 是
+		// **进程内计数**——控制面重启归零、多副本各自计数（≈额度×副本数），客户端此前
+		// 只能对着 gateway.go 的注释猜。嵌入保序：旧键原样扁平保留（非破坏），只增两键。
+		paginate.WriteJSON(w, http.StatusOK, budgetView{
+			TokenBudget: budget,
+			Enforcement: "in-process",
+			Scope:       "per-tenant, per-replica",
+		})
 	case http.MethodPost:
 		actx, ok := h.authorize(w, r, "cost:write")
 		if !ok {

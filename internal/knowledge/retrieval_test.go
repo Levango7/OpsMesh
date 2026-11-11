@@ -5,7 +5,93 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	gateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
 )
+
+// stubProvider 可控 LLM 提供商替身：Complete/Embed 返回固定值，
+// 用于钉住 Rerank 的空 choices 兜底与 Retrieve 的 topK 上界语义。
+type stubProvider struct {
+	completeResp *gateway.CompletionResponse
+	embedVec     []float64
+}
+
+func (p *stubProvider) Name() string { return "openai" }
+func (p *stubProvider) Complete(context.Context, gateway.CompletionRequest) (*gateway.CompletionResponse, error) {
+	return p.completeResp, nil
+}
+func (p *stubProvider) Embed(context.Context, string) ([]float64, error) { return p.embedVec, nil }
+func (p *stubProvider) ListModels() []string                             { return []string{"gpt-4o-mini"} }
+func (p *stubProvider) HealthCheck(context.Context) error                { return nil }
+
+func newStubGateway(resp *gateway.CompletionResponse, embedVec []float64) *gateway.Gateway {
+	gw := gateway.NewGateway()
+	gw.RegisterProvider(gateway.ProviderConfig{
+		Name: "openai", Type: "openai", Models: []string{"gpt-4o-mini"},
+	}, &stubProvider{completeResp: resp, embedVec: embedVec})
+	return gw
+}
+
+// TestRetrieve_TopKNotPollutedByResultCount 钉住 topK 上界语义：
+// 首查结果数不足 topK 时不得写回 r.topK（共享实例的检索上界会被永久收窄，
+// 旧实现 topK=5 首查 2 条后所有后续查询恒为 2 条）。
+func TestRetrieve_TopKNotPollutedByResultCount(t *testing.T) {
+	gw := newStubGateway(nil, []float64{1, 0})
+	s := NewInMemoryKnowledgeStore()
+	ctx := context.Background()
+	if err := s.Upsert(ctx, []KnowledgeDoc{
+		{ID: "d1", Source: SourceCMDB, Title: "t1", Content: "alpha"},
+		{ID: "d2", Source: SourceCMDB, Title: "t2", Content: "beta"},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	r := NewHybridRetriever(s, gw, 5)
+	got, err := r.Retrieve(ctx, "alpha", nil)
+	if err != nil {
+		t.Fatalf("Retrieve: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("首查 2 条应全量返回，得到 %d", len(got))
+	}
+	if r.topK != 5 {
+		t.Fatalf("首查结果数写回了 r.topK：topK = %d，期望保持构造值 5", r.topK)
+	}
+
+	if err := s.Upsert(ctx, []KnowledgeDoc{
+		{ID: "d3", Source: SourceCMDB, Title: "t3", Content: "gamma"},
+		{ID: "d4", Source: SourceCMDB, Title: "t4", Content: "delta"},
+		{ID: "d5", Source: SourceCMDB, Title: "t5", Content: "epsilon"},
+		{ID: "d6", Source: SourceCMDB, Title: "t6", Content: "zeta"},
+		{ID: "d7", Source: SourceCMDB, Title: "t7", Content: "eta"},
+	}); err != nil {
+		t.Fatalf("Upsert 追加: %v", err)
+	}
+	got, err = r.Retrieve(ctx, "alpha", nil)
+	if err != nil {
+		t.Fatalf("第二次 Retrieve: %v", err)
+	}
+	if len(got) != 5 {
+		t.Errorf("topK 被污染后第二查只能拿到 %d 条，期望 5（构造上界）", len(got))
+	}
+}
+
+// TestRerank_EmptyChoicesFallsBackToOriginalOrder 钉住空 choices 兜底：
+// 上游返回无 choices 的成功响应时，旧实现 resp.Choices[0] 直接 panic；
+// 应与 LLM 调用失败同策略（沿用原始顺序）。
+func TestRerank_EmptyChoicesFallsBackToOriginalOrder(t *testing.T) {
+	gw := newStubGateway(&gateway.CompletionResponse{}, nil)
+	rk := NewReranker(gw)
+	docs := []KnowledgeDoc{{ID: "d1"}, {ID: "d2"}}
+
+	got, err := rk.Rerank(context.Background(), "q", docs)
+	if err != nil {
+		t.Fatalf("Rerank: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != "d1" || got[1].ID != "d2" {
+		t.Errorf("空 choices 应沿用原始顺序，得到 %v", got)
+	}
+}
 
 func TestCosineSimilarity(t *testing.T) {
 	cases := []struct {
@@ -131,7 +217,7 @@ func TestInMemoryKnowledgeStore(t *testing.T) {
 		t.Errorf("过滤 ci_type=server 应只返回 d1，得到 %+v", filtered)
 	}
 
-	cmdb, _ := s.ListBySource(ctx, SourceCMDB)
+	cmdb, _ := s.ListBySource(ctx, SourceCMDB, 0)
 	if len(cmdb) != 2 {
 		t.Errorf("ListBySource(cmdb) 数量 = %d，期望 2", len(cmdb))
 	}

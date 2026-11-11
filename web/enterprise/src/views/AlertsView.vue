@@ -53,8 +53,22 @@
       </div>
       <div class="alert-actions">
         <template v-if="(a.status || 'firing') === 'firing'">
-          <Button variant="primary" size="sm" @click="onAck(a.alertID)" data-testid="alert-ack-btn">{{ $t('alerts.ack') }}</Button>
-          <Button variant="ghost" size="sm" @click="onSilence(a.alertID)" data-testid="alert-silence-btn">{{ $t('alerts.silence') }}</Button>
+          <Button
+            variant="primary"
+            size="sm"
+            :disabled="isActing(a.alertID)"
+            :title="isActing(a.alertID) ? $t('common.loading') : ''"
+            @click="onAck(a.alertID)"
+            data-testid="alert-ack-btn"
+          >{{ $t('alerts.ack') }}</Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            :disabled="isActing(a.alertID)"
+            :title="isActing(a.alertID) ? $t('common.loading') : ''"
+            @click="onSilence(a.alertID)"
+            data-testid="alert-silence-btn"
+          >{{ $t('alerts.silence') }}</Button>
         </template>
         <span v-else class="muted" style="font-size:12px">
           {{ $t('alerts.handler') }}{{ a.acknowledgedBy || '—' }}<template v-if="a.status === 'silenced' && a.silencedUntil">{{ $t('alerts.silenced_until') }}{{ a.silencedUntil }}</template>
@@ -145,9 +159,17 @@ function showConfirm(title, message) {
 const durationModal = reactive({ show: false, id: null })
 const commentModal = reactive({ show: false, id: null, duration: 1440 })
 
+// 在飞态（P1-8 余项）：同一告警的 ack/silence 请求未返回前禁用按钮 + handler 重入守卫——
+// 连击会造成重复 ack 与重复静默（两个接口都不幂等，且会重复写审计）。
+const actingIds = reactive(new Set())
+function isActing(id) { return actingIds.has(id) }
+
 async function onAck(id) {
+  if (actingIds.has(id)) return
+  actingIds.add(id)
   try { await store.ack(id) }
   catch (e) { showConfirm(t('common.error'), t('alerts.ack_failed') + (e.j?.error || e.s)) }
+  finally { actingIds.delete(id) }
 }
 
 function onSilence(id) {
@@ -167,8 +189,11 @@ async function onCommentConfirm(value) {
   const comment = value || ''
   const id = commentModal.id
   const duration = commentModal.duration
+  if (actingIds.has(id)) return          // 重入守卫：静默请求在飞时不重复下发
+  actingIds.add(id)
   try { await store.silence(id, { durationMinutes: duration, comment }) }
   catch (e) { showConfirm(t('common.error'), t('alerts.silence_failed') + (e.j?.error || e.s)) }
+  finally { actingIds.delete(id) }
 }
 
 onMounted(() => { if (!store.list.length) store.fetchAlerts() })

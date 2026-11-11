@@ -9,6 +9,45 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
+// buildABACScript 把 action + 用户字段组装成下发脚本（纯函数，供变异反证测试直接调）。
+// 返回 (script, 0, "") 表示可下发；否则 ( "", status, errMsg) 表示拒绝。
+func buildABACScript(action, subject, resource, actionAttr, context string) (string, int, string) {
+	switch action {
+	case "policy-list":
+		return `echo "=== ABAC Policies ===" && echo "No ABAC policies configured (RBAC is the default)" && echo "---" && echo "To enable ABAC, configure policy rules in /etc/opsmesh/abac/policies.json"`, 0, ""
+	case "policy-delete":
+		return `echo "ABAC policy deletion (manual edit required)"`, 0, ""
+	case "policy-create":
+		if subject == "" || resource == "" || actionAttr == "" {
+			return "", http.StatusBadRequest, "subject, resource, and actionAttr are required"
+		}
+		// 两层编码，顺序不可换：先 JSON（encoding/json 保证合法 JSON + 引号/换行转义），
+		// 再 shell（shellquote.Quote 单引号字面量）。旧实现把用户字节直接拼进
+		// echo '…' 的单引号 JSON 里——请求体带 ' 即闭合引号注入任意命令（A1 审计 BA-04，P0）。
+		doc, err := json.Marshal(map[string]string{
+			"subject":  subject,
+			"resource": resource,
+			"action":   actionAttr,
+			"context":  context,
+		})
+		if err != nil {
+			return "", http.StatusBadRequest, "subject/resource/context must be JSON-serializable: " + err.Error()
+		}
+		return fmt.Sprintf(`mkdir -p /etc/opsmesh/abac && echo %s >> /etc/opsmesh/abac/policies.json && echo "ABAC policy created"`, shellQuote(string(doc))), 0, ""
+	case "evaluate":
+		if subject == "" || resource == "" || actionAttr == "" {
+			return "", http.StatusBadRequest, "subject, resource, and actionAttr are required"
+		}
+		// 旧实现把「Result: ALLOWED (default policy)」硬编码进 echo——不查任何策略引擎，
+		// 任何输入都"允许"，是假判定（A1 审计 BA-04）。按 owner 已裁口径（未实现=显式 501，
+		// 不造假数据，AI Agent 工具同先例）改为 501：强制层是 RBAC（requirePermission），
+		// ABAC 评估属产品待立项。
+		return "", http.StatusNotImplemented, "ABAC evaluation is not implemented; enforcement is RBAC-based (requirePermission). Policy files are advisory only."
+	default:
+		return "", http.StatusBadRequest, "unknown action: " + action
+	}
+}
+
 // handleABAC 处理 POST /api/v1/abac
 func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -29,26 +68,9 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var script string
-	switch req.Action {
-	case "policy-list":
-		script = `echo "=== ABAC Policies ===" && echo "No ABAC policies configured (RBAC is the default)" && echo "---" && echo "To enable ABAC, configure policy rules in /etc/opsmesh/abac/policies.json"`
-	case "policy-create":
-		if req.Subject == "" || req.Resource == "" || req.ActionAttr == "" {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject, resource, and actionAttr are required"})
-			return
-		}
-		script = fmt.Sprintf(`mkdir -p /etc/opsmesh/abac && echo '{"subject":%s,"resource":%s,"action":"%s","context":%s}' >> /etc/opsmesh/abac/policies.json && echo "ABAC policy created"`, req.Subject, req.Resource, req.ActionAttr, req.Context)
-	case "policy-delete":
-		script = `echo "ABAC policy deletion (manual edit required)"`
-	case "evaluate":
-		if req.Subject == "" || req.Resource == "" || req.ActionAttr == "" {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject, resource, and actionAttr are required"})
-			return
-		}
-		script = fmt.Sprintf(`echo "=== ABAC Evaluation ===" && echo "Subject: %s" && echo "Resource: %s" && echo "Action: %s" && echo "Result: ALLOWED (default policy)"`, req.Subject, req.Resource, req.ActionAttr)
-	default:
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
+	script, status, errMsg := buildABACScript(req.Action, req.Subject, req.Resource, req.ActionAttr, req.Context)
+	if errMsg != "" {
+		paginate.WriteJSON(w, status, map[string]string{"error": errMsg})
 		return
 	}
 

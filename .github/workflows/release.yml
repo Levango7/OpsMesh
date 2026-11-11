@@ -20,6 +20,9 @@ permissions:
   packages: write
 
 env:
+  # 同 ci.yml：GOSUMDB=off（go.sum 钉版入库 + Go 模块完整性本地校验，不依赖 sum.golang.org）
+  # 消除 sum.golang.org tile 侧 GOAWAY 对 goreleaser 下载的影响。
+  GOSUMDB: off
   # Docker Hub 凭据（可选，同 ci.yml）：拉基础镜像按 IP 限流，配置后配额提升（TD-89）。
   # 步骤级 if: 不能用 secrets 上下文（actionlint 门禁），故以 env 承载并作判据。
   DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -86,7 +89,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26.10"
+          go-version: "1.26.11"
 
       - name: 登录 Docker Hub（提升匿名拉取配额；未配置 secrets 时自动跳过）
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
@@ -162,9 +165,10 @@ jobs:
         run: |
           set -euo pipefail
           command -v syft >/dev/null 2>&1 || {
-              curl -sSfL "https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz" -o /tmp/syft.tar.gz
-              tar -xzf /tmp/syft.tar.gz -C /tmp syft
-              sudo mv /tmp/syft /usr/local/bin/syft
+                            go install github.com/anchore/syft/cmd/syft@v1.51.1
+              echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+              GOPATH_BIN="$(go env GOPATH)/bin"
+              export PATH="$GOPATH_BIN:$PATH"
           }
           syft version
           syft "${{ steps.meta.outputs.image }}:${{ github.sha }}" -o spdx-json > "sbom-${{ matrix.service }}-${GITHUB_SHA}.spdx.json"
@@ -183,10 +187,16 @@ jobs:
           path: sbom-${{ matrix.service }}-${{ github.sha }}.*.json
           retention-days: 30
 
-      - name: 安装 cosign（官方 installer，钉死 commit）
-        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
-        with:
-          cosign-release: 'v2.2.4'
+      - name: 安装 cosign（go install，钉版 v2.2.4）
+        # 口径刻意与 ci.yml 逐字一致（同一取数方式、同一 cosign 版本），避免两条发布路径
+        # 产出不同强度的证据。github release 资产在 CI runner 稳定 504 ⇒ 改 `go install`。
+        run: |
+          set -euo pipefail
+                    go install github.com/sigstore/cosign/v2/cmd/cosign@v2.2.4
+          GOPATH_BIN="$(go env GOPATH)/bin"
+          export PATH="$GOPATH_BIN:$PATH"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          cosign version
 
       - name: cosign 签名镜像（keyless OIDC）
         run: |

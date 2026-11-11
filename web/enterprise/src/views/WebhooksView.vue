@@ -6,7 +6,7 @@
     :error="loadErr"
   >
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate">
+      <Button variant="primary" size="md" @click="openCreate" data-testid="webhooks-opencreate-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <Icon name="add" :size="14" />
         {{ $t('webhooks.add') }}
       </Button>
@@ -18,6 +18,7 @@
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <DataTable :columns="columns" :rows="webhooks" row-key="id" :empty-text="$t('webhooks.empty')">
         <template #cell-url="{ value }"><code class="url-cell">{{ value }}</code></template>
         <template #cell-events="{ value }">
@@ -28,10 +29,10 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <Button variant="ghost" size="sm" :title="$t('webhooks.test')" @click="onTest(row)"><Icon name="check" :size="13" /></Button>
+            <Button variant="ghost" size="sm" :title="canWrite ? ($t('webhooks.test')) : $t('common.write_denied')" @click="onTest(row)" data-testid="webhooks-ontest-btn" :disabled="!canWrite"><Icon name="check" :size="13" /></Button>
             <Button variant="ghost" size="sm" :title="$t('webhooks.deliveries')" @click="openDeliveries(row)"><Icon name="clipboard" :size="13" /></Button>
-            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
-            <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="webhooks-openedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="webhooks-ondelete-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -68,7 +69,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('webhooks.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" data-testid="webhooks-onsave-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('webhooks.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('webhooks.cancel') }}</Button>
         </div>
       </form>
@@ -107,6 +108,7 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
+import { useAuthStore } from '@/stores/auth'
 
 // Webhook 管理页 — CRUD + 测试投递 + 投递记录查看
 import { ref, computed, reactive, onMounted } from 'vue'
@@ -122,6 +124,11 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 import Button from "@/components/ui/Button.vue"
+
+// 写操作门（按钮级门范式，2026-11-06 批量批）：后端该域 handler 一律 requirePermission('webhook:write')
+// ——只读者进得来、点写按钮必 403。这里显式禁用 + 说明，不再让用户撞墙。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('webhook:write'))
 
 const webhooks = ref([])
 const loading = ref(false)

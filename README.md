@@ -229,16 +229,16 @@
 | 4 | **CMDB** | 模型 + 实例 CRUD + SQL 持久化 + 采集自动化 / 关系图谱可视化（SVG 力导向图，含 force/topology/list 三模式）/ 变更审批流 | ✅ | `internal/cmdb/`、`internal/controlplane/cmdb_*.go` |
 | | ↳ 全文本检索 | ✅ **2026-10-05 补齐**（此前该行系从日志模块漂移而来）：检索范围 `name`/`ciType`/`attrs`（键与值）/`id`/`agentID`/`deviceID`/`source`，字段加权打分；支持前缀匹配（`web` 命中 `webserver`）、中英文混合（中文按字切分）、`all`/`any`/`phrase` 三种模式；端点 `GET /api/v1/cmdb/ci/search`。分词与倒排索引下沉到 `internal/fulltext/`，与日志检索共用同一实现；**命中判定与排序只有一份打分器**，故 Memory / SQL 两后端结果一致（有门禁测试对账）。已知限制：SQL 后端受"不改 `ci_items` 表结构"约束，召回走 `LIKE` 子串匹配且窗口上限 1000 条，彻底解决需建 FULLTEXT 索引 | `internal/cmdb/search.go`、`internal/fulltext/` |
 | 5 | **日志检索** | 双后端（Memory/SQL）+ 外部后端（Loki/ES）/ offset 分页 / 关键词 + 级别 + 时间窗过滤 / agent gRPC 上报日志 / 倒排索引 | ✅ | `internal/logstore/` |
-| 6 | **编排部署** | 服务部署计划 + fan-out 执行 + Reconcile + Rollback / 三策略（rolling/canary/bluegreen）/ 发布门禁（失败率/延迟阈值）+ 自动回滚 + Promote 拥级 / 灰度自适应推进 / 多集群联邦发布 | ✅ | `internal/deploy/`、`internal/controlplane/server_deploy.go` |
+| 6 | **编排部署** | 服务部署计划 + fan-out 执行 + Reconcile + Rollback / 三策略（rolling/canary/bluegreen）/ 发布门禁（失败率/延迟阈值）+ 自动回滚 + Promote 拥级 / 灰度自适应推进（2026-11-09 补齐生产装配）/ 多集群联邦发布 | ✅ | `internal/deploy/`、`internal/controlplane/server_deploy.go`、`internal/controlplane/factory/` |
 | 7 | **OS 优化** | 14+ 预置模板（内核/网络/安全/时间同步/SSH/磁盘/系统/用户）/ 在线 CRUD / 在指定 agent 执行 / 模板 store 持久化 + 幂等 seed | ✅ | `internal/controlplane/os_optimize.go` |
 | 8 | **中间件部署** | 10+ 中间件（MySQL/Redis/Kafka/Nginx/Tomcat/Zookeeper/PostgreSQL/MongoDB/RabbitMQ/Elasticsearch）× docker/systemd 双模式 / CRUD + 实例查询 + 卸载 | ✅ | `internal/controlplane/middleware_deploy.go` |
-| 9 | **K8s 管理** | 多集群接入（client-go，无 kubectl 依赖）/ 集群增删查 + 测试连接 / 资源只读 + 写（namespace/pod/deployment/service/configmap/secret/node）/ scale/restart/rollback / 租户隔离 / kubeconfig AES-256-GCM 加密落盘 | ✅ | `internal/controlplane/k8s_cluster.go`、`k8s_manage.go`、`internal/k8s/` |
+| 9 | **K8s 管理** | 多集群接入（client-go，无 kubectl 依赖）/ 集群增删查 + 测试连接 / 资源只读 + 写（namespace/pod/deployment/service/configmap/secret/node）/ scale/restart/rollback / 租户隔离 / kubeconfig AES-256-GCM 加密落盘（upgrade/rollback/cert-rotate 后端 501，internal/k8slifecycle/handler.go:490/553/570） | ⚠️ | `internal/controlplane/k8s_cluster.go`、`k8s_manage.go`、`internal/k8s/` |
 | 10 | **用户中心** | 注册/登录/RBAC（用户/角色/权限三表）/ JWT 双 Token（at/rt HttpOnly Cookie）/ 防爆破 + 失败锁账号 / 注册审批 / 首登强制改密 / Refresh Token 持久化 + 设备指纹绑定 | ✅ | `internal/controlplane/auth*.go` |
 | 11 | **审计日志** | 100% 留痕（AuditEvent → audit_log / memory ring）/ 审计检索（租户/动作/时间窗过滤）/ 等保三级 ≥6 月导出 / bootstrap 端点审计 | ✅ | `internal/controlplane/server_audits.go` |
 | 12 | **联邦** | 跨网段任务转发 / 联邦设备视图聚合 / 独立 mTLS 监听 / HMAC 签名验签（防伪造/重放）/ 多集群联邦发布协调 | ✅ | `internal/controlplane/federation.go`、`internal/deploy/federation.go` |
-| 13 | **SSE 实时推送** | 任务状态/告警/设备上下线事件流 / 替代 5s 轮询 / 心跳保活 / 契约守护测试（9 事件名 + 信封 + 心跳） | ✅ | `internal/controlplane/sse.go`、`docs/sse-protocol.md` |
-| 14 | **工作流** | DAG 引擎（拓扑排序 + 环检测 + 依赖就绪判定）/ 子工作流展开 + 条件分支 + 节点级超时重试 / 执行历史（ListRuns）/ 画布编辑 / cron 触发 + reconcile | ✅ **回放除外，见下行** | `internal/orchestration/`、`internal/dag/` |
-| | ↳ 执行历史**回放** | ❌ **未实现（2026-10-05 复核）**：执行历史本身有（`ListRuns` + `CreateRun`/`UpdateRun`），但全仓 `func.*[Rr]eplay` **零命中** —— 有"历史"无"回放"（重放某次执行的能力不存在）。易被误读为"可回看并重跑" | `internal/orchestration/sql.go:233 ListRuns` |
+| 13 | **SSE 实时推送** | 任务状态/告警/设备上下线事件流 / 替代 5s 轮询 / 心跳保活 / 契约守护测试（11 事件名 + 信封 + 心跳） | ✅ | `internal/controlplane/sse.go`、`docs/sse-protocol.md` |
+| 14 | **工作流** | DAG 引擎（拓扑排序 + 环检测 + 依赖就绪判定）/ 子工作流展开 + 条件分支 + 节点级超时重试 / 执行历史（ListRuns）/ 画布编辑 / cron 触发 + reconcile | ✅ | `internal/orchestration/`、`internal/dag/` |
+| | ↳ 执行历史**回放** | ✅ **2026-11-09 实现**：`POST /api/v1/workflows/{id}/runs/{run_id}/replay` 以历史运行为血缘起点重放（新 run 的 `originRunID` 指向原 run，写库后不可变）；原 run 不存在或跨租户返回 404（不泄露存在性）；租户隔离沿用 ListRuns 口径 | `internal/orchestration/handler.go ReplayRun`、`internal/orchestration/replay_test.go` |
 
 ### 横切能力
 

@@ -1,0 +1,662 @@
+package controlplane
+
+// elk_injection_test.go — 批次 9（ELK/Elasticsearch 运维面「req.* 未转义直插」收口）的注入守卫。
+//
+// 覆盖范围：internal/controlplane/elk_ops.go（27 处脚本行）+ elk_ext_ops.go（26 处脚本行）。
+//
+// 为什么是真缺陷面：这些 handler 把用户可控字段裸拼进要下发到 agent 的 shell 脚本，agent 以
+// `sh -c` 执行 ⇒ `$(id)` / 反引号 / 分号被**真实执行**。鉴权面无缺口（均经 dispatchKafkaTask
+// → subsystemAuthorize 的 task:write 闸）⇒ 已授权调用者可直接打到 agent 的 RCE。
+//
+// 本批的三个易错点（守卫专门盯这三条）：
+//
+//	① **URL 不能把 Quote 结果塞回双引号段**：旧形态 URL 在 `"http://…/%s"` 里，双引号内单引号
+//	  是**字面量**——Quote 产出的 `'x'` 会变成 URL 里的 %27 ⇒ 请求必然 404。故正确做法是
+//	  Go 层拼完整 URL 再**整体** Quote。本文件用两条断言钉住：①a 脚本里不得再出现
+//	  `"http://localhost:9200/` 形态；①b 真 shell 求值后 URL 与原 URL **逐字相同**。
+//	② **自由 JSON 载荷必须先校验再整体 Quote**：旧形态 `-d '%s'` 在单引号段内，payload 里出现
+//	  单引号即**破段** ⇒ 可执行注入；且 payload 非法 JSON 时旧形态是把垃圾发给 ES 由 ES 报错，
+//	  收口后改为控制面 400（能力变化，已在 CHANGELOG 登记）。
+//	③ **回显段也要防**：`echo "…%s…"` 的双引号段内 `$` 与反引号同样会展开。
+//
+// 载荷形态说明（沿用批次 7 的教训）：
+//   - 自由 JSON 字段（body / roles）的载荷必须是**合法 JSON**（否则会被新的 400 校验拦下，
+//     测不到注入面）——故用 `{"a":"…"}` 包裹。
+//   - 语义判据用**语法合法**的载荷：URL 类用 `$(touch marker)`（旧形态在双引号段内会真实执行
+//     命令替换）；logstash config 类用配对单引号的 `x'; touch marker; echo '`（旧形态
+//     `echo '%s'` 遇配对引号即破段执行）。带未闭合单引号的载荷会让整段脚本语法错误 ⇒ fail-closed，
+//     不构成可执行注入的证明。
+
+import (
+	"bytes"
+	"context"
+	"go/ast"
+	"go/parser"
+	"go/printer"
+	"go/token"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// b9Marker 是本批语义判据的副作用标记文件名（放在临时目录里）。
+const b9MarkerName = "pwned"
+
+// b9PayloadAny 用于 URL / 标识符类字段（载荷原样进入 URL 路径段或回显文本）。
+var b9PayloadAny = []string{
+	`$(id)`,
+	"`id`",
+	`x; touch /tmp/opsmesh-b9-pwned`,
+	`x'; touch /tmp/opsmesh-b9-pwned; echo '`,
+	`"; touch /tmp/opsmesh-b9-pwned; echo "`,
+}
+
+// b9PayloadJSON 用于自由 JSON 字段：载荷必须是合法 JSON，否则会被 400 校验拦下。
+var b9PayloadJSON = []string{
+	`{"a":"$(id)"}`,
+	`{"a":"x'; touch /tmp/opsmesh-b9-pwned; echo '"}`,
+	`{"a":"` + "`id`" + `"}`,
+	`{"a":"\"; touch /tmp/opsmesh-b9-pwned; echo \""}`,
+}
+
+// b9PayloadText 用于非 JSON 的自由文本字段（logstash pipeline 的 config）。
+var b9PayloadText = []string{
+	`x'; touch /tmp/opsmesh-b9-pwned; echo '`,
+	`$(touch /tmp/opsmesh-b9-pwned)`,
+}
+
+// b9Case 覆盖一个 handler × 注入字段组合。
+type b9Case struct {
+	name    string
+	handler http.HandlerFunc
+	body    map[string]interface{}
+	field   string
+	kind    string // "any" | "json" | "text"
+}
+
+// b9Cases 列出本批的全部注入面。
+func b9Cases(s *Server) []b9Case {
+	return []b9Case{
+		// ---- elk_ops.go: 部署 / 升级 ----
+		{"deploy/version", s.handleElasticsearchDeploy, map[string]interface{}{"mode": "single", "version": "8.13.0"}, "version", "any"},
+		{"deploy/memLimit", s.handleElasticsearchDeploy, map[string]interface{}{"mode": "single", "version": "8.13.0", "memLimit": "512m"}, "memLimit", "any"},
+		{"upgrade/targetVersion", s.handleElasticsearchUpgrade, map[string]interface{}{"action": "upgrade"}, "targetVersion", "any"},
+
+		// ---- elk_ops.go: index ----
+		{"index/create-index", s.handleElasticsearchIndex, map[string]interface{}{"action": "create", "index": "i1"}, "index", "any"},
+		{"index/create-body", s.handleElasticsearchIndex, map[string]interface{}{"action": "create", "index": "i1"}, "body", "json"},
+		{"index/delete-index", s.handleElasticsearchIndex, map[string]interface{}{"action": "delete", "index": "i1"}, "index", "any"},
+		{"index/mapping-index", s.handleElasticsearchIndex, map[string]interface{}{"action": "mapping", "index": "i1"}, "index", "any"},
+		{"index/settings-index", s.handleElasticsearchIndex, map[string]interface{}{"action": "settings", "index": "i1"}, "index", "any"},
+
+		// ---- elk_ops.go: ILM ----
+		{"ilm/get-policy", s.handleElasticsearchILM, map[string]interface{}{"action": "get", "policy": "p1"}, "policy", "any"},
+		{"ilm/create-policy", s.handleElasticsearchILM, map[string]interface{}{"action": "create", "policy": "p1", "body": `{}`}, "policy", "any"},
+		{"ilm/create-body", s.handleElasticsearchILM, map[string]interface{}{"action": "create", "policy": "p1"}, "body", "json"},
+		{"ilm/delete-policy", s.handleElasticsearchILM, map[string]interface{}{"action": "delete", "policy": "p1"}, "policy", "any"},
+
+		// ---- elk_ops.go: 快照 ----
+		{"snapshot/create-repo", s.handleElasticsearchSnapshot, map[string]interface{}{"action": "create-repo", "repo": "r1", "location": "/backups"}, "repo", "any"},
+		{"snapshot/create-location", s.handleElasticsearchSnapshot, map[string]interface{}{"action": "create-repo", "repo": "r1", "location": "/backups"}, "location", "any"},
+		{"snapshot/create-snapshot", s.handleElasticsearchSnapshot, map[string]interface{}{"action": "create-snapshot", "repo": "r1", "snapshot": "s1"}, "snapshot", "any"},
+		{"snapshot/create-indices", s.handleElasticsearchSnapshot, map[string]interface{}{"action": "create-snapshot", "repo": "r1", "snapshot": "s1"}, "indices", "any"},
+		{"snapshot/restore-repo", s.handleElasticsearchSnapshot, map[string]interface{}{"action": "restore", "repo": "r1", "snapshot": "s1"}, "repo", "any"},
+		{"snapshot/list-repo", s.handleElasticsearchSnapshot, map[string]interface{}{"action": "list", "repo": "r1"}, "repo", "any"},
+		{"snapshot/delete-snapshot", s.handleElasticsearchSnapshot, map[string]interface{}{"action": "delete", "repo": "r1", "snapshot": "s1"}, "snapshot", "any"},
+
+		// ---- elk_ops.go: reindex / security ----
+		{"reindex/source", s.handleElasticsearchReindex, map[string]interface{}{"source": "a", "dest": "b"}, "source", "any"},
+		{"reindex/dest", s.handleElasticsearchReindex, map[string]interface{}{"source": "a", "dest": "b"}, "dest", "any"},
+		{"security/create-user", s.handleElasticsearchSecurity, map[string]interface{}{"action": "create-user", "user": "u1", "password": "p1"}, "user", "any"},
+		{"security/create-password", s.handleElasticsearchSecurity, map[string]interface{}{"action": "create-user", "user": "u1", "password": "p1"}, "password", "any"},
+		{"security/create-roles", s.handleElasticsearchSecurity, map[string]interface{}{"action": "create-user", "user": "u1", "password": "p1"}, "roles", "json"},
+		{"security/delete-user", s.handleElasticsearchSecurity, map[string]interface{}{"action": "delete-user", "user": "u1"}, "user", "any"},
+		{"security/create-role", s.handleElasticsearchSecurity, map[string]interface{}{"action": "create-role", "role": "r1"}, "role", "any"},
+
+		// ---- elk_ops.go: logstash / kibana / filebeat / opensearch ----
+		{"logstash/deploy-version", s.handleLogstash, map[string]interface{}{"action": "deploy", "version": "8.13.0"}, "version", "any"},
+		{"logstash/pipeline-name", s.handleLogstash, map[string]interface{}{"action": "pipeline", "name": "p1"}, "name", "any"},
+		{"logstash/pipeline-config", s.handleLogstash, map[string]interface{}{"action": "pipeline", "name": "p1"}, "config", "text"},
+		{"kibana/deploy-version", s.handleKibana, map[string]interface{}{"action": "deploy", "version": "8.13.0"}, "version", "any"},
+		{"kibana/deploy-esUrl", s.handleKibana, map[string]interface{}{"action": "deploy", "version": "8.13.0", "esUrl": "http://localhost:9200"}, "esUrl", "any"},
+		{"filebeat/deploy-version", s.handleFilebeat, map[string]interface{}{"action": "deploy", "version": "8.13.0"}, "version", "any"},
+		{"opensearch/deploy-version", s.handleOpenSearch, map[string]interface{}{"action": "deploy", "version": "2.13.0"}, "version", "any"},
+		{"opensearch/index-index", s.handleOpenSearch, map[string]interface{}{"action": "index", "index": "i1"}, "index", "any"},
+
+		// ---- elk_ext_ops.go: pipeline / template ----
+		{"ext-pipeline/get-name", s.handleElasticsearchPipeline, map[string]interface{}{"action": "get", "name": "n1"}, "name", "any"},
+		{"ext-pipeline/create-name", s.handleElasticsearchPipeline, map[string]interface{}{"action": "create", "name": "n1", "body": `{}`}, "name", "any"},
+		{"ext-pipeline/create-body", s.handleElasticsearchPipeline, map[string]interface{}{"action": "create", "name": "n1"}, "body", "json"},
+		{"ext-pipeline/delete-name", s.handleElasticsearchPipeline, map[string]interface{}{"action": "delete", "name": "n1"}, "name", "any"},
+		{"ext-pipeline/simulate-body", s.handleElasticsearchPipeline, map[string]interface{}{"action": "simulate"}, "body", "json"},
+		{"ext-template/get-name", s.handleElasticsearchTemplate, map[string]interface{}{"action": "get", "name": "n1"}, "name", "any"},
+		{"ext-template/create-name", s.handleElasticsearchTemplate, map[string]interface{}{"action": "create", "name": "n1", "body": `{}`}, "name", "any"},
+		{"ext-template/create-body", s.handleElasticsearchTemplate, map[string]interface{}{"action": "create", "name": "n1"}, "body", "json"},
+		{"ext-template/delete-name", s.handleElasticsearchTemplate, map[string]interface{}{"action": "delete", "name": "n1"}, "name", "any"},
+
+		// ---- elk_ext_ops.go: alias / datastream ----
+		{"ext-alias/add-index", s.handleElasticsearchAlias, map[string]interface{}{"action": "add", "alias": "a1", "index": "i1"}, "index", "any"},
+		{"ext-alias/add-alias", s.handleElasticsearchAlias, map[string]interface{}{"action": "add", "alias": "a1", "index": "i1"}, "alias", "any"},
+		{"ext-alias/remove-index", s.handleElasticsearchAlias, map[string]interface{}{"action": "remove", "alias": "a1", "index": "i1"}, "index", "any"},
+		{"ext-alias/remove-alias", s.handleElasticsearchAlias, map[string]interface{}{"action": "remove", "alias": "a1", "index": "i1"}, "alias", "any"},
+		{"ext-datastream/create-name", s.handleElasticsearchDataStream, map[string]interface{}{"action": "create", "name": "n1"}, "name", "any"},
+		{"ext-datastream/delete-name", s.handleElasticsearchDataStream, map[string]interface{}{"action": "delete", "name": "n1"}, "name", "any"},
+		{"ext-datastream/rollover-name", s.handleElasticsearchDataStream, map[string]interface{}{"action": "rollover", "name": "n1"}, "name", "any"},
+
+		// ---- elk_ext_ops.go: maintenance / cluster-settings ----
+		{"ext-maintenance/forcemerge-index", s.handleElasticsearchMaintenance, map[string]interface{}{"action": "force-merge", "index": "i1"}, "index", "any"},
+		{"ext-maintenance/clearcache-index", s.handleElasticsearchMaintenance, map[string]interface{}{"action": "clear-cache", "index": "i1"}, "index", "any"},
+		{"ext-maintenance/flush-index", s.handleElasticsearchMaintenance, map[string]interface{}{"action": "flush", "index": "i1"}, "index", "any"},
+		{"ext-maintenance/refresh-index", s.handleElasticsearchMaintenance, map[string]interface{}{"action": "refresh", "index": "i1"}, "index", "any"},
+		{"ext-maintenance/shrink-index", s.handleElasticsearchMaintenance, map[string]interface{}{"action": "shrink", "index": "i1"}, "index", "any"},
+		{"ext-maintenance/split-index", s.handleElasticsearchMaintenance, map[string]interface{}{"action": "split", "index": "i1"}, "index", "any"},
+		{"ext-cluster-settings/update-body", s.handleElasticsearchClusterSettings, map[string]interface{}{"action": "update"}, "body", "json"},
+
+		// ---- elk_ext_ops.go: CCR / watcher ----
+		{"ext-ccr/follow-index", s.handleElasticsearchCCR, map[string]interface{}{"action": "create-follower", "index": "i1", "leader": "l1"}, "index", "any"},
+		{"ext-ccr/follow-remote", s.handleElasticsearchCCR, map[string]interface{}{"action": "create-follower", "index": "i1", "leader": "l1"}, "remote", "any"},
+		{"ext-ccr/follow-leader", s.handleElasticsearchCCR, map[string]interface{}{"action": "create-follower", "index": "i1", "leader": "l1"}, "leader", "any"},
+		{"ext-ccr/pause-index", s.handleElasticsearchCCR, map[string]interface{}{"action": "pause", "index": "i1"}, "index", "any"},
+		{"ext-ccr/resume-index", s.handleElasticsearchCCR, map[string]interface{}{"action": "resume", "index": "i1"}, "index", "any"},
+		{"ext-watcher/get-watchid", s.handleElasticsearchWatcher, map[string]interface{}{"action": "get", "watchId": "w1"}, "watchId", "any"},
+		{"ext-watcher/create-watchid", s.handleElasticsearchWatcher, map[string]interface{}{"action": "create", "watchId": "w1", "body": `{}`}, "watchId", "any"},
+		{"ext-watcher/create-body", s.handleElasticsearchWatcher, map[string]interface{}{"action": "create", "watchId": "w1"}, "body", "json"},
+		{"ext-watcher/delete-watchid", s.handleElasticsearchWatcher, map[string]interface{}{"action": "delete", "watchId": "w1"}, "watchId", "any"},
+		{"ext-watcher/activate-watchid", s.handleElasticsearchWatcher, map[string]interface{}{"action": "activate", "watchId": "w1"}, "watchId", "any"},
+		{"ext-watcher/deactivate-watchid", s.handleElasticsearchWatcher, map[string]interface{}{"action": "deactivate", "watchId": "w1"}, "watchId", "any"},
+	}
+}
+
+// b9Payloads 按 kind 取载荷集。
+func b9Payloads(kind string) []string {
+	switch kind {
+	case "json":
+		return b9PayloadJSON
+	case "text":
+		return b9PayloadText
+	default:
+		return b9PayloadAny
+	}
+}
+
+// b9AssertNoInjection 断言脚本里载荷只以字面量形态存在（判据①③）。
+//
+// 用批次 7 的 unquotedText（纯函数，取脚本中「单引号之外」的文本）：注入载荷若出现在那里，
+// 就是可执行结构。
+func b9AssertNoInjection(t *testing.T, name, script string, payload string) {
+	t.Helper()
+	out := unquotedText(script)
+	for _, bad := range []string{payload, "$(", "`", "touch /tmp/opsmesh-b9-pwned"} {
+		if bad == "" {
+			continue
+		}
+		if strings.Contains(out, bad) {
+			t.Errorf("%s：引号外文本含可执行结构 %q：\n脚本=%s\n引号外=%s", name, bad, script, out)
+		}
+	}
+	// 旧形态：用户字段直接落在**双引号段**内（双引号内 $ / 反引号仍会展开 ⇒ 不是防护）。
+	//
+	// 这里必须在 **unquotedText** 上查，不能在原始脚本上查——原始脚本里到处是 JSON 的
+	// 双引号（如 `-d '{"actions":[{"add":{"alias":"<载荷>"}}]}'`），载荷嵌在 JSON 字符串里
+	// 时两侧恰好也是 `"`，在原始脚本上查会**误判**（JSON 双引号 ≠ shell 双引号：
+	// 整个 JSON 在 shell 单引号段内，本来就不可执行）。
+	// unquotedText 已剥掉 shell 单引号段 ⇒ 只有真正的 shell 双引号直插才会命中。
+	if strings.Contains(out, `"`+payload+`"`) {
+		t.Errorf("%s：用户字段仍是双引号直插形态（双引号内 $ / 反引号会展开 ⇒ 可执行注入）：\n%s", name, script)
+	}
+}
+
+// TestB9InjectionQuoted 判据①③：载荷只以单引号字面量形态出现。
+func TestB9InjectionQuoted(t *testing.T) {
+	s := newShellQuoteServer()
+	for _, c := range b9Cases(s) {
+		for pi, payload := range b9Payloads(c.kind) {
+			body := map[string]interface{}{"deviceID": "b9-" + c.name + "-" + string(rune('a'+pi))}
+			for k, v := range c.body {
+				body[k] = v
+			}
+			body[c.field] = payload
+			dev := body["deviceID"].(string)
+			rec := sqPost(t, s, c.handler, body)
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("%s：应受理：%d %s", c.name, rec.Code, rec.Body.String())
+			}
+			sc := sqDispatchScript(t, s, dev)
+			b9AssertNoInjection(t, c.name+"/"+payload, sc, payload)
+		}
+	}
+}
+
+// TestB9FreeFormJSONRejected 判据②：自由 JSON 字段非法 ⇒ 400 拒收；合法 ⇒ 受理。
+func TestB9FreeFormJSONRejected(t *testing.T) {
+	s := newShellQuoteServer()
+	bad := []string{
+		`{"a":`,
+		`not json`,
+		`{'a':'b'}`,
+		`{"a":"b",}`,
+	}
+	cases := []b9Case{
+		{"index-body", s.handleElasticsearchIndex, map[string]interface{}{"action": "create", "index": "i1"}, "body", "json"},
+		{"ilm-body", s.handleElasticsearchILM, map[string]interface{}{"action": "create", "policy": "p1"}, "body", "json"},
+		{"pipeline-body", s.handleElasticsearchPipeline, map[string]interface{}{"action": "create", "name": "n1"}, "body", "json"},
+		{"template-body", s.handleElasticsearchTemplate, map[string]interface{}{"action": "create", "name": "n1"}, "body", "json"},
+		{"cluster-body", s.handleElasticsearchClusterSettings, map[string]interface{}{"action": "update"}, "body", "json"},
+		{"watcher-body", s.handleElasticsearchWatcher, map[string]interface{}{"action": "create", "watchId": "w1"}, "body", "json"},
+	}
+	for _, c := range cases {
+		for i, payload := range bad {
+			body := map[string]interface{}{"deviceID": "b9-free-" + c.name + "-" + string(rune('a'+i))}
+			for k, v := range c.body {
+				body[k] = v
+			}
+			body[c.field] = payload
+			rec := sqPost(t, s, c.handler, body)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("%s：非法 JSON 应 400 拒收，实得 %d：%s", c.name, rec.Code, rec.Body.String())
+			}
+		}
+		// 合法 JSON 仍受理（能力不误伤）
+		body := map[string]interface{}{"deviceID": "b9-free-ok-" + c.name}
+		for k, v := range c.body {
+			body[k] = v
+		}
+		body[c.field] = `{"properties":{"a":{"type":"string"}}}`
+		rec := sqPost(t, s, c.handler, body)
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("%s：合法 JSON 应受理，实得 %d：%s", c.name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// b9Shell 返回本机可用的 POSIX shell（nil=无）。
+func b9Shell() string {
+	if p, err := exec.LookPath("sh"); err == nil {
+		return p
+	}
+	for _, cand := range []string{
+		`C:\Program Files\Git\bin\bash.exe`,
+		`C:\Program Files\Git\usr\bin\bash.exe`,
+	} {
+		if _, err := os.Stat(cand); err == nil {
+			return cand
+		}
+	}
+	return ""
+}
+
+// TestB9SemanticNoSideEffect 判据③：把脚本交给**真 sh** 执行，注入载荷不得产生副作用。
+//
+// URL 类载荷用 `$(touch marker)`：旧形态 URL 在双引号段内，而**双引号内命令替换照样展开**
+// ⇒ 旧码下真的执行。logstash config 类用配对单引号的载荷（旧形态 `echo '%s'` 破段执行）。
+func TestB9SemanticNoSideEffect(t *testing.T) {
+	sh := b9Shell()
+	if sh == "" {
+		t.Skip("本机无 POSIX shell（Windows），语义判据由 CI 的 ubuntu runner 承担")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, b9MarkerName)
+	if strings.ContainsAny(marker, " \t") {
+		t.Skip("临时目录路径含空白，跳过语义判据")
+	}
+	posixMarker := filepath.ToSlash(marker)
+
+	s := newShellQuoteServer()
+	plan := []struct {
+		name    string
+		handler http.HandlerFunc
+		body    map[string]interface{}
+		field   string
+		payload string
+	}{
+		{"index-mapping", s.handleElasticsearchIndex, map[string]interface{}{"action": "mapping", "index": "i1"}, "index", "$(touch " + posixMarker + ")"},
+		{"index-delete", s.handleElasticsearchIndex, map[string]interface{}{"action": "delete", "index": "i1"}, "index", "$(touch " + posixMarker + ")"},
+		{"ilm-get", s.handleElasticsearchILM, map[string]interface{}{"action": "get", "policy": "p1"}, "policy", "$(touch " + posixMarker + ")"},
+		{"datastream-rollover", s.handleElasticsearchDataStream, map[string]interface{}{"action": "rollover", "name": "n1"}, "name", "$(touch " + posixMarker + ")"},
+		{"maintenance-refresh", s.handleElasticsearchMaintenance, map[string]interface{}{"action": "refresh", "index": "i1"}, "index", "$(touch " + posixMarker + ")"},
+		{"watcher-get", s.handleElasticsearchWatcher, map[string]interface{}{"action": "get", "watchId": "w1"}, "watchId", "$(touch " + posixMarker + ")"},
+		{"logstash-pipeline", s.handleLogstash, map[string]interface{}{"action": "pipeline", "name": "p1"}, "config", "x'; touch " + posixMarker + "; echo '"},
+	}
+	for _, c := range plan {
+		body := map[string]interface{}{"deviceID": "b9-sem-" + c.name}
+		for k, v := range c.body {
+			body[k] = v
+		}
+		body[c.field] = c.payload
+		rec := sqPost(t, s, c.handler, body)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("%s：应受理：%d %s", c.name, rec.Code, rec.Body.String())
+		}
+		sc := sqDispatchScript(t, s, body["deviceID"].(string))
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		exec.CommandContext(ctx, sh, "-c", sc).Run() // 退出码无关紧要（ES 多半不存在）
+		cancel()
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatalf("%s：注入载荷被执行（标记文件已落地）：\n%s", c.name, sc)
+		}
+	}
+}
+
+// TestB9APIURLQuoteSemantics 钉判据①b：**整体 Quote 后，curl 收到的 URL 与原 URL 逐字相同**。
+//
+// 这是本批最容易被做错的一步——若把 Quote 结果塞回双引号段（`"http://…/'idx'"`），
+// URL 里会多出字面量单引号（%27）⇒ 请求 404，而且**文本断言看不出来**（引号是配对的）。
+// 故必须交给真 shell 求值来验。
+func TestB9APIURLQuoteSemantics(t *testing.T) {
+	sh := b9Shell()
+	if sh == "" {
+		t.Skip("本机无 POSIX shell（Windows），语义判据由 CI 的 ubuntu runner 承担")
+	}
+	paths := []string{
+		"myindex",
+		"myindex/_mapping?pretty",
+		"_ilm/policy/p1?pretty",
+		"_snapshot/repo1/snap1?wait_for_completion=true",
+		"idx with space",
+		"idx'quote",
+	}
+	for _, p := range paths {
+		out, err := exec.Command(sh, "-c", "printf '%s' "+esAPIURL(p)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("求值 %q 失败：%v（%s）", p, err, out)
+		}
+		want := esBaseURL + "/" + p
+		if string(out) != want {
+			t.Errorf("URL 求值结果与原 URL 不等：\n got=%q\nwant=%q", string(out), want)
+		}
+	}
+}
+
+// TestB9NoRawReqInterpolation 判据④：两个文件里不得再有未经收口的用户字段直插脚本。
+//
+// 为什么不用**行级**判据（批次 7 的做法）：行级判据是「整行含任意收口 marker 即放过」，
+// 于是「同一行里既有已收口的 req.A、又有未收口的 req.B」会**漏判**；而且行级判据只看得到
+// `req.` 字面量，看不到派生局部变量（`body := req.Body` 之后的 `body`、`version`、
+// `index`、`payload` …）——真正的注入点恰恰常是这些派生变量。
+//
+// 故本判据改为 **AST 级污点传播**：
+//   - 污点源：请求结构体里**字符串类型**的字段（`req.Foo`）；
+//   - 传播：局部变量赋值、字符串拼接、`fmt.Sprintf` 实参；
+//   - 净化：经收口助手（`shellquote.Quote` / `esAPIURL` / `esQuoteJSONText` /
+//     `esJSONPayload` / `esEcho`）返回的值即已安全；
+//   - 断言：`script = fmt.Sprintf(...)` 的**每一个实参**都不得携带未净化的污点。
+//
+// 非字符串字段（`port` / `maxSegments`，int）不构成注入面：JSON 解码阶段就会因类型不符
+// 而 400，请求体无法把 shell 元字符送进来。
+func TestB9NoRawReqInterpolation(t *testing.T) {
+	for _, f := range []string{"elk_ops.go", "elk_ext_ops.go"} {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, f, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("解析 %s 失败：%v", f, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			st := newB9TaintState(b9SafeHelpers, false)
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.DeclStmt:
+					// 函数体内的 `var req struct{...}` 是 DeclStmt 包着 GenDecl。
+					gd, ok := x.Decl.(*ast.GenDecl)
+					if ok {
+						st.collectReqStruct(gd)
+					}
+				case *ast.GenDecl:
+					st.collectReqStruct(x)
+				case *ast.AssignStmt:
+					st.checkAssign(fset, f, x, t)
+				}
+				return true
+			})
+		}
+	}
+}
+
+// b9SafeHelpers 是**批次 9** 认可的「收口助手」集合：它们的返回值已是可安全进 shell 的字面量。
+//
+// 口径要与 `scripts/shell-injection-audit.py` 的 QUOTE_MARKERS 一致（那边多了几个
+// 历史形态的助手，本批两个文件未用到）。
+//
+// 注：批次 10 起本集合被**参数化**（见 newB9TaintState）——不同批次认定的收口助手
+// 集合不同（批次 10 多了 ops*/graph*/kafka* 一族），但**污点传播机制本身只有一份**，
+// 避免两套实现漂移。
+var b9SafeHelpers = map[string]bool{
+	"shellquote.Quote":       true,
+	"shellquote.QuoteDouble": true,
+	"shellquote.QuoteJoin":   true,
+	"esAPIURL":               true,
+	"esQuoteJSONText":        true,
+	"esJSONPayload":          true,
+	"esEcho":                 true,
+}
+
+// b9Taint 取值：表达式携带未净化的用户数据 / 已净化 / 干净。
+type b9Taint int
+
+const (
+	b9Clean b9Taint = iota
+	b9Tainted
+	b9Sanitized
+)
+
+// b9TaintState 是单个 handler 内的污点状态。
+type b9TaintState struct {
+	tainted    map[string]bool   // 局部变量名 -> 携带未净化的用户数据
+	sanitized  map[string]bool   // 局部变量名 -> 已由收口助手净化
+	fieldTypes map[string]string // req 字段名 -> 类型标识（"string" / "int" …）
+	safe       map[string]bool   // 认可的收口助手集合（按批次注入）
+	strict     bool              // 是否对 `script = <任意表达式>` 做**整体**断言
+}
+
+// newB9TaintState 建一个污点状态。
+//
+// safe：本批次认可的收口助手集合（传 nil ⇒ 不认任何助手 ⇒ 全部用户字段都算污点）。
+// strict：true 时额外断言 `script = <任意表达式>` 的整体不带未净化污点——批次 10 的
+// 收口后形态大量是**拼接**（`script = cypherShell(...) + " … " + opsEcho(...)`），
+// 只盯 `fmt.Sprintf` 会漏掉这些行。
+func newB9TaintState(safe map[string]bool, strict bool) *b9TaintState {
+	return &b9TaintState{
+		tainted:    map[string]bool{},
+		sanitized:  map[string]bool{},
+		fieldTypes: map[string]string{},
+		safe:       safe,
+		strict:     strict,
+	}
+}
+
+// collectReqStruct 收集 `var req struct{...}` 的字段名与类型。
+//
+// 为什么需要类型：只有**字符串**字段能携带 shell 元字符；int 字段在 JSON 解码阶段
+// 就被类型校验挡掉（传字符串 ⇒ 400），不可能成为注入面。
+func (st *b9TaintState) collectReqStruct(decl *ast.GenDecl) {
+	if decl.Tok != token.VAR {
+		return
+	}
+	for _, spec := range decl.Specs {
+		switch sp := spec.(type) {
+		case *ast.ValueSpec:
+			// `var req struct{...}` 的形态是 ValueSpec 且 **Values 为空**——
+			// 类型写在 ValueSpec.Type 上（不是 Values[i]）。
+			for _, name := range sp.Names {
+				if name.Name != "req" {
+					continue
+				}
+				stt, ok := sp.Type.(*ast.StructType)
+				if !ok {
+					continue
+				}
+				for _, field := range stt.Fields.List {
+					typ := ""
+					if id, ok := field.Type.(*ast.Ident); ok {
+						typ = id.Name
+					}
+					for _, fname := range field.Names {
+						st.fieldTypes[fname.Name] = typ
+					}
+				}
+			}
+		case *ast.TypeSpec:
+			// `type req struct{...}` 形态（本仓两个文件未用，留作兼容）。
+			if sp.Name.Name != "req" {
+				continue
+			}
+			stt, ok := sp.Type.(*ast.StructType)
+			if !ok {
+				continue
+			}
+			for _, field := range stt.Fields.List {
+				typ := ""
+				if id, ok := field.Type.(*ast.Ident); ok {
+					typ = id.Name
+				}
+				for _, fname := range field.Names {
+					st.fieldTypes[fname.Name] = typ
+				}
+			}
+		}
+	}
+}
+
+// classify 判定表达式携带的污点级别。
+func (st *b9TaintState) classify(e ast.Expr) b9Taint {
+	switch x := e.(type) {
+	case *ast.CallExpr:
+		name := b9CallName(x.Fun)
+		if st.safe[name] {
+			// 收口助手的返回值已是安全字面量（助手内部负责 Quote / 白名单 / JSON 构造）。
+			return b9Sanitized
+		}
+		for _, a := range x.Args {
+			if st.classify(a) == b9Tainted {
+				return b9Tainted
+			}
+		}
+		return b9Clean
+	case *ast.SelectorExpr:
+		if id, ok := x.X.(*ast.Ident); ok && id.Name == "req" {
+			if st.fieldTypes[x.Sel.Name] == "string" {
+				return b9Tainted
+			}
+			return b9Clean
+		}
+		return st.classify(x.X)
+	case *ast.Ident:
+		if st.tainted[x.Name] {
+			return b9Tainted
+		}
+		if st.sanitized[x.Name] {
+			return b9Sanitized
+		}
+		return b9Clean
+	case *ast.BinaryExpr:
+		if st.classify(x.X) == b9Tainted || st.classify(x.Y) == b9Tainted {
+			return b9Tainted
+		}
+		return b9Clean
+	case *ast.ParenExpr:
+		return st.classify(x.X)
+	}
+	return b9Clean
+}
+
+// checkAssign 处理一条赋值：先传播污点，再对 `script = fmt.Sprintf(...)` 逐实参断言。
+func (st *b9TaintState) checkAssign(fset *token.FileSet, file string, as *ast.AssignStmt, t *testing.T) {
+	// 传播：Go 的多返回值写法 `a, b := f()` 只把首个结果绑定到首个 lhs。
+	binding := len(as.Lhs)
+	if len(as.Rhs) == 1 && binding > 1 {
+		for i := 1; i < binding; i++ {
+			if id, ok := as.Lhs[i].(*ast.Ident); ok {
+				st.sanitized[id.Name] = true
+			}
+		}
+		binding = 1
+	}
+	for i := 0; i < binding && i < len(as.Rhs); i++ {
+		id, ok := as.Lhs[i].(*ast.Ident)
+		if !ok {
+			continue
+		}
+		switch st.classify(as.Rhs[i]) {
+		case b9Tainted:
+			st.tainted[id.Name] = true
+			delete(st.sanitized, id.Name)
+		case b9Sanitized:
+			st.sanitized[id.Name] = true
+			delete(st.tainted, id.Name)
+		}
+	}
+
+	// 断言：`script = fmt.Sprintf(...)` 的每个实参都不得携带未净化的污点。
+	if len(as.Lhs) != 1 {
+		return
+	}
+	id, ok := as.Lhs[0].(*ast.Ident)
+	if !ok || id.Name != "script" {
+		return
+	}
+	// 断言（strict 模式，批次 10 起）：`script = <任意表达式>` 的**整体**都不得携带
+	// 未净化的污点。
+	//
+	// 为什么不能只盯 fmt.Sprintf：批次 10 的收口后形态大量是**拼接**形态
+	// （`script = cypherShell(...) + " 2>/dev/null && echo " + opsEcho(...)`），
+	// 只盯 Sprintf 会漏掉这些行 ⇒ 必须对整体表达式断言。
+	//
+	// 注意：cypherShell / nebulaConsole 在批次 10 里**故意不算净化器**——它们只把
+	// 整条语句做 shell 层 Quote，**挡不住图库层注入**（Cypher / nGQL 自己的字符串
+	// 字面量仍可被闭合）。把它们排除在 safe 集合之外，AST 守卫才能抓到「图库层
+	// 注入」——即使用户字段绕过了白名单助手直接进语句。
+	if st.strict && st.classify(as.Rhs[0]) == b9Tainted {
+		t.Errorf("%s:%d script 的赋值携带未净化的用户字段：%s",
+			file, fset.Position(as.Pos()).Line, b9Src(fset, as.Rhs[0]))
+	}
+	call, ok := as.Rhs[0].(*ast.CallExpr)
+	if !ok || b9CallName(call.Fun) != "fmt.Sprintf" {
+		return
+	}
+	if len(call.Args) == 0 {
+		return
+	}
+	// 格式串必须是字面量（防 format string 注入：格式串本身若来自用户输入，
+	// 其中的 % 会被解释为动词）。
+	if _, ok := call.Args[0].(*ast.BasicLit); !ok {
+		t.Errorf("%s:%d script 的 fmt.Sprintf 格式串不是字面量（format string 注入面）：%s",
+			file, fset.Position(call.Pos()).Line, b9Src(fset, call.Args[0]))
+	}
+	for i, a := range call.Args[1:] {
+		if st.classify(a) != b9Tainted {
+			continue
+		}
+		t.Errorf("%s:%d script 的 fmt.Sprintf 第 %d 个实参携带未净化的用户字段：%s",
+			file, fset.Position(a.Pos()).Line, i+1, b9Src(fset, a))
+	}
+}
+
+// b9CallName 返回调用者的限定名（如 `shellquote.Quote` / `esAPIURL`）。
+func b9CallName(fun ast.Expr) string {
+	switch f := fun.(type) {
+	case *ast.Ident:
+		return f.Name
+	case *ast.SelectorExpr:
+		if id, ok := f.X.(*ast.Ident); ok {
+			return id.Name + "." + f.Sel.Name
+		}
+		return f.Sel.Name
+	}
+	return ""
+}
+
+// b9Src 渲染 AST 片段的源码文本（用于报错定位）。
+func b9Src(fset *token.FileSet, e ast.Expr) string {
+	var b bytes.Buffer
+	if err := printer.Fprint(&b, fset, e); err != nil {
+		return "<expr>"
+	}
+	return b.String()
+}

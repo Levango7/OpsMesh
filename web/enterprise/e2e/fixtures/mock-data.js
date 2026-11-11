@@ -9,6 +9,10 @@ export const mockUser = {
   email: 'admin@opsmesh.local',
   status: 'active',
   role_ids: ['r-admin'],
+  // 注意：这个夹具扮演的是「管理员」，权限表必须与按钮级权限门对齐——
+  // 2026-11-06 批 1 起写按钮按 hasPerm 禁用，缺了对应权限点，E2E 点按钮会全部落空
+  // （实测：缺 k8s:write 让 k8s.spec 8 条资源子页用例全红）。E2E 管辖的功能视图需要哪族，
+  // 这里就补到哪族；权限矩阵本身的判定由单测棘轮（write-gate-ledger / router-perms）负责。
   permissions: [
     'device:read', 'device:write',
     'task:read', 'task:write', 'task:cancel',
@@ -17,7 +21,8 @@ export const mockUser = {
     'workflow:read',
     'deploy:read',
     'log:read',
-    'user:read', 'role:read'
+    'user:read', 'role:read',
+    'k8s:read', 'k8s:write', 'k8s:delete'
   ]
 }
 

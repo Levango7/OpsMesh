@@ -17,6 +17,7 @@ package controlplane
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -76,9 +77,21 @@ func (s *Server) handleSystemServices(w http.ResponseWriter, r *http.Request) {
 	// 构造脚本：systemctl <action> <service>；status/is-active 用 --no-pager 输出供轮询查看。
 	var script string
 	if req.Action == "status" || req.Action == "is-active" {
-		script = fmt.Sprintf("systemctl --no-pager %s %q\n", req.Action, req.Service)
+		actionV, err := opsIdentifier("action", req.Action)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		serviceV := opsSQLString(req.Service)
+		script = fmt.Sprintf("systemctl --no-pager %s %s\n", actionV, serviceV)
 	} else {
-		script = fmt.Sprintf("systemctl %s %q && systemctl is-active %q\n", req.Action, req.Service, req.Service)
+		actionV, err := opsIdentifier("action", req.Action)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		serviceV := opsSQLString(req.Service)
+		script = fmt.Sprintf("systemctl %s %s && systemctl is-active %s\n", actionV, serviceV, serviceV)
 	}
 
 	task, err := s.createSystemTask(actx.TenantID, req.AgentID, script, "service_"+req.Action, true)
@@ -172,7 +185,7 @@ func (s *Server) handleSystemJournal(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "journal_query", Target: req.Unit,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("agentID=%s lines=%d level=%s", req.AgentID, lines, req.Level)),
+		Detail: sanitizeAuditDetail("agentID=" + opsSQLString(req.AgentID) + " lines=" + opsSQLString(strconv.Itoa(lines)) + " level=" + opsSQLString(req.Level)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"taskID":    task.TaskID,

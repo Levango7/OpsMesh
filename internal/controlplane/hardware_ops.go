@@ -194,12 +194,14 @@ func (s *Server) handleCabinet(w http.ResponseWriter, r *http.Request) {
 	var script string
 	switch req.Action {
 	case "status":
-		script = fmt.Sprintf(`echo "=== Cabinet Status ===" && echo "Cabinet: %s"
+		cabEcho := opsEcho("Cabinet: %s", cabinet)
+		script = fmt.Sprintf(
+			`echo "=== Cabinet Status ===" && echo %s
 echo "--- PDU ---" && (ipmitool sensor list 2>/dev/null | grep -iE 'pdu|power' || snmpwalk -v2c -c public localhost 1.3.6.1.4.1.21785 2>/dev/null | head -20 || echo "PDU status not available")
 echo "--- Cooling/Fan ---" && (ipmitool sensor list 2>/dev/null | grep -iE 'fan|cool' || echo "fan status not available")
-echo "--- Temp ---" && (ipmitool sensor list 2>/dev/null | grep -iE 'temp' || sensors 2>/dev/null || echo "temp not available")`, cabinet)
+echo "--- Temp ---" && (ipmitool sensor list 2>/dev/null | grep -iE 'temp' || sensors 2>/dev/null || echo "temp not available")`, cabEcho)
 	case "list":
-		script = fmt.Sprintf(`echo "=== Devices in Cabinet %s ===" && (ls /dev 2>/dev/null | head; echo "---"; dmidecode -t 1 2>/dev/null | grep -iE 'product|serial|manufacturer' || echo "device list not available")`, cabinet)
+		script = fmt.Sprintf(`echo %s && (ls /dev 2>/dev/null | head; echo "---"; dmidecode -t 1 2>/dev/null | grep -iE 'product|serial|manufacturer' || echo "device list not available")`, opsEcho("=== Devices in Cabinet %s ===", cabinet))
 	case "devices":
 		op := req.Operation
 		if op == "" {
@@ -207,13 +209,13 @@ echo "--- Temp ---" && (ipmitool sensor list 2>/dev/null | grep -iE 'temp' || se
 		}
 		switch op {
 		case "add", "mount":
-			script = fmt.Sprintf(`echo "Mounting device %s into cabinet %s at %s" && echo "device mounted"`, req.Device, cabinet, req.Position)
+			script = fmt.Sprintf(`echo %s && echo "device mounted"`, opsEcho("Mounting device %s into cabinet %s at %s", req.Device, cabinet, req.Position))
 		case "remove", "unmount":
-			script = fmt.Sprintf(`echo "Removing device %s from cabinet %s" && echo "device removed"`, req.Device, cabinet)
+			script = fmt.Sprintf(`echo %s && echo "device removed"`, opsEcho("Removing device %s from cabinet %s", req.Device, cabinet))
 		case "move":
-			script = fmt.Sprintf(`echo "Moving device %s to position %s in cabinet %s" && echo "device moved"`, req.Device, req.Position, cabinet)
+			script = fmt.Sprintf(`echo %s && echo "device moved"`, opsEcho("Moving device %s to position %s in cabinet %s", req.Device, req.Position, cabinet))
 		default:
-			script = fmt.Sprintf(`echo "=== Cabinet %s Device List ===" && (dmidecode -t 1 2>/dev/null | grep -iE 'product|serial' || echo "no device inventory")`, cabinet)
+			script = fmt.Sprintf(`echo %s && (dmidecode -t 1 2>/dev/null | grep -iE 'product|serial' || echo "no device inventory")`, opsEcho("=== Cabinet %s Device List ===", cabinet))
 		}
 	case "power":
 		pa := req.PowerAction
@@ -229,20 +231,22 @@ echo "--- Temp ---" && (ipmitool sensor list 2>/dev/null | grep -iE 'temp' || se
 		}
 		switch pa {
 		case "on":
-			script = fmt.Sprintf(`echo "Power ON outlet %s in cabinet %s" && (ipmitool power on 2>/dev/null || snmpset -v2c -c private localhost 1.3.6.1.4.1.21785.3.1.0 i 1 2>/dev/null || echo "pdu control not available")`, outlet, cabinet)
+			script = fmt.Sprintf(`echo %s && (ipmitool power on 2>/dev/null || snmpset -v2c -c private localhost 1.3.6.1.4.1.21785.3.1.0 i 1 2>/dev/null || echo "pdu control not available")`, opsEcho("Power ON outlet %s in cabinet %s", outlet, cabinet))
 		case "off":
-			script = fmt.Sprintf(`echo "Power OFF outlet %s in cabinet %s" && (ipmitool power off 2>/dev/null || snmpset -v2c -c private localhost 1.3.6.1.4.1.21785.3.1.0 i 0 2>/dev/null || echo "pdu control not available")`, outlet, cabinet)
+			script = fmt.Sprintf(`echo %s && (ipmitool power off 2>/dev/null || snmpset -v2c -c private localhost 1.3.6.1.4.1.21785.3.1.0 i 0 2>/dev/null || echo "pdu control not available")`, opsEcho("Power OFF outlet %s in cabinet %s", outlet, cabinet))
 		case "cycle":
-			script = fmt.Sprintf(`echo "Power CYCLE outlet %s in cabinet %s" && (ipmitool power cycle 2>/dev/null || echo "pdu control not available")`, outlet, cabinet)
+			script = fmt.Sprintf(`echo %s && (ipmitool power cycle 2>/dev/null || echo "pdu control not available")`, opsEcho("Power CYCLE outlet %s in cabinet %s", outlet, cabinet))
 		case "status":
-			script = fmt.Sprintf(`echo "Power status for cabinet %s outlet %s" && (ipmitool power status 2>/dev/null || echo "pdu status not available")`, cabinet, outlet)
+			script = fmt.Sprintf(`echo %s && (ipmitool power status 2>/dev/null || echo "pdu status not available")`, opsEcho("Power status for cabinet %s outlet %s", cabinet, outlet))
 		default:
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown power action: " + pa})
 			return
 		}
 	case "temperature":
-		script = fmt.Sprintf(`echo "=== Temperature Monitoring for Cabinet %s ===" && (ipmitool sensor list 2>/dev/null | grep -iE 'temp' || sensors 2>/dev/null || echo "temperature sensors not available")
-echo "--- Fan ---" && (ipmitool sensor list 2>/dev/null | grep -iE 'fan' || echo "fan not available")`, cabinet)
+		tempEcho := opsEcho("=== Temperature Monitoring for Cabinet %s ===", cabinet)
+		script = fmt.Sprintf(
+			`echo %s && (ipmitool sensor list 2>/dev/null | grep -iE 'temp' || sensors 2>/dev/null || echo "temperature sensors not available")
+echo "--- Fan ---" && (ipmitool sensor list 2>/dev/null | grep -iE 'fan' || echo "fan not available")`, tempEcho)
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

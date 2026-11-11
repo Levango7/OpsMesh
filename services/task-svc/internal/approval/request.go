@@ -51,6 +51,27 @@ type RequestStep struct {
 	Status    RequestStatus // 该步骤状态：pending/approved/rejected/timeout
 	Decisions []Decision    // 决策列表（按时间顺序追加）
 	StartedAt time.Time     // 步骤开始时间（成为当前步骤的时刻，用于步骤超时计算）
+
+	// 以下三字段为提交时从审批流定义快照的内容：请求一旦创建即与流定义解耦，
+	// 后续 UpdateFlow / DeleteFlow 不改变在途请求的审批人、模式与超时语义。
+	Mode      StepMode      // 审批模式快照：sequential/countersign/anyof
+	Approvers []string      // 审批人列表快照
+	Timeout   time.Duration // 审批超时快照（<=0 表示不超时）
+}
+
+// SnapshotStep 把请求步骤快照还原为步骤定义形态，供状态机校验与推进使用。
+// Mode 为零值表示该请求步骤未携带快照（直接构造的 RequestStep），返回 nil。
+func (rs *RequestStep) SnapshotStep() *ApprovalStep {
+	if rs.Mode == "" {
+		return nil
+	}
+	return &ApprovalStep{
+		ID:        rs.StepID,
+		Order:     rs.Order,
+		Mode:      rs.Mode,
+		Approvers: rs.Approvers,
+		Timeout:   rs.Timeout,
+	}
 }
 
 // HasDecided 返回 userID 在本步骤是否已决策。
@@ -132,4 +153,12 @@ func (r *ApprovalRequest) StepByID(id string) *RequestStep {
 // IsExpired 返回请求是否已过期（ExpireAt 非零且已过）。
 func (r *ApprovalRequest) IsExpired(now time.Time) bool {
 	return !r.ExpireAt.IsZero() && now.After(r.ExpireAt)
+}
+
+// LastOrder 返回最后一步的 Order（Steps 按 Order 升序，由 Submit 保证）。无步骤返回 0。
+func (r *ApprovalRequest) LastOrder() int {
+	if len(r.Steps) == 0 {
+		return 0
+	}
+	return r.Steps[len(r.Steps)-1].Order
 }

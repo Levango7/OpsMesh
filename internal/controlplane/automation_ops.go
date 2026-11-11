@@ -40,7 +40,12 @@ func (s *Server) handleAutomation(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job is required"})
 			return
 		}
-		script = fmt.Sprintf(`echo "Running job: %s" && echo "Job completed"`, req.Job)
+		jobV, err := opsIdentifier("job", req.Job)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && echo %s`, opsEcho("Running job: %s", jobV), opsEcho("Job completed"))
 	case "list-jobs":
 		script = `echo "=== Rundeck Jobs ===" && (curl -s http://localhost:4440/api/14/jobs 2>/dev/null | head -10 || echo "Rundeck not available")`
 	default:

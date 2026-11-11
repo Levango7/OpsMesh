@@ -19,8 +19,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/Levango7/OpsMesh/internal/logx"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 
 	"github.com/fsnotify/fsnotify"
 )

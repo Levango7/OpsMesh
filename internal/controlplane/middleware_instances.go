@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -51,7 +52,7 @@ func parseAuditDetail(detail string) map[string]string {
 // instanceKey 构建中间件实例的复合键。
 // 格式：<templateID>@<agentID>:<deployType>:<version>
 func instanceKey(templateID, agentID, deployType, version string) string {
-	return templateID + "@" + agentID + ":" + deployType + ":" + version
+	return fmt.Sprintf("%s@%s:%s:%s", templateID, agentID, deployType, version)
 }
 
 // deriveMiddlewareInstances 从审计日志推导已部署的中间件实例列表。

@@ -143,7 +143,7 @@ func (h *Handler) handleDeploys(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, list)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -155,12 +155,12 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 	parts := strings.SplitN(rest, "/", 2)
 	idStr := parts[0]
 	if idStr == "" || strings.Contains(idStr, "/") {
-		http.Error(w, "invalid deploy id", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid deploy id"})
 		return
 	}
 	var id int64
 	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
-		http.Error(w, "invalid deploy id", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid deploy id"})
 		return
 	}
 
@@ -169,7 +169,7 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 		switch parts[1] {
 		case "execute":
 			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 			if err := h.Execute(r.Context(), id, actx.TenantID); err != nil {
@@ -185,7 +185,7 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 			return
 		case "rollback":
 			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 			if err := h.Rollback(r.Context(), id, actx.TenantID); err != nil {
@@ -202,7 +202,7 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 		case "promote":
 			// 灰度晋级：canary/gated -> 全量派发剩余目标。
 			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 			if err := h.Promote(r.Context(), id, actx.TenantID); err != nil {
@@ -227,14 +227,14 @@ func (h *Handler) handleDeployByID(w http.ResponseWriter, r *http.Request) {
 			h.autoAdvance.ServeHTTP(w, r, id, actx.TenantID, parts[1])
 			return
 		default:
-			http.Error(w, "not found", http.StatusNotFound)
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
 		}
 	}
 
 	// 默认：GET 详情（带 lazy reconcile）。
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	dt, err := h.store.Get(r.Context(), id, actx.TenantID)
@@ -736,7 +736,7 @@ func (h *Handler) handleFederationDeploys(w http.ResponseWriter, r *http.Request
 		}
 		writeJSON(w, http.StatusOK, list)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -752,12 +752,12 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 	parts := strings.SplitN(rest, "/", 2)
 	idStr := parts[0]
 	if idStr == "" || strings.Contains(idStr, "/") {
-		http.Error(w, "invalid federation id", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid federation id"})
 		return
 	}
 	var id int64
 	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
-		http.Error(w, "invalid federation id", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid federation id"})
 		return
 	}
 
@@ -766,7 +766,7 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 		switch parts[1] {
 		case "execute":
 			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 			if err := h.fed.Start(r.Context(), id, actx.TenantID); err != nil {
@@ -782,7 +782,7 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 			return
 		case "promote":
 			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 			if err := h.fed.Promote(r.Context(), id, actx.TenantID); err != nil {
@@ -798,7 +798,7 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 			return
 		case "rollback":
 			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 			if err := h.fed.Rollback(r.Context(), id, actx.TenantID); err != nil {
@@ -814,7 +814,7 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 			return
 		case "status":
 			if r.Method != http.MethodGet {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 			st, err := h.fed.Status(r.Context(), id, actx.TenantID)
@@ -829,14 +829,14 @@ func (h *Handler) handleFederationDeployByID(w http.ResponseWriter, r *http.Requ
 			writeJSON(w, http.StatusOK, st)
 			return
 		default:
-			http.Error(w, "not found", http.StatusNotFound)
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
 		}
 	}
 
 	// 默认：GET 详情。
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	f, err := h.fed.Store().Get(r.Context(), id, actx.TenantID)

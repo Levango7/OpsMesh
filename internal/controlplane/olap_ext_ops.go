@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -84,7 +85,13 @@ func (s *Server) handleClickHouse(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "target (view name) is required"})
 			return
 		}
-		script := fmt.Sprintf(`clickhouse-client --query "CREATE MATERIALIZED VIEW IF NOT EXISTS %s ENGINE = MergeTree() ORDER BY tuple() AS SELECT * FROM source_table" 2>/dev/null && echo "Materialized view %s created"`, req.Target, req.Target)
+		targetV, err := opsDBName("target", req.Target)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		stmt := "CREATE MATERIALIZED VIEW IF NOT EXISTS " + opsSQLString(targetV) + " ENGINE = MergeTree() ORDER BY tuple() AS SELECT * FROM source_table"
+		script := fmt.Sprintf(`clickhouse-client --query %s 2>/dev/null && echo %s`, shellquote.Quote(stmt), opsEcho("Materialized view %s created", targetV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "clickhouse_materialized-view")
 		if !ok {
 			return
@@ -140,11 +147,16 @@ func (s *Server) handleDorisFE(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "host is required"})
 			return
 		}
+		hostV, err := opsHost("host", req.Host)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		port := req.Port
 		if port == 0 {
 			port = 9010
 		}
-		script := fmt.Sprintf(`echo "Adding Doris FE node: %s:%d" && /opt/doris/fe/bin/start_fe.sh --helper %s:%d 2>/dev/null && echo "FE node added"`, req.Host, port, req.Host, port)
+		script := fmt.Sprintf(`echo %s && /opt/doris/fe/bin/start_fe.sh --helper %s:%d 2>/dev/null && echo %s`, opsEcho("Adding Doris FE node: %s:%d", hostV, port), hostV, port, opsEcho("FE node added: %s:%d", hostV, port))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "doris_fe_add")
 		if !ok {
 			return
@@ -156,7 +168,12 @@ func (s *Server) handleDorisFE(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "host is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Removing Doris FE node: %s" && echo "FE node removed"`, req.Host)
+		hostV, err := opsHost("host", req.Host)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`echo %s && echo "FE node removed"`, opsEcho("Removing Doris FE node: %s", hostV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "doris_fe_remove")
 		if !ok {
 			return
@@ -208,11 +225,16 @@ func (s *Server) handleDorisBE(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "host is required"})
 			return
 		}
+		hostV, err := opsHost("host", req.Host)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		port := req.Port
 		if port == 0 {
 			port = 9050
 		}
-		script := fmt.Sprintf(`echo "Adding Doris BE node: %s:%d" && /opt/doris/be/bin/start_be.sh --helper 127.0.0.1:9010 2>/dev/null && echo "BE node added"`, req.Host, port)
+		script := fmt.Sprintf(`echo %s && /opt/doris/be/bin/start_be.sh --helper 127.0.0.1:9010 2>/dev/null && echo %s`, opsEcho("Adding Doris BE node: %s:%d", hostV, port), opsEcho("BE node added: %s:%d", hostV, port))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "doris_be_add")
 		if !ok {
 			return
@@ -224,7 +246,13 @@ func (s *Server) handleDorisBE(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "host is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Removing Doris BE node: %s" && mysql -h 127.0.0.1 -P 9030 -uroot -e "ALTER SYSTEM DECOMMISSION BACKEND '%s:%d';" 2>/dev/null && echo "BE node removed"`, req.Host, req.Host, req.Port)
+		hostV, err := opsHost("host", req.Host)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		stmt := fmt.Sprintf("ALTER SYSTEM DECOMMISSION BACKEND '%s:%d'", opsSQLString(hostV), req.Port)
+		script := fmt.Sprintf(`echo %s && mysql -h 127.0.0.1 -P 9030 -uroot -e %s 2>/dev/null && echo %s`, opsEcho("Removing Doris BE node: %s", hostV), shellquote.Quote(stmt), opsEcho("BE node removed"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "doris_be_remove")
 		if !ok {
 			return
@@ -306,7 +334,12 @@ func (s *Server) handleDorisUpgrade(w http.ResponseWriter, r *http.Request) {
 		if version == "" {
 			version = "2.1.0"
 		}
-		script = fmt.Sprintf(`echo "Upgrading Doris to %s..." && echo "Upgrade complete (manual steps required)"`, version)
+		versionV, err := mqVersion("version", version)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`echo %s && echo "Upgrade complete (manual steps required)"`, opsEcho("Upgrading Doris to %s...", versionV))
 	case "rollback":
 		script = `echo "Rolling back Doris..." && echo "Rollback complete"`
 	case "version":
@@ -346,6 +379,11 @@ func (s *Server) handleDorisBackup(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/var/backups/doris"
 	}
+	pathV, err := mqPath("path", path)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	switch req.Action {
 	case "backup":
@@ -353,7 +391,18 @@ func (s *Server) handleDorisBackup(w http.ResponseWriter, r *http.Request) {
 		if db == "" {
 			db = "default"
 		}
-		script := fmt.Sprintf(`mkdir -p %s && echo "EXPORT TABLE %s.%s TO '%s';" | mysql -h 127.0.0.1 -P 9030 -uroot 2>/dev/null && echo "Backup created: %s"`, path, db, req.Table, path, path)
+		dbV, err := opsDBName("db", db)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		tableV, err := opsDBName("table", req.Table)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		stmt := fmt.Sprintf("EXPORT TABLE %s.%s TO '%s'", opsSQLString(dbV), tableV, pathV)
+		script := fmt.Sprintf(`mkdir -p %s && echo %s | mysql -h 127.0.0.1 -P 9030 -uroot 2>/dev/null && echo %s`, shellquote.Quote(pathV), shellquote.Quote(stmt), opsEcho("Backup created: %s", pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "doris_backup_backup")
 		if !ok {
 			return
@@ -361,7 +410,7 @@ func (s *Server) handleDorisBackup(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "backup"})
 
 	case "restore":
-		script := fmt.Sprintf(`echo "Restore from %s (manual steps required)"`, path)
+		script := fmt.Sprintf(`echo %s`, opsEcho("Restore from %s (manual steps required)", pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "doris_backup_restore")
 		if !ok {
 			return
@@ -369,7 +418,7 @@ func (s *Server) handleDorisBackup(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "restore"})
 
 	case "list":
-		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, path)
+		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, shellquote.Quote(pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "doris_backup_list")
 		if !ok {
 			return
@@ -409,13 +458,25 @@ func (s *Server) handleDorisUser(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user and password are required"})
 			return
 		}
-		script = fmt.Sprintf(`mysql -h 127.0.0.1 -P 9030 -uroot -e "CREATE USER '%s' IDENTIFIED BY '%s';" 2>/dev/null && echo "User %s created"`, req.User, req.Password, req.User)
+		userV, err := opsDBName("user", req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		stmt := "CREATE USER '" + opsSQLString(userV) + "' IDENTIFIED BY '" + opsSQLString(req.Password) + "'"
+		script = fmt.Sprintf(`mysql -h 127.0.0.1 -P 9030 -uroot -e %s 2>/dev/null && echo %s`, shellquote.Quote(stmt), opsEcho("User %s created", userV))
 	case "delete":
 		if req.User == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
 			return
 		}
-		script = fmt.Sprintf(`mysql -h 127.0.0.1 -P 9030 -uroot -e "DROP USER '%s';" 2>/dev/null && echo "User %s deleted"`, req.User, req.User)
+		userV, err := opsDBName("user", req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		stmt := "DROP USER '" + opsSQLString(userV) + "'"
+		script = fmt.Sprintf(`mysql -h 127.0.0.1 -P 9030 -uroot -e %s 2>/dev/null && echo %s`, shellquote.Quote(stmt), opsEcho("User %s deleted", userV))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -451,6 +512,11 @@ func (s *Server) handleDorisMaterializedView(w http.ResponseWriter, r *http.Requ
 	if db == "" {
 		db = "default"
 	}
+	dbV, err := opsDBName("db", db)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	var script string
 	switch req.Action {
@@ -459,15 +525,28 @@ func (s *Server) handleDorisMaterializedView(w http.ResponseWriter, r *http.Requ
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name and sql are required"})
 			return
 		}
-		script = fmt.Sprintf(`mysql -h 127.0.0.1 -P 9030 -uroot -e "CREATE MATERIALIZED VIEW %s.%s AS %s;" 2>/dev/null && echo "Materialized view %s created"`, db, req.Name, req.SQL, req.Name)
+		nameV, err := opsDBName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		stmt := "CREATE MATERIALIZED VIEW " + opsSQLString(dbV) + "." + opsSQLString(nameV) + " AS " + req.SQL
+		script = fmt.Sprintf(`mysql -h 127.0.0.1 -P 9030 -uroot -e %s 2>/dev/null && echo %s`, shellquote.Quote(stmt), opsEcho("Materialized view %s created", nameV))
 	case "list":
-		script = fmt.Sprintf(`mysql -h 127.0.0.1 -P 9030 -uroot -e "SHOW MATERIALIZED VIEWS IN %s;" 2>/dev/null || echo "Doris not available"`, db)
+		stmt := "SHOW MATERIALIZED VIEWS IN " + dbV
+		script = fmt.Sprintf(`mysql -h 127.0.0.1 -P 9030 -uroot -e %s 2>/dev/null || echo "Doris not available"`, shellquote.Quote(stmt))
 	case "drop":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`mysql -h 127.0.0.1 -P 9030 -uroot -e "DROP MATERIALIZED VIEW %s.%s;" 2>/dev/null && echo "Materialized view %s dropped"`, db, req.Name, req.Name)
+		nameV, err := opsDBName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		stmt := "DROP MATERIALIZED VIEW " + opsSQLString(dbV) + "." + opsSQLString(nameV)
+		script = fmt.Sprintf(`mysql -h 127.0.0.1 -P 9030 -uroot -e %s 2>/dev/null && echo %s`, shellquote.Quote(stmt), opsEcho("Materialized view %s dropped", nameV))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -503,6 +582,11 @@ func (s *Server) handleClickHouseMaterializedView(w http.ResponseWriter, r *http
 	if db == "" {
 		db = "default"
 	}
+	dbV, err := opsDBName("db", db)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	var script string
 	switch req.Action {
@@ -511,15 +595,28 @@ func (s *Server) handleClickHouseMaterializedView(w http.ResponseWriter, r *http
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name and sql are required"})
 			return
 		}
-		script = fmt.Sprintf(`clickhouse-client --query "CREATE MATERIALIZED VIEW %s.%s ENGINE = MergeTree() ORDER BY tuple() AS %s" 2>/dev/null && echo "Materialized view %s created"`, db, req.Name, req.SQL, req.Name)
+		nameV, err := opsDBName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		stmt := "CREATE MATERIALIZED VIEW " + opsSQLString(dbV) + "." + opsSQLString(nameV) + " ENGINE = MergeTree() ORDER BY tuple() AS " + req.SQL
+		script = fmt.Sprintf(`clickhouse-client --query %s 2>/dev/null && echo %s`, shellquote.Quote(stmt), opsEcho("Materialized view %s created", nameV))
 	case "list":
-		script = fmt.Sprintf(`clickhouse-client --query "SHOW TABLES FROM %s" 2>/dev/null | grep -i mv || echo "No materialized views"`, db)
+		stmt := "SHOW TABLES FROM " + dbV
+		script = fmt.Sprintf(`clickhouse-client --query %s 2>/dev/null | grep -i mv || echo "No materialized views"`, shellquote.Quote(stmt))
 	case "drop":
 		if req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 			return
 		}
-		script = fmt.Sprintf(`clickhouse-client --query "DROP VIEW %s.%s" 2>/dev/null && echo "Materialized view %s dropped"`, db, req.Name, req.Name)
+		nameV, err := opsDBName("name", req.Name)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		stmt := "DROP VIEW " + opsSQLString(dbV) + "." + opsSQLString(nameV)
+		script = fmt.Sprintf(`clickhouse-client --query %s 2>/dev/null && echo %s`, shellquote.Quote(stmt), opsEcho("Materialized view %s dropped", nameV))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -562,19 +659,34 @@ func (s *Server) handleTrino(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "catalog is required"})
 			return
 		}
-		script = fmt.Sprintf(`trino --execute "SHOW SCHEMAS FROM %s" 2>/dev/null`, req.Catalog)
+		catalogV, err := opsDBName("catalog", req.Catalog)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`trino --execute %s 2>/dev/null`, shellquote.Quote("SHOW SCHEMAS FROM "+catalogV))
 	case "tables":
 		if req.Catalog == "" || req.Schema == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "catalog and schema are required"})
 			return
 		}
-		script = fmt.Sprintf(`trino --execute "SHOW TABLES FROM %s.%s" 2>/dev/null`, req.Catalog, req.Schema)
+		catalogV, err := opsDBName("catalog", req.Catalog)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		schemaV, err := opsDBName("schema", req.Schema)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`trino --execute %s 2>/dev/null`, shellquote.Quote("SHOW TABLES FROM "+catalogV+"."+schemaV))
 	case "query":
 		if req.Query == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "query is required"})
 			return
 		}
-		script = fmt.Sprintf(`trino --execute "%s" 2>/dev/null`, req.Query)
+		script = fmt.Sprintf(`trino --execute %s 2>/dev/null`, shellquote.Quote(req.Query))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

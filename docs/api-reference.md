@@ -92,16 +92,25 @@
 
 ### 分页
 
-列表类接口支持 `page` / `pageSize` 查询参数（部分接口用 `limit` / `offset`），响应统一包装：
+列表类接口支持 `page` / `pageSize` 查询参数（部分接口用 `limit` / `offset`）。
+
+> **⚠️ 实现状态（2026-11-07 勘误，A2 审计 BB-08；与 api-specification.md §6.1 对齐）**：
+> 下方"统一包装"是**设计目标**，实测信封有四套并存（A2/BB-04）：裸数组（logs/deploys/cmdb-ci 等）、
+> 领域名键（`{"apiKeys":…}`、`{"tasks":…}` 等 60+ 键）、`{items,…}`（仅 helm）、
+> `{data,total,page,pageSize,hasMore}`（仅 tasks/devices/alerts 走 `paginate.ParsePagination` 的 5 处）。
+> 且**仅传 page 才分页**：同一端点不传 `page` 返回裸数组、传 `?page=1` 返回信封（BB-01）。
+> 对接请以各端点 handler 实测为准；本节不再声称"响应统一包装"。
 
 ```json
 {
-  "items": [],
+  "data": [],
+  "total": 100,
   "page": 1,
   "pageSize": 20,
-  "total": 100
+  "hasMore": false
 }
 ```
+（上为 `page/pageSize` 族的实测信封；`items`/`total` 组合当前仅 helm 的 `{items,…}` 存在且无分页键。）
 
 ---
 
@@ -1607,6 +1616,29 @@ M5 作业编排：DAG 创建 / 触发 / 状态查询。
 ### GET /api/v1/workflows/{id}/runs
 
 工作流执行历史。
+
+### POST /api/v1/workflows/{id}/runs/{run_id}/replay
+
+重放一次历史执行：以源 run 所属工作流的**当前定义**重新展开执行（与触发同链路），在新 run 记录写入 `originRunID` 血缘（指向被重放的 run；写库后不可变，UpdateRun 不回写该列），源 run 记录不变。
+
+- **认证**：需 `workflow:write` 权限（写操作，与触发同权）
+- **路径参数**：`run_id` 为数字 run ID
+- **响应**：`201 Created`，返回新 `WorkflowRun`（含 `originRunID`；该字段为 0 时省略，即首次运行）
+- 源 run 不存在或不属于该工作流/本租户：`404`（与 `listRuns` 同语义，不泄露他租户存在性）
+- 工作流不属于本租户：`403`；`run_id` 非数字：`400`；非 POST 方法：`405`；其他错误：`500`（错误体均为 JSON `{"error": ...}`）
+
+```json
+{
+  "id": 42,
+  "workflowID": 7,
+  "tenantID": "t1",
+  "startedAt": "2026-11-09T16:30:00Z",
+  "finishedAt": "0001-01-01T00:00:00Z",
+  "status": "running",
+  "nodeStates": {},
+  "originRunID": 17
+}
+```
 
 ---
 

@@ -145,7 +145,7 @@ func (h *Handler) handleCIs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, ci)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -182,7 +182,7 @@ func (h *Handler) handleCIByID(w http.ResponseWriter, r *http.Request) {
 	actx := authctx.FromHTTPHeader(r.Header)
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/cmdb/ci/")
 	if id == "" || strings.Contains(id, "/") {
-		http.Error(w, "invalid ci id", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid ci id"})
 		return
 	}
 	switch r.Method {
@@ -216,7 +216,7 @@ func (h *Handler) handleCIByID(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -251,7 +251,7 @@ func (h *Handler) handleCITypes(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusCreated, t)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -261,7 +261,7 @@ func (h *Handler) handleCITypes(w http.ResponseWriter, r *http.Request) {
 // 支持 ?format=csv（默认 json），导出当前租户下 active 状态 CI。
 func (h *Handler) handleCIExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -301,7 +301,7 @@ func (h *Handler) writeCICSV(w http.ResponseWriter, items []CiItem) {
 // 支持 JSON 数组或 CSV（?format=csv），按 ID upsert 到当前租户，返回导入摘要。
 func (h *Handler) handleCIImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -374,7 +374,7 @@ func (h *Handler) handleCIImport(w http.ResponseWriter, r *http.Request) {
 // 响应为 CiSearchHit 数组，按 score 降序。
 func (h *Handler) handleCISearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -420,7 +420,7 @@ func (h *Handler) handleCISearch(w http.ResponseWriter, r *http.Request) {
 // 返回当前租户下待审批（approvalStatus=pending）的 CI 列表。
 func (h *Handler) handleCIPending(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -438,7 +438,7 @@ func (h *Handler) handleCIPending(w http.ResponseWriter, r *http.Request) {
 // handleCIApprove 处理 POST /api/v1/cmdb/ci/{id}/approve。
 func (h *Handler) handleCIApprove(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -452,7 +452,7 @@ func (h *Handler) handleCIApprove(w http.ResponseWriter, r *http.Request, id str
 // handleCIReject 处理 POST /api/v1/cmdb/ci/{id}/reject。
 func (h *Handler) handleCIReject(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -631,14 +631,14 @@ func (h *Handler) handleRelations(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, rel)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
 // handleCIRelations 处理 GET /api/v1/cmdb/ci/{id}/relations。
 func (h *Handler) handleCIRelations(w http.ResponseWriter, r *http.Request, ciID string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -656,7 +656,7 @@ func (h *Handler) handleCIRelations(w http.ResponseWriter, r *http.Request, ciID
 // handleCIRelationGraph 处理 GET /api/v1/cmdb/ci/{id}/graph。
 func (h *Handler) handleCIRelationGraph(w http.ResponseWriter, r *http.Request, ciID string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 	actx := authctx.FromHTTPHeader(r.Header)
@@ -700,7 +700,7 @@ func (h *Handler) handleAttrTemplates(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, tmpl)
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }
 
@@ -709,12 +709,12 @@ func (h *Handler) handleAttrTemplateByID(w http.ResponseWriter, r *http.Request)
 	actx := authctx.FromHTTPHeader(r.Header)
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/v1/cmdb/attr-templates/")
 	if idStr == "" || strings.Contains(idStr, "/") {
-		http.Error(w, "invalid template id", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid template id"})
 		return
 	}
 	var tmplID int
 	if _, err := fmt.Sscanf(idStr, "%d", &tmplID); err != nil {
-		http.Error(w, "invalid template id", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid template id"})
 		return
 	}
 	switch r.Method {
@@ -754,6 +754,6 @@ func (h *Handler) handleAttrTemplateByID(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
 }

@@ -454,8 +454,8 @@ func (m *MemoryStore) seedRBAC() {
 			// bcrypt 失败属于环境异常（成本因子超限等），构造期 panic 暴露问题。
 			// log.Panicf 合理：bcrypt 哈希失败意味着密码哈希算法不可用（如 bcrypt 库损坏），
 			// 这是不可恢复的初始化错误。seedRBAC 在构造时调用，失败时程序无法安全启动。
-		logx.Error(context.Background(), "store: 预填充用户 bcrypt 哈希失败", err, "user", us.name)
-		panic(fmt.Sprintf("bcrypt hash failed for user %q: %v", us.name, err))
+			logx.Error(context.Background(), "store: 预填充用户 bcrypt 哈希失败", err, "user", us.name)
+			panic(fmt.Sprintf("bcrypt hash failed for user %q: %v", us.name, err))
 		}
 		u := &User{
 			ID:                 us.id,

@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -70,7 +69,7 @@ func (s *Server) createAlertSilence(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "create_alert_silence", Target: created.ID,
-		Detail: sanitizeAuditDetail(fmt.Sprintf("reason=%s startAt=%s endAt=%s", created.Reason, created.StartAt.Format(time.RFC3339), created.EndAt.Format(time.RFC3339))),
+		Detail: sanitizeAuditDetail("reason=" + opsSQLString(created.Reason) + " startAt=" + opsSQLString(created.StartAt.Format(time.RFC3339)) + " endAt=" + opsSQLString(created.EndAt.Format(time.RFC3339))),
 	})
 	paginate.WriteJSON(w, http.StatusCreated, created)
 }
