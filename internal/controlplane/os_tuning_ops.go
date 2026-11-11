@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -100,7 +101,12 @@ func (s *Server) handleKernelTuning(w http.ResponseWriter, r *http.Request) {
 	case "get":
 		var script string
 		if req.Param != "" {
-			script = fmt.Sprintf(`sysctl %s 2>/dev/null || echo "Param not found"`, req.Param)
+			paramV, err := opsSysctlParam("param", req.Param)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			script = fmt.Sprintf(`sysctl %s 2>/dev/null || echo "Param not found"`, shellquote.Quote(paramV))
 		} else {
 			script = `sysctl -a 2>/dev/null | head -50`
 		}
@@ -115,7 +121,17 @@ func (s *Server) handleKernelTuning(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "param and value are required"})
 			return
 		}
-		script := fmt.Sprintf(`sysctl -w %s=%s 2>/dev/null && echo "%s = %s" >> /etc/sysctl.d/99-opsmesh.conf && sysctl -p /etc/sysctl.d/99-opsmesh.conf 2>/dev/null && echo "Applied"`, req.Param, req.Value, req.Param, req.Value)
+		paramV, err := opsSysctlParam("param", req.Param)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		valueV, err := opsSysctlValue("value", req.Value)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`sysctl -w %s=%s 2>/dev/null && echo "%s = %s" >> /etc/sysctl.d/99-opsmesh.conf && sysctl -p /etc/sysctl.d/99-opsmesh.conf 2>/dev/null && echo "Applied"`, opsSQLString(paramV), opsSQLString(valueV), paramV, valueV)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_kernel_tuning_set")
 		if !ok {
 			return
@@ -127,7 +143,12 @@ func (s *Server) handleKernelTuning(w http.ResponseWriter, r *http.Request) {
 		if preset == "" {
 			preset = "database"
 		}
-		script := buildKernelTuningPreset(preset)
+		presetV, err := opsSched("preset", preset)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := buildKernelTuningPreset(presetV)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_kernel_tuning_apply-preset")
 		if !ok {
 			return
@@ -199,7 +220,7 @@ net.ipv4.tcp_wmem = 4096 65536 16777216
 EOF
 sysctl -p /etc/sysctl.d/99-opsmesh-ll.conf && echo "Low latency tuning applied"`
 	default:
-		return `echo "Unknown preset: ` + preset + `"`
+		return fmt.Sprintf(`echo %s`, opsEcho("Unknown preset: %s", preset))
 	}
 }
 
@@ -229,19 +250,34 @@ func (s *Server) handleOSKernelModule(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "module is required"})
 			return
 		}
-		script = fmt.Sprintf(`modprobe %s 2>/dev/null && echo "Module %s loaded" || echo "Failed to load module %s"`, req.Module, req.Module, req.Module)
+		moduleV, err := opsModule("module", req.Module)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`modprobe %s 2>/dev/null && echo "Module %s loaded" || echo "Failed to load module %s"`, shellquote.Quote(moduleV), moduleV, moduleV)
 	case "unload":
 		if req.Module == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "module is required"})
 			return
 		}
-		script = fmt.Sprintf(`modprobe -r %s 2>/dev/null && echo "Module %s unloaded" || echo "Failed to unload module %s"`, req.Module, req.Module, req.Module)
+		moduleV, err := opsModule("module", req.Module)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`modprobe -r %s 2>/dev/null && echo "Module %s unloaded" || echo "Failed to unload module %s"`, shellquote.Quote(moduleV), moduleV, moduleV)
 	case "info":
 		if req.Module == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "module is required"})
 			return
 		}
-		script = fmt.Sprintf(`modinfo %s 2>/dev/null || echo "Module info not available"`, req.Module)
+		moduleV, err := opsModule("module", req.Module)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script = fmt.Sprintf(`modinfo %s 2>/dev/null || echo "Module info not available"`, shellquote.Quote(moduleV))
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
@@ -363,7 +399,17 @@ func (s *Server) handleStorageTuning(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "device and sched are required"})
 			return
 		}
-		script := fmt.Sprintf(`echo %s > /sys/block/%s/queue/scheduler 2>/dev/null && echo "Scheduler set to %s for %s" || echo "Failed"`, req.Sched, req.Device, req.Sched, req.Device)
+		deviceV, err := opsDeviceName("device", req.Device)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		schedV, err := opsSched("sched", req.Sched)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`echo %s > /sys/block/%s/queue/scheduler 2>/dev/null && echo "Scheduler set to %s for %s" || echo "Failed"`, schedV, opsSQLString(deviceV), schedV, deviceV)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_storage_tuning_set")
 		if !ok {
 			return
@@ -419,7 +465,12 @@ func (s *Server) handleOSCert(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "certPath is required"})
 			return
 		}
-		script := fmt.Sprintf(`openssl x509 -in %s -noout -subject -issuer -dates 2>/dev/null || echo "Certificate not found"`, req.CertPath)
+		pathV, err := mqPath("certPath", req.CertPath)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`openssl x509 -in %s -noout -subject -issuer -dates 2>/dev/null || echo "Certificate not found"`, shellquote.Quote(pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_cert_check")
 		if !ok {
 			return
@@ -443,7 +494,12 @@ func (s *Server) handleOSCert(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "certPath is required"})
 			return
 		}
-		script := fmt.Sprintf(`echo "Renewing certificate: %s (manual steps required)"`, req.CertPath)
+		pathV, err := mqPath("certPath", req.CertPath)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`echo %s`, opsEcho("Renewing certificate: %s (manual steps required)", pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_cert_renew")
 		if !ok {
 			return
@@ -491,7 +547,12 @@ func (s *Server) handleOSResource(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "limit is required (e.g. nofile=65535)"})
 			return
 		}
-		script := fmt.Sprintf(`ulimit -n %s 2>/dev/null && echo "ulimit set: %s" || echo "Failed to set ulimit"`, req.Limit, req.Limit)
+		limitV, err := opsDigits("limit", req.Limit)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`ulimit -n %s 2>/dev/null && echo "ulimit set: %s" || echo "Failed to set ulimit"`, opsSQLString(limitV), limitV)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_resource_ulimit")
 		if !ok {
 			return
@@ -503,7 +564,12 @@ func (s *Server) handleOSResource(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
 			return
 		}
-		script := fmt.Sprintf(`quota -u %s 2>/dev/null || echo "Quota not enabled for %s"`, req.User, req.User)
+		userV, err := mqName("user", req.User)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		script := fmt.Sprintf(`quota -u %s 2>/dev/null || echo "Quota not enabled for %s"`, shellquote.Quote(userV), userV)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_resource_quota")
 		if !ok {
 			return
@@ -548,10 +614,15 @@ func (s *Server) handleOSSystemBackup(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/var/backups/system"
 	}
+	pathV, err := mqPath("path", path)
+	if err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	switch req.Action {
 	case "backup":
-		script := fmt.Sprintf(`mkdir -p %s && tar czf %s/system-backup-$(date +%%Y%%m%%d).tar.gz /etc /opt /var/lib 2>/dev/null && echo "System backup created: %s/system-backup-$(date +%%Y%%m%%d).tar.gz"`, path, path, path)
+		script := fmt.Sprintf(`mkdir -p %s && tar czf %s/system-backup-$(date +%%Y%%m%%d).tar.gz /etc /opt /var/lib 2>/dev/null && echo "System backup created: %s/system-backup-$(date +%%Y%%m%%d).tar.gz"`, shellquote.Quote(pathV), shellquote.Quote(pathV), pathV)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_system_backup_backup")
 		if !ok {
 			return
@@ -559,7 +630,7 @@ func (s *Server) handleOSSystemBackup(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "backup"})
 
 	case "restore":
-		script := fmt.Sprintf(`echo "Restoring system from %s (manual steps required)"`, path)
+		script := fmt.Sprintf(`echo %s`, opsEcho("Restoring system from %s (manual steps required)", pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_system_backup_restore")
 		if !ok {
 			return
@@ -567,7 +638,7 @@ func (s *Server) handleOSSystemBackup(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": "restore"})
 
 	case "list":
-		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, path)
+		script := fmt.Sprintf(`ls -lh %s 2>/dev/null || echo "No backup files found"`, shellquote.Quote(pathV))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_system_backup_list")
 		if !ok {
 			return
