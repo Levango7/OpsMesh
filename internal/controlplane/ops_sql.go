@@ -48,14 +48,6 @@ func opsHost(field, s string) (string, error) {
 	return s, nil
 }
 
-// opsHostAllowEmpty 校验可选的主机名：空串放行（调用方随后套默认值或跳过该项）。
-func opsHostAllowEmpty(field, s string) (string, error) {
-	if s == "" {
-		return "", nil
-	}
-	return opsHost(field, s)
-}
-
 // opsDBName 校验必填的库名/表名（位置参数 / SQL 标识符位置）。
 func opsDBName(field, s string) (string, error) {
 	if s == "" {
@@ -65,14 +57,6 @@ func opsDBName(field, s string) (string, error) {
 		return "", fmt.Errorf("invalid %s %q: must match %s", field, s, opsDBNameRe.String())
 	}
 	return s, nil
-}
-
-// opsDBNameAllowEmpty 校验可选的库名/表名：空串放行（调用方随后套默认值）。
-func opsDBNameAllowEmpty(field, s string) (string, error) {
-	if s == "" {
-		return "", nil
-	}
-	return opsDBName(field, s)
 }
 
 // opsSQLString 按 SQL 语义转义**字符串字面量**里的单引号（`'` → `”`）。
