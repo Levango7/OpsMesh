@@ -106,6 +106,7 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 		paginate.JSONError(w, http.StatusNotFound, fmt.Sprintf("agent binary not found for %s/%s (set --agent-bin-dir and place opsmesh-agent-%s-%s there)", osName, arch, osName, arch))
 		return
 	}
+	//nolint:gosec // G703：path 源自 query，但经 bootstrapSafeToken [a-z0-9] 白名单约束 + filepath.Join 于 AgentBinDir 之下，无穿越面
 	f, err := os.Open(path)
 	if err != nil {
 		paginate.JSONError(w, http.StatusInternalServerError, "cannot open agent binary")
@@ -169,7 +170,7 @@ func bootstrapSafeToken(v string) bool {
 		return false
 	}
 	for _, c := range v {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9') {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
 			return false
 		}
 	}

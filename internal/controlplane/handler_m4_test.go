@@ -587,7 +587,7 @@ func TestHandlerM4ServeAgent_ArchMatchFromBinDir(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if string(rec.Body.Bytes()) != string(want) {
+	if rec.Body.String() != string(want) {
 		t.Fatalf("body 不符: got %q, want %q", rec.Body.String(), string(want))
 	}
 	if got := rec.Header().Get("X-OpsMesh-Agent-Arch"); got != "arm64" {
