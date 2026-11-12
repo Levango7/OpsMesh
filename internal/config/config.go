@@ -61,6 +61,7 @@ type Config struct {
 	Segment     string // agent 所属网段（分桶键）
 	HTTPPort    int    // 控制面 HTTP(B/S) 端口（约定 8080）
 	GRPCPort    int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
+	TaskSvcGRPCAddr string // task-svc gRPC 地址（TD-60 任务域切流，默认 localhost:9090）
 	MetricsPort int    // metrics 端口（约定 9091）
 	// 数据本地化：持久化后端选择。
 	Store     string // 持久化后端: memory（默认） | mysql
@@ -485,6 +486,7 @@ func Load() *Config {
 	segment := flag.String("segment", "default", "agent 所属网段")
 	httpPort := flag.Int("http-port", 8080, "控制面 HTTP(B/S) 端口（约定 8080）")
 	grpcPort := flag.Int("grpc-port", 9090, "gRPC 端口（约定 9090）")
+	taskSvcGRPCAddr := flag.String("task-svc-grpc-addr", "localhost:9090", "task-svc gRPC 地址（TD-60 任务域切流）；空=使用存根实现")
 	metricsPort := flag.Int("metrics-port", 9091, "metrics 端口（约定 9091）")
 	// 数据本地化：持久化后端选择（默认 memory，保证无外部依赖即可运行）。
 	store := flag.String("store", "memory", "持久化后端: memory（默认） | mysql（数据本地化）")
@@ -724,6 +726,7 @@ func Load() *Config {
 		Segment:                  val("segment", *segment, "OPSMESH_SEGMENT"),
 		HTTPPort:                 valInt("http-port", *httpPort, "OPSMESH_HTTP_PORT"),
 		GRPCPort:                 valInt("grpc-port", *grpcPort, "OPSMESH_GRPC_PORT"),
+		TaskSvcGRPCAddr:          val("task-svc-grpc-addr", *taskSvcGRPCAddr, "OPSMESH_TASK_SVC_GRPC_ADDR"),
 		MetricsPort:              valInt("metrics-port", *metricsPort, "OPSMESH_METRICS_PORT"),
 		Store:                    val("store", *store, "OPSMESH_STORE"),
 		MySQLDSN:                 val("mysql-dsn", *mysqlDSN, "OPSMESH_MYSQL_DSN"),

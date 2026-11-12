@@ -23,10 +23,10 @@ import (
 	"github.com/Levango7/OpsMesh/internal/approval"
 	"github.com/Levango7/OpsMesh/internal/cmdb"
 	"github.com/Levango7/OpsMesh/internal/config"
-	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
 	"github.com/Levango7/OpsMesh/internal/controlplane/cutover"
 	"github.com/Levango7/OpsMesh/internal/controlplane/factory"
 	"github.com/Levango7/OpsMesh/internal/controlplane/metricscache"
+	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
 	"github.com/Levango7/OpsMesh/internal/controlplane/pluginhost"
 	"github.com/Levango7/OpsMesh/internal/cost"
 	"github.com/Levango7/OpsMesh/internal/cron"
@@ -47,8 +47,8 @@ import (
 	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/secrets"
-	"github.com/Levango7/OpsMesh/internal/store"
 	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
+	"github.com/Levango7/OpsMesh/internal/store"
 	"github.com/Levango7/OpsMesh/internal/tlsutil"
 )
 
@@ -149,6 +149,10 @@ type Server struct {
 	// 为 nil 或总闸关闭时全部请求按本地处理（与切流前逐字一致）。
 	// 见 internal/controlplane/cutover 与 docs/td60-cutover-signal-design.md。
 	cutoverRouter *cutover.Router
+
+	// electorClient 任务域选主客户端（TD-60 任务域切流）。
+	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc LeaderElectorService。
+	electorClient LeaderElectorClient
 
 	// DeviceFP deadline：超过此时刻签发的 refresh token 必须绑定 DeviceFP（非空）。
 	// 零值=不强制（向后兼容）；非零=渐进式强制设备绑定。
@@ -896,6 +900,26 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		notifier: s.alertNotifier,
 		bus:      bus,
 	})
+
+	// TD-60 任务域切流：初始化选主客户端（gRPC 调用 task-svc LeaderElectorService）。
+	// 使用 task-svc 的 gRPC 地址（默认 localhost:9090，可通过配置覆盖）。
+	// 若配置为空或连接失败，回退到存根实现（单副本/开发模式）。
+	if cfg.TaskSvcGRPCAddr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := NewGRPCLeaderElectorClient(ctx, cfg.TaskSvcGRPCAddr)
+		if err != nil {
+			logx.Warn(context.Background(), "Task leader 客户端初始化失败，回退存根", "err", err)
+			s.electorClient = NewStubLeaderElectorClient(true)
+		} else {
+			s.electorClient = client
+			logx.Info(context.Background(), "Task leader 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
+		}
+		cancel()
+	} else {
+		s.electorClient = NewStubLeaderElectorClient(true)
+		logx.Info(context.Background(), "Task leader 客户端使用存根实现（单副本/开发模式）")
+	}
+
 	return s, nil
 }
 

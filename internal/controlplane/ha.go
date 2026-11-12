@@ -17,6 +17,7 @@ package controlplane
 //     手动切换需运维摘掉当前 leader Pod 触发重新选举）。
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"time"
@@ -26,12 +27,13 @@ import (
 
 // haInstanceInfo 控制面实例信息（HA 状态查询返回）。
 type haInstanceInfo struct {
-	InstanceID string `json:"instanceId"`
-	Hostname   string `json:"hostname"`
-	HTTPPort   int    `json:"httpPort"`
-	GRPCPort   int    `json:"grpcPort"`
-	Role       string `json:"role"` // "leader" | "follower"
-	IsLeader   bool   `json:"isLeader"`
+	InstanceID       string `json:"instanceId"`
+	Hostname         string `json:"hostname"`
+	HTTPPort         int    `json:"httpPort"`
+	GRPCPort         int    `json:"grpcPort"`
+	Role             string `json:"role"` // "leader" | "follower"
+	IsLeader         bool   `json:"isLeader"`
+	LeaderInstanceID string `json:"leaderInstanceId,omitempty"`
 }
 
 // haStatusResponse HA 状态响应。
@@ -55,18 +57,28 @@ func (s *Server) haInstanceID() string {
 
 // haCurrentInstance 返回当前实例信息。
 func (s *Server) haCurrentInstance() haInstanceInfo {
-	isLeader := s.store.IsLeader()
+	isLeader := false
+	leaderInstanceID := ""
+	if s.electorClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		isLeader, leaderInstanceID, _ = s.electorClient.IsLeader(ctx)
+	} else {
+		// 回退：使用 store.IsLeader()（单副本/开发模式）
+		isLeader = s.store.IsLeader()
+	}
 	role := "follower"
 	if isLeader {
 		role = "leader"
 	}
 	return haInstanceInfo{
-		InstanceID: s.haInstanceID(),
-		Hostname:   s.haInstanceID(),
-		HTTPPort:   s.httpPort,
-		GRPCPort:   s.grpcPort,
-		Role:       role,
-		IsLeader:   isLeader,
+		InstanceID:       s.haInstanceID(),
+		Hostname:         s.haInstanceID(),
+		HTTPPort:         s.httpPort,
+		GRPCPort:         s.grpcPort,
+		Role:             role,
+		IsLeader:         isLeader,
+		LeaderInstanceID: leaderInstanceID,
 	}
 }
 
@@ -85,10 +97,11 @@ func (s *Server) handleHAStatus(w http.ResponseWriter, r *http.Request) {
 	if !current.IsLeader {
 		// MVP：非 leader 实例无法得知 leader 详情，返回占位。
 		leader = haInstanceInfo{
-			InstanceID: "unknown",
-			Hostname:   "unknown",
-			Role:       "leader",
-			IsLeader:   true,
+			InstanceID:       "unknown",
+			Hostname:         "unknown",
+			Role:             "leader",
+			IsLeader:         true,
+			LeaderInstanceID: current.LeaderInstanceID,
 		}
 	}
 	resp := haStatusResponse{
