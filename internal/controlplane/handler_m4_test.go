@@ -24,6 +24,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -546,6 +549,82 @@ func TestHandlerM4ServeAgent_NonDemoNoToken(t *testing.T) {
 	s.handleServeAgent(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandlerM4ServeAgent_ArchMismatchWithoutBinDir 验证：请求带 ?arch= 且与本进程架构
+// 不一致、未配置 --agent-bin-dir 时返回 404（如实报错），绝不静默下发错架构二进制。
+func TestHandlerM4ServeAgent_ArchMismatchWithoutBinDir(t *testing.T) {
+	other := "arm64"
+	if runtime.GOARCH == "arm64" {
+		other = "amd64"
+	}
+	s := newM4TestServer()
+	req := httptest.NewRequest(http.MethodGet, "/bin/opsmesh-agent?os=linux&arch="+other, nil)
+	rec := httptest.NewRecorder()
+	s.handleServeAgent(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "agent binary not found for linux/"+other) {
+		t.Fatalf("body 应说明找不到 linux/%s 产物; body=%s", other, rec.Body.String())
+	}
+}
+
+// TestHandlerM4ServeAgent_ArchMatchFromBinDir 验证：配置 --agent-bin-dir 后按 os/arch
+// 命中命名产物 opsmesh-agent-{os}-{arch}，响应头如实回显实际下发产物的平台。
+func TestHandlerM4ServeAgent_ArchMatchFromBinDir(t *testing.T) {
+	dir := t.TempDir()
+	want := []byte("fake-arm64-agent-binary")
+	if err := os.WriteFile(filepath.Join(dir, "opsmesh-agent-linux-arm64"), want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := newM4TestServer()
+	s.cfg.AgentBinDir = dir
+	req := httptest.NewRequest(http.MethodGet, "/bin/opsmesh-agent?os=linux&arch=arm64", nil)
+	rec := httptest.NewRecorder()
+	s.handleServeAgent(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != string(want) {
+		t.Fatalf("body 不符: got %q, want %q", rec.Body.String(), string(want))
+	}
+	if got := rec.Header().Get("X-OpsMesh-Agent-Arch"); got != "arm64" {
+		t.Fatalf("X-OpsMesh-Agent-Arch=%q, want arm64", got)
+	}
+	if got := rec.Header().Get("X-OpsMesh-Agent-OS"); got != "linux" {
+		t.Fatalf("X-OpsMesh-Agent-OS=%q, want linux", got)
+	}
+}
+
+// TestHandlerM4ServeAgent_NoArchParamServesSelf 验证：不带 ?arch=（旧客户端/未探测）时
+// 回退当前进程二进制，x86 行为回归不变，响应头如实反映本进程平台。
+func TestHandlerM4ServeAgent_NoArchParamServesSelf(t *testing.T) {
+	s := newM4TestServer()
+	req := httptest.NewRequest(http.MethodGet, "/bin/opsmesh-agent", nil)
+	rec := httptest.NewRecorder()
+	s.handleServeAgent(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-OpsMesh-Agent-Arch"); got != runtime.GOARCH {
+		t.Fatalf("X-OpsMesh-Agent-Arch=%q, want %s（本进程架构）", got, runtime.GOARCH)
+	}
+	if got := rec.Header().Get("X-OpsMesh-Agent-OS"); got != runtime.GOOS {
+		t.Fatalf("X-OpsMesh-Agent-OS=%q, want %s（本进程系统）", got, runtime.GOOS)
+	}
+}
+
+// TestHandlerM4ServeAgent_ArchTokenTraversal 验证：?arch= 带路径穿越词元时被白名单拒绝
+// （404），不会按 ../ 拼路径读到任意文件。
+func TestHandlerM4ServeAgent_ArchTokenTraversal(t *testing.T) {
+	s := newM4TestServer()
+	req := httptest.NewRequest(http.MethodGet, "/bin/opsmesh-agent?os=linux&arch=..%2F..%2Fetc", nil)
+	rec := httptest.NewRecorder()
+	s.handleServeAgent(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

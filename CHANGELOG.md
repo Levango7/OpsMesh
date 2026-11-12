@@ -180,7 +180,28 @@
   通过；selftest 22/22 绿。`latest` 标签禁止（exit 1，同 deploy.sh:239-242 口径）。
 - **边界（如实记账）**：只含构建机架构镜像层（龙芯/飞腾属 A1 多架构项，不在本次）；
   第三方图本地缺失时走 docker-pull-retry.sh 有界重试，`AIRGAP_SKIP_PULL=1` 下缺图即红。
+## [Unreleased-P0-A1 多架构镜像 manifest + bootstrap 按架构分发 agent] — 2026-11-10（方案甲首项；CLAIM 2026-11-10T09:53:35Z）
 
+- **背景**：投标准入 P0-A1——原管线三处断链：`_publish-image.yml` 单架构构建；控制面
+  `/bin/opsmesh-agent` 恒发本进程二进制（ARM64 设备拿 amd64）；`install.sh` 探测 uname
+  但下载 URL 不带 os/arch。
+- **工程**：① `_publish-image.yml` 构建加 `platforms: linux/amd64,linux/arm64` +
+  `docker/setup-qemu-action@v3`，撤 `load: true`（buildx 多平台不支持 load；Trivy/syft
+  改凭登录步写好的 docker config 从 registry 拉），构建后新增「验 manifest 双平台」步
+  （imagetools inspect 缺任一平台即判红）；② `internal/config/config.go` 新增
+  `--agent-bin-dir` / `OPSMESH_AGENT_BIN_DIR`；③ `internal/controlplane/server_bootstrap.go`
+  handleServeAgent 按 `?os=&arch=` 分发：`{agentBinDir}/opsmesh-agent-{os}-{arch}` →
+  generic `opsmesh-agent` → 无 arch 参数（旧客户端）回退本进程二进制；请求架构≠本进程
+  且目录无产物 → 404 如实报错，绝不静默下发错架构二进制；os/arch 词元白名单防穿越；
+  响应头 `X-OpsMesh-Agent-OS/Arch` 如实反映实际下发产物平台；④ `pkg/provision/install.go`
+  模板带 `uname -s/-m` 探测结果 `?os=&arch=` 下载（x86_64→amd64、aarch64|arm64→arm64，
+  其余架构原样透传，服务端无产物时 404）。
+- **测试**：`handler_m4_test.go` 新增 4 用例（架构错配且无 binDir→404、binDir 命名产物
+  命中且响应头回显实际平台、无参数回退本进程二进制、arch 穿越词元→404）；
+  `install_test.go` 断言更新为带 `?os=$OS&arch=$ARCH` 的下载 URL + uname 归一化断言；
+  x86 行为回归不变（controlplane/provision/config 三包全量单测全绿）。
+- **边界**：ARM64 真机纳管回执本批不伪造，留待真机环境如实登记；估算文档 §4.1 同批补
+  信创架构应答口径（可说完 amd64+arm64 双平台，禁承诺龙芯/飞腾）。
 ## [Unreleased-TD-89 残余表述对齐] — 2026-11-10（裁决⑤：service containers 换源已闭环，更正台账过期表述）
 
 - **背景**：TD-89 工程面已被 bf48ad76 闭环（ci.yml 三处 service containers 换

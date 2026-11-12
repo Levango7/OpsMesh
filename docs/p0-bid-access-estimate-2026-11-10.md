@@ -74,6 +74,21 @@
 - 禁语：不得承诺「密评通过」（无密码机/CA 实证）；不得写「已支持 SM2/SM3/SM4」（代码侧国密关键词 0 命中，实测算法仅 AES-GCM/bcrypt/SHA-256/HMAC/Ed25519）。
 - 应答模板：标书问「是否支持国密」→「支持国密演进规划；当前版本加密体系为 AES-256-GCM/SHA-256/Ed25519，国密接入按项目需求单独立项」。
 
+### 4.1 信创架构应答口径（策略性表述，不进工程；A1 工程证据见锚点）
+
+- 可说：控制面镜像与 agent 二进制分发均按 linux/amd64 + linux/arm64 双平台组织；ARM64
+  设备按 `?os=&arch=` 拿对应架构产物，服务端无对应架构产物时 404 如实报错，绝不静默
+  下发错架构二进制。
+- 禁语：不得承诺「已支持龙芯/飞腾/loongarch64/mips64」（无真机、无构建产物）；
+  不得说「全架构/全平台覆盖」。
+- 应答模板：标书问「是否支持 ARM64/国产 CPU」→「linux/amd64 与 linux/arm64 双平台已
+  交付；loongarch64/mips64 等国产 CPU 按项目需求单独立项」。
+- 边界：双平台口径以 CI manifest 验真为证；ARM64 真机纳管回执待真机环境实测后如实登记，
+  不预支。
+- 证据锚点：`.github/workflows/_publish-image.yml`（platforms=linux/amd64,linux/arm64 +
+  「验 manifest 双平台」步）；`internal/controlplane/server_bootstrap.go` handleServeAgent；
+  `pkg/provision/install.go` uname 探测透传。
+
 ## 5 第 0 步剩余项登记（2026-11-10 用户裁「可以」，同批执行完毕）
 
 - item 1：scenarios 国密/多 DB/ARM64 tag 完成态口吻 → 已改。:892 国产化 DB / :894 密码合规 / :997 数据脱敏 / :1677 等保行 / :2063 传输加密 / :2065 备份加密统一标「规划中，按项目交付」；:74 Store 后端格改 MySQL（国产 DB 规划中）；:1700-1701 arm64 tag 换 .goreleaser.yml 模板 `opsmesh-{{ .Version }}-linux-arm64` 并注 A1 未落地。

@@ -73,9 +73,19 @@ func TestInstallScript_AgentBinaryDownload(t *testing.T) {
 	advertise := "https://opsmesh.example.com:8443"
 	script := InstallScript(advertise, "v1")
 
-	// 应从 $ADVERTISE/bin/opsmesh-agent 下载
-	if !strings.Contains(script, "$ADVERTISE/bin/opsmesh-agent") {
-		t.Fatal("脚本应从 $ADVERTISE/bin/opsmesh-agent 下载 agent 二进制")
+	// 应从 $ADVERTISE/bin/opsmesh-agent?os=$OS&arch=$ARCH 下载（URL 带 uname 探测结果）
+	if !strings.Contains(script, "$ADVERTISE/bin/opsmesh-agent?os=$OS&arch=$ARCH") {
+		t.Fatal("脚本应从 $ADVERTISE/bin/opsmesh-agent?os=$OS&arch=$ARCH 下载 agent 二进制")
+	}
+	// 应探测 ARCH="$(uname -m)" 并归一化架构名
+	if !strings.Contains(script, "ARCH=\"$(uname -m)\"") {
+		t.Fatal("脚本应探测 ARCH=$(uname -m)")
+	}
+	if !strings.Contains(script, "x86_64) ARCH=amd64 ;;") {
+		t.Fatal("脚本应将 x86_64 归一为 amd64")
+	}
+	if !strings.Contains(script, "aarch64|arm64) ARCH=arm64 ;;") {
+		t.Fatal("脚本应将 aarch64/arm64 归一为 arm64")
 	}
 	// 应 curl 下载
 	if !strings.Contains(script, "curl -fsSL") {

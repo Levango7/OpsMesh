@@ -179,6 +179,9 @@ type Config struct {
 	// 安全：bootstrap 绝不能用请求方可控的 r.Host（Host 头注入→供应链 RCE），
 	// 必须由运维显式配置可信地址。空则回退 http://127.0.0.1:<http-port>（仅本机开发）。
 	AdvertiseAddr string
+	// A1 bootstrap：agent 二进制分发目录（按平台/架构组织：opsmesh-agent-{os}-{arch}）。
+	// 空=回退当前进程二进制（仅开发/单机部署回退）；生产应配置本目录按平台/架构分发。
+	AgentBinDir string `json:"agentBinDir"`
 	// M7 监控告警：告警 Webhook 推送 URL（POST JSON）。
 	// 空=不推送；非空时 critical 告警通过 HTTP POST 推送到此地址。
 	AlertWebhookURL string
@@ -533,6 +536,7 @@ func Load() *Config {
 	auditRetentionDays := flag.Int("audit-retention-days", 180, "P1-3 审计日志保留天数；超龄审计行由 leader 搬入 audit_log_archive 后从在线表删除（0=永久保留）；或 env OPSMESH_AUDIT_RETENTION_DAYS")
 	provisionSecret := flag.String("provision-secret", "", "自动纳管 install token 的 HMAC 签名密钥；空则本实例随机生成（多副本需一致）")
 	advertiseAddr := flag.String("advertise-addr", "", "自动纳管控制面对外 HTTP 地址（拼接 bootstrap 安装命令）；空则回退 127.0.0.1:<http-port>（仅本机开发）")
+	agentBinDir := flag.String("agent-bin-dir", "", "bootstrap agent 二进制分发目录（按平台/架构组织：opsmesh-agent-{os}-{arch}）；空=回退当前进程二进制（仅开发/单机）；或 env OPSMESH_AGENT_BIN_DIR")
 	alertWebhookURL := flag.String("alert-webhook-url", "", "M7 告警 Webhook 推送 URL（POST JSON 告警到此地址）；空=不推送。：URL 含 slack.com 走 Slack Block Kit，含 qyapi.weixin.qq.com 走企业微信 markdown")
 	alertNotifierType := flag.String("alert-notifier-type", "generic", "M7 告警通知类型：generic(直接POST Alert JSON)/feishu(飞书卡片)/dingtalk(钉钉markdown)；：Webhook URL 域名可识别时自动覆盖此值")
 	alertEmailHost := flag.String("alert-email-host", "", "告警邮件 SMTP 主机（如 smtp.example.com）；空=关闭邮件通道（或 env OPSMESH_ALERT_EMAIL_HOST）")
@@ -770,6 +774,7 @@ func Load() *Config {
 		AuditRetentionDays:       valInt("audit-retention-days", *auditRetentionDays, "OPSMESH_AUDIT_RETENTION_DAYS"),
 		ProvisionSecret:          val("provision-secret", *provisionSecret, "OPSMESH_PROVISION_SECRET"),
 		AdvertiseAddr:            val("advertise-addr", *advertiseAddr, "OPSMESH_ADVERTISE_ADDR"),
+		AgentBinDir:              val("agent-bin-dir", *agentBinDir, "OPSMESH_AGENT_BIN_DIR"),
 		AlertWebhookURL:          val("alert-webhook-url", *alertWebhookURL, "OPSMESH_ALERT_WEBHOOK_URL"),
 		AlertNotifierType:        val("alert-notifier-type", *alertNotifierType, "OPSMESH_ALERT_NOTIFIER_TYPE"),
 		AlertEmailHost:           val("alert-email-host", *alertEmailHost, "OPSMESH_ALERT_EMAIL_HOST"),
