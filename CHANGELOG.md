@@ -5,6 +5,25 @@
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
 
+## [Unreleased-批次 15 注入面补白名单] — 2026-11-11（apache 族 2 文件 27 处真洞：version/path 全程无校验）
+
+- **背景**：批次 14 把盘点器口径扩到实参级（判据 E/F）后，全仓命中 408 处。按「该字段在同文件内是否有校验式调用」分级 ⇒ **50 处真洞**（字段全程无任何校验，直达 shell/SQL 命令位），其余约 358 处属「已校验但直引」的形态问题（顺延批次 16+ 机械收口）。本批落 **apache 族 2 文件 / 27 处**（一批一 PR，保证可审）。
+- **真洞（此前无任何判据覆盖）**：`apache_ops.go`（httpd / Tomcat / Jetty / OpenResty / Nginx）与 `apache_ext_ops.go`（Hadoop / Hive / HBase / Solr / Druid / NiFi / Impala）的
+  - `req.Version` —— 进 tarball 下载 URL、`ln -sfn` 目标路径、部署回显；
+  - `req.Path` —— 进 `printf '%s\n' <content> > <path>`（配置文件写入位）。
+  两者**全程没有任何白名单** ⇒ `;` / `$( )` / 反引号可直达 agent 的 `sh -c`（已授权调用者 ⇒ agent 侧 RCE）。
+- **收口（与批次 14 同一三段式）**：
+  ① **handler 侧补白名单**：version 走 `isVersionLike`（纯数字段、2–4 段，如 `2.4` / `9.0.85` / `1.25.3.1`）；path 走 `shellquote.ValidatePath`（绝对路径、无 shell 元字符）⇒ 非法一律 **400**；
+  ② **局部变量承接**（`versionV` / `pathV`）⇒ 实参不再直接引用 `req.*`（判据 E/F 归零）；
+  ③ **format 串一字不动** ⇒ 下发到 agent 的脚本文本与改动前**逐字节一致**（既有测试与运维脚本比对不受影响）。
+- **能力降级点（如实登记）**：
+  - `version` 只接受纯数字点分（2–4 段）；此前可传任意串（含 `;`、`$( )`）。
+  - `path` 必须是合法绝对路径且不含 shell 元字符；此前任意串（含空格、引号、`$`、反引号）。
+  - 上述两类载荷此前可执行，现一律 **400**。
+- **守卫**：`internal/controlplane/b15_injection_test.go` —— ①实参级 AST 守卫（带类型感知：int 字段不算注入面）；②白名单拒收语义判据（version/path 注入载荷 ⇒ 400 且不下发脚本）。CI 的 `go test ./internal/controlplane/` 兜底。
+- **验证**：`go build` / `go vet` / `gofmt` 全绿；`go test ./internal/controlplane/ -count=1` 全绿；打补丁后的盘点器实测 apache 族 **E/F = 0**（全仓 E 64 → 37、F 403 → 344）。
+- **顺延批次 16+（如实登记）**：同批真洞还有 8 文件 23 处（system_ops 的 `useradd %q`（Go 的 `%q` **不是** shell 转义，`$` 与反引号在双引号段照样展开）、vector_ops 的 ID/Metric/Payload、activemq 的 Type/Brokers/Master/Slave、kafka_advanced 的集群名、k8s_provision 的 CertHash、dns 的 Forwarders、middleware 的 Action、git_unix 的 Port），以及「已校验但直引」形态面约 358 处 —— 数字已可复算，按文件组分批推进。
+
 ## [Unreleased-批次 14 注入面扩面收口] — 2026-11-11（口径扩面：Sprintf 实参级 + Fprintf→builder 整类；P0 切片 8 文件；剩余面登记在册）
 
 - **先纠偏（如实登记）**：批次 9–13 的注入面盘点器（`scripts/shell-injection-audit.py`）有**两个结构性盲区**——
