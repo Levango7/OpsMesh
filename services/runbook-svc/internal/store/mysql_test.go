@@ -86,11 +86,12 @@ func TestMySQLStore_RunbookCRUD(t *testing.T) {
 func TestMySQLStore_Executions(t *testing.T) {
 	m := newTestMySQLStore(t)
 
-	r := &models.Runbook{ID: "rb-itest-exec", Name: "exec 测试"}
+	r := &models.Runbook{ID: "rb-itest-exec", TenantID: "t1", Name: "exec 测试"}
 	m.CreateRunbook(r)
 
 	e := &models.ExecutionRecord{
 		ID:          "exec-itest-1",
+		TenantID:    "t1",
 		RunbookID:   r.ID,
 		TriggeredBy: "itest",
 		Status:      "success",

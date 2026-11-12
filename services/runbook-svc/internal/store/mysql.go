@@ -198,7 +198,7 @@ func (m *MySQLStore) UpdateRunbook(r *models.Runbook, tenantID string) bool {
 	steps, _ := json.Marshal(r.Steps)
 	res, err := m.db.ExecContext(ctx,
 		`UPDATE runbooks SET name=?, description=?, content=?, triggers=?, steps=?, enabled=?, updated_at=? WHERE id=? AND tenant_id=?`,
-		r.Name, r.Description, r.Content, triggers, steps, r.Enabled, r.UpdatedAt, r.ID)
+		r.Name, r.Description, r.Content, triggers, steps, r.Enabled, r.UpdatedAt, r.ID, tenantID)
 	if err != nil {
 		log.Printf("[store] UpdateRunbook 失败: %v", err)
 		return false
