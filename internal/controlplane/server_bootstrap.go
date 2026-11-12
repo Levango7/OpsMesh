@@ -106,8 +106,10 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 		paginate.JSONError(w, http.StatusNotFound, fmt.Sprintf("agent binary not found for %s/%s (set --agent-bin-dir and place opsmesh-agent-%s-%s there)", osName, arch, osName, arch))
 		return
 	}
-	//nolint:gosec // G703：path 源自 query，但经 bootstrapSafeToken [a-z0-9] 白名单约束 + filepath.Join 于 AgentBinDir 之下，无穿越面
-	f, err := os.Open(path)
+	// G703 取证：path 源自 query，但经 bootstrapSafeToken [a-z0-9] 白名单约束 +
+	// filepath.Join 于 AgentBinDir 之下，无穿越面（独立 gosec 步不认 //nolint 形态，
+	// 故用 gosec 原生 #nosec 行尾注释；golangci-lint 的 gosec 引擎同认）
+	f, err := os.Open(path) // #nosec G703
 	if err != nil {
 		paginate.JSONError(w, http.StatusInternalServerError, "cannot open agent binary")
 		return
@@ -179,9 +181,10 @@ func bootstrapSafeToken(v string) bool {
 
 // bootstrapFileExists 判存在且为常规文件（拒绝目录等）。
 //
-//nolint:gosec // 仅检查存在性，不读内容，路径已由 bootstrapSafeToken 约束
+// bootstrapFileExists 判存在且为常规文件（拒绝目录等）。
 func bootstrapFileExists(p string) bool {
-	info, err := os.Stat(p)
+	// G703 取证同 os.Open：p 由 bootstrapSafeToken 白名单词元拼成
+	info, err := os.Stat(p) // #nosec G703
 	return err == nil && !info.IsDir()
 }
 
