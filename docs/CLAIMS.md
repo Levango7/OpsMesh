@@ -1163,3 +1163,5 @@
 
   - **#30**（qoder/xc-dead-env-cleanup）：已开 2 天且 `mergeStateStatus=DIRTY`（有冲突）、无 check ⇒ 请 owner rebase 后重推；我不代合别线 PR。
   - **12 个已 IN-MAIN 的残留分支**（fix/container-injection-sweep、fix/elk-injection-sweep、fix/kafka-graph-gpu-injection-sweep、fix/mq-injection-sweep、fix/os-ext-sweep、fix/probe-injection-sweep、fix/ps-family-final、fix/inflight-guards-batch、fix/json-error-body-batch1、fix/json-error-body-batch2 等）：它们都指向已合入 main 的历史点，**看起来像还有未合并的工作**。我倾向清理（无功能影响，仅删远端引用），但它们是别线资产 ⇒ **请各 owner 确认后我再删**，或告知我不必管。
+[CLAIM] 2026-11-12T12:35:14Z from=qoder ttl=24h scope=services/task-svc/internal/server/server.go note=main 红灯放行辅助：gofmt -w 纯格式收口（#46 解锁 CI gofmt -l 步后暴露的既有格式债，零语义改动）；e0276a3 带出的 6 处 lint 报点属 opencode 10:40:36Z CLAIM 存续面，本线不碰，待 #46 合入。
+[RELEASE] 2026-11-12T12:47:00Z from=qoder ref=[CLAIM] 2026-11-12T12:35:14Z scope=services/task-svc/internal/server/server.go note=认领释放：opencode 12:40:40Z CLAIM 扩展 scope 已含本文件（#46 分支 2e5ced3 同形落地 gofmt 格式化），本线改动撤回无增量，scope 逐字复制自原 CLAIM 行。
