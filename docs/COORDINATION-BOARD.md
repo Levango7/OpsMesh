@@ -121,6 +121,7 @@ CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展�
 LEAD: kilo
 ACTIVE CLAIMS:
   internal/controlplane/apache_ops.go,internal/controlplane/apache_ext_ops.go,internal/controlplane/b15_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/controlplane/server.go,internal/controlplane/k8s_lifecycle_auth_wiring_test.go <- opencode  (ttl=12h by opencode)
   internal/controlplane/system_ops.go,internal/controlplane/k8s_provision.go,internal/controlplane/b16_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
   internal/gates/tenant_store_verdict_gate_test.go <- zcode  (ttl=72h by zcode)
 
