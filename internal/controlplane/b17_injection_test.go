@@ -36,12 +36,6 @@ var b17Files = []string{
 	"kafka_advanced_ops.go",
 }
 
-// b17Fields 是本批收口（白名单 + 局部变量承接）的字段。
-var b17Fields = []string{
-	"Metric", "ID", "Payload",
-	"SourceCluster", "TargetCluster", "Topics",
-}
-
 // b17FieldRe 匹配本批字段的裸引用（req.<字段>）。
 var b17FieldRe = regexp.MustCompile(`\breq\.(Metric|ID|Payload|SourceCluster|TargetCluster|Topics)\b`)
 
