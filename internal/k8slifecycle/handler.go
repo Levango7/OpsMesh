@@ -1616,38 +1616,140 @@ func (h *K8sLifecycleHandler) precheckRollback(ctx context.Context, jobID string
 	return nil
 }
 
-// restoreEtcd 恢复 etcd
+// restoreEtcd 恢复 etcd（支持多 CP 集群）
 func (h *K8sLifecycleHandler) restoreEtcd(ctx context.Context, jobID, backupPath string, cluster *ClusterInfo) error {
-	h.updateJobPhase(context.Background(), "", "etcd_restore", 25, "etcd_restore: stopping etcd")
+	h.updateJobPhase(context.Background(), "", "etcd_restore", 15, "etcd_restore: stopping etcd on all CP nodes")
 
-	// 1. 停止 etcd
-	cmd := "systemctl stop etcd"
-	if _, stderr, code, err := h.execSSH(context.Background(), cluster.CPNodes[0].Host, "systemctl stop etcd"); err != nil || code != 0 {
-		return fmt.Errorf("stop etcd failed: %v, stderr: %s", err, stderr)
+	// 1. 停止所有 CP 节点的 etcd（并行停止，但按顺序更安全）
+	for _, cp := range cluster.CPNodes {
+		if _, stderr, code, err := h.execSSH(context.Background(), cp.Host, "systemctl stop etcd"); err != nil || code != 0 {
+			return fmt.Errorf("stop etcd on %s failed: %v, stderr: %s", cp.Host, err, stderr)
+		}
 	}
 
-	h.updateJobPhase(context.Background(), "", "etcd_restore", 35, "etcd_restore: restoring from backup")
+	h.updateJobPhase(context.Background(), "", "etcd_restore", 30, "etcd_restore: restoring from backup on first CP node")
 
-	// 2. 恢复 etcd 数据
-	cmd = fmt.Sprintf("etcdctl snapshot restore %s --data-dir /var/lib/etcd", backupPath)
+	// 2. 在第一个 CP 节点恢复 etcd 数据
+	firstCP := cluster.CPNodes[0]
+	cmd := fmt.Sprintf("etcdctl snapshot restore %s --data-dir /var/lib/etcd --name %s --initial-cluster %s --initial-cluster-token etcd-cluster --initial-advertise-peer-urls https://%s:2380",
+		backupPath, "cp-1", h.buildInitialCluster(cluster), firstCP.Host)
 	if _, stderr, code, err := h.execSSH(context.Background(), cluster.CPNodes[0].Host, cmd); err != nil || code != 0 {
 		return fmt.Errorf("etcdctl snapshot restore failed: %v, stderr: %s", err, stderr)
 	}
 
-	h.updateJobPhase(context.Background(), "", "etcd_restore", 50, "etcd_restore: starting etcd")
-
-	// 3. 启动 etcd
+	// 3. 启动第一个 etcd 实例
 	if _, stderr, code, err := h.execSSH(context.Background(), cluster.CPNodes[0].Host, "systemctl start etcd"); err != nil || code != 0 {
 		return fmt.Errorf("start etcd failed: %v, stderr: %s", err, stderr)
 	}
 
-	// 等待 etcd 健康
+	// 等待第一个 etcd 健康并成为 leader
 	time.Sleep(10 * time.Second)
+	if err := h.waitEtcdLeader(context.Background(), cluster.CPNodes[0].Host, maxNodeReadyWait); err != nil {
+		return fmt.Errorf("etcd leader not elected after restore: %w", err)
+	}
+
+	// 3. 其余 CP 节点加入集群（逐个添加成员并启动）
+	for i := 1; i < len(cluster.CPNodes); i++ {
+		cp := cluster.CPNodes[i]
+		h.updateJobPhase(context.Background(), "", "etcd_restore", 40+int(float64(i)/float64(len(cluster.CPNodes))*50), fmt.Sprintf("adding etcd member %d/%d: %s", i+1, len(cluster.CPNodes), cp.Host))
+
+		// 添加成员到集群
+		cmd = fmt.Sprintf("etcdctl member add %s --peer-urls=https://%s:2380", cp.Host, cp.Host)
+		if _, stderr, code, err := h.execSSH(context.Background(), cluster.CPNodes[0].Host, cmd); err != nil || code != 0 {
+			// 成员可能已存在，检查错误
+			if strings.Contains(stderr, "member already exists") {
+				logx.Info(context.Background(), "etcd member already exists, skipping add", "node", cp.Host)
+			} else {
+				return fmt.Errorf("etcdctl member add %s failed: %v, stderr: %s", cp.Host, err, stderr)
+			}
+		}
+
+		// 恢复该节点的 etcd 数据（使用相同的 snapshot）
+		cmd = fmt.Sprintf("etcdctl snapshot restore %s --data-dir /var/lib/etcd --name %s --initial-cluster %s --initial-cluster-token etcd-cluster --initial-advertise-peer-urls https://%s:2380",
+			backupPath, fmt.Sprintf("cp-%d", i+1), h.buildInitialCluster(cluster), cp.Host)
+		if _, stderr, code, err := h.execSSH(context.Background(), cp.Host, cmd); err != nil || code != 0 {
+			return fmt.Errorf("etcdctl snapshot restore on %s failed: %v, stderr: %s", cp.Host, err, stderr)
+		}
+
+		// 启动该节点 etcd
+		if _, stderr, code, err := h.execSSH(context.Background(), cp.Host, "systemctl start etcd"); err != nil || code != 0 {
+			return fmt.Errorf("start etcd on %s failed: %v, stderr: %s", cp.Host, err, stderr)
+		}
+
+		// 等待该节点加入集群
+		if err := h.waitEtcdMemberReady(context.Background(), cp.Host, 60*time.Second); err != nil {
+			return fmt.Errorf("etcd member %s not ready: %w", cp.Host, err)
+		}
+	}
+
+	// 最终验证：所有成员健康
 	if err := h.checkEtcdHealth(context.Background(), &ClusterInfo{CPNodes: cluster.CPNodes}); err != nil {
-		return fmt.Errorf("etcd not healthy after restore: %w", err)
+		return fmt.Errorf("etcd cluster not healthy after restore: %w", err)
 	}
 
 	return nil
+}
+
+// buildInitialCluster 构建 etcd 初始集群字符串
+func (h *K8sLifecycleHandler) buildInitialCluster(cluster *ClusterInfo) string {
+	var members []string
+	for i, cp := range cluster.CPNodes {
+		members = append(members, fmt.Sprintf("cp-%d=https://%s:2380", i+1, cp.Host))
+	}
+	return strings.Join(members, ",")
+}
+
+// waitEtcdLeader 等待 etcd 选举出 leader
+func (h *K8sLifecycleHandler) waitEtcdLeader(ctx context.Context, host string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return fmt.Errorf("timeout waiting for etcd leader on %s", host)
+			}
+			cmd := "etcdctl endpoint status --cluster -w json | jq -r '.[] | select(.Status.leader == .Status.header.member_id) | .Status.header.member_id'"
+			out, _, code, err := h.execSSH(context.Background(), host, cmd)
+			if err != nil || code != 0 {
+				continue
+			}
+			if strings.TrimSpace(out) != "" {
+				return nil
+			}
+		case <-time.After(30 * time.Second):
+			return fmt.Errorf("timeout waiting for etcd leader")
+		}
+	}
+}
+
+// waitEtcdMemberReady 等待 etcd 成员加入集群并就绪
+func (h *K8sLifecycleHandler) waitEtcdMemberReady(ctx context.Context, host string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return fmt.Errorf("timeout waiting for etcd member %s to join", host)
+			}
+			cmd := "etcdctl endpoint health --cluster"
+			_, _, code, err := h.execSSH(context.Background(), host, cmd)
+			if err == nil && code == 0 {
+				return nil
+			}
+		case <-time.After(60 * time.Second):
+			return fmt.Errorf("timeout waiting for etcd member %s", host)
+		}
+	}
 }
 
 // rollbackControlPlane 回滚控制面节点
@@ -1894,26 +1996,61 @@ func (h *K8sLifecycleHandler) precheckCertRotation(ctx context.Context, jobID st
 	return nil
 }
 
-// rotateAllCerts 续签所有证书
+// rotateAllCerts 续签所有证书（支持多 CP 集群）
 func (h *K8sLifecycleHandler) rotateAllCerts(ctx context.Context, jobID string, spec CertRotationSpec, cluster *ClusterInfo) error {
 	h.updateJobPhase(ctx, jobID, "cert_rotation", 30, "cert_rotation: renewing all certificates via kubeadm")
 
-	// kubeadm certs renew all
+	// 1. 在第一个 CP 节点续签所有证书
 	cmd := "kubeadm certs renew all"
 	if _, stderr, code, err := h.execSSH(context.Background(), cluster.CPNodes[0].Host, cmd); err != nil || code != 0 {
 		return fmt.Errorf("kubeadm certs renew all failed: %v, stderr: %s", err, stderr)
 	}
 
-	// 对于多 CP 集群，需要分发证书
-	for _, cp := range cluster.CPNodes {
-		if cp.Host == cluster.CPNodes[0].Host {
-			continue
+	// 2. 多 CP 集群：上传证书并分发到其他 CP 节点
+	if len(cluster.CPNodes) > 1 {
+		h.updateJobPhase(ctx, jobID, "cert_rotation", 40, "cert_rotation: uploading certificates for multi-CP distribution")
+
+		// 在第一个 CP 上传证书并获取 certificate-key
+		cmd := "kubeadm init phase upload-certs --upload-certs --certificate-key=$(kubeadm init phase upload-certs --dry-run -o json | jq -r '.certificateKey')"
+		out, stderr, code, err := h.execSSH(context.Background(), cluster.CPNodes[0].Host, cmd)
+		if err != nil || code != 0 {
+			// 备选：直接使用 upload-certs 并解析输出
+			cmd = "kubeadm init phase upload-certs --upload-certs"
+			out, stderr, code, err = h.execSSH(context.Background(), cluster.CPNodes[0].Host, cmd)
+			if err != nil || code != 0 {
+				return fmt.Errorf("kubeadm init phase upload-certs failed: %v, stderr: %s", err, stderr)
+			}
 		}
-		// 从第一个 CP 复制证书到其他 CP
-		// 简化：通过 scp 或 kubeadm init phase upload-certs
+
+// 解析输出中的 certificate-key
+			certKey := extractCertificateKey(out)
+			if certKey == "" {
+				return fmt.Errorf("failed to extract certificate-key from upload-certs output")
+			}
+
+		h.updateJobPhase(ctx, jobID, "cert_rotation", 50, "cert_rotation: distributing certificates to remaining CP nodes")
+
+		// 3. 其他 CP 节点下载证书并加入集群
+		for _, cp := range cluster.CPNodes {
+			if cp.Host == cluster.CPNodes[0].Host {
+				continue
+			}
+
+			h.updateJobPhase(ctx, jobID, "cert_rotation", 50+int(float64(10)/float64(len(cluster.CPNodes))*10), fmt.Sprintf("distributing certs to CP node %s", cp.Host))
+
+			// 在其他 CP 节点上执行 join --certificate-key
+			cmd := fmt.Sprintf("kubeadm join %s:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash> --certificate-key %s --control-plane", cluster.CPNodes[0].Host, certKey)
+			// 注意：实际需要从 cluster 获取正确的 join 命令参数
+			// 简化：使用 kubeadm join phase control-plane-prepare certs
+			cmd = fmt.Sprintf("kubeadm join phase control-plane-prepare certs --certificate-key %s --config /etc/kubernetes/kubeadm-config.yaml", certKey)
+if _, _, code, err := h.execSSH(context.Background(), cp.Host, cmd); err != nil || code != 0 {
+				// 备选：直接复制 /etc/kubernetes/pki 目录
+				return h.distributeCertsViaSCP(cluster.CPNodes[0].Host, cp.Host)
+			}
+		}
 	}
 
-	h.updateJobPhase(context.Background(), "", "cert_rotation", 60, "cert_rotation: all certificates renewed")
+	h.updateJobPhase(ctx, jobID, "cert_rotation", 60, "cert_rotation: all certificates renewed and distributed")
 	return nil
 }
 
@@ -2003,4 +2140,39 @@ func nodePort(node NodeSpec) int {
 		return node.Port
 	}
 	return 22
+}
+
+// extractCertificateKey 从 kubeadm upload-certs 输出中提取 certificate-key
+func extractCertificateKey(out string) string {
+	// kubeadm upload-certs 输出示例：
+	// [upload-certs] Storing the certificates in Secret "kubeadm-certs" in the "kube-system" Namespace
+	// [upload-certs] Using certificate key: a1b2c3d4e5f6...
+	re := regexp.MustCompile(`Using certificate key:\s*([a-f0-9]{64})`)
+	if m := re.FindStringSubmatch(out); len(m) > 1 {
+		return m[1]
+	}
+	// 备选：直接匹配 64 位十六进制字符串
+	re2 := regexp.MustCompile(`\b([a-f0-9]{64})\b`)
+	if m := re2.FindStringSubmatch(out); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+// distributeCertsViaSCP 通过 SCP 分发证书文件（备选方案）
+func (h *K8sLifecycleHandler) distributeCertsViaSCP(srcHost, dstHost string) error {
+	// 将 /etc/kubernetes/pki 目录通过 scp 复制到目标节点
+	// 注意：需要 SSH 密钥互信或密码认证
+	cmd := fmt.Sprintf("scp -r -o StrictHostKeyChecking=no /etc/kubernetes/pki %s:/etc/kubernetes/", dstHost)
+	if _, _, code, err := h.execSSH(context.Background(), srcHost, cmd); err != nil || code != 0 {
+		return fmt.Errorf("scp certs from %s to %s failed: %v", srcHost, dstHost, err)
+	}
+
+	// 修复目标节点上的证书文件权限
+	cmd = "chmod 644 /etc/kubernetes/pki/*.crt /etc/kubernetes/pki/*.key 2>/dev/null; chmod 600 /etc/kubernetes/pki/etcd/*.crt /etc/kubernetes/pki/etcd/*.key 2>/dev/null"
+	if _, _, code, err := h.execSSH(context.Background(), dstHost, cmd); err != nil || code != 0 {
+		logx.Warn(context.Background(), "fix cert permissions warning", "host", dstHost)
+	}
+
+	return nil
 }
