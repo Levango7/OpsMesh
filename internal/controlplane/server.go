@@ -50,6 +50,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
 	"github.com/Levango7/OpsMesh/internal/store"
 	"github.com/Levango7/OpsMesh/internal/tlsutil"
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 // Server 控制面服务（HTTP + gRPC + metrics）。
@@ -152,6 +153,12 @@ type Server struct {
 
 	// electorClient 任务域选主客户端（TD-60 任务域切流）。
 	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc LeaderElectorService。
+	// taskServiceClient 任务服务 gRPC 客户端（TD-60 任务域 HTTP 切流）。
+	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc TaskService。
+	taskServiceClient taskv1.TaskServiceClient
+	// resultServiceClient 任务结果服务 gRPC 客户端（TD-60 任务域 HTTP 切流）。
+	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc ResultService。
+	resultServiceClient taskv1.ResultServiceClient
 	electorClient LeaderElectorClient
 
 	// DeviceFP deadline：超过此时刻签发的 refresh token 必须绑定 DeviceFP（非空）。
@@ -908,16 +915,50 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		client, err := NewGRPCLeaderElectorClient(ctx, cfg.TaskSvcGRPCAddr)
 		if err != nil {
-			logx.Warn(context.Background(), "Task leader 客户端初始化失败，回退存根", "err", err)
-			s.electorClient = NewStubLeaderElectorClient(true)
+logx.Warn(context.Background(), "Task leader 客户端初始化失败，回退存根", "err", err)
+		s.electorClient = NewStubLeaderElectorClient(true)
+	} else {
+		s.electorClient = client
+		logx.Info(context.Background(), "Task leader 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
+	}
+	cancel()
+} else {
+	s.electorClient = NewStubLeaderElectorClient(true)
+	logx.Info(context.Background(), "Task leader 客户端使用存根实现（单副本/开发模式）")
+}
+
+	// TD-60 任务域切流：初始化任务服务 gRPC 客户端（HTTP 代理转发到 task-svc TaskService）。
+	if cfg.TaskSvcGRPCAddr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := NewGRPCTaskServiceClient(ctx, cfg.TaskSvcGRPCAddr)
+		if err != nil {
+			logx.Warn(context.Background(), "Task service 客户端初始化失败，回退存根", "err", err)
+			s.taskServiceClient = NewStubTaskServiceClient()
 		} else {
-			s.electorClient = client
-			logx.Info(context.Background(), "Task leader 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
+			s.taskServiceClient = client
+			logx.Info(context.Background(), "Task service 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
 		}
 		cancel()
 	} else {
-		s.electorClient = NewStubLeaderElectorClient(true)
-		logx.Info(context.Background(), "Task leader 客户端使用存根实现（单副本/开发模式）")
+		s.taskServiceClient = NewStubTaskServiceClient()
+		logx.Info(context.Background(), "Task service 客户端使用存根实现（单副本/开发模式）")
+	}
+
+	// TD-60 任务域切流：初始化任务结果服务 gRPC 客户端（HTTP 代理转发到 task-svc ResultService）。
+	if cfg.TaskSvcGRPCAddr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := NewGRPCResultServiceClient(ctx, cfg.TaskSvcGRPCAddr)
+		if err != nil {
+			logx.Warn(context.Background(), "Result service 客户端初始化失败，回退存根", "err", err)
+			s.resultServiceClient = NewStubResultServiceClient()
+		} else {
+			s.resultServiceClient = client
+			logx.Info(context.Background(), "Result service 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
+		}
+		cancel()
+	} else {
+		s.resultServiceClient = NewStubResultServiceClient()
+		logx.Info(context.Background(), "Result service 客户端使用存根实现（单副本/开发模式）")
 	}
 
 	return s, nil

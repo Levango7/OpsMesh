@@ -63,6 +63,14 @@ service BatchService {
   rpc ListBatchTasks(ListBatchTasksRequest) returns (ListBatchTasksResponse);
 }
 
+// LeaderElectorService 提供选主能力（TD-60 任务域切流）。
+service LeaderElectorService {
+  // IsLeader 检查当前实例是否为 leader。
+  rpc IsLeader(IsLeaderRequest) returns (IsLeaderResponse);
+  // Renew 续租 leader 租约。
+  rpc Renew(RenewRequest) returns (RenewResponse);
+}
+
 // Task 任务。
 // ⚠️ 演进须同步：本 message 有两份逐字节锁定文本——canonical 在 proto/opsmesh/task/v1/task.proto
 // （受 buf lint/breaking 守护），服务侧副本在 services/task-svc/api/proto/v1/task.proto。
@@ -186,6 +194,31 @@ message ReportResultRequest {
 message CancelTaskRequest {
   string task_id = 1;
   string tenant_id = 2;
+}
+
+// IsLeaderRequest 检查 leader 状态请求。
+message IsLeaderRequest {
+  string instance_id = 1; // 实例 ID，可选（空则查询当前实例）
+}
+
+// IsLeaderResponse 检查 leader 状态响应。
+message IsLeaderResponse {
+  bool is_leader = 1;          // 是否为 leader
+  string leader_instance_id = 2; // 当前 leader 实例 ID（非 leader 时为空）
+}
+
+// RenewRequest 续租 leader 租约请求。
+message RenewRequest {
+  string instance_id = 1;      // 实例 ID，可选（空则当前实例）
+  int64 ttl_seconds = 2;       // 租约 TTL（秒），0 使用默认值
+}
+
+// RenewResponse 续租 leader 租约响应。
+message RenewResponse {
+  bool success = 1;            // 续租成功（仍为 leader）
+  bool is_leader = 2;          // 续租后是否仍为 leader
+  int64 lease_ttl_seconds = 3; // 实际租约 TTL（秒）
+  int64 lease_until_unix = 4;  // 租约过期时间（Unix 时间戳，UTC）
 }
 
 // ApproveTaskRequest 审批通过请求。

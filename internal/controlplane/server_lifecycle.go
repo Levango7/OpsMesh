@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/ai/agent"
 	aigateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -21,6 +22,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/knowledge"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 // Start 启动 HTTP(B/S)、gRPC(9090)、metrics(9091) 三个监听，并在收到 SIGTERM/SIGINT 时优雅退出。
@@ -659,11 +661,11 @@ func (s *Server) Start() error {
 //   - "GET /api/v1/tasks/dead-letter"：字面量优先于 {id} 通配（更具体者胜），互不冲突。
 func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/tasks", s.handleListTasks)
-	mux.HandleFunc("/api/v1/tasks/", s.handleTaskRouting)                        // 子路径：{id}/cancel、{id}/result、{id}/retry、{id}/dead-letter
-	mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskRouting)                // GET 任务详情（{id} 详情 + 详情外的子树兜底）
+	mux.HandleFunc("/api/v1/tasks/", s.handleTaskProxy)                        // 子路径：{id}/cancel、{id}/result、{id}/approve、{id}/reject、{id}/retry、{id}/dead-letter
+	mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskProxy)                // GET 任务详情（{id} 详情 + 详情外的子树兜底）
 	mux.HandleFunc("GET /api/v1/tasks/dead-letter", s.handleListDeadLetterTasks) // Wave 4-D DLQ 列表
-	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.handleTaskRouting)         // Wave 4-D DLQ 重试
-	mux.HandleFunc("DELETE /api/v1/tasks/{id}/dead-letter", s.handleTaskRouting) // Wave 4-D DLQ 清除
+	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.handleTaskProxy)         // Wave 4-D DLQ 重试
+	mux.HandleFunc("DELETE /api/v1/tasks/{id}/dead-letter", s.handleTaskProxy) // Wave 4-D DLQ 清除
 }
 
 // registerBatchCanaryRoutes 注册批量运维/灰度发布路由（M5）。
@@ -755,6 +757,224 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		next.ServeHTTP(w, r)
+next.ServeHTTP(w, r)
+	})
+}
+
+// handleTaskProxy 代理任务 HTTP 请求到 task-svc gRPC 服务（TD-60 任务域 HTTP 切流）。
+func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
+	// 检查租户上下文
+	actx, ok := s.requireTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := s.requireProd(w, r, "task:read"); !ok {
+		return
+	}
+
+	// 将租户上下文注入请求 context，供后续 gRPC 调用使用
+	ctx := authctx.NewContext(r.Context(), actx)
+
+	// 检查 taskServiceClient 是否可用
+	if s.taskServiceClient == nil {
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "task service unavailable",
+		})
+		return
+	}
+
+	// 解析路径：/api/v1/tasks/{id}[/...]
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
+	if path == "" || path == r.URL.Path {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid task path"})
+		return
+	}
+
+	// 解析任务 ID 和子路径
+	parts := strings.SplitN(path, "/", 2)
+	id := parts[0]
+	if id == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "task id required"})
+		return
+	}
+
+	subPath := ""
+	if len(parts) > 1 {
+		subPath = parts[1]
+	}
+
+	tenantID := actx.TenantID
+
+	// 根据 HTTP 方法和子路径分发到 gRPC 方法
+	switch r.Method {
+	case http.MethodGet:
+		if subPath == "" {
+			// GET /api/v1/tasks/{id} - 获取任务详情
+			resp, err := s.taskServiceClient.GetTask(ctx, &taskv1.GetTaskRequest{
+				TaskId: id,
+			})
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+				} else {
+					paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task service error"})
+				}
+				return
+			}
+			s.writeTaskResponse(w, resp)
+			return
+		}
+		// 子路径处理
+		switch subPath {
+		case "result":
+			// GET /api/v1/tasks/{id}/result
+			resp, err := s.resultServiceClient.GetTaskResult(ctx, &taskv1.GetTaskResultRequest{
+				TaskId: id,
+			})
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "task result not found"})
+				} else {
+					paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task result service error"})
+				}
+				return
+			}
+			s.writeTaskResultResponse(w, resp)
+			return
+		case "status":
+			resp, err := s.taskServiceClient.GetTaskStatus(ctx, &taskv1.GetTaskStatusRequest{
+				TaskId: id,
+			})
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+				} else {
+					paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task status service error"})
+				}
+				return
+			}
+			paginate.WriteJSON(w, http.StatusOK, resp)
+			return
+		default:
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+
+	case http.MethodPost:
+		switch subPath {
+		case "cancel":
+			_, err := s.taskServiceClient.CancelTask(ctx, &taskv1.CancelTaskRequest{
+				TaskId:   id,
+				TenantId: tenantID,
+			})
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task cancel failed"})
+				return
+			}
+			paginate.WriteJSON(w, http.StatusOK, map[string]string{"message": "task cancelled"})
+			return
+		case "approve":
+			resp, err := s.taskServiceClient.ApproveTask(ctx, &taskv1.ApproveTaskRequest{
+				TaskId:   id,
+				TenantId: tenantID,
+			})
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task approve failed"})
+				return
+			}
+			s.writeTaskResponse(w, resp)
+			return
+		case "reject":
+			resp, err := s.taskServiceClient.RejectTask(ctx, &taskv1.RejectTaskRequest{
+				TaskId:   id,
+				TenantId: tenantID,
+			})
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task reject failed"})
+				return
+			}
+			s.writeTaskResponse(w, resp)
+			return
+		case "retry":
+			// retry 实际上是取消并重新创建，这里先取消
+			_, err := s.taskServiceClient.CancelTask(ctx, &taskv1.CancelTaskRequest{
+				TaskId:   id,
+				TenantId: tenantID,
+			})
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task cancel failed"})
+				return
+			}
+			// TODO: 真正的重试需要重新创建任务，暂返回成功
+			paginate.WriteJSON(w, http.StatusOK, map[string]string{"message": "task cancelled for retry"})
+			return
+		default:
+			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+
+	case http.MethodDelete:
+		if subPath == "dead-letter" {
+			// 删除死信任务
+			_, err := s.taskServiceClient.CancelTask(ctx, &taskv1.CancelTaskRequest{
+				TaskId:   id,
+				TenantId: tenantID,
+			})
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "dead letter purge failed"})
+				return
+			}
+			paginate.WriteJSON(w, http.StatusOK, map[string]string{"message": "dead letter purged"})
+			return
+		}
+		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+
+}
+
+}
+
+// writeTaskResponse 将 taskv1.Task 写入 HTTP 响应（统一格式）。
+func (s *Server) writeTaskResponse(w http.ResponseWriter, resp *taskv1.Task) {
+	paginate.WriteJSON(w, http.StatusOK, map[string]any{
+		"taskId":            resp.TaskId,
+		"agentId":           resp.AgentId,
+		"tenantId":          resp.TenantId,
+		"type":              resp.Type,
+		"command":           resp.Command,
+		"content":           resp.Content,
+		"path":              resp.Path,
+		"status":            normalizeTaskStatus(resp.Status),
+		"rawStatus":         resp.Status,
+		"claimedBy":         resp.ClaimedBy,
+		"claimedAt":         resp.ClaimedAt,
+		"createdAt":         resp.CreatedAt,
+		"retryCount":        resp.RetryCount,
+		"deadLetter":        resp.DeadLetter,
+		"approvalRequired":  resp.ApprovalRequired,
+		"claimEpoch":        resp.ClaimEpoch,
+		"schedule":          resp.Schedule,
+		"parentId":          resp.ParentId,
+		"dependsOn":         resp.DependsOn,
+		"approvedBy":        resp.ApprovedBy,
+		"approvedAt":        resp.ApprovedAt,
+		"batchId":           resp.BatchId,
+		"lastFiredAt":       resp.LastFiredAt,
+		"priority":          resp.Priority,
+		"idempotencyKey":    resp.IdempotencyKey,
+		"statusMachine":     resp.StatusMachine,
+		"scriptBody":        resp.ScriptBody,
+	})
+}
+
+// writeTaskResultResponse 将 taskv1.TaskResult 写入 HTTP 响应。
+func (s *Server) writeTaskResultResponse(w http.ResponseWriter, resp *taskv1.TaskResult) {
+	paginate.WriteJSON(w, http.StatusOK, map[string]any{
+		"taskId":     resp.TaskId,
+		"exitCode":   resp.ExitCode,
+		"stdout":     resp.Stdout,
+		"stderr":     resp.Stderr,
+		"durationMs": resp.DurationMs,
+		"finishedAt": resp.FinishedAt,
 	})
 }

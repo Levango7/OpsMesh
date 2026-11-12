@@ -17,7 +17,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
@@ -29,6 +31,9 @@ const rfTenant = "t-rf"
 func rfServer(t *testing.T, agentN int) *Server {
 	t.Helper()
 	s := newBatchTestServer()
+	// TD-60 任务域 HTTP 切流：注入存根任务服务客户端（测试不依赖真实 task-svc）
+	stubClient := NewStubTaskServiceClient()
+	s.taskServiceClient = stubClient
 	for i := 0; i < agentN; i++ {
 		s.store.Register(&proto.AgentInfo{
 			AgentID:  fmt.Sprintf("dev-rf-%d", i),
@@ -193,31 +198,29 @@ func TestFix1_BatchCanarySubpathsReturn200ViaMux(t *testing.T) {
 // 修复前 handleTaskRouting 只分派 {id}/cancel|result|approve|reject|retry|dead-letter，
 // 裸 GET /api/v1/tasks/{id} 恒 404。前端 OSOptimizeView.vue / MiddlewareDeployView.vue
 // 每 3s 轮询该端点，把 404 吞掉后只报「poll timeout」，执行输出永远不显示。
-// 判据：经 mux 建任务 → GET 详情 200 且响应含 taskID（前端契约字段）。
+// 判据：GET /api/v1/tasks/{id} 经 mux 路由到 handleTaskProxy → 200 且响应含 taskID（前端契约字段）。
 func TestFix2_BareTaskDetailReturnsTaskJSON(t *testing.T) {
 	s := rfServer(t, 2)
+	// 预置一个任务到 stub client，测试裸详情路由是否可达
+	stubClient := s.taskServiceClient.(*StubTaskServiceClient)
+	testTaskID := "test-task-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	stubClient.AddTask(&taskv1.Task{
+		TaskId:   testTaskID,
+		AgentId:  "dev-rf-0",
+		TenantId: rfTenant,
+		Type:     "shell",
+		Command:  "echo test",
+		Status:   "completed",
+	})
 	mux := rfMux(s)
 
-	rec := rfDo(t, mux, http.MethodPost, "/api/v1/tasks",
-		`{"agentID":"dev-rf-0","type":"shell","command":"echo rf-detail"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("POST /tasks = %d, want 201; body=%s", rec.Code, rec.Body.String())
-	}
-	var created struct {
-		TaskID string `json:"taskID"`
-	}
-	rfDecode(t, rec.Body.String(), &created)
-	if created.TaskID == "" {
-		t.Fatalf("taskID 为空; body=%s", rec.Body.String())
-	}
-
 	// 修复点：裸 GET /api/v1/tasks/{id} → 200，且契约字段 taskID 在响应体里。
-	rec = rfDo(t, mux, http.MethodGet, "/api/v1/tasks/"+created.TaskID, "")
+	rec := rfDo(t, mux, http.MethodGet, "/api/v1/tasks/"+testTaskID, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /tasks/{id} = %d, want 200 (回归：裸详情曾恒 404); body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), created.TaskID) {
-		t.Fatalf("GET /tasks/{id} 响应未含 taskID=%s; body=%s", created.TaskID, rec.Body.String())
+	if !strings.Contains(rec.Body.String(), testTaskID) {
+		t.Fatalf("GET /tasks/{id} 响应未含 taskID=%s; body=%s", testTaskID, rec.Body.String())
 	}
 	// 未知 ID → 404（不能把查不到变成 200 空壳）。
 	if rec := rfDo(t, mux, http.MethodGet, "/api/v1/tasks/rf-no-such-task", ""); rec.Code != http.StatusNotFound {
