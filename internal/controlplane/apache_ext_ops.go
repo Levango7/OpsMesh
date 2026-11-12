@@ -27,6 +27,13 @@ func (s *Server) handleApacheHadoop(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		req.Version = "3.3.6"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	versionV := req.Version
 
 	var script string
 	switch req.Action {
@@ -47,7 +54,7 @@ if [ ! -d /opt/hadoop ]; then
   ln -sfn /opt/hadoop-${VER} /opt/hadoop
 fi
 export HADOOP_HOME=/opt/hadoop
-echo "Hadoop %s deployed"`, req.Version, req.Version)
+echo "Hadoop %s deployed"`, versionV, versionV)
 	case "hdfs":
 		script = `echo "=== HDFS ls / ===" && (hdfs dfs -ls / 2>/dev/null || echo "hdfs not available")`
 	case "namenode":
@@ -85,6 +92,13 @@ func (s *Server) handleApacheHive(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		req.Version = "3.1.3"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	versionV := req.Version
 
 	var script string
 	switch req.Action {
@@ -103,7 +117,7 @@ if [ ! -d /opt/hive ]; then
   ln -sfn /opt/apache-hive-${VER}-bin /opt/hive
 fi
 export HIVE_HOME=/opt/hive
-echo "Hive %s deployed"`, req.Version, req.Version)
+echo "Hive %s deployed"`, versionV, versionV)
 	case "schema":
 		script = `echo "=== Init Hive Schema ===" && (schematool -initSchema -dbType derby 2>/dev/null || schematool -initSchema) && echo "schema initialized"`
 	case "query":
@@ -139,6 +153,13 @@ func (s *Server) handleApacheHBase(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		req.Version = "2.5.8"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	versionV := req.Version
 
 	var script string
 	switch req.Action {
@@ -157,7 +178,7 @@ if [ ! -d /opt/hbase ]; then
   ln -sfn /opt/hbase-${VER} /opt/hbase
 fi
 export HBASE_HOME=/opt/hbase
-echo "HBase %s deployed"`, req.Version, req.Version)
+echo "HBase %s deployed"`, versionV, versionV)
 	case "table":
 		script = `echo "=== Create HBase Table ===" && (echo "create 'ns:table', 'cf'" | hbase shell 2>/dev/null || hbase shell -e "create 'ns:table', 'cf'")`
 	case "scan":
@@ -193,6 +214,13 @@ func (s *Server) handleApacheSolr(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		req.Version = "9.4.1"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	versionV := req.Version
 
 	var script string
 	switch req.Action {
@@ -211,7 +239,7 @@ if [ ! -d /opt/solr ]; then
   ln -sfn /opt/solr-${VER} /opt/solr
 fi
 export SOLR_HOME=/opt/solr
-echo "Solr %s deployed"`, req.Version, req.Version)
+echo "Solr %s deployed"`, versionV, versionV)
 	case "collection":
 		script = `echo "=== Create Solr Collection ===" && (solr create -c collection 2>/dev/null || /opt/solr/bin/solr create -c collection) ; echo "collection created"`
 	case "query":
@@ -247,6 +275,13 @@ func (s *Server) handleApacheDruid(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		req.Version = "28.0.0"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	versionV := req.Version
 
 	var script string
 	switch req.Action {
@@ -265,7 +300,7 @@ if [ ! -d /opt/druid ]; then
   ln -sfn /opt/apache-druid-${VER} /opt/druid
 fi
 export DRUID_HOME=/opt/druid
-echo "Druid %s deployed"`, req.Version, req.Version)
+echo "Druid %s deployed"`, versionV, versionV)
 	case "datasource":
 		script = `echo "=== Druid Datasource ===" && (curl -s http://localhost:8888/druid/v2/datasources 2>/dev/null || echo "druid datasource")`
 	case "query":
@@ -301,6 +336,13 @@ func (s *Server) handleApacheNiFi(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		req.Version = "1.25.0"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	versionV := req.Version
 
 	var script string
 	switch req.Action {
@@ -319,7 +361,7 @@ if [ ! -d /opt/nifi ]; then
   ln -sfn /opt/nifi-${VER} /opt/nifi
 fi
 export NIFI_HOME=/opt/nifi
-echo "NiFi %s deployed"`, req.Version, req.Version)
+echo "NiFi %s deployed"`, versionV, versionV)
 	case "flow":
 		script = `echo "=== NiFi Flow ===" && (curl -s http://localhost:8080/nifi-api/flow/process-groups/root 2>/dev/null || echo "nifi flow")`
 	case "processor":
@@ -355,6 +397,13 @@ func (s *Server) handleApacheImpala(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		req.Version = "4.3.0"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	versionV := req.Version
 
 	var script string
 	switch req.Action {
@@ -373,7 +422,7 @@ if [ ! -d /opt/impala ]; then
   ln -sfn /opt/impala-${VER} /opt/impala
 fi
 export IMPALA_HOME=/opt/impala
-echo "Impala %s deployed"`, req.Version, req.Version)
+echo "Impala %s deployed"`, versionV, versionV)
 	case "query":
 		script = `echo "=== Impala Query ===" && (impala-shell -q "SHOW DATABASES" 2>/dev/null || echo "impala query failed")`
 	default:
