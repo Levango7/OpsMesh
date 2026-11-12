@@ -2,11 +2,14 @@ package controlplane
 
 import (
 	"context"
+	"fmt"
 	"time"
 
-	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 // LeaderElectorClient 选主客户端接口（便于测试 mock）。
@@ -26,12 +29,30 @@ func NewGRPCLeaderElectorClient(ctx context.Context, target string) (*GRPCLeader
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
+	// grpc.WithBlock 已废弃（NewClient 不支持该 DialOption，1.x 全程不再支持）。
+	//
+	// 按 grpc 官方迁移路径：**NewClient（立即返回、连接惰性建立）+ Connect() 主动触发 +
+	// WaitForStateChange 等到 READY** —— 保持原「阻塞到连接就绪或 ctx 超时」的**等价语义**
+	// （不是简单删掉 WithBlock：那会把「启动即验证连通性」变成「首次 RPC 时才连」，
+	// 选主客户端的创建语义会变）。
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
+	}
+	conn.Connect()
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			break
+		}
+		if state == connectivity.Shutdown {
+			_ = conn.Close()
+			return nil, fmt.Errorf("leader elector client to %s closed while connecting", target)
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			_ = conn.Close()
+			return nil, fmt.Errorf("leader elector connect to %s: %w", target, ctx.Err())
+		}
 	}
 
 	client := taskv1.NewLeaderElectorServiceClient(conn)
