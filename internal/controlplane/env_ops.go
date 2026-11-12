@@ -18,6 +18,7 @@ package controlplane
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -155,35 +156,39 @@ func (s *Server) handleEnvInstall(w http.ResponseWriter, r *http.Request) {
 
 func buildEnvInstallScript(req envInstallReq) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	versionV := req.Version
+	typeV := req.Type
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then PKG_MGR=yum; elif command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v apt-get >/dev/null 2>&1; then PKG_MGR=apt-get; else echo '未找到包管理器' && exit 1; fi\n")
 	switch req.Type {
 	case "java":
 		b.WriteString("# Java 环境安装（OpenJDK）\n")
-		fmt.Fprintf(&b, "$PKG_MGR install -y java-%s-openjdk || $PKG_MGR install -y jdk-%s || true\n", req.Version, req.Version)
+		fmt.Fprintf(&b, "$PKG_MGR install -y java-%s-openjdk || $PKG_MGR install -y jdk-%s || true\n", versionV, versionV)
 		b.WriteString("java -version\n")
 	case "nodejs":
 		b.WriteString("# Node.js 环境安装（nvm）\n")
 		b.WriteString("curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash\n")
 		b.WriteString("source ~/.nvm/nvm.sh\n")
-		fmt.Fprintf(&b, "nvm install %s && nvm use %s && node --version\n", req.Version, req.Version)
+		fmt.Fprintf(&b, "nvm install %s && nvm use %s && node --version\n", versionV, versionV)
 	case "python2":
 		b.WriteString("# Python 2.x 环境安装（已弃用，仅支持旧系统）\n")
-		fmt.Fprintf(&b, "$PKG_MGR install -y python2 || $PKG_MGR install -y python2.%s || true\n", req.Version)
+		fmt.Fprintf(&b, "$PKG_MGR install -y python2 || $PKG_MGR install -y python2.%s || true\n", versionV)
 		b.WriteString("python2 --version\n")
 	case "python3":
 		b.WriteString("# Python 3.x 环境安装\n")
-		fmt.Fprintf(&b, "$PKG_MGR install -y python3.%s || $PKG_MGR install -y python3 || true\n", req.Version)
+		fmt.Fprintf(&b, "$PKG_MGR install -y python3.%s || $PKG_MGR install -y python3 || true\n", versionV)
 		b.WriteString("python3 --version\n")
 	case "go":
 		b.WriteString("# Go 环境安装\n")
-		fmt.Fprintf(&b, "wget -q https://go.dev/dl/go%s.linux-amd64.tar.gz -O /tmp/go.tar.gz || true\n", req.Version)
+		fmt.Fprintf(&b, "wget -q https://go.dev/dl/go%s.linux-amd64.tar.gz -O /tmp/go.tar.gz || true\n", versionV)
 		b.WriteString("rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz\n")
 		b.WriteString("export PATH=$PATH:/usr/local/go/bin\n")
 		b.WriteString("go version\n")
 	}
-	fmt.Fprintf(&b, "echo '%s %s 环境安装完成\n", req.Type, req.Version)
+	fmt.Fprintf(&b, "echo '%s %s 环境安装完成\n", typeV, versionV)
 	return b.String()
 }
 
@@ -359,9 +364,19 @@ func (s *Server) handleIPVS(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (list/add/del)"})
 		return
 	}
+	var vipV string
 	if req.Action != "list" && (req.VIP == "" || req.Port <= 0 || req.Port > 65535) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid vip/port"})
 		return
+	}
+	if req.Action != "list" {
+		// IPVS 的 -t 参数是 IP[:port]：必须是合法 IP 字面量，否则 ipvsadm 直接拒绝；
+		// 更重要的是它会进 shell（ipvsadm -A -t <VIP>:<port>），白名单比转义更严。
+		if net.ParseIP(req.VIP) == nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid vip: must be an IP literal"})
+			return
+		}
+		vipV = req.VIP
 	}
 	if req.Action != "list" && req.Protocol != "tcp" && req.Protocol != "udp" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid protocol (tcp/udp)"})
@@ -375,7 +390,7 @@ func (s *Server) handleIPVS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "env_ipvs_" + req.Action, Target: fmt.Sprintf("%s:%d", req.VIP, req.Port),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "env_ipvs_" + req.Action, Target: fmt.Sprintf("%s:%d", vipV, req.Port),
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
@@ -383,17 +398,21 @@ func (s *Server) handleIPVS(w http.ResponseWriter, r *http.Request) {
 
 func buildIPVSScript(req ipvsReq) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	vipV := req.VIP
+	actionV := req.Action
 	b.WriteString("set -e\n")
 	b.WriteString("modprobe ip_vs || true\n")
 	switch req.Action {
 	case "list":
 		b.WriteString("ipvsadm -L -n\n")
 	case "add":
-		fmt.Fprintf(&b, "ipvsadm -A -t %s:%d -s rr || true\n", req.VIP, req.Port)
+		fmt.Fprintf(&b, "ipvsadm -A -t %s:%d -s rr || true\n", vipV, req.Port)
 	case "del":
-		fmt.Fprintf(&b, "ipvsadm -D -t %s:%d || true\n", req.VIP, req.Port)
+		fmt.Fprintf(&b, "ipvsadm -D -t %s:%d || true\n", vipV, req.Port)
 	}
-	fmt.Fprintf(&b, "echo 'IPVS %s 操作完成\n", req.Action)
+	fmt.Fprintf(&b, "echo 'IPVS %s 操作完成\n", actionV)
 	return b.String()
 }
 

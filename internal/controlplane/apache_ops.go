@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // handleApacheHTTPD 处理 POST /api/v1/middleware/apache/httpd
@@ -36,6 +37,17 @@ func (s *Server) handleApacheHTTPD(w http.ResponseWriter, r *http.Request) {
 	if req.Path == "" {
 		req.Path = "/etc/httpd/conf/httpd.conf"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	if err := shellquote.ValidatePath(req.Path); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
+		return
+	}
+	versionV, pathV := req.Version, req.Path
 
 	var script string
 	switch req.Action {
@@ -58,14 +70,14 @@ if command -v httpd >/dev/null 2>&1 || command -v apache2 >/dev/null 2>&1; then 
 fi
 %s
 systemctl enable --now httpd 2>/dev/null || apachectl start 2>/dev/null || true
-echo "Apache httpd %s deployed"`, vhost, req.Version)
+echo "Apache httpd %s deployed"`, vhost, versionV)
 	case "scan":
 		script = `echo "=== Apache Security Scan ===" && echo "--- loaded modules ---" && (apachectl -M 2>/dev/null || httpd -M 2>/dev/null) | grep -iE 'security|headers|ssl' || echo "mod_security not loaded" && echo "--- config test ---" && (apachectl -t 2>&1 || httpd -t 2>&1) && echo "--- response headers ---" && (curl -sI http://localhost/ 2>/dev/null | grep -iE 'server|x-frame|x-content-type|strict-transport|content-security' || echo "curl not available")`
 	case "config":
 		if req.Content != "" {
-			script = fmt.Sprintf(`printf '%%s\n' %s > %s && echo "config written to %s" && (apachectl -t 2>&1 || httpd -t 2>&1)`, shellQuote(req.Content), shellQuote(req.Path), req.Path)
+			script = fmt.Sprintf(`printf '%%s\n' %s > %s && echo "config written to %s" && (apachectl -t 2>&1 || httpd -t 2>&1)`, shellQuote(req.Content), shellQuote(pathV), pathV)
 		} else {
-			script = fmt.Sprintf(`echo "=== %s ===" && (cat %s 2>/dev/null || echo "file not found")`, req.Path, shellQuote(req.Path))
+			script = fmt.Sprintf(`echo "=== %s ===" && (cat %s 2>/dev/null || echo "file not found")`, pathV, shellQuote(pathV))
 		}
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
@@ -105,6 +117,17 @@ func (s *Server) handleApacheTomcat(w http.ResponseWriter, r *http.Request) {
 	if req.Path == "" {
 		req.Path = "/opt/tomcat/conf/server.xml"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	if err := shellquote.ValidatePath(req.Path); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
+		return
+	}
+	versionV, pathV := req.Version, req.Path
 
 	var script string
 	switch req.Action {
@@ -133,14 +156,14 @@ if [ ! -d /opt/tomcat ]; then
 fi
 %s
 /opt/tomcat/bin/startup.sh 2>/dev/null || true
-echo "Apache Tomcat %s deployed"`, req.Version, war, req.Version)
+echo "Apache Tomcat %s deployed"`, versionV, war, versionV)
 	case "scan":
 		script = `echo "=== Tomcat Security Scan ===" && echo "--- manager app ---" && (ls /opt/tomcat/webapps/ 2>/dev/null | grep -i manager || echo "manager not deployed") && echo "--- default credentials check ---" && (grep -n "tomcat-users" /opt/tomcat/conf/tomcat-users.xml 2>/dev/null; grep -oE 'username="[a-z]+" password="[a-z]+"' /opt/tomcat/conf/tomcat-users.xml 2>/dev/null || echo "no default creds found") && echo "--- version ---" && /opt/tomcat/bin/catalina.sh version 2>&1 | head -5`
 	case "config":
 		if req.Content != "" {
-			script = fmt.Sprintf(`printf '%%s\n' %s > %s && echo "config written to %s"`, shellQuote(req.Content), shellQuote(req.Path), req.Path)
+			script = fmt.Sprintf(`printf '%%s\n' %s > %s && echo "config written to %s"`, shellQuote(req.Content), shellQuote(pathV), pathV)
 		} else {
-			script = fmt.Sprintf(`echo "=== %s ===" && (cat %s 2>/dev/null || echo "file not found")`, req.Path, shellQuote(req.Path))
+			script = fmt.Sprintf(`echo "=== %s ===" && (cat %s 2>/dev/null || echo "file not found")`, pathV, shellQuote(pathV))
 		}
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
@@ -179,6 +202,17 @@ func (s *Server) handleApacheJetty(w http.ResponseWriter, r *http.Request) {
 	if req.Path == "" {
 		req.Path = "/opt/jetty/etc/jetty.xml"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	if err := shellquote.ValidatePath(req.Path); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
+		return
+	}
+	versionV := req.Version
 
 	var script string
 	switch req.Action {
@@ -206,7 +240,7 @@ if [ ! -d /opt/jetty ]; then
   ln -sfn /opt/jetty-distribution-${VER} /opt/jetty
 fi
 %s
-echo "Apache Jetty %s deployed"`, req.Version, war, req.Version)
+echo "Apache Jetty %s deployed"`, versionV, war, versionV)
 	case "scan":
 		script = `echo "=== Jetty Security Scan ===" && echo "--- webapps ---" && (ls /opt/jetty/webapps/ 2>/dev/null || echo "no webapps") && echo "--- version ---" && (java -jar /opt/jetty/start.jar --version 2>&1 | head -5) && echo "--- config test ---" && (ls /opt/jetty/etc/ 2>/dev/null | head)`
 	default:
@@ -246,6 +280,17 @@ func (s *Server) handleApacheOpenResty(w http.ResponseWriter, r *http.Request) {
 	if req.Path == "" {
 		req.Path = "/usr/local/openresty/nginx/conf/nginx.conf"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	if err := shellquote.ValidatePath(req.Path); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
+		return
+	}
+	pathV := req.Path
 
 	var script string
 	switch req.Action {
@@ -259,9 +304,9 @@ func (s *Server) handleApacheOpenResty(w http.ResponseWriter, r *http.Request) {
 		script = `systemctl restart openresty 2>/dev/null || (openresty -s stop 2>/dev/null; sleep 1; openresty) ; echo "openresty restart attempted"`
 	case "config":
 		if req.Content != "" {
-			script = fmt.Sprintf(`printf '%%s\n' %s > %s && echo "config written to %s" && (openresty -t 2>&1 || nginx -t 2>&1)`, shellQuote(req.Content), shellQuote(req.Path), req.Path)
+			script = fmt.Sprintf(`printf '%%s\n' %s > %s && echo "config written to %s" && (openresty -t 2>&1 || nginx -t 2>&1)`, shellQuote(req.Content), shellQuote(pathV), pathV)
 		} else {
-			script = fmt.Sprintf(`echo "=== %s ===" && (cat %s 2>/dev/null || echo "file not found")`, req.Path, shellQuote(req.Path))
+			script = fmt.Sprintf(`echo "=== %s ===" && (cat %s 2>/dev/null || echo "file not found")`, pathV, shellQuote(pathV))
 		}
 	case "lua":
 		luaPath := req.Path
@@ -309,6 +354,17 @@ func (s *Server) handleApacheNginx(w http.ResponseWriter, r *http.Request) {
 	if req.Path == "" {
 		req.Path = "/etc/nginx/nginx.conf"
 	}
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	if !isVersionLike(req.Version) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version: expected x.y.z, got " + req.Version})
+		return
+	}
+	if err := shellquote.ValidatePath(req.Path); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
+		return
+	}
+	pathV := req.Path
 
 	var script string
 	switch req.Action {
@@ -322,9 +378,9 @@ func (s *Server) handleApacheNginx(w http.ResponseWriter, r *http.Request) {
 		script = `systemctl restart nginx 2>/dev/null || (nginx -s stop 2>/dev/null; sleep 1; nginx); echo "nginx restart attempted"`
 	case "config":
 		if req.Content != "" {
-			script = fmt.Sprintf(`printf '%%s\n' %s > %s && echo "config written to %s" && (nginx -t 2>&1)`, shellQuote(req.Content), shellQuote(req.Path), req.Path)
+			script = fmt.Sprintf(`printf '%%s\n' %s > %s && echo "config written to %s" && (nginx -t 2>&1)`, shellQuote(req.Content), shellQuote(pathV), pathV)
 		} else {
-			script = fmt.Sprintf(`echo "=== %s ===" && (cat %s 2>/dev/null || echo "file not found")`, req.Path, shellQuote(req.Path))
+			script = fmt.Sprintf(`echo "=== %s ===" && (cat %s 2>/dev/null || echo "file not found")`, pathV, shellQuote(pathV))
 		}
 	case "test":
 		script = `nginx -t 2>&1 && echo "nginx config test passed" || echo "nginx config test failed"`

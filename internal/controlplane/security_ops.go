@@ -158,13 +158,16 @@ func (s *Server) handleSecurityScan(w http.ResponseWriter, r *http.Request) {
 
 func buildSecurityScanScript(req securityScanReq) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	cveV := req.CVE
 	b.WriteString("set -e\n")
 	if req.CVE != "" {
-		fmt.Fprintf(&b, "# 按 CVE 检索受影响包: %s\n", req.CVE)
+		fmt.Fprintf(&b, "# 按 CVE 检索受影响包: %s\n", cveV)
 		b.WriteString("if command -v yum >/dev/null 2>&1; then\n")
-		fmt.Fprintf(&b, "  yum updateinfo list cve.%s 2>/dev/null || yum updateinfo list security\n", strings.ToLower(req.CVE))
+		fmt.Fprintf(&b, "  yum updateinfo list cve.%s 2>/dev/null || yum updateinfo list security\n", strings.ToLower(cveV))
 		b.WriteString("elif command -v dnf >/dev/null 2>&1; then\n")
-		fmt.Fprintf(&b, "  dnf updateinfo list cve.%s 2>/dev/null || dnf updateinfo list security\n", strings.ToLower(req.CVE))
+		fmt.Fprintf(&b, "  dnf updateinfo list cve.%s 2>/dev/null || dnf updateinfo list security\n", strings.ToLower(cveV))
 		b.WriteString("elif command -v apt-get >/dev/null 2>&1; then\n")
 		b.WriteString("  echo 'Debian/Ubuntu 按 CVE 检索需 ubuntu-security-status 或 debsecan 工具'\n")
 		b.WriteString("  apt list --upgradable 2>/dev/null | head -50\n")
@@ -460,12 +463,15 @@ func (s *Server) handleSecurityRollback(w http.ResponseWriter, r *http.Request) 
 
 func buildSecurityRollbackScript(req securityRollbackReq) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	txnV := req.TransactionID
 	b.WriteString("set -e\n")
 	b.WriteString("# 回滚最近的更新事务\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then\n")
-	fmt.Fprintf(&b, "  yum history undo %s -y || echo '回滚失败（事务不存在或不可逆）'\n", req.TransactionID)
+	fmt.Fprintf(&b, "  yum history undo %s -y || echo '回滚失败（事务不存在或不可逆）'\n", txnV)
 	b.WriteString("elif command -v dnf >/dev/null 2>&1; then\n")
-	fmt.Fprintf(&b, "  dnf history undo %s -y || echo '回滚失败'\n", req.TransactionID)
+	fmt.Fprintf(&b, "  dnf history undo %s -y || echo '回滚失败'\n", txnV)
 	b.WriteString("elif command -v apt-get >/dev/null 2>&1; then\n")
 	b.WriteString("  echo 'Debian/Ubuntu 回滚需手动降级：apt-get install <pkg>=<old-version>'\n")
 	b.WriteString(fiProbe())

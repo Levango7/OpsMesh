@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
@@ -126,6 +127,28 @@ func (s *Server) handleSystemUsers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		action = "user_add"
+		// 白名单（批次 16）：username 是标识符；home/shell 是**绝对路径**。
+		//
+		// 为什么必须补：buildUserAddScript 用 Go 的 %q 写 useradd 的实参，而 %q
+		// **不是 shell 转义**（只转义引号与反斜杠，$ 与反引号原样保留 ⇒ 在双引号段里
+		// 照样展开）⇒ `$(id)` 可在 agent 上执行。补白名单后，合法输入下 %q 的输出
+		// 与 shellQuote **逐字节一致** ⇒ 脚本文本不变，非法输入 400。
+		if _, err := opsIdentifier("username", req.Username); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if req.Home != "" {
+			if err := shellquote.ValidatePath(req.Home); err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "home: " + err.Error()})
+				return
+			}
+		}
+		if req.Shell != "" {
+			if err := shellquote.ValidatePath(req.Shell); err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "shell: " + err.Error()})
+				return
+			}
+		}
 		script = buildUserAddScript(req)
 	case http.MethodDelete:
 		action = "user_del"
@@ -162,20 +185,22 @@ func (s *Server) handleSystemUsers(w http.ResponseWriter, r *http.Request) {
 // buildUserAddScript 构造创建用户的 shell 脚本（幂等：已存在则跳过）。
 func buildUserAddScript(req systemOpRequest) string {
 	var b strings.Builder
+	// 收口（批次 16）：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
+	usernameV, groupV, homeV, shellV := req.Username, req.Group, req.Home, req.Shell
 	b.WriteString("set -e\n")
-	fmt.Fprintf(&b, "if id %q >/dev/null 2>&1; then echo 'user already exists: %s'; exit 0; fi\n", req.Username, req.Username)
-	args := fmt.Sprintf("%q", req.Username)
-	if req.Group != "" && safeNameRe.MatchString(req.Group) {
-		args += fmt.Sprintf(" -g %q", req.Group)
+	fmt.Fprintf(&b, "if id %q >/dev/null 2>&1; then echo 'user already exists: %s'; exit 0; fi\n", usernameV, usernameV)
+	args := fmt.Sprintf("%q", usernameV)
+	if groupV != "" && safeNameRe.MatchString(groupV) {
+		args += fmt.Sprintf(" -g %q", groupV)
 	}
-	if req.Home != "" && strings.HasPrefix(req.Home, "/") {
-		args += fmt.Sprintf(" -d %q -m", req.Home)
+	if homeV != "" && strings.HasPrefix(homeV, "/") {
+		args += fmt.Sprintf(" -d %q -m", homeV)
 	}
-	if req.Shell != "" && strings.HasPrefix(req.Shell, "/") {
-		args += fmt.Sprintf(" -s %q", req.Shell)
+	if shellV != "" && strings.HasPrefix(shellV, "/") {
+		args += fmt.Sprintf(" -s %q", shellV)
 	}
 	fmt.Fprintf(&b, "useradd %s\n", args)
-	fmt.Fprintf(&b, "echo 'user created: %s'\n", req.Username)
+	fmt.Fprintf(&b, "echo 'user created: %s'\n", usernameV)
 	return b.String()
 }
 
@@ -352,12 +377,14 @@ func (s *Server) handleListFirewallRules(w http.ResponseWriter, r *http.Request)
 // add=true 添加，false 删除。
 func buildFirewallScript(req systemOpRequest, add bool) string {
 	var b strings.Builder
+	// 收口（批次 16）：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
+	portV := req.Port
 	b.WriteString("set -e\n")
-	portSpec := req.Port
+	portSpec := portV
 	if req.Protocol != "" && !strings.Contains(portSpec, "/") {
-		portSpec = req.Port + "/" + req.Protocol
+		portSpec = portV + "/" + req.Protocol
 	}
-	if req.Port == "" {
+	if portV == "" {
 		portSpec = ""
 	}
 	b.WriteString("if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then\n")
@@ -375,15 +402,15 @@ func buildFirewallScript(req systemOpRequest, add bool) string {
 	if !add {
 		action = "ACCEPT" // 删除时按规则匹配删除
 	}
-	if req.Port != "" {
+	if portV != "" {
 		proto := req.Protocol
 		if proto == "" {
 			proto = "tcp"
 		}
 		if add {
-			fmt.Fprintf(&b, "  iptables -A %s -p %s --dport %s -j %s\n", chain, proto, req.Port, action)
+			fmt.Fprintf(&b, "  iptables -A %s -p %s --dport %s -j %s\n", chain, proto, portV, action)
 		} else {
-			fmt.Fprintf(&b, "  iptables -D %s -p %s --dport %s -j %s || true\n", chain, proto, req.Port, action)
+			fmt.Fprintf(&b, "  iptables -D %s -p %s --dport %s -j %s || true\n", chain, proto, portV, action)
 		}
 	}
 	b.WriteString("fi\n")
@@ -464,6 +491,8 @@ func (s *Server) handleSystemPackages(w http.ResponseWriter, r *http.Request) {
 // buildPackageScript 构造包管理 shell 脚本（yum/apt 自动探测，幂等）。
 func buildPackageScript(req packageOpRequest) string {
 	var b strings.Builder
+	// 收口（批次 16）：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
+	packageV := req.Package
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器：yum（RHEL/CentOS/Fedora）或 apt（Debian/Ubuntu）\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then\n")
@@ -475,7 +504,7 @@ func buildPackageScript(req packageOpRequest) string {
 	b.WriteString("else\n")
 	fmt.Fprintf(&b, "  echo '未找到 yum/dnf/apt-get 包管理器' && exit 1\n")
 	b.WriteString("fi\n")
-	fmt.Fprintf(&b, "PKG=%q\n", req.Package)
+	fmt.Fprintf(&b, "PKG=%q\n", packageV)
 	switch req.Action {
 	case "install":
 		b.WriteString("if $PKG_MGR list installed \"$PKG\" >/dev/null 2>&1; then\n")

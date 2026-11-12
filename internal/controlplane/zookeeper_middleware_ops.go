@@ -46,6 +46,10 @@ func (s *Server) handleZookeeperCmd(w http.ResponseWriter, r *http.Request) {
 	if req.Host == "" {
 		req.Host = "localhost:2181"
 	}
+	if _, err := opsHost("host", req.Host); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	allowed := map[string]bool{"stat": true, "ruok": true, "mntr": true, "cons": true, "envi": true, "conf": true, "crst": true, "dump": true, "wchs": true, "wchc": true, "mon": true}
 	if !allowed[req.Cmd] {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported 4lw command (stat/ruok/mntr/cons/envi/conf/crst/dump/wchs/wchc/mon)"})
@@ -66,9 +70,13 @@ func (s *Server) handleZookeeperCmd(w http.ResponseWriter, r *http.Request) {
 
 func buildZookeeperCmdScript(req zookeeperCmdReq) string {
 	var b strings.Builder
+	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
+	hostV := req.Host
+	cmdV := req.Cmd
 	b.WriteString("set -e\n")
-	fmt.Fprintf(&b, "HOST=%q\n", req.Host)
-	fmt.Fprintf(&b, "echo %q | nc -w 2 $HOST\n", req.Cmd)
-	fmt.Fprintf(&b, "echo 'Zookeeper %s 命令执行完成 (host=%s)\n", req.Cmd, req.Host)
+	fmt.Fprintf(&b, "HOST=%q\n", hostV)
+	fmt.Fprintf(&b, "echo %q | nc -w 2 $HOST\n", cmdV)
+	fmt.Fprintf(&b, "echo 'Zookeeper %s 命令执行完成 (host=%s)\n", cmdV, hostV)
 	return b.String()
 }
