@@ -121,7 +121,6 @@ func main() {
 		ss store.ScheduleStore = memStore
 		rs store.ResultStore   = memStore
 		bs store.BatchStore    = memStore
-		cs store.CanaryStore   = memStore
 	)
 	if cfg.StoreType == "sql" {
 		// 显式要求 sql 却没配 DSN ⇒ 拒绝启动。
@@ -135,18 +134,19 @@ func main() {
 		if ms, err := store.NewMySQLStore(cfg.DSN); err != nil {
 			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
-			ts, ss, rs, bs, cs = ms, ms, ms, ms, ms
+			ts, ss, rs, bs = ms, ms, ms, ms
 			log.Printf("MySQL store 已启用")
 			defer func() { _ = ms.Close() }()
 		}
 	}
 	svc := service.NewService(ts, ss, rs, bs)
 
-	// M5 增强：灰度发布存储。SQL 模式与其余四个 store 同源（落 canary_releases 表，
-	// 重启后仍可按 canaryID 查到——R6）；memory 模式仍是同进程内存索引。
-	// 修前此处无条件注入 MemoryStore 并注释"不持久化"：SQL 模式下灰度记录重启即丢，
-	// 而 compose 出厂就是 TASK_SVC_STORE_TYPE=sql。
-	svc.SetCanaryStore(cs)
+	// A-2 阶段：选主器构造（控制面切流需求）。
+	elector, err := buildElector(cfg)
+	if err != nil {
+		lgr.Fatalf("build elector: %v", err)
+	}
+	defer func() { _ = elector.Close() }()
 
 	// A-2 阶段：事件总线/审计/SSE 桥接注入（接口注入模式，生产环境由 main 注入真实实现）。
 	// 默认 LogBus/LogAuditSink/StubSSEBridge（开发/单机可见）；生产环境可通过环境变量切换。
@@ -157,7 +157,7 @@ func main() {
 	cb := circuit.New("task-execution", 5, 30*time.Second)
 	svc.SetCircuitBreaker(cb)
 
-	srv := server.NewServer(svc)
+	srv := server.NewServer(svc, elector)
 
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
@@ -168,6 +168,7 @@ func main() {
 	taskv1.RegisterScheduleServiceServer(grpcServer, srv)
 	taskv1.RegisterResultServiceServer(grpcServer, srv)
 	taskv1.RegisterBatchServiceServer(grpcServer, srv)
+	taskv1.RegisterLeaderElectorServiceServer(grpcServer, srv)
 
 	healthServer := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
@@ -249,14 +250,6 @@ func main() {
 	// 回收规则：status=running + ClaimAt 早于 maxAge + 持有者无活跃心跳。
 	// A-2 阶段：renew 通过 LeaderElector 接口注入（stub 永真为默认，
 	// 生产环境可注入 K8sLeaseElector 实现多副本选主）。
-	// 选主（2026-09-27 补齐，TD-60 评估登记的"扩容即重复执行"缺陷）：
-	// stub=永真（单副本语义，默认）；mysql=租约真选主（多副本部署必须）。
-	// 声明 mysql 但前置不满足时 fail-fast——静默回落 stub 是多副本重复调度的温床。
-	elector, err := buildElector(cfg)
-	if err != nil {
-		lgr.Fatalf("选主初始化失败，停止启动: %v", err)
-	}
-	defer elector.Close()
 	// ShadowMode=true 时，task-svc 不执行 fire/reclaim（真正只读），只有 controlplane 调度。
 	// 这防止共库双调度器并发写 tasks 表。
 	var reclaimFn scheduler.ReclaimFunc

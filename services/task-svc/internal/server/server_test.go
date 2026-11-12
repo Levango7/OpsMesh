@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/leader"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
 )
@@ -15,7 +16,7 @@ import (
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	mem := store.NewMemoryStore()
-	return NewServer(service.NewService(mem, mem, mem, mem))
+	return NewServer(service.NewService(mem, mem, mem, mem), leader.NewStub())
 }
 
 func requireCode(t *testing.T, err error, want codes.Code, what string) {

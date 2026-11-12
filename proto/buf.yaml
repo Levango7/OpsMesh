@@ -5,6 +5,7 @@
 version: v2
 modules:
   - path: .
+  - path: ../services/task-svc/api
 lint:
   use:
     - STANDARD
