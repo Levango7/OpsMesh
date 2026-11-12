@@ -4,8 +4,14 @@
 # FILE 比 WIRE 更严格：WIRE 只守二进制兼容，FILE 还守源码兼容（更早暴露破坏性变更）。
 version: v2
 modules:
+  # buf v2 约束：module path 必须位于 **context 目录内**（context = 含本文件的目录 = proto/）。
+  # a704cea 曾在此加 `../services/task-svc/api`，buf 直接拒绝加载整个配置：
+  #   buf: Failure: decode buf.yaml: invalid module path: ../services/task-svc/api:
+  #        is outside the context directory
+  # ⇒ CI proto job 全红（main 与所有 open PR）。要把 task-svc 的 proto 纳入 lint，
+  # 需在 services/task-svc/api 下另建 buf.yaml 并由 CI 分别 lint（或把该 proto 物理纳入
+  # proto/ 下的独立 module 目录）——那是协议覆盖面的设计决定，不在本次回退范围内。
   - path: .
-  - path: ../services/task-svc/api
 lint:
   use:
     - STANDARD
