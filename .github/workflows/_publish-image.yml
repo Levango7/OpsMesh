@@ -197,7 +197,9 @@ jobs:
           echo "$out"
           missing=0
           for p in linux/amd64 linux/arm64; do
-            if printf '%s' "$out" | grep -q "$p"; then
+            # grep -q <<<"$out"（非 printf | grep -q）：pipefail 下 grep -q 提前退出会
+            # SIGPIPE 杀 producer，命中也可能判未命中（internal/gates TestNoPipelineGrepQInDeliveryAssets）。
+            if grep -q "$p" <<<"$out"; then
               echo "manifest 含平台: $p"
             else
               echo "::error::manifest 缺平台 $p"
