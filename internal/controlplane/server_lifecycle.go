@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/ai/agent"
 	aigateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
+	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/controlplane/svcproxy"
 	"github.com/Levango7/OpsMesh/internal/cost"
@@ -661,11 +661,11 @@ func (s *Server) Start() error {
 //   - "GET /api/v1/tasks/dead-letter"：字面量优先于 {id} 通配（更具体者胜），互不冲突。
 func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/tasks", s.handleListTasks)
-	mux.HandleFunc("/api/v1/tasks/", s.handleTaskProxy)                        // 子路径：{id}/cancel、{id}/result、{id}/approve、{id}/reject、{id}/retry、{id}/dead-letter
-	mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskProxy)                // GET 任务详情（{id} 详情 + 详情外的子树兜底）
+	mux.HandleFunc("/api/v1/tasks/", s.handleTaskProxy)                          // 子路径：{id}/cancel、{id}/result、{id}/approve、{id}/reject、{id}/retry、{id}/dead-letter
+	mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskProxy)                  // GET 任务详情（{id} 详情 + 详情外的子树兜底）
 	mux.HandleFunc("GET /api/v1/tasks/dead-letter", s.handleListDeadLetterTasks) // Wave 4-D DLQ 列表
-	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.handleTaskProxy)         // Wave 4-D DLQ 重试
-	mux.HandleFunc("DELETE /api/v1/tasks/{id}/dead-letter", s.handleTaskProxy) // Wave 4-D DLQ 清除
+	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.handleTaskProxy)           // Wave 4-D DLQ 重试
+	mux.HandleFunc("DELETE /api/v1/tasks/{id}/dead-letter", s.handleTaskProxy)   // Wave 4-D DLQ 清除
 }
 
 // registerBatchCanaryRoutes 注册批量运维/灰度发布路由（M5）。
@@ -757,7 +757,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -930,40 +930,40 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 
-}
+	}
 
 }
 
 // writeTaskResponse 将 taskv1.Task 写入 HTTP 响应（统一格式）。
 func (s *Server) writeTaskResponse(w http.ResponseWriter, resp *taskv1.Task) {
 	paginate.WriteJSON(w, http.StatusOK, map[string]any{
-		"taskId":            resp.TaskId,
-		"agentId":           resp.AgentId,
-		"tenantId":          resp.TenantId,
-		"type":              resp.Type,
-		"command":           resp.Command,
-		"content":           resp.Content,
-		"path":              resp.Path,
-		"status":            normalizeTaskStatus(resp.Status),
-		"rawStatus":         resp.Status,
-		"claimedBy":         resp.ClaimedBy,
-		"claimedAt":         resp.ClaimedAt,
-		"createdAt":         resp.CreatedAt,
-		"retryCount":        resp.RetryCount,
-		"deadLetter":        resp.DeadLetter,
-		"approvalRequired":  resp.ApprovalRequired,
-		"claimEpoch":        resp.ClaimEpoch,
-		"schedule":          resp.Schedule,
-		"parentId":          resp.ParentId,
-		"dependsOn":         resp.DependsOn,
-		"approvedBy":        resp.ApprovedBy,
-		"approvedAt":        resp.ApprovedAt,
-		"batchId":           resp.BatchId,
-		"lastFiredAt":       resp.LastFiredAt,
-		"priority":          resp.Priority,
-		"idempotencyKey":    resp.IdempotencyKey,
-		"statusMachine":     resp.StatusMachine,
-		"scriptBody":        resp.ScriptBody,
+		"taskId":           resp.TaskId,
+		"agentId":          resp.AgentId,
+		"tenantId":         resp.TenantId,
+		"type":             resp.Type,
+		"command":          resp.Command,
+		"content":          resp.Content,
+		"path":             resp.Path,
+		"status":           normalizeTaskStatus(resp.Status),
+		"rawStatus":        resp.Status,
+		"claimedBy":        resp.ClaimedBy,
+		"claimedAt":        resp.ClaimedAt,
+		"createdAt":        resp.CreatedAt,
+		"retryCount":       resp.RetryCount,
+		"deadLetter":       resp.DeadLetter,
+		"approvalRequired": resp.ApprovalRequired,
+		"claimEpoch":       resp.ClaimEpoch,
+		"schedule":         resp.Schedule,
+		"parentId":         resp.ParentId,
+		"dependsOn":        resp.DependsOn,
+		"approvedBy":       resp.ApprovedBy,
+		"approvedAt":       resp.ApprovedAt,
+		"batchId":          resp.BatchId,
+		"lastFiredAt":      resp.LastFiredAt,
+		"priority":         resp.Priority,
+		"idempotencyKey":   resp.IdempotencyKey,
+		"statusMachine":    resp.StatusMachine,
+		"scriptBody":       resp.ScriptBody,
 	})
 }
 

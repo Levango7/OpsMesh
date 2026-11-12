@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
+
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 // TaskServiceClient 任务服务客户端接口（便于测试 mock）。
@@ -36,10 +36,8 @@ func NewGRPCTaskServiceClient(ctx context.Context, target string) (*GRPCTaskServ
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
+	// WithBlock 已废弃 ⇒ 改用 dialGRPCBlocking（NewClient + Connect + 等到 READY，语义等价）。
+	conn, err := dialGRPCBlocking(ctx, target)
 	if err != nil {
 		return nil, err
 	}
@@ -222,10 +220,8 @@ func NewGRPCResultServiceClient(ctx context.Context, target string) (*GRPCResult
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
+	// WithBlock 已废弃 ⇒ 改用 dialGRPCBlocking（NewClient + Connect + 等到 READY，语义等价）。
+	conn, err := dialGRPCBlocking(ctx, target)
 	if err != nil {
 		return nil, err
 	}

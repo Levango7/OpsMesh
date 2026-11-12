@@ -7,9 +7,8 @@ modules:
   # buf v2 约束：module path 必须位于 **context 目录内**（context = 含本文件的目录 = proto/）。
   #
   # 为什么不能把 services/task-svc/api 列为 module（TD-60 起曾两次这样做）：
-  #   ① buf 直接拒绝加载整个配置 —— "invalid module path: ../services/task-svc/api:
+  #   ① buf 会直接拒绝加载整个配置 —— "invalid module path: ../services/task-svc/api:
   #      is outside the context directory" ⇒ CI proto job 全红（main 与所有 open PR 一起被挡）；
-  #      且因为 buf breaking 比对的是 **main 上的这份配置**，⇒ 连「修掉它」的 PR 自己都过不了 CI（死锁）。
   #   ② 即便把 workspace 根提到仓库根也不行 —— task-svc 副本的 package `opsmesh.task.v1`
   #      与其目录 `proto/v1` 不匹配，且与 canonical 同包撞名（TD-63 当初把 canonical 改址到
   #      opsmesh/task/v1 的原因）⇒ buf 报 "Files with package opsmesh.task.v1 must be within

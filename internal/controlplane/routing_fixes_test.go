@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 const rfTenant = "t-rf"

@@ -20,8 +20,8 @@ type Server struct {
 	taskv1.UnimplementedResultServiceServer
 	taskv1.UnimplementedBatchServiceServer
 	taskv1.UnimplementedLeaderElectorServiceServer
-	svc      *service.Service
-	elector  leader.LeaderElector
+	svc     *service.Service
+	elector leader.LeaderElector
 }
 
 // NewServer creates a new gRPC server.
@@ -246,8 +246,8 @@ func (s *Server) ListBatchTasks(ctx context.Context, req *taskv1.ListBatchTasksR
 func (s *Server) IsLeader(ctx context.Context, req *taskv1.IsLeaderRequest) (*taskv1.IsLeaderResponse, error) {
 	if s.elector == nil {
 		return &taskv1.IsLeaderResponse{
-			IsLeader:          false,
-			LeaderInstanceId:  "",
+			IsLeader:         false,
+			LeaderInstanceId: "",
 		}, nil
 	}
 	isLeader := s.elector.IsLeader()
@@ -256,8 +256,8 @@ func (s *Server) IsLeader(ctx context.Context, req *taskv1.IsLeaderRequest) (*ta
 		// 获取 leader 实例 ID（从 elector 获取，这里简化返回空）
 	}
 	return &taskv1.IsLeaderResponse{
-		IsLeader:          isLeader,
-		LeaderInstanceId:  leaderInstanceID,
+		IsLeader:         isLeader,
+		LeaderInstanceId: leaderInstanceID,
 	}, nil
 }
 
@@ -265,10 +265,10 @@ func (s *Server) IsLeader(ctx context.Context, req *taskv1.IsLeaderRequest) (*ta
 func (s *Server) Renew(ctx context.Context, req *taskv1.RenewRequest) (*taskv1.RenewResponse, error) {
 	if s.elector == nil {
 		return &taskv1.RenewResponse{
-			Success:      false,
-			IsLeader:     false,
-			LeaseTtlSeconds:  0,
-			LeaseUntilUnix:   0,
+			Success:         false,
+			IsLeader:        false,
+			LeaseTtlSeconds: 0,
+			LeaseUntilUnix:  0,
 		}, nil
 	}
 
