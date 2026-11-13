@@ -57,14 +57,14 @@ type Config struct {
 	ControlplaneEndpoints string
 	// 负载均衡策略：round-robin（轮询）| failover（主备切换，默认）。
 	// 单控制面地址时退化为始终用该地址（不破坏现有行为）。
-	LBStrategy  string
-	Segment     string // agent 所属网段（分桶键）
-	HTTPPort    int    // 控制面 HTTP(B/S) 端口（约定 8080）
-	GRPCPort    int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
+	LBStrategy      string
+	Segment         string // agent 所属网段（分桶键）
+	HTTPPort        int    // 控制面 HTTP(B/S) 端口（约定 8080）
+	GRPCPort        int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
 	TaskSvcGRPCAddr string // task-svc gRPC 地址（TD-60 任务域切流，默认 localhost:9090）
-	MetricsPort int    // metrics 端口（约定 9091）
+	MetricsPort     int    // metrics 端口（约定 9091）
 	// 数据本地化：持久化后端选择。
-	Store     string // 持久化后端: memory（默认） | mysql
+	Store     string // 持久化后端: memory（默认） | mysql | postgres
 	MySQLDSN  string // MySQL DSN（--store=mysql 时生效），如 user:pass@tcp(host:3306)/ops_device
 	RedisAddr string // Redis 地址（--store=mysql 时作 agent/device 状态缓存），如 redis:6379
 	// Redis 认证口令（--requirepass 场景）。空=不发送 AUTH，仅适用于未设密码的 Redis。
@@ -489,7 +489,7 @@ func Load() *Config {
 	taskSvcGRPCAddr := flag.String("task-svc-grpc-addr", "localhost:9090", "task-svc gRPC 地址（TD-60 任务域切流）；空=使用存根实现")
 	metricsPort := flag.Int("metrics-port", 9091, "metrics 端口（约定 9091）")
 	// 数据本地化：持久化后端选择（默认 memory，保证无外部依赖即可运行）。
-	store := flag.String("store", "memory", "持久化后端: memory（默认） | mysql（数据本地化）")
+	store := flag.String("store", "memory", "持久化后端: memory（默认） | mysql | postgres（数据本地化）")
 	mysqlDSN := flag.String("mysql-dsn", "", "MySQL DSN（--store=mysql 时生效），如 user:pass@tcp(mysql:3306)/ops_device")
 	redisAddr := flag.String("redis-addr", "", "Redis 地址（--store=mysql 时作状态缓存），如 redis:6379")
 	redisPassword := flag.String("redis-password", "", "Redis 认证口令（服务端 --requirepass）；空=不认证（仅限未设密码的 Redis，生产必须配置）；或 env OPSMESH_REDIS_PASSWORD")
@@ -1121,8 +1121,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("非法 --task-timeout=%v（应 > 0）", c.TaskTimeout)
 		}
 	}
-	if c.Store == "mysql" && c.MySQLDSN == "" {
-		return fmt.Errorf("--store=mysql 但 --mysql-dsn 为空（数据本地化需要 DSN）")
+	if (c.Store == "mysql" || c.Store == "postgres") && c.MySQLDSN == "" {
+		return fmt.Errorf("--store=mysql/postgres 但 --mysql-dsn 为空（数据本地化需要 DSN）")
 	}
 	if c.TaskLeaseSec <= 0 {
 		return fmt.Errorf("非法 --task-lease-sec=%d（应 > 0）", c.TaskLeaseSec)

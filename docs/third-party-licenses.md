@@ -1,8 +1,8 @@
 # 第三方依赖许可证清单（自动生成，勿手改）
 
 > 生成命令：`bash deploy/scripts/gen-third-party-licenses.sh`（CI 用 `--check` 阻止文档与 go.sum 漂移）  
-> 生成时间：2026-11-06T23:48:48Z  
-> 依赖来源：根模块 + `services/*/go.mod` + `operator/go.mod` 的全部 `go.sum`（163 个 module@version）  
+> 生成时间：2026-11-12T12:31:57Z  
+> 依赖来源：根模块 + `services/*/go.mod` + `operator/go.mod` 的全部 `go.sum`（167 个 module@version）  
 > 许可证识别：读本地 Go 模块缓存里各模块自带的 LICENSE 文件，按签名表分类为常见 SPDX 名。
 
 ## 本清单**不做**的事（必须人判）
@@ -16,7 +16,7 @@
 | 许可证 | 模块数 |
 |---|---|
 | `Apache-2.0` | 51 |
-| `MIT` | 47 |
+| `MIT` | 51 |
 | `BSD-3-Clause` | 31 |
 | `MPL-2.0` | 24 |
 | `BSD-2-Clause` | 9 |
@@ -193,7 +193,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 |---|---|---|
 | `github.com/davecgh/go-spew` | v1.1.2-0.20180830191138-d8f796af33cc | 间接 |
 
-### `MIT`（47）
+### `MIT`（51）
 
 | 模块 | 版本 | 依赖类型 |
 |---|---|---|
@@ -214,6 +214,10 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/golang-jwt/jwt/v5` | v5.3.1 | 直接 |
 | `github.com/hashicorp/go-cty` | v1.4.1-0.20200414143053-d3edf31b6320 | 间接 |
 | `github.com/hashicorp/go-hclog` | v1.6.3 | 间接 |
+| `github.com/jackc/pgpassfile` | v1.0.0 | 间接 |
+| `github.com/jackc/pgservicefile` | v0.0.0-20240606120523-5a60cdf6a761 | 间接 |
+| `github.com/jackc/pgx/v5` | v5.13.0 | 直接 |
+| `github.com/jackc/puddle/v2` | v2.2.3 | 间接 |
 | `github.com/josharian/intern` | v1.0.0 | 间接 |
 | `github.com/json-iterator/go` | v1.1.12 | 间接 |
 | `github.com/klauspost/cpuid/v2` | v2.2.10 | 间接 |

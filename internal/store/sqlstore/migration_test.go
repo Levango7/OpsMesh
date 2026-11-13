@@ -707,7 +707,7 @@ func newTestSQLStoreSameSchema(t *testing.T, s *SQLStore) (*SQLStore, func()) {
 	if err != nil {
 		t.Fatalf("open same-schema store: %v", err)
 	}
-	store := &SQLStore{db: st, instanceID: "test-replica", secret: storekit.MustRandHex(32),
+	store := &SQLStore{db: st, dialect: mysqlDialect{}, instanceID: "test-replica", secret: storekit.MustRandHex(32),
 		deviceMetrics: make(map[string]*storekit.MetricsRing), agentSecretCache: make(map[string]string)}
 	return store, func() { st.Close() }
 }
