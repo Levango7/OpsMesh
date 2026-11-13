@@ -55,6 +55,24 @@
 - **能力降级点**：**无**（唯一改变脚本文本的地方是 `--eval` 参数的引号形态——为消除注入所必需；参数内容与原来逐字节相同）。
 - **守卫**：`internal/controlplane/b21_injection_test.go` —— ①真洞判据（含单引号的 filter 不得出现在裸 `--eval '...'` 段内；`--eval` 参数必须是 Quote 形态且含 `'\''` 转义）；②AST 判据（builder 实参不得裸引用 `req.*`）；③能力判据（合法 filter 含单引号不被 400）。守卫经**变异测试**验证（`--eval` 改回裸单引号段 ⇒ 判红；实参改回 `req.*` ⇒ 判红；复原 ⇒ 绿）。
 - **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` **ok 81.4s**；盘点器实测 `mongo_ops.go` 命中 **17 → 0**，全仓 **A/B 0**（不增）。
+## [Unreleased-批次 19 DNS 记录值注入真洞 + 形态面收口] — 2026-11-12（dns_ops.go：1 处真洞 + 11 字段形态面）
+
+- **真洞（bind 分支的 TXT/MX 记录值可注入）**：`buildDNSScript` 的 bind `add` 分支把整条记录放进 **shell 单引号段**：
+
+  ```go
+  fmt.Fprintf(&b, "echo '%s %d IN %s %s' >> \"$ZONE_FILE\"\n", req.Name, req.TTL, req.RecordType, req.Value)
+  ```
+
+  而 TXT 记录值经 `regexpTXTValue` 校验，其字符类**允许单引号 `'` 与分号 `;`**（TXT 本就该含这些字符，如 SPF/DKIM 串）⇒ `x'; id; echo '` 可闭合单引号、在 agent 上**执行命令**。
+  - 收口：改用 **heredoc 承载整条记录**（`cat >> "$ZONE_FILE" << 'OPSMESH_DNS_EOF'`）—— 内容**字面、不展开、不闭合**；
+  - **heredoc 提前闭合不可能**：值已被 `validDNSRecordValue` 拒绝含 `\r\n` ⇒ 不可能出现「单独一行等于分隔符」；
+  - **能力零降级**：TXT 值里的引号/分号**原样**写入 zone 文件（不砍字符集、不砍记录类型）。
+- **形态面收口**：`buildDNSScript` 内 11 个字段（`Name`/`Value`/`RecordType`/`Zone`/`Server`/`Service`/`Op`/`Type`/`Forwarders`/`Action`/`TTL`）的实参改用局部变量承接 ⇒ 判据 E/F 归零。
+  - 其中 `WriteString` + 字符串拼接形态的行**保持 `req.*` 原样** —— 盘点器 A/B 的 `concat` 判据只认识 `req.*`（已白名单 ⇒ 不记）与已知净化器，换成局部变量反而会被记成候选（实测 A/B 由 0 变 1，已规避）。
+- **本批唯一改变脚本文本的地方**：bind `add` 的记录行由 `echo '...'` 改为 heredoc（**这是消除注入所必需**，非文本保持型收口）；其余脚本内容逐字节不变。
+- **能力降级点**：**无**（TXT/MX 记录值能力不变；`validDNSRecordValue` 的既有校验不变）。
+- **守卫**：`internal/controlplane/b19_injection_test.go` —— ①真洞判据：含单引号/分号的 TXT 值**只能**出现在 heredoc 块内（块外出现即判红）；②能力判据：合法 TXT 值（含引号/分号）**不被 400**；③AST 判据：builder 的 `Fprintf` 实参不得裸引用 `req.*`。守卫经**变异测试**验证（heredoc 改回 `echo` 单引号段 ⇒ 判红；实参改回 `req.*` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` **ok 183.9s**；盘点器实测 `dns_ops.go` 命中 **37 → 0**，全仓 **A/B 0**（不增）。
 ## [Unreleased-批次 16 真洞剩余收口] — 2026-11-11（system_ops 的 useradd %q + k8s CertHash，2 文件）
 
 - **背景**：批次 14 把盘点口径扩到实参级（判据 E/F）后，全仓命中 408 处；按「该字段在同文件内是否有校验式调用」分级 ⇒ **50 处真洞**。批次 15 落 apache 族 27 处，本批落余下真洞中**可独立验证**的两处（k8s 其余形态项与 vector/kafka/dns/activemq/git 的 23 处顺延批次 17+）。
