@@ -72,8 +72,8 @@ func (s *Service) CreateRule(ctx context.Context, rule *models.ScaleRule) (*mode
 }
 
 // GetRule retrieves a rule by ID.
-func (s *Service) GetRule(ctx context.Context, id string) (*models.ScaleRule, error) {
-	rule, err := s.evaluator.GetRule(id)
+func (s *Service) GetRule(ctx context.Context, id, tenantID string) (*models.ScaleRule, error) {
+	rule, err := s.evaluator.GetRule(id, tenantID)
 	if err != nil {
 		return nil, ErrRuleNotFound
 	}
@@ -81,17 +81,17 @@ func (s *Service) GetRule(ctx context.Context, id string) (*models.ScaleRule, er
 }
 
 // ListRules lists all rules.
-func (s *Service) ListRules(ctx context.Context) ([]*models.ScaleRule, error) {
-	return s.evaluator.ListRules(), nil
+func (s *Service) ListRules(ctx context.Context, tenantID string) ([]*models.ScaleRule, error) {
+	return s.evaluator.ListRules(tenantID), nil
 }
 
 // UpdateRule updates an existing rule.
-func (s *Service) UpdateRule(ctx context.Context, rule *models.ScaleRule) (*models.ScaleRule, error) {
+func (s *Service) UpdateRule(ctx context.Context, rule *models.ScaleRule, tenantID string) (*models.ScaleRule, error) {
 	if rule == nil || rule.ID == "" {
 		return nil, ErrRuleInvalid
 	}
 	rule.UpdatedAt = time.Now()
-	if err := s.evaluator.UpdateRule(rule); err != nil {
+	if err := s.evaluator.UpdateRule(rule, tenantID); err != nil {
 		if err.Error() == fmt.Sprintf("rule not found: %s", rule.ID) {
 			return nil, ErrRuleNotFound
 		}
@@ -101,8 +101,8 @@ func (s *Service) UpdateRule(ctx context.Context, rule *models.ScaleRule) (*mode
 }
 
 // DeleteRule deletes a rule by ID.
-func (s *Service) DeleteRule(ctx context.Context, id string) error {
-	if err := s.evaluator.DeleteRule(id); err != nil {
+func (s *Service) DeleteRule(ctx context.Context, id, tenantID string) error {
+	if err := s.evaluator.DeleteRule(id, tenantID); err != nil {
 		if err.Error() == fmt.Sprintf("rule not found: %s", id) {
 			return ErrRuleNotFound
 		}
@@ -112,8 +112,8 @@ func (s *Service) DeleteRule(ctx context.Context, id string) error {
 }
 
 // Evaluate triggers evaluation of scaling rules.
-func (s *Service) Evaluate(ctx context.Context, ruleID string) (*models.EvaluateResponse, error) {
-	decisions, err := s.evaluator.Evaluate(s.reader, s.scaler, ruleID)
+func (s *Service) Evaluate(ctx context.Context, ruleID, tenantID string) (*models.EvaluateResponse, error) {
+	decisions, err := s.evaluator.Evaluate(s.reader, s.scaler, ruleID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("evaluation failed: %w", err)
 	}
@@ -131,8 +131,8 @@ func (s *Service) Evaluate(ctx context.Context, ruleID string) (*models.Evaluate
 }
 
 // GetDecisions returns the scaling decision history.
-func (s *Service) GetDecisions(ctx context.Context) []*models.ScaleDecision {
-	return s.evaluator.Decisions()
+func (s *Service) GetDecisions(ctx context.Context, tenantID string) []*models.ScaleDecision {
+	return s.evaluator.Decisions(tenantID)
 }
 
 // ScaleRequest is the body for manual scale (frontend contract: {target,replicas,reason},
@@ -174,7 +174,7 @@ func parseScaleTarget(target string) (deployment, namespace string) {
 
 // Scale manually sets the target deployment's replica count to the specified value
 // and records a manual decision (backend contract: POST /api/v1/scale).
-func (s *Service) Scale(ctx context.Context, req *ScaleRequest) (*ScaleResponse, error) {
+func (s *Service) Scale(ctx context.Context, req *ScaleRequest, tenantID string) (*ScaleResponse, error) {
 	if req == nil {
 		return nil, ErrRuleInvalid
 	}
@@ -197,6 +197,7 @@ func (s *Service) Scale(ctx context.Context, req *ScaleRequest) (*ScaleResponse,
 	executor := s.scaler.Executor()
 	s.evaluator.RecordDecision(&models.ScaleDecision{
 		ID:           uuid.New().String(),
+		TenantID:     tenantID, // 手工伸缩的归属 = 调用租户（RecordDecision 拒收空租户）
 		RuleID:       "",
 		Deployment:   deployment,
 		Namespace:    namespace,
@@ -226,6 +227,6 @@ type CooldownStatus = evaluator.CooldownStatus
 
 // GetCooldowns returns per-rule cooldown remaining seconds (frontend contract:
 // GET /api/v1/cooldowns → {cooldowns:[{ruleId,ruleName,remaining,expiresAt}]}).
-func (s *Service) GetCooldowns(ctx context.Context) []CooldownStatus {
-	return s.evaluator.Cooldowns()
+func (s *Service) GetCooldowns(ctx context.Context, tenantID string) []CooldownStatus {
+	return s.evaluator.Cooldowns(tenantID)
 }

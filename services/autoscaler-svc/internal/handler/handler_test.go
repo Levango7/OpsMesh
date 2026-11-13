@@ -58,6 +58,8 @@ func doJSON(t *testing.T, ts *httptest.Server, method, path string, body interfa
 		t.Fatalf("new request %s %s: %v", method, path, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// 租户上下文（D4）：网关注入的 X-Tenant-ID；缺失会被 handler 以 401 拒掉。
+	req.Header.Set("X-Tenant-ID", "t1")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("do %s %s: %v", method, path, err)
@@ -274,7 +276,7 @@ func TestCooldownsAfterScalingDecision(t *testing.T) {
 	ts, eng, _ := newTestServer(t)
 
 	// 规则 + 最近一次 scale_up 决策 → cooldowns 应报告剩余秒数。
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "r1",
 		Name:               "cpu-rule",
 		Deployment:         "web-app",
@@ -292,7 +294,7 @@ func TestCooldownsAfterScalingDecision(t *testing.T) {
 		t.Fatalf("AddRule: %v", err)
 	}
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
-	eng.RecordDecision(&models.ScaleDecision{
+	eng.RecordDecision(&models.ScaleDecision{TenantID: "t1",
 		RuleID:       "r1",
 		Deployment:   "web-app",
 		Namespace:    "default",
@@ -330,7 +332,7 @@ func TestCooldownsAfterScalingDecision(t *testing.T) {
 func TestCooldownsExpiredAfterWindow(t *testing.T) {
 	ts, eng, _ := newTestServer(t)
 
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "r2",
 		Name:               "mem-rule",
 		Deployment:         "api",
@@ -347,7 +349,7 @@ func TestCooldownsExpiredAfterWindow(t *testing.T) {
 		t.Fatalf("AddRule: %v", err)
 	}
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
-	eng.RecordDecision(&models.ScaleDecision{
+	eng.RecordDecision(&models.ScaleDecision{TenantID: "t1",
 		RuleID:    "r2",
 		Action:    "scale_up",
 		Timestamp: now.Add(-120 * time.Second), // 60s 窗口早已过期

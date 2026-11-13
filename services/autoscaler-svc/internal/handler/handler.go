@@ -104,12 +104,17 @@ func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	rule, err := decodeScaleRule(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
+	rule.TenantID = tid // 归属以网关注入为准（请求体 tenantId 不作信任来源）
 	created, err := h.svc.CreateRule(r.Context(), rule)
 	if err != nil {
 		// 服务层用 %w 包装 ErrRuleInvalid，必须 errors.Is 而非 ==。
@@ -183,7 +188,11 @@ func decodeScaleRule(body io.Reader) (*models.ScaleRule, error) {
 }
 
 func (h *Handler) listRules(w http.ResponseWriter, r *http.Request) {
-	rules, err := h.svc.ListRules(r.Context())
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	rules, err := h.svc.ListRules(r.Context(), tid)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -193,6 +202,10 @@ func (h *Handler) listRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request, id string) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	var rule models.ScaleRule
 	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -200,7 +213,7 @@ func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request, id string) 
 	}
 	rule.ID = id
 
-	updated, err := h.svc.UpdateRule(r.Context(), &rule)
+	updated, err := h.svc.UpdateRule(r.Context(), &rule, tid)
 	if err != nil {
 		if err == service.ErrRuleNotFound {
 			writeError(w, http.StatusNotFound, "rule not found")
@@ -218,7 +231,11 @@ func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request, id string) 
 }
 
 func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request, id string) {
-	if err := h.svc.DeleteRule(r.Context(), id); err != nil {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteRule(r.Context(), id, tid); err != nil {
 		if err == service.ErrRuleNotFound {
 			writeError(w, http.StatusNotFound, "rule not found")
 			return
@@ -231,6 +248,10 @@ func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request, id string) 
 }
 
 func (h *Handler) handleEvaluate(w http.ResponseWriter, r *http.Request) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -242,7 +263,7 @@ func (h *Handler) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.svc.Evaluate(r.Context(), req.RuleID)
+	resp, err := h.svc.Evaluate(r.Context(), req.RuleID, tid)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -252,18 +273,26 @@ func (h *Handler) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDecisions(w http.ResponseWriter, r *http.Request) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	decisions := h.svc.GetDecisions(r.Context())
+	decisions := h.svc.GetDecisions(r.Context(), tid)
 	writeJSON(w, http.StatusOK, decisions)
 }
 
 // handleScale 手动扩缩容（前端契约：POST /api/v1/autoscaler/scale，经聚合层
 // 剥域前缀后到 /api/v1/scale，请求体 {target,replicas,reason}，响应 {status,message}）。
 func (h *Handler) handleScale(w http.ResponseWriter, r *http.Request) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -275,7 +304,7 @@ func (h *Handler) handleScale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.svc.Scale(r.Context(), &req)
+	resp, err := h.svc.Scale(r.Context(), &req, tid)
 	if err != nil {
 		// 服务层用 %w 包装 ErrRuleInvalid，必须 errors.Is 而非 ==。
 		if errors.Is(err, service.ErrRuleInvalid) {
@@ -292,13 +321,17 @@ func (h *Handler) handleScale(w http.ResponseWriter, r *http.Request) {
 // handleCooldowns 冷却状态查询（前端契约：GET /api/v1/autoscaler/cooldowns →
 // /api/v1/cooldowns，响应 {cooldowns:[{ruleId,ruleName,remaining,expiresAt}]}）。
 func (h *Handler) handleCooldowns(w http.ResponseWriter, r *http.Request) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"cooldowns": h.svc.GetCooldowns(r.Context()),
+		"cooldowns": h.svc.GetCooldowns(r.Context(), tid),
 	})
 }
 
@@ -309,6 +342,17 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// tenantFromRequest 取租户：网关注入的 X-Tenant-ID（缺失即 401，不兜底 default）。
+// 扩缩容规则/决策是租户级数据（D4 / issue #27 裁决②）。
+func tenantFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+	tid := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
+	if tid == "" {
+		writeError(w, http.StatusUnauthorized, "missing X-Tenant-ID (tenant context required)")
+		return "", false
+	}
+	return tid, true
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
