@@ -252,9 +252,6 @@ func (s *Server) IsLeader(ctx context.Context, req *taskv1.IsLeaderRequest) (*ta
 	}
 	isLeader := s.elector.IsLeader()
 	leaderInstanceID := ""
-	if isLeader {
-		// 获取 leader 实例 ID（从 elector 获取，这里简化返回空）
-	}
 	return &taskv1.IsLeaderResponse{
 		IsLeader:         isLeader,
 		LeaderInstanceId: leaderInstanceID,
