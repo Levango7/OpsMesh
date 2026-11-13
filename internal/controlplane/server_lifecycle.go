@@ -659,13 +659,34 @@ func (s *Server) Start() error {
 //   - "/api/v1/tasks/"：子树模式，兜住 {id}/cancel|result|approve|reject|retry|dead-letter 等子路径。
 //   - "GET /api/v1/tasks/{id}"：裸任务详情（前端 OS 优化/中间件部署的日志轮询依赖它）。
 //   - "GET /api/v1/tasks/dead-letter"：字面量优先于 {id} 通配（更具体者胜），互不冲突。
+//
+// TD-60 任务域 HTTP 切流（任务域总闸 TASK_SVC_PROXY_ENABLED，默认关闭）：
+//   - 总闸关闭（默认，单副本/未接 task-svc）⇒ 走 **本地** handleTaskRouting（切流前行为
+//     逐字一致：详情/结果/审批/DLQ 全部直查控制面 store）。否则 default 部署下
+//     /api/v1/tasks/{id}/result 等端点会恒走 task-svc gRPC 桩（空壳，返回 nil ⇒ panic ⇒ 500），
+//     且即便是真 task-svc 也对本地建的任务查无此物 —— 端点整体不可用。
+//   - 总闸开启 ⇒ 走 handleTaskProxy（HTTP → task-svc gRPC）。
 func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/tasks", s.handleListTasks)
-	mux.HandleFunc("/api/v1/tasks/", s.handleTaskProxy)                          // 子路径：{id}/cancel、{id}/result、{id}/approve、{id}/reject、{id}/retry、{id}/dead-letter
-	mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskProxy)                  // GET 任务详情（{id} 详情 + 详情外的子树兜底）
-	mux.HandleFunc("GET /api/v1/tasks/dead-letter", s.handleListDeadLetterTasks) // Wave 4-D DLQ 列表
-	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.handleTaskProxy)           // Wave 4-D DLQ 重试
-	mux.HandleFunc("DELETE /api/v1/tasks/{id}/dead-letter", s.handleTaskProxy)   // Wave 4-D DLQ 清除
+	taskSvcProxied := s.cutoverRouter != nil && s.cutoverRouter.TaskEnabled()
+	if s.cutoverRouter == nil {
+		// 未装配裁决器（如未经 NewServer 的测试 Server）：与 cutover.Router.TaskEnabled()
+		// 同一判据（纯环境读取 TASK_SVC_PROXY_ENABLED），保证两条装配路径行为一致。
+		taskSvcProxied = os.Getenv("TASK_SVC_PROXY_ENABLED") == "true"
+	}
+	if taskSvcProxied {
+		mux.HandleFunc("/api/v1/tasks/", s.handleTaskProxy)                          // 子路径：{id}/cancel、{id}/result、{id}/approve、{id}/reject、{id}/retry、{id}/dead-letter
+		mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskProxy)                  // GET 任务详情（{id} 详情 + 详情外的子树兜底）
+		mux.HandleFunc("GET /api/v1/tasks/dead-letter", s.handleListDeadLetterTasks) // Wave 4-D DLQ 列表（字面量优先）
+		mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.handleTaskProxy)           // Wave 4-D DLQ 重试
+		mux.HandleFunc("DELETE /api/v1/tasks/{id}/dead-letter", s.handleTaskProxy)   // Wave 4-D DLQ 清除
+		return
+	}
+	mux.HandleFunc("/api/v1/tasks/", s.handleTaskRouting)                        // 子路径：本地 {id}/cancel、{id}/result、{id}/approve、{id}/reject、{id}/retry、{id}/dead-letter
+	mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskRouting)                // GET 任务详情（本地）
+	mux.HandleFunc("GET /api/v1/tasks/dead-letter", s.handleListDeadLetterTasks) // Wave 4-D DLQ 列表（字面量优先）
+	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.handleTaskRouting)         // Wave 4-D DLQ 重试（本地）
+	mux.HandleFunc("DELETE /api/v1/tasks/{id}/dead-letter", s.handleTaskRouting) // Wave 4-D DLQ 清除（本地）
 }
 
 // registerBatchCanaryRoutes 注册批量运维/灰度发布路由（M5）。

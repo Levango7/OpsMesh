@@ -271,18 +271,21 @@ func NewStubResultServiceClient() *StubResultServiceClient {
 }
 
 // GetTaskResult 存根实现。
+// 为什么返回错误而不是 (nil, nil)：空壳桩 + 调用方裸解引用 = 静默 panic。
+// 切流总闸关闭（默认）时路由层已不走 task-svc（见 registerTaskRoutes），正常永远不会到这里；
+// 真到了说明部署形态判错，明确报错好过 panic（HTTP recover 兜住也只是 500 "http-recover"）。
 func (s *StubResultServiceClient) GetTaskResult(ctx context.Context, req *taskv1.GetTaskResultRequest, opts ...grpc.CallOption) (*taskv1.TaskResult, error) {
-	return nil, nil
+	return nil, fmt.Errorf("result service: task-svc gRPC client not configured (stub mode)")
 }
 
 // ListTaskResults 存根实现。
 func (s *StubResultServiceClient) ListTaskResults(ctx context.Context, req *taskv1.ListTaskResultsRequest, opts ...grpc.CallOption) (*taskv1.ListTaskResultsResponse, error) {
-	return nil, nil
+	return nil, fmt.Errorf("result service: task-svc gRPC client not configured (stub mode)")
 }
 
 // GetTaskLogs 存根实现。
 func (s *StubResultServiceClient) GetTaskLogs(ctx context.Context, req *taskv1.GetTaskLogsRequest, opts ...grpc.CallOption) (*taskv1.TaskLogsResponse, error) {
-	return nil, nil
+	return nil, fmt.Errorf("result service: task-svc gRPC client not configured (stub mode)")
 }
 
 // Close 存根实现。
