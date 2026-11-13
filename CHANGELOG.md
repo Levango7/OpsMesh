@@ -26,6 +26,17 @@
 - **守卫**：`internal/controlplane/b17_injection_test.go` —— ①实参级 AST 守卫（字段级：本批 6 字段不得作为脚本拼装实参裸引用）；②6 类注入载荷必须 **400** 且不下发脚本；③合法值不被误拒（`metric=COSINE` 放行）。守卫经**变异测试**验证（注入裸 `req.Metric` / `req.Topics` ⇒ 判红；复原 ⇒ 绿）。
 - **验证**：`gofmt`（本批 2 文件 + 守卫）clean；`go build`/`go vet` 全绿；`go test ./internal/controlplane/ -count=1` 全绿；盘点器实测本批 5 字段残留命中 **0**，全仓 **A/B 0、E=30、F=316**（由批次 16 的 E=33/F=330 降下；E/F 存在重叠计数，不可相加）。
 - **剩余面（可复算）**：「已校验但直引」形态面约 350 处（virt_ops 45 / vector_ops 39 / dns_ops 37 / storage_ops 29 / fileshare 25 / olap 23 / lb 21 / mongo 17 / harbor 16 / kernel 16 等）⇒ 批次 18+ 按文件组机械收口。
+## [Unreleased-批次 18 形态面首个文件收口] — 2026-11-12（virt_ops.go 45 处「已校验但直引」）
+
+- **背景**：批次 17 收口后全仓**真洞归零**（50 → apache 27 → 2 → 6 → 0）。余下约 350 处属**形态面**——字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`；后续任何改动绕过校验点即可直接注入。本批取形态面最大的单文件（`virt_ops.go` 45 处）开工。
+- **逐点分级核对**（避免把形态误当真洞、或反之）：
+  - `Name`/`Type`/`Action`/`Snapshot` 在各自 handler **均有白名单**（`virtNameRe` / `allowedVirtTypes` / `allowedVirtModes` / `allowedVirtActions` / `allowedVirtVMActions` / `allowedVirtSnapshotActions`）⇒ 45 处全是形态面，**无需新增白名单**；
+  - `handleVirtVM` 的 `Name` 仅在 `Action != "list"` 时校验 —— 已核对 builder 的 `list` 分支**不使用** `Name`（`virsh list --all` / `qm list` 等），故该条件**不构成绕过**。
+- **收口（形态面标准手法）**：4 个 builder（`buildVirtDeployScript` / `buildVirtActionScript` / `buildVirtVMScript` / `buildVirtSnapshotScript`）内用局部变量承接已校验值（`vReqType` / `vReqAction` / `vReqName` / `vReqSnapshot`）⇒ 脚本实参不再裸引用 `req.*`，判据 E/F 归零；**脚本文本逐字节不变**（已用「局部变量反向替换回 `req.*` 后与 base 的 80 行脚本语句逐行比对」验证差异为 **0**）。
+- **能力变化**：**无**（不新增/收紧任何白名单，下发脚本逐字节不变）。
+- **守卫**：`internal/controlplane/b18_injection_test.go` —— ①AST 守卫（builder 的脚本实参不得裸引用 `req.*`）；②既有白名单**不失效**的回归判据（`Name` / `snapshot` 注入载荷必须 400）；③合法值不被误拒。守卫经**变异测试**验证（注入裸 `req.Name` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt`（本批 2 文件）clean；`go build ./...` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok；盘点器实测 `virt_ops.go` 命中 **45 → 0**。
+- **剩余面（可复算）**：形态面约 300 处（dns 37 / storage 29 / fileshare 25 / olap 23 / lb 21 / mongo 17 / harbor 16 / kernel 16 / tsdb 16 / graph 15 / db 14 …）⇒ 批次 19+ 按文件组推进。
 
 ## [Unreleased-批次 21 mongo Filter 注入真洞 + 形态面] — 2026-11-12（mongo_ops.go：1 处真洞 + 17 处形态面）
 
