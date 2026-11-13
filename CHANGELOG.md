@@ -73,6 +73,15 @@
 - **能力降级点**：**无**（TXT/MX 记录值能力不变；`validDNSRecordValue` 的既有校验不变）。
 - **守卫**：`internal/controlplane/b19_injection_test.go` —— ①真洞判据：含单引号/分号的 TXT 值**只能**出现在 heredoc 块内（块外出现即判红）；②能力判据：合法 TXT 值（含引号/分号）**不被 400**；③AST 判据：builder 的 `Fprintf` 实参不得裸引用 `req.*`。守卫经**变异测试**验证（heredoc 改回 `echo` 单引号段 ⇒ 判红；实参改回 `req.*` ⇒ 判红；复原 ⇒ 绿）。
 - **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` **ok 183.9s**；盘点器实测 `dns_ops.go` 命中 **37 → 0**，全仓 **A/B 0**（不增）。
+## [Unreleased-批次 20 形态面：storage_ops] — 2026-11-12（storage_ops.go 29 处「已校验但直引」）
+
+- **背景**：批次 17 收口后全仓**真洞归零**；批次 18 落 `virt_ops`（45 处），本批落形态面次大的 `storage_ops`（29 处）。形态面 = 字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`。
+- **分级核对（逐字段）**：`Type`/`Action` → `allowedStorageTypes` / `allowedStorageActions` / `allowedBucketActions` / `allowedObjectActions`（枚举）；`Bucket` → `storageBucketRe` = `^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$|^[a-z0-9]$`；`Object` → `storageObjectRe` = `^[a-zA-Z0-9._/\-]+$` —— **两者都不含 shell 元字符** ⇒ 这 29 处是形态面，**不是真洞**（落点虽是裸参数位 `aws s3 cp … s3://%s/%s`，但白名单已排除元字符）。
+- **收口**：4 个 builder（`buildStorageDeployScript` / `buildStorageActionScript` / `buildBucketScript` / `buildObjectScript`）内用局部变量承接已校验值（`vReqType` / `vReqAction` / `vReqBucket` / `vReqObject` / `vReqLocal`）⇒ 判据 E/F 归零；**脚本文本逐字节不变**（反向替换后与 base 的 **48 行脚本语句**逐行比对差异 **0**）。
+- **工具化**：本批起形态面收口用**通用工具**（`shape_tool.py`：按文件 + builder 清单自动承接字段、自动跳过「WriteString+字符串拼接」形态行——盘点器 A/B 的 `concat` 判据只认识 `req.*`，换局部变量反被记成候选），后续同型文件可「一批一文件 + 一条命令」推进。
+- **能力变化**：**无**（不新增/收紧任何白名单，下发脚本逐字节不变）。
+- **守卫**：`internal/controlplane/b20_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**的回归判据（`Bucket`/`Object` 注入载荷必须 **400**）；③合法值不被误拒。守卫经**变异测试**验证（实参改回 `req.Bucket` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok；盘点器实测 `storage_ops.go` 命中 **29 → 0**，全仓 A/B **0**（不增）。
 ## [Unreleased-批次 16 真洞剩余收口] — 2026-11-11（system_ops 的 useradd %q + k8s CertHash，2 文件）
 
 - **背景**：批次 14 把盘点口径扩到实参级（判据 E/F）后，全仓命中 408 处；按「该字段在同文件内是否有校验式调用」分级 ⇒ **50 处真洞**。批次 15 落 apache 族 27 处，本批落余下真洞中**可独立验证**的两处（k8s 其余形态项与 vector/kafka/dns/activemq/git 的 23 处顺延批次 17+）。
