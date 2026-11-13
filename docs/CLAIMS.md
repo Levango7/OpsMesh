@@ -1199,3 +1199,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 本地验证：buf lint exit 0。main 上其余四处红灯（canonical 未同步 / 8 个文件未格式化 / ha.go 未检 err / 3 处 grpc.WithBlock 废弃）由 **#49** 一次修完（PR 路径，含新增的防复发守卫 internal/proto/buf_module_scope_test.go ⇒ 下次再把越界 module 加回来，CI 立刻红并说清原因）。
 
 本线纪律说明：此前我多次建议别线「直推 main 前先跑 lint/gofmt/buf lint」；本次为解除全局死锁而直推一次**一行**，是明确的例外，且已记录在此。
+
+[CLAIM] 2026-11-13T04:34:02Z from=opencode ttl=12h scope=go.mod,go.sum,Dockerfile,Dockerfile.agent,docs/CLAIMS.md note=E2E (real backend)/E2E (security)/image/image-agent 四个 job 红在 docker 构建（真因已定位：internal/controlplane 5 文件 import 兄弟模块 services/task-svc/api/proto/v1，docker 构建 GOWORK=off 单模块模式下根模块不认识该模块 ⇒ 'no required module provides package'。用户裁定：确定无人认领 ⇒ 本线接手。板子/信箱/CLAIMS/open PR/main 提交已全量核验，无任何一线在做）
