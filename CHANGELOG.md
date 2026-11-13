@@ -82,6 +82,14 @@
 - **能力变化**：**无**（不新增/收紧任何白名单，下发脚本逐字节不变）。
 - **守卫**：`internal/controlplane/b20_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**的回归判据（`Bucket`/`Object` 注入载荷必须 **400**）；③合法值不被误拒。守卫经**变异测试**验证（实参改回 `req.Bucket` ⇒ 判红；复原 ⇒ 绿）。
 - **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok；盘点器实测 `storage_ops.go` 命中 **29 → 0**，全仓 A/B **0**（不增）。
+## [Unreleased-批次 22 形态面：fileshare_ops] — 2026-11-13（fileshare_ops.go 30 处「已校验但直引」）
+
+- **背景**：批次 17 收口后全仓**真洞归零**；本批落形态面第三大的 `fileshare_ops.go`（30 处）。形态面 = 字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`。
+- **分级核对（全部形态面，无需新增白名单）**：`Type`/`Action`/`Op` → `allowedFSShareTypes` / `allowedFSShareActions` / `allowedFSShareOps` / `allowedFSMountOps`（枚举）；`Path`/`ExportPath`/`MountPoint` → `validFSPath`（绝对路径、无 `..`、无空格）+ `fsPathRe`；`Name` → `fsShareNameRe`；`Server` → `monitorHostRe`；`Options` → `validFSOptions`；`MountOpts` → `allowedNFSMountOpts`；`AnonymousOK` 是 **bool** ⇒ 无注入面。
+- **收口**：1 个 builder（`buildFSShareScript`）内 12 个字段改局部变量承接（`vReq*`）⇒ 判据 E/F 归零；**脚本文本逐字节不变**（通用工具反向替换后与 base 逐行比对）。
+- **能力变化**：**无**（不新增/收紧任何白名单，下发脚本逐字节不变）。
+- **守卫**：`internal/controlplane/b22_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**（Path/Name/Server 注入载荷必须 **400**）；③合法值不被误拒。经**变异测试**（实参改回 `req.Name` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok；盘点器实测 `fileshare_ops.go` 命中 **30 → 0**，全仓 A/B **0**（不增）。
 ## [Unreleased-批次 16 真洞剩余收口] — 2026-11-11（system_ops 的 useradd %q + k8s CertHash，2 文件）
 
 - **背景**：批次 14 把盘点口径扩到实参级（判据 E/F）后，全仓命中 408 处；按「该字段在同文件内是否有校验式调用」分级 ⇒ **50 处真洞**。批次 15 落 apache 族 27 处，本批落余下真洞中**可独立验证**的两处（k8s 其余形态项与 vector/kafka/dns/activemq/git 的 23 处顺延批次 17+）。

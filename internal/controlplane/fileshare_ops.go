@@ -276,8 +276,10 @@ func validMountOpts(opts string) bool {
 
 func buildFSShareScript(req fsShareReq) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqAnonymousOK, vReqExportPath, vReqMountPoint, vReqMountOpts, vReqOptions, vReqService, vReqServer, vReqAction, vReqPath, vReqType, vReqName, vReqOp := req.AnonymousOK, req.ExportPath, req.MountPoint, req.MountOpts, req.Options, req.Service, req.Server, req.Action, req.Path, req.Type, req.Name, req.Op
 	b.WriteString("set -e\n")
-	switch req.Action {
+	switch vReqAction {
 	case "status":
 		b.WriteString("# 文件共享服务状态\n")
 		b.WriteString("echo '=== vsftpd ==='\nsystemctl is-active vsftpd 2>/dev/null || echo 'not running'\n")
@@ -290,14 +292,14 @@ func buildFSShareScript(req fsShareReq) string {
 
 	case "deploy":
 		b.WriteString("# 部署文件共享服务\n")
-		switch req.Type {
+		switch vReqType {
 		case "vsftpd":
 			b.WriteString("if command -v yum >/dev/null 2>&1; then yum install -y vsftpd >/dev/null 2>&1 || true; elif command -v apt-get >/dev/null 2>&1; then apt-get install -y vsftpd >/dev/null 2>&1 || true; fi\n")
 			b.WriteString("mkdir -p /etc/vsftpd.d\n")
 			b.WriteString("cat > /etc/vsftpd.d/opsmesh.conf <<'OPSMESH_FS_EOF'\n")
 			b.WriteString("# OpsMesh 托管：vsftpd 配置\n")
 			b.WriteString("local_enable=YES\nwrite_enable=YES\nchroot_local_user=YES\n")
-			if req.AnonymousOK {
+			if vReqAnonymousOK {
 				b.WriteString("anonymous_enable=YES\nanon_upload_enable=YES\n")
 			} else {
 				b.WriteString("anonymous_enable=NO\n")
@@ -325,87 +327,87 @@ func buildFSShareScript(req fsShareReq) string {
 		}
 
 	case "share":
-		switch req.Type {
+		switch vReqType {
 		case "nfs":
 			b.WriteString("# NFS 导出管理（/etc/exports.d/opsmesh.exports，托管文件）\n")
 			b.WriteString("EXPORTS=/etc/exports.d/opsmesh.exports\nmkdir -p /etc/exports.d && touch \"$EXPORTS\"\n")
-			switch req.Op {
+			switch vReqOp {
 			case "list":
 				b.WriteString("cat \"$EXPORTS\"; echo '---'; exportfs -v 2>/dev/null | head -30 || true\n") //nolint:misspell // exportfs 是 NFS 导出工具名，非 exports 拼写错误
 			case "add":
-				opts := req.Options
+				opts := vReqOptions
 				if opts == "" {
 					opts = "rw,sync,no_root_squash,no_subtree_check"
 				}
-				fmt.Fprintf(&b, "mkdir -p %q\n", req.Path)
-				fmt.Fprintf(&b, "sed -i -E '\\#^%s#d' \"$EXPORTS\" 2>/dev/null || true\n", req.Path)
-				fmt.Fprintf(&b, "echo '%s %s(%s)' >> \"$EXPORTS\"\n", req.Path, "*", opts)
+				fmt.Fprintf(&b, "mkdir -p %q\n", vReqPath)
+				fmt.Fprintf(&b, "sed -i -E '\\#^%s#d' \"$EXPORTS\" 2>/dev/null || true\n", vReqPath)
+				fmt.Fprintf(&b, "echo '%s %s(%s)' >> \"$EXPORTS\"\n", vReqPath, "*", opts)
 				b.WriteString("exportfs -ra && echo '导出已添加并生效'\n") //nolint:misspell // exportfs 是 NFS 导出工具名，非 exports 拼写错误
 			case "delete":
-				fmt.Fprintf(&b, "sed -i -E '\\#^%s#d' \"$EXPORTS\"\n", req.Path)
+				fmt.Fprintf(&b, "sed -i -E '\\#^%s#d' \"$EXPORTS\"\n", vReqPath)
 				b.WriteString("exportfs -ra && echo '导出已删除并生效'\n") //nolint:misspell // exportfs 是 NFS 导出工具名，非 exports 拼写错误
 			}
 		case "samba":
 			b.WriteString("# Samba 共享管理（/etc/samba/opsmesh-shares.conf，托管文件）\n")
 			b.WriteString("CONF=/etc/samba/opsmesh-shares.conf\nmkdir -p /etc/samba && touch \"$CONF\"\n")
-			switch req.Op {
+			switch vReqOp {
 			case "list":
 				b.WriteString("cat \"$CONF\" 2>/dev/null || echo '(无托管共享)'\n")
 			case "add":
 				b.WriteString("BACKUP=\"$CONF.bak.$(date +%s)\"\ncp \"$CONF\" \"$BACKUP\"\n")
 				// 幂等：删除同名 section（[name] 到下一个 [ 之间）。
-				fmt.Fprintf(&b, "awk -v sec='[%s]' '$0==sec{skip=1;next} /^\\[/{skip=0} !skip' \"$CONF\" > \"$CONF.tmp\" && mv \"$CONF.tmp\" \"$CONF\"\n", req.Name)
-				fmt.Fprintf(&b, "mkdir -p %q\n", req.Path)
-				extra := req.Options
+				fmt.Fprintf(&b, "awk -v sec='[%s]' '$0==sec{skip=1;next} /^\\[/{skip=0} !skip' \"$CONF\" > \"$CONF.tmp\" && mv \"$CONF.tmp\" \"$CONF\"\n", vReqName)
+				fmt.Fprintf(&b, "mkdir -p %q\n", vReqPath)
+				extra := vReqOptions
 				if extra == "" {
 					extra = "browseable = yes\n  writable = yes\n  guest ok = no"
 				}
-				fmt.Fprintf(&b, "{\n  echo '[%s]'\n  echo '  path = %s'\n  echo '  %s'\n} >> \"$CONF\"\n", req.Name, req.Path, strings.ReplaceAll(extra, "\n", "\n  "))
+				fmt.Fprintf(&b, "{\n  echo '[%s]'\n  echo '  path = %s'\n  echo '  %s'\n} >> \"$CONF\"\n", vReqName, vReqPath, strings.ReplaceAll(extra, "\n", "\n  "))
 				b.WriteString("if testparm -s >/dev/null 2>&1; then systemctl reload smbd 2>/dev/null || systemctl reload smb 2>/dev/null || true; echo '共享已添加并 reload'; else cp \"$BACKUP\" \"$CONF\"; echo 'smb.conf 校验失败，已回滚' && exit 1; fi\n")
 			case "delete":
 				b.WriteString("BACKUP=\"$CONF.bak.$(date +%s)\"\ncp \"$CONF\" \"$BACKUP\"\n")
-				fmt.Fprintf(&b, "awk -v sec='[%s]' '$0==sec{skip=1;next} /^\\[/{skip=0} !skip' \"$CONF\" > \"$CONF.tmp\" && mv \"$CONF.tmp\" \"$CONF\"\n", req.Name)
+				fmt.Fprintf(&b, "awk -v sec='[%s]' '$0==sec{skip=1;next} /^\\[/{skip=0} !skip' \"$CONF\" > \"$CONF.tmp\" && mv \"$CONF.tmp\" \"$CONF\"\n", vReqName)
 				b.WriteString("if testparm -s >/dev/null 2>&1; then systemctl reload smbd 2>/dev/null || true; echo '共享已删除并 reload'; else cp \"$BACKUP\" \"$CONF\"; echo '校验失败，已回滚' && exit 1; fi\n")
 			}
 		case "vsftpd":
 			b.WriteString("# vsftpd 用户目录共享（创建目录并授权）\n")
-			switch req.Op {
+			switch vReqOp {
 			case "list":
 				b.WriteString("grep -E '^(local_root|user_config_dir)' /etc/vsftpd.conf /etc/vsftpd.d/*.conf 2>/dev/null || echo '(无托管共享)'\n")
 			case "add":
-				fmt.Fprintf(&b, "mkdir -p %q && chmod 755 %q\n", req.Path, req.Path)
-				fmt.Fprintf(&b, "echo '共享目录已创建: %s（用户目录由系统用户管理）'\n", req.Path)
+				fmt.Fprintf(&b, "mkdir -p %q && chmod 755 %q\n", vReqPath, vReqPath)
+				fmt.Fprintf(&b, "echo '共享目录已创建: %s（用户目录由系统用户管理）'\n", vReqPath)
 			case "delete":
-				fmt.Fprintf(&b, "echo 'vsftpd 共享删除：目录 %s 保留（防误删数据），如需删除请手动处理'\n", req.Path)
+				fmt.Fprintf(&b, "echo 'vsftpd 共享删除：目录 %s 保留（防误删数据），如需删除请手动处理'\n", vReqPath)
 			}
 		}
 
 	case "mount":
 		b.WriteString("# NFS 客户端挂载管理\n")
-		switch req.Op {
+		switch vReqOp {
 		case "list":
 			b.WriteString("mount -t nfs,nfs4 2>/dev/null || mount | grep -E 'type nfs' || echo '(无 NFS 挂载)'\n")
 		case "mount":
-			opts := req.MountOpts
+			opts := vReqMountOpts
 			if opts == "" {
 				opts = "rw,hard,intr,noatime,nfsvers=4"
 			}
-			fmt.Fprintf(&b, "mkdir -p %q\n", req.MountPoint)
-			fmt.Fprintf(&b, "mount -t nfs -o %s %s:%s %s && echo '已挂载: %s'\n", opts, req.Server, req.ExportPath, req.MountPoint, req.MountPoint)
+			fmt.Fprintf(&b, "mkdir -p %q\n", vReqMountPoint)
+			fmt.Fprintf(&b, "mount -t nfs -o %s %s:%s %s && echo '已挂载: %s'\n", opts, vReqServer, vReqExportPath, vReqMountPoint, vReqMountPoint)
 			b.WriteString("# 幂等写入 fstab（重启保持；先删同名行）\n")
-			fmt.Fprintf(&b, "sed -i -E '\\#%s#d' /etc/fstab 2>/dev/null || true\n", req.MountPoint)
-			fmt.Fprintf(&b, "echo '%s:%s %s nfs %s 0 0' >> /etc/fstab\n", req.Server, req.ExportPath, req.MountPoint, opts)
+			fmt.Fprintf(&b, "sed -i -E '\\#%s#d' /etc/fstab 2>/dev/null || true\n", vReqMountPoint)
+			fmt.Fprintf(&b, "echo '%s:%s %s nfs %s 0 0' >> /etc/fstab\n", vReqServer, vReqExportPath, vReqMountPoint, opts)
 			b.WriteString("echo 'fstab 已更新（重启保持）'\n")
 		case "umount":
-			fmt.Fprintf(&b, "umount %q 2>/dev/null || umount -l %q 2>/dev/null || echo '卸载失败（可能未挂载或占用）'\n", req.MountPoint, req.MountPoint)
-			fmt.Fprintf(&b, "sed -i -E '\\#%s#d' /etc/fstab 2>/dev/null || true\n", req.MountPoint)
+			fmt.Fprintf(&b, "umount %q 2>/dev/null || umount -l %q 2>/dev/null || echo '卸载失败（可能未挂载或占用）'\n", vReqMountPoint, vReqMountPoint)
+			fmt.Fprintf(&b, "sed -i -E '\\#%s#d' /etc/fstab 2>/dev/null || true\n", vReqMountPoint)
 			b.WriteString("echo '已卸载并从 fstab 移除'\n")
 		}
 
 	case "service":
 		b.WriteString("# 文件共享服务管理\n")
 		var svcNames string
-		switch req.Type {
+		switch vReqType {
 		case "vsftpd":
 			svcNames = "vsftpd"
 		case "samba":
@@ -413,7 +415,7 @@ func buildFSShareScript(req fsShareReq) string {
 		case "nfs":
 			svcNames = "nfs-server nfs-kernel-server"
 		}
-		switch req.Service {
+		switch vReqService {
 		case "start":
 			fmt.Fprintf(&b, "for s in %s; do systemctl start $s 2>/dev/null && { echo \"$s started\"; exit 0; }; done; echo 'service not found' && exit 1\n", svcNames)
 		case "stop":
