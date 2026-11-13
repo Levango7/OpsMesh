@@ -27,6 +27,23 @@
 - **验证**：`gofmt`（本批 2 文件 + 守卫）clean；`go build`/`go vet` 全绿；`go test ./internal/controlplane/ -count=1` 全绿；盘点器实测本批 5 字段残留命中 **0**，全仓 **A/B 0、E=30、F=316**（由批次 16 的 E=33/F=330 降下；E/F 存在重叠计数，不可相加）。
 - **剩余面（可复算）**：「已校验但直引」形态面约 350 处（virt_ops 45 / vector_ops 39 / dns_ops 37 / storage_ops 29 / fileshare 25 / olap 23 / lb 21 / mongo 17 / harbor 16 / kernel 16 等）⇒ 批次 18+ 按文件组机械收口。
 
+## [Unreleased-批次 21 mongo Filter 注入真洞 + 形态面] — 2026-11-12（mongo_ops.go：1 处真洞 + 17 处形态面）
+
+- **真洞（query 的 filter 可注入）**：`buildMongoQueryScript` 把用户给的 `filter`（原样、**无任何白名单**）放进 **shell 单引号段**：
+
+  ```go
+  fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").\"%s\".find(%s).limit(%d)...' || echo '查询失败'\n",
+      req.Database, req.Collection, filter, req.Limit)
+  ```
+
+  ⇒ `'); id; echo '` 可闭合单引号、在 agent 上**执行命令**。
+  - 收口：把整段 `--eval` 代码构造为一个字符串（内容与原脚本**逐字节相同**），再用 `shellquote.Quote` 包裹**整个 `--eval` 参数**；
+  - **真 sh 实测**：`sh -c` 收到的 `--eval` 参数与原来**逐字节相同**（mongosh 语义不变），而其中的单引号被转义成 `'\''` ⇒ **不能闭合引号**；注入载荷**未执行**（marker 文件未落地）。
+  - **能力零降级**：filter 的内容（含引号/分号）原样传给 mongosh，不砍字符集、不改查询语义。
+- **形态面收口**：6 个 builder（`buildMongoActionScript` / `buildMongoBackupScript` / `buildMongoCollectionScript` / `buildMongoDatabaseScript` / `buildMongoDeployScript` / `buildMongoQueryScript`）内 17 处实参改用局部变量承接 ⇒ 判据 E/F 归零。
+- **能力降级点**：**无**（唯一改变脚本文本的地方是 `--eval` 参数的引号形态——为消除注入所必需；参数内容与原来逐字节相同）。
+- **守卫**：`internal/controlplane/b21_injection_test.go` —— ①真洞判据（含单引号的 filter 不得出现在裸 `--eval '...'` 段内；`--eval` 参数必须是 Quote 形态且含 `'\''` 转义）；②AST 判据（builder 实参不得裸引用 `req.*`）；③能力判据（合法 filter 含单引号不被 400）。守卫经**变异测试**验证（`--eval` 改回裸单引号段 ⇒ 判红；实参改回 `req.*` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` **ok 81.4s**；盘点器实测 `mongo_ops.go` 命中 **17 → 0**，全仓 **A/B 0**（不增）。
 ## [Unreleased-批次 16 真洞剩余收口] — 2026-11-11（system_ops 的 useradd %q + k8s CertHash，2 文件）
 
 - **背景**：批次 14 把盘点口径扩到实参级（判据 E/F）后，全仓命中 408 处；按「该字段在同文件内是否有校验式调用」分级 ⇒ **50 处真洞**。批次 15 落 apache 族 27 处，本批落余下真洞中**可独立验证**的两处（k8s 其余形态项与 vector/kafka/dns/activemq/git 的 23 处顺延批次 17+）。
