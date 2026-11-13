@@ -22,6 +22,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
+
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
@@ -62,7 +64,13 @@ func (s *Server) haCurrentInstance() haInstanceInfo {
 	if s.electorClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		isLeader, leaderInstanceID, _ = s.electorClient.IsLeader(ctx)
+		// errcheck：显式接收 err 并留痕（**不改变 isLeader/leaderInstanceID 的取值**，
+		// 只把原先被 `_` 静默丢弃的失败原因记录下来）。
+		var lerr error
+		isLeader, leaderInstanceID, lerr = s.electorClient.IsLeader(ctx)
+		if lerr != nil {
+			logx.Warn(ctx, "查询选主状态失败", "error", lerr)
+		}
 	} else {
 		// 回退：使用 store.IsLeader()（单副本/开发模式）
 		isLeader = s.store.IsLeader()

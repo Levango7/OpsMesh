@@ -23,10 +23,10 @@ import (
 	"github.com/Levango7/OpsMesh/internal/approval"
 	"github.com/Levango7/OpsMesh/internal/cmdb"
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
 	"github.com/Levango7/OpsMesh/internal/controlplane/cutover"
 	"github.com/Levango7/OpsMesh/internal/controlplane/factory"
 	"github.com/Levango7/OpsMesh/internal/controlplane/metricscache"
-	"github.com/Levango7/OpsMesh/internal/controlplane/credentials"
 	"github.com/Levango7/OpsMesh/internal/controlplane/pluginhost"
 	"github.com/Levango7/OpsMesh/internal/cost"
 	"github.com/Levango7/OpsMesh/internal/cron"
@@ -47,8 +47,8 @@ import (
 	"github.com/Levango7/OpsMesh/internal/platform/cloudprovider"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/secrets"
-	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
 	"github.com/Levango7/OpsMesh/internal/store"
+	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
 	"github.com/Levango7/OpsMesh/internal/tlsutil"
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
@@ -159,7 +159,7 @@ type Server struct {
 	// resultServiceClient 任务结果服务 gRPC 客户端（TD-60 任务域 HTTP 切流）。
 	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc ResultService。
 	resultServiceClient taskv1.ResultServiceClient
-	electorClient LeaderElectorClient
+	electorClient       LeaderElectorClient
 
 	// DeviceFP deadline：超过此时刻签发的 refresh token 必须绑定 DeviceFP（非空）。
 	// 零值=不强制（向后兼容）；非零=渐进式强制设备绑定。
@@ -915,17 +915,17 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		client, err := NewGRPCLeaderElectorClient(ctx, cfg.TaskSvcGRPCAddr)
 		if err != nil {
-logx.Warn(context.Background(), "Task leader 客户端初始化失败，回退存根", "err", err)
-		s.electorClient = NewStubLeaderElectorClient(true)
+			logx.Warn(context.Background(), "Task leader 客户端初始化失败，回退存根", "err", err)
+			s.electorClient = NewStubLeaderElectorClient(true)
+		} else {
+			s.electorClient = client
+			logx.Info(context.Background(), "Task leader 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
+		}
+		cancel()
 	} else {
-		s.electorClient = client
-		logx.Info(context.Background(), "Task leader 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
+		s.electorClient = NewStubLeaderElectorClient(true)
+		logx.Info(context.Background(), "Task leader 客户端使用存根实现（单副本/开发模式）")
 	}
-	cancel()
-} else {
-	s.electorClient = NewStubLeaderElectorClient(true)
-	logx.Info(context.Background(), "Task leader 客户端使用存根实现（单副本/开发模式）")
-}
 
 	// TD-60 任务域切流：初始化任务服务 gRPC 客户端（HTTP 代理转发到 task-svc TaskService）。
 	if cfg.TaskSvcGRPCAddr != "" {
