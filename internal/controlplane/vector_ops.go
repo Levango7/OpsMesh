@@ -25,6 +25,7 @@
 package controlplane
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -32,6 +33,7 @@ import (
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
@@ -367,6 +369,15 @@ func (s *Server) handleVectorCollection(w http.ResponseWriter, r *http.Request, 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "dimension must be positive"})
 		return
 	}
+	// 白名单（批次 17）：metric 直接进 curl 的 JSON 体（落点在 shell 单引号段内），
+	// 此前**无任何校验** ⇒ `COSINE'; id; echo '` 可闭合引号并执行。
+	// 空值保留原有语义（builder 里空则默认 COSINE/Cosine），故只校验非空。
+	if req.Action == "create" && req.Metric != "" {
+		if err := shellquote.ValidateName(req.Metric, 32); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid metric: " + err.Error()})
+			return
+		}
+	}
 	req.Type = vecType
 
 	script := buildVectorCollectionScript(req)
@@ -384,18 +395,20 @@ func (s *Server) handleVectorCollection(w http.ResponseWriter, r *http.Request, 
 
 func buildVectorCollectionScript(req vectorCollectionReq) string {
 	var b strings.Builder
+	// 收口（批次 17）：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
+	collectionV, metricV := req.Collection, req.Metric
 	b.WriteString("set -e\n")
 	switch req.Type {
 	case "milvus":
 		b.WriteString("# Milvus 集合管理（REST API，v2）\n")
 		switch req.Action {
 		case "create":
-			if req.Metric == "" {
-				req.Metric = "COSINE"
+			if metricV == "" {
+				metricV = "COSINE"
 			}
-			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/create' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"dimension\":%d,\"metricType\":\"%s\"}'\n", req.Collection, req.Dimension, req.Metric)
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/create' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"dimension\":%d,\"metricType\":\"%s\"}'\n", collectionV, req.Dimension, metricV)
 		case "delete":
-			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/drop' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\"}'\n", req.Collection)
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/drop' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\"}'\n", collectionV)
 		case "list":
 			b.WriteString("curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/list' -H 'Content-Type: application/json' -d '{}'\n")
 		}
@@ -403,12 +416,12 @@ func buildVectorCollectionScript(req vectorCollectionReq) string {
 		b.WriteString("# Qdrant 集合管理（REST API）\n")
 		switch req.Action {
 		case "create":
-			if req.Metric == "" {
-				req.Metric = "Cosine"
+			if metricV == "" {
+				metricV = "Cosine"
 			}
-			fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s' -H 'Content-Type: application/json' -d '{\"vectors\":{\"size\":%d,\"distance\":\"%s\"}}'\n", req.Collection, req.Dimension, req.Metric)
+			fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s' -H 'Content-Type: application/json' -d '{\"vectors\":{\"size\":%d,\"distance\":\"%s\"}}'\n", collectionV, req.Dimension, metricV)
 		case "delete":
-			fmt.Fprintf(&b, "curl -s -X DELETE 'http://localhost:6333/collections/%s'\n", req.Collection)
+			fmt.Fprintf(&b, "curl -s -X DELETE 'http://localhost:6333/collections/%s'\n", collectionV)
 		case "list":
 			b.WriteString("curl -s 'http://localhost:6333/collections'\n")
 		}
@@ -416,9 +429,9 @@ func buildVectorCollectionScript(req vectorCollectionReq) string {
 		b.WriteString("# pgvector 表管理（SQL）\n")
 		switch req.Action {
 		case "create":
-			fmt.Fprintf(&b, "psql -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS %s (id text PRIMARY KEY, embedding vector(%d), payload jsonb)' || echo '创建失败'\n", req.Collection, req.Dimension)
+			fmt.Fprintf(&b, "psql -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS %s (id text PRIMARY KEY, embedding vector(%d), payload jsonb)' || echo '创建失败'\n", collectionV, req.Dimension)
 		case "delete":
-			fmt.Fprintf(&b, "psql -c 'DROP TABLE IF EXISTS %s' || echo '删除失败'\n", req.Collection)
+			fmt.Fprintf(&b, "psql -c 'DROP TABLE IF EXISTS %s' || echo '删除失败'\n", collectionV)
 		case "list":
 			b.WriteString("psql -c '\\dt'\n")
 		}
@@ -461,6 +474,25 @@ func (s *Server) handleVectorWrite(w http.ResponseWriter, r *http.Request, vecTy
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "vector is required"})
 		return
 	}
+	// 白名单（批次 17）：id 进 milvus 的 JSON 与 pgvector 的 VALUES ('%s')，
+	// 此前**无任何校验** ⇒ 单引号可闭合 shell 串。opsIdentifier 允许
+	// [A-Za-z0-9][A-Za-z0-9._/:-]{0,255}（覆盖 uuid / int64 / 文本主键），不含 shell 元字符。
+	if _, err := opsIdentifier("vector id", req.ID); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	// 白名单（批次 17）：payload 原样进 curl 的 -d 单引号段（nonEmptyPayload 不转义）
+	// ⇒ 必须是合法 JSON，且不含单引号（否则闭合 shell 串）。
+	if strings.TrimSpace(req.Payload) != "" {
+		if !json.Valid([]byte(req.Payload)) {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "payload must be valid JSON"})
+			return
+		}
+		if strings.Contains(req.Payload, "'") {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "payload must not contain single quotes"})
+			return
+		}
+	}
 	req.Type = vecType
 
 	script := buildVectorWriteScript(req)
@@ -478,18 +510,20 @@ func (s *Server) handleVectorWrite(w http.ResponseWriter, r *http.Request, vecTy
 
 func buildVectorWriteScript(req vectorWriteReq) string {
 	var b strings.Builder
+	// 收口（批次 17）：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
+	collectionV, idV, payloadV := req.Collection, req.ID, req.Payload
 	b.WriteString("set -e\n")
 	vecJSON := floatSliceToJSON(req.Vector)
 	switch req.Type {
 	case "milvus":
 		b.WriteString("# Milvus 向量写入\n")
-		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/entities/insert' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"data\":[{\"id\":\"%s\",\"vector\":%s}]}'\n", req.Collection, req.ID, vecJSON)
+		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/entities/insert' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"data\":[{\"id\":\"%s\",\"vector\":%s}]}'\n", collectionV, idV, vecJSON)
 	case "qdrant":
 		b.WriteString("# Qdrant 向量写入（point id 需为整数或 UUID，此处用哈希）\n")
-		fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s/points' -H 'Content-Type: application/json' -d '{\"points\":[{\"id\":1,\"vector\":%s,\"payload\":%s}]}'\n", req.Collection, vecJSON, nonEmptyPayload(req.Payload))
+		fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s/points' -H 'Content-Type: application/json' -d '{\"points\":[{\"id\":1,\"vector\":%s,\"payload\":%s}]}'\n", collectionV, vecJSON, nonEmptyPayload(payloadV))
 	case "pgvector":
 		b.WriteString("# pgvector 向量写入\n")
-		fmt.Fprintf(&b, "psql -c \"INSERT INTO %s (id, embedding) VALUES ('%s', '%s') ON CONFLICT (id) DO UPDATE SET embedding=EXCLUDED.embedding\" || echo '写入失败'\n", req.Collection, req.ID, vecJSON)
+		fmt.Fprintf(&b, "psql -c \"INSERT INTO %s (id, embedding) VALUES ('%s', '%s') ON CONFLICT (id) DO UPDATE SET embedding=EXCLUDED.embedding\" || echo '写入失败'\n", collectionV, idV, vecJSON)
 	}
 	b.WriteString("echo '向量写入完成'\n")
 	return b.String()
