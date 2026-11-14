@@ -416,24 +416,38 @@ func (s *Server) handleSyncCloudAccount(w http.ResponseWriter, r *http.Request, 
 				region = "cn-hangzhou"
 			}
 			// 发现实例（各资源类型独立尽力发现：单项失败记 Warn 留痕，按 0 计入总数，不阻断同步）
+			// 审计整改批次2：统计失败项数，全部失败时不得标 synced（原实现恒标 synced 假成功）。
+			failed := 0
+			total := 4
 			instances, err := provider.DiscoverInstances(r.Context(), *creds, region)
 			if err != nil {
+				failed++
 				logx.Warn(r.Context(), "发现云实例失败", "provider", existing.Provider, "region", region, "error", err)
 			}
 			vpcs, err := provider.DiscoverVPCs(r.Context(), *creds, region)
 			if err != nil {
+				failed++
 				logx.Warn(r.Context(), "发现 VPC 失败", "provider", existing.Provider, "region", region, "error", err)
 			}
 			subnets, err := provider.DiscoverSubnets(r.Context(), *creds, region, "")
 			if err != nil {
+				failed++
 				logx.Warn(r.Context(), "发现子网失败", "provider", existing.Provider, "region", region, "error", err)
 			}
 			clusters, err := provider.DiscoverClusters(r.Context(), *creds, region)
 			if err != nil {
+				failed++
 				logx.Warn(r.Context(), "发现集群失败", "provider", existing.Provider, "region", region, "error", err)
 			}
 			discoveredCount = len(instances) + len(vpcs) + len(subnets) + len(clusters)
-			body.SyncStatus = "synced"
+			switch {
+			case failed == 0:
+				body.SyncStatus = "synced"
+			case failed < total:
+				body.SyncStatus = "partial"
+			default:
+				body.SyncStatus = "failed"
+			}
 		}
 	}
 
@@ -445,9 +459,16 @@ func (s *Server) handleSyncCloudAccount(w http.ResponseWriter, r *http.Request, 
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "cloud_account_sync",
 		Target: id, Detail: "sync_status=" + body.SyncStatus + " discovered=" + strconv.Itoa(discoveredCount),
 	})
-	paginate.WriteJSON(w, http.StatusOK, map[string]string{
+	// 响应 status 与真实结果一致：全部发现失败时 502，部分失败仍 200 但 syncStatus=partial。
+	httpStatus := http.StatusOK
+	respStatus := body.SyncStatus
+	if body.SyncStatus == "failed" {
+		httpStatus = http.StatusBadGateway
+		respStatus = "failed"
+	}
+	paginate.WriteJSON(w, httpStatus, map[string]string{
 		"status":          "synced",
-		"syncStatus":      body.SyncStatus,
+		"syncStatus":      respStatus,
 		"discoveredCount": strconv.Itoa(discoveredCount),
 	})
 }

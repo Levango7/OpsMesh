@@ -457,13 +457,24 @@ func (s *Server) handleTestAutomationRule(w http.ResponseWriter, r *http.Request
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "automation rule not found"})
 		return
 	}
-	// 测试规则（不实际执行）
+	// 测试规则（审计整改批次2：TestRule 只做条件匹配、**不执行任何动作**）。
+	// 原实现返回 triggered:true 并落一条与真实执行无异的记录，会误导运维。
+	// 现在：Status=dry_run、Detail 显式标注、响应 dryRun:true + triggered:false。
 	domainRule := automationRuleToDomain(rule)
 	exec := automationEngine.TestRule(domainRule)
-	// 落库执行记录
 	storeExec := automationExecToStore(exec, actx.TenantID)
+	storeExec.Status = "dry_run"
+	if storeExec.Detail == "" {
+		storeExec.Detail = "dry run: condition evaluated only, no action executed"
+	} else {
+		storeExec.Detail = "dry run (no action executed): " + storeExec.Detail
+	}
 	s.store.CreateAutomationExecution(actx.TenantID, storeExec)
-	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"execution": storeExec, "triggered": true})
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"execution": storeExec,
+		"triggered": false,
+		"dryRun":    true,
+	})
 }
 
 // handleAutomationExecutions 处理 GET /api/v1/automation/executions：执行历史。

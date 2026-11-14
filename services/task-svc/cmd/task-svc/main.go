@@ -153,6 +153,9 @@ func main() {
 	svc.SetEventBus(events.LogBus{})
 	svc.SetAuditSink(events.LogAuditSink{})
 	svc.SetSSEBridge(events.StubSSEBridge{})
+	// 审计整改批次2：显式告警——默认 SSE 桩只写日志、不向 /api/v1/events 转发，
+	// 依赖 SSE 的前端会收不到任务状态推送。生产部署必须注入真实 bridge。
+	log.Printf("[task-svc] WARN: SSE bridge = stub（仅日志，不转发）——依赖 /api/v1/events 的前端收不到任务状态推送；生产需注入真实实现")
 
 	cb := circuit.New("task-execution", 5, 30*time.Second)
 	svc.SetCircuitBreaker(cb)

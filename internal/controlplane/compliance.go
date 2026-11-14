@@ -19,7 +19,6 @@ package controlplane
 import (
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
@@ -117,20 +116,16 @@ func (s *Server) handleComplianceScan(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	// 结果为空时用引擎规则生成占位结果（全 failed，供测试/演示）。
-	results := body.Results
-	if len(results) == 0 {
-		eng := s.complianceEngine()
-		now := time.Now()
-		for _, rule := range eng.ListRules() {
-			results = append(results, compliance.ComplianceResult{
-				RuleID:    rule.ID,
-				Passed:    false,
-				Output:    "not checked",
-				CheckedAt: now,
-			})
-		}
+	// 审计整改批次2：结果为空时不再用 "not checked" 占位伪造报告
+	//（那会把"没检查"落库成"真实合规报告"，分数 0 被误读为全部不合格）。
+	// 扫描结果必须来自 agent 实测；空结果显式 400。
+	if len(body.Results) == 0 {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "results is required: scan must be executed on the agent and results submitted (empty results are not persisted as a report)",
+		})
+		return
 	}
+	results := body.Results
 	// 用引擎计算分数并生成报告。
 	eng := s.complianceEngine()
 	report := eng.Scan(actx.TenantID, body.DeviceID, results)
