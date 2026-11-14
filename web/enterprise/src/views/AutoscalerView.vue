@@ -141,17 +141,32 @@
         </div>
       </div>
     </div>
+
+    <!-- 审计整改批次8：原生 confirm()/alert() 替换为统一弹窗 -->
+    <ConfirmModal
+      v-model="deleteConfirm.show"
+      :title="$t('common.confirm')"
+      :message="$t('autoscaler.deleteConfirm')"
+      @confirm="onDeleteRuleConfirm"
+    />
+    <ConfirmModal
+      v-model="infoModal.show"
+      :title="$t('common.error')"
+      :message="infoModal.message"
+      info
+    />
   </PageShell>
 </template>
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useAutoscalerStore } from '@/stores/autoscaler'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Button from "@/components/ui/Button.vue"
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const store = useAutoscalerStore()
 
@@ -219,19 +234,31 @@ async function onToggleRule(row) {
     await store.editRule(row.id, { enabled: !row.enabled })
     await store.fetchRules()
   } catch (e) {
-    alert(e.j?.error || t('autoscaler.toggleFail'))
+    infoModal.message = e.j?.error || t('autoscaler.toggleFail')
+    infoModal.show = true
   }
 }
 
-async function onDeleteRule(id) {
-  if (!confirm(t('autoscaler.deleteConfirm'))) return
+// 审计整改批次8：删除走 ConfirmModal（不再原生 confirm/alert）。
+const deleteConfirm = reactive({ show: false, id: '' })
+const infoModal = reactive({ show: false, message: '' })
+
+function onDeleteRule(id) {
+  deleteConfirm.id = id
+  deleteConfirm.show = true
+}
+
+async function onDeleteRuleConfirm() {
+  const id = deleteConfirm.id
+  if (!id) return
   try {
     const r = await store.removeRule(id)
     if (r.s === 204 || (r.s >= 200 && r.s < 300)) {
       await store.fetchRules()
     }
   } catch (e) {
-    alert(e.j?.error || t('autoscaler.deleteFail'))
+    infoModal.message = e.j?.error || t('autoscaler.deleteFail')
+    infoModal.show = true
   }
 }
 
