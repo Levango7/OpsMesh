@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,7 +45,9 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusOK, snap)
 		return
 	}
-	// 展平所有 segment 的设备后分页。
+	// 展平所有 segment 的设备后分页，但**保持 segment 形态**返回：
+	// 前端 store 按 Object.entries 遍历 segments，若返回 {data:[…]} 会崩。
+	// 审计整改批次24：分页时仅截断每个 segment 内的设备数，总数字段放响应头。
 	var allDevs []proto.DeviceInfo
 	for _, devs := range snap {
 		allDevs = append(allDevs, devs...)
@@ -58,9 +61,15 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	if end > total {
 		end = total
 	}
-	paginate.WriteJSON(w, http.StatusOK, paginate.PaginateResult{
-		Data: allDevs[start:end], Total: total, Page: page, PageSize: pageSize, HasMore: end < total,
-	})
+	// 按 segment 重新分组（保持前端契约）
+	paged := make(map[string][]proto.DeviceInfo)
+	for _, dev := range allDevs[start:end] {
+		paged[dev.Segment] = append(paged[dev.Segment], dev)
+	}
+	w.Header().Set("X-Total-Count", strconv.Itoa(total))
+	w.Header().Set("X-Page", strconv.Itoa(page))
+	w.Header().Set("X-Page-Size", strconv.Itoa(pageSize))
+	paginate.WriteJSON(w, http.StatusOK, paged)
 }
 
 // agentLiveWindow 是 agent 判定失联的心跳窗口（§3.9）：心跳 10s/次，30s（3 个

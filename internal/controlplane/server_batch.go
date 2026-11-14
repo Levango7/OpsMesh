@@ -49,11 +49,13 @@ type batchTask struct {
 }
 
 // batchTaskItem 批量中单设备任务状态。
+// 审计整改批次24：补 JSON tag——此前序列化为 {"DeviceID":…} 大写键，
+// 前端 BatchView 读 taskID/agentID/status/output 全 undefined（结果表全空）。
 type batchTaskItem struct {
-	DeviceID string // 设备 ID
-	TaskID   string // 任务 ID
-	Status   string // 任务状态（pending/running/done/failed/cancelled）
-	Error    string // 失败原因（如设备不存在）
+	DeviceID string `json:"deviceID"` // 设备 ID
+	TaskID   string `json:"taskID"`   // 任务 ID
+	Status   string `json:"status"`   // 任务状态（pending/running/done/failed/cancelled）
+	Error    string `json:"error"`    // 失败原因（如设备不存在）
 }
 
 // canaryRelease 灰度发布记录。
@@ -369,6 +371,28 @@ func (s *Server) handleBatchStatus(w http.ResponseWriter, r *http.Request, id st
 			items[i].Status = t.Status
 		}
 	}
+	// 审计整改批次24：补聚合字段——前端 BatchView 读 total/succeeded/failed/status，
+	// 原响应只有 tasks[]，统计卡全 0。
+	var succeeded, failed int
+	for _, it := range items {
+		switch it.Status {
+		case "done", "completed":
+			succeeded++
+		case "failed", "cancelled":
+			failed++
+		}
+	}
+	aggStatus := "running"
+	if succeeded+failed == len(items) && len(items) > 0 {
+		switch {
+		case failed == 0:
+			aggStatus = "completed"
+		case succeeded == 0:
+			aggStatus = "failed"
+		default:
+			aggStatus = "partial"
+		}
+	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"batchID":   bt.BatchID,
 		"taskType":  bt.TaskType,
@@ -376,6 +400,10 @@ func (s *Server) handleBatchStatus(w http.ResponseWriter, r *http.Request, id st
 		"createdAt": bt.CreatedAt,
 		"createdBy": bt.CreatedBy,
 		"tasks":     items,
+		"total":     len(items),
+		"succeeded": succeeded,
+		"failed":    failed,
+		"status":    aggStatus,
 	})
 }
 

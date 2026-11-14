@@ -4,24 +4,50 @@
     <div v-if="!detailId" class="card card--raised">
       <h3>{{ $t('canary.create_title') }}</h3>
       <form @submit.prevent="onCreate">
+<form @submit.prevent="onCreate">
         <div class="row-2">
           <div class="field field--fixed">
-            <label>{{ $t('canary.field_service') }}</label>
-            <Input v-model.trim="form.serviceName" type="text" required data-testid="canary-service-input" />
+            <label>{{ $t('canary.field_devices') }}</label>
+            <Input v-model.trim="form.deviceIDs" type="text" required data-testid="canary-device-input" :placeholder="$t('canary.device_ids_placeholder')" />
           </div>
           <div class="field field--fixed">
-            <label>{{ $t('canary.field_target_version') }}</label>
-            <Input v-model.trim="form.targetVersion" type="text" required data-testid="canary-target-version-input" />
+            <label>{{ $t('canary.field_task_type') }}</label>
+            <Select v-model="form.taskType" data-testid="canary-task-type-input">
+              <option value="shell">Shell</option>
+              <option value="file">File</option>
+            </Select>
           </div>
         </div>
         <div class="row-2">
           <div class="field field--fixed">
-            <label>{{ $t('canary.field_baseline_version') }}</label>
-            <Input v-model.trim="form.baselineVersion" type="text" :placeholder="$t('canary.optional')" />
+            <label>{{ $t('canary.field_command') }}</label>
+            <Input v-model.trim="form.command" type="text" required data-testid="canary-command-input" :placeholder="$t('canary.command_placeholder')" />
           </div>
           <div class="field field--fixed">
-            <label>{{ $t('canary.field_steps') }}</label>
-            <Input v-model.trim="form.steps" type="text" placeholder="10,30,50,100" />
+            <label>{{ $t('canary.field_strategy') }}</label>
+            <Select v-model="form.strategy" data-testid="canary-strategy-input">
+              <option value="percentage">{{ $t('canary.strategy_percentage') }}</option>
+              <option value="group">{{ $t('canary.strategy_group') }}</option>
+              <option value="label">{{ $t('canary.strategy_label') }}</option>
+            </Select>
+          </div>
+        </div>
+        <div v-if="form.strategy === 'percentage'" class="row-2">
+          <div class="field field--fixed">
+            <label>{{ $t('canary.field_percentage') }}</label>
+            <Input v-model.number="form.percentage" type="number" min="1" max="100" data-testid="canary-percentage-input" />
+          </div>
+        </div>
+        <div v-if="form.strategy === 'group'" class="row-2">
+          <div class="field field--fixed">
+            <label>{{ $t('canary.field_groups') }}</label>
+            <Input v-model.trim="form.groups" type="text" data-testid="canary-groups-input" :placeholder="$t('canary.groups_placeholder')" />
+          </div>
+        </div>
+        <div v-if="form.strategy === 'label'" class="row-2">
+          <div class="field field--fixed">
+            <label>{{ $t('canary.field_labels') }}</label>
+            <Input v-model.trim="form.labels" type="text" data-testid="canary-labels-input" :placeholder="$t('canary.labels_placeholder')" />
           </div>
         </div>
         <div class="btnbar btnbar--bottom">
@@ -45,20 +71,21 @@
       </div>
 
       <div class="stats">
+        <!-- 审计整改批次24：字段对齐后端 canary status（percentage/strategy/taskType/createdBy） -->
         <div class="stat indigo">
-          <div class="stat-v">{{ store.current.currentStep || 0 }}%</div>
+          <div class="stat-v">{{ store.current.percentage ?? 0 }}%</div>
           <div class="stat-l">{{ $t('canary.stat_step') }}</div>
         </div>
         <div class="stat teal">
-          <div class="stat-v">{{ store.current.status || '—' }}</div>
+          <div class="stat-v">{{ store.current.strategy || '—' }}</div>
           <div class="stat-l">{{ $t('canary.stat_status') }}</div>
         </div>
         <div class="stat amber">
-          <div class="stat-v">{{ store.current.serviceName || '—' }}</div>
+          <div class="stat-v">{{ store.current.taskType || '—' }}</div>
           <div class="stat-l">{{ $t('canary.stat_service') }}</div>
         </div>
         <div class="stat rose">
-          <div class="stat-v">{{ store.current.targetVersion || '—' }}</div>
+          <div class="stat-v">{{ store.current.createdBy || '—' }}</div>
           <div class="stat-l">{{ $t('canary.stat_target') }}</div>
         </div>
       </div>
@@ -183,7 +210,12 @@ import Icon from '@/components/Icon.vue'
 
 const route = useRoute()
 const store = useCanaryStore()
-const form = ref({ serviceName: '', targetVersion: '', baselineVersion: '', steps: '10,30,50,100' })
+// 审计整改批次24：表单对齐后端契约（deviceIDs + taskType + command + strategy）
+const form = ref({
+	deviceIDs: '', taskType: 'shell', command: '',
+	strategy: 'percentage', percentage: 50,
+	groups: '', labels: ''
+})
 const creating = ref(false)
 const createMsg = ref('')
 const createOk = ref(false)
@@ -197,17 +229,23 @@ const detailId = computed(() => route.params.id || '')
 const advanceConfirm = reactive({ show: false })
 const errorConfirm = reactive({ show: false, message: '' })
 
+// 审计整改批次24：后端 canary status 无 status 字段（返回 phases），
+// 可推进判定改为「存在待执行阶段」；无 phases 时允许推进（后端会返回明确错误）。
 const canAdvance = computed(() => {
   const c = store.current
   if (!c) return false
-  const status = c.status || ''
-  return !['completed', 'cancelled', 'rolledback', 'failed'].includes(status)
+  const phases = c.phases
+  if (Array.isArray(phases) && phases.length > 0) {
+    return phases.some((p) => p && (p.status === 'pending' || p.status === 'running'))
+  }
+  return true
 })
 
 const canaryPercent = computed(() => {
   const ts = store.trafficSplit
-  if (!ts) return store.current?.currentStep || 0
-  return ts.canaryPercent != null ? ts.canaryPercent : (store.current?.currentStep || 0)
+  if (!ts) return store.current?.percentage || 0
+  // 后端 GET /traffic-split 返回 {canaryID, percentage}；兼容旧字段 canaryPercent。
+  return ts.percentage != null ? ts.percentage : (ts.canaryPercent != null ? ts.canaryPercent : (store.current?.percentage || 0))
 })
 
 const baselinePercent = computed(() => Math.max(0, 100 - canaryPercent.value))
@@ -238,14 +276,16 @@ async function onCreate() {
   creating.value = true
   createMsg.value = ''
   try {
+    // 审计整改批次24：对齐后端契约（deviceIDs + taskType + command + strategy）
     const body = {
-      serviceName: form.value.serviceName,
-      targetVersion: form.value.targetVersion
+      deviceIDs: form.value.deviceIDs ? form.value.deviceIDs.split(',').map((s) => s.trim()).filter(Boolean) : [],
+      taskType: form.value.taskType || 'shell',
+      command: form.value.command || '',
+      strategy: form.value.strategy || 'percentage',
+      percentage: form.value.percentage || 50
     }
-    if (form.value.baselineVersion) body.baselineVersion = form.value.baselineVersion
-    if (form.value.steps) {
-      body.steps = form.value.steps.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n))
-    }
+    if (form.value.groups) body.groups = form.value.groups.split(',').map((s) => s.trim()).filter(Boolean)
+    if (form.value.labels) body.labels = Object.fromEntries(form.value.labels.split(',').map((s) => { const [k,v] = s.split('='); return [k.trim(), v.trim()] }))
     const r = await store.create(body)
     createMsg.value = t('canary.create_success', { id: r.j?.canaryID || '—' })
     createOk.value = true
@@ -317,7 +357,8 @@ async function onTrafficSave() {
   if (!store.current?.canaryID || trafficSaving.value) return
   trafficSaving.value = true
   try {
-    await store.updateTrafficSplit(store.current.canaryID, { canaryPercent: trafficForm.value.canaryPercent })
+    // 审计整改批次24：后端字段是 percentage（原实现发 canaryPercent ⇒ 写入 0）
+    await store.updateTrafficSplit(store.current.canaryID, { percentage: trafficForm.value.canaryPercent })
     toast.success(t('canary.traffic_saved'))
     trafficEdit.value = false
   } catch (e) {

@@ -61,30 +61,35 @@ var ErrRuleInvalid = errors.New("alert rule invalid")
 //
 // 语义：对设备指标 Metric 在时间窗口 Window 内的聚合值（通常为平均值）
 // 应用 Operator 与 Threshold 比较。Window<=0 表示取即时值（窗口退化为 0）。
+//
+// 审计整改批次24：补 JSON tag——此前 /alert-rules-engine 返回 {"ID","Name","Conditions"}
+// 大写键，AlertRulesView 读 row.id/name/conditions/severity 全 undefined。
 type Condition struct {
-	Metric    string        // 指标名（cpu_usage/mem_usage/disk_usage/net_in/net_out 等）
-	Operator  string        // 比较算子：>/</>=/<=/==/!=
-	Threshold float64       // 阈值
-	Window    time.Duration // 采样窗口（如最近 5 分钟平均值）；<=0 表示即时值
+	Metric    string        `json:"metric"`           // 指标名（cpu_usage/mem_usage/disk_usage/net_in/net_out 等）
+	Operator  string        `json:"operator"`         // 比较算子：>/</>=/<=/==/!=
+	Threshold float64       `json:"threshold"`        // 阈值
+	Window    time.Duration `json:"window,omitempty"` // 采样窗口（如最近 5 分钟平均值）；<=0 表示即时值
 }
 
 // AlertRule 一条告警规则。
 //
 // 多个 Condition 按 Logic 组合；当组合结果持续满足 Duration 时间，
 // 引擎对该设备产出一条 AlertEvent。Duration<=0 表示立即触发（无持续时长要求）。
+//
+// 审计整改批次24：补 JSON tag（同上）。
 type AlertRule struct {
-	ID             string        // 规则唯一 ID（租户内唯一）
-	Name           string        // 规则名（展示用）
-	TenantID       string        // 所属租户
-	Enabled        bool          // 是否启用
-	Conditions     []Condition   // 条件列表（至少 1 条）
-	Logic          LogicOp       // 条件组合算子（AND/OR/NOT）
-	Duration       time.Duration // 持续时长（条件需持续满足多久才触发）；<=0 立即触发
-	Severity       string        // critical/warning/info
-	NotifyChannels []string      // 通知渠道 ID 列表
-	SilenceID      string        // 关联的静默规则 ID（可选）
-	CreatedAt      time.Time     // 创建时间
-	UpdatedAt      time.Time     // 最近更新时间
+	ID             string        `json:"id"`                       // 规则唯一 ID（租户内唯一）
+	Name           string        `json:"name"`                     // 规则名（展示用）
+	TenantID       string        `json:"tenantID"`                 // 所属租户
+	Enabled        bool          `json:"enabled"`                  // 是否启用
+	Conditions     []Condition   `json:"conditions"`               // 条件列表（至少 1 条）
+	Logic          LogicOp       `json:"logic"`                    // 条件组合算子（AND/OR/NOT）
+	Duration       time.Duration `json:"duration,omitempty"`       // 持续时长（条件需持续满足多久才触发）；<=0 立即触发
+	Severity       string        `json:"severity"`                 // critical/warning/info
+	NotifyChannels []string      `json:"notifyChannels,omitempty"` // 通知渠道 ID 列表
+	SilenceID      string        `json:"silenceID,omitempty"`      // 关联的静默规则 ID（可选）
+	CreatedAt      time.Time     `json:"createdAt,omitempty"`      // 创建时间
+	UpdatedAt      time.Time     `json:"updatedAt,omitempty"`      // 最近更新时间
 }
 
 // AlertEvent 规则触发产出的告警事件。

@@ -72,7 +72,9 @@ func (s *Server) handleCanaryEnhance(w http.ResponseWriter, r *http.Request) {
 // handleCanaryTrafficSplit 处理 POST /api/v1/canary/{id}/traffic-split：设置流量分割百分比。
 // 请求体：{"percentage": 30}（0-100 整数，表示灰度版本流量占比）。
 func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodPost {
+	// 审计整改批次24：GET 返回当前分流比例（前端 getTrafficSplit 用 GET，
+	// 原实现只收 POST ⇒ 恒 405）。写操作仍只允许 POST。
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
@@ -92,7 +94,7 @@ func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request
 		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing actx.TenantID context (X-Tenant-ID required)"})
 		return
 	}
-	// 校验灰度发布存在
+	// 灰度发布存在性 + 租户校验（GET 与 POST 共用）
 	s.batches.mu.RLock()
 	canary, exists := s.batches.canaries[id]
 	s.batches.mu.RUnlock()
@@ -102,6 +104,14 @@ func (s *Server) handleCanaryTrafficSplit(w http.ResponseWriter, r *http.Request
 	}
 	if canary.TenantID != "" && canary.TenantID != actx.TenantID {
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "canary release not found"})
+		return
+	}
+	// GET：返回当前比例
+	if r.Method == http.MethodGet {
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"canaryID":   id,
+			"percentage": canary.Percentage,
+		})
 		return
 	}
 	var body struct {

@@ -955,7 +955,7 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
 				"code":   "ERR_NOT_IMPLEMENTED",
 				"error":  "任务重试尚未接线：需要按原任务参数重建（当前仅支持死信队列的 retry 语义）",
-				"taskId": id,
+				"taskID": id,
 			})
 			return
 		default:
@@ -965,16 +965,13 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		if subPath == "dead-letter" {
-			// 删除死信任务
-			_, err := s.taskServiceClient.CancelTask(ctx, &taskv1.CancelTaskRequest{
-				TaskId:   id,
-				TenantId: tenantID,
+			// 审计整改批次24：代理路径不再假成功——task-svc 无 purge 接口，
+			// CancelTask 只是取消任务，不等于清除死信。显式 501 让调用方走本地路径。
+			paginate.WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
+				"code":   "ERR_NOT_IMPLEMENTED",
+				"error":  "代理模式下死信清除需走本地 controlplane（task-svc 无 purge 接口）",
+				"taskID": id,
 			})
-			if err != nil {
-				writeTaskSvcError(w, err)
-				return
-			}
-			paginate.WriteJSON(w, http.StatusOK, map[string]string{"message": "dead letter purged"})
 			return
 		}
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
@@ -1113,7 +1110,7 @@ func taskToAPIMap(resp *taskv1.Task, normalizeStatus bool) map[string]any {
 		"claimEpoch":       resp.GetClaimEpoch(),
 		"schedule":         resp.GetSchedule(),
 		"parentID":         resp.GetParentId(),
-		"batchId":          resp.GetBatchId(),
+		"batchID":          resp.GetBatchId(),
 		"lastFiredAt":      resp.GetLastFiredAt(),
 		"priority":         resp.GetPriority(),
 		"idempotencyKey":   resp.GetIdempotencyKey(),
