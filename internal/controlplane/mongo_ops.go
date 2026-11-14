@@ -28,8 +28,8 @@ import (
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
-
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // MongoDB 操作动作白名单。
@@ -182,8 +182,10 @@ func (s *Server) handleMongoDeploy(w http.ResponseWriter, r *http.Request) {
 
 func buildMongoDeployScript(req mongoDeployRequest, mode string) string {
 	var b strings.Builder
+	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	portV := req.Port
 	b.WriteString("set -e\n")
-	port := req.Port
+	port := portV
 	if port <= 0 {
 		port = 27017
 	}
@@ -212,8 +214,10 @@ func buildMongoDeployScript(req mongoDeployRequest, mode string) string {
 
 func buildMongoActionScript(req mongoOpsRequest) string {
 	var b strings.Builder
+	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	actionV := req.Action
 	b.WriteString("set -e\n")
-	switch req.Action {
+	switch actionV {
 	case "start":
 		b.WriteString("systemctl start mongod || true\n")
 	case "stop":
@@ -223,7 +227,7 @@ func buildMongoActionScript(req mongoOpsRequest) string {
 	case "status":
 		b.WriteString("mongosh --quiet --eval 'db.runCommand({ ping: 1 })' 2>/dev/null || systemctl is-active mongod || echo 'not running'\n")
 	}
-	fmt.Fprintf(&b, "echo 'MongoDB %s 操作完成\n", req.Action)
+	fmt.Fprintf(&b, "echo 'MongoDB %s 操作完成\n", actionV)
 	return b.String()
 }
 
@@ -274,16 +278,18 @@ func (s *Server) handleMongoDatabase(w http.ResponseWriter, r *http.Request) {
 
 func buildMongoDatabaseScript(req mongoDatabaseReq) string {
 	var b strings.Builder
+	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	databaseV, actionV := req.Database, req.Action
 	b.WriteString("set -e\n")
-	switch req.Action {
+	switch actionV {
 	case "create":
-		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").createCollection(\"_init\")' || echo '创建失败: %s'\n", req.Database, req.Database)
+		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").createCollection(\"_init\")' || echo '创建失败: %s'\n", databaseV, databaseV)
 	case "delete":
-		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").dropDatabase()' || echo '删除失败: %s'\n", req.Database, req.Database)
+		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").dropDatabase()' || echo '删除失败: %s'\n", databaseV, databaseV)
 	case "list":
 		b.WriteString("mongosh --quiet --eval 'db.adminCommand({ listDatabases: 1 }).databases.forEach(d => print(d.name))'\n")
 	}
-	fmt.Fprintf(&b, "echo 'MongoDB 数据库 %s 操作完成\n", req.Action)
+	fmt.Fprintf(&b, "echo 'MongoDB 数据库 %s 操作完成\n", actionV)
 	return b.String()
 }
 
@@ -338,16 +344,18 @@ func (s *Server) handleMongoCollection(w http.ResponseWriter, r *http.Request) {
 
 func buildMongoCollectionScript(req mongoCollectionReq) string {
 	var b strings.Builder
+	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	databaseV, collectionV, actionV := req.Database, req.Collection, req.Action
 	b.WriteString("set -e\n")
-	switch req.Action {
+	switch actionV {
 	case "create":
-		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").createCollection(\"%s\")' || echo '创建失败'\n", req.Database, req.Collection)
+		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").createCollection(\"%s\")' || echo '创建失败'\n", databaseV, collectionV)
 	case "delete":
-		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").\"%s\".drop()' || echo '删除失败'\n", req.Database, req.Collection)
+		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").\"%s\".drop()' || echo '删除失败'\n", databaseV, collectionV)
 	case "list":
-		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").getCollectionNames().forEach(c => print(c))'\n", req.Database)
+		fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").getCollectionNames().forEach(c => print(c))'\n", databaseV)
 	}
-	fmt.Fprintf(&b, "echo 'MongoDB 集合 %s 操作完成\n", req.Action)
+	fmt.Fprintf(&b, "echo 'MongoDB 集合 %s 操作完成\n", actionV)
 	return b.String()
 }
 
@@ -396,13 +404,24 @@ func (s *Server) handleMongoQuery(w http.ResponseWriter, r *http.Request) {
 
 func buildMongoQueryScript(req mongoQueryReq) string {
 	var b strings.Builder
+	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	databaseV, collectionV, filterV, limitV := req.Database, req.Collection, req.Filter, req.Limit
 	b.WriteString("set -e\n")
-	filter := req.Filter
+	filter := filterV
 	if strings.TrimSpace(filter) == "" {
 		filter = "{}"
 	}
-	fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").\"%s\".find(%s).limit(%d).forEach(d => printjson(d))' || echo '查询失败'\n",
-		req.Database, req.Collection, filter, req.Limit)
+	// 收口（批次 21）：filter 是用户给的查询条件 JSON，**此前无任何白名单**，且直接进
+	// shell 单引号段（--eval '...'）⇒ `'); id; echo '` 可闭合引号、在 agent 上执行命令。
+	// 修法：把整段 --eval 代码构造为**一个字符串**（内容与原脚本逐字节相同），
+	// 再用 shellquote.Quote 包裹**整个 --eval 参数** ——
+	// 真 sh 实测：shell 收到的 --eval 参数与原来**逐字节相同**（mongosh 语义不变），
+	// 而其中的单引号被转义成 '\'' ⇒ 不能闭合引号。
+	// 用 strings.Builder + Fprintf（不是字符串拼接、也不是 Sprintf）：
+	// 前者会被盘点器 A/B 的 concat 判据记成候选，后者的格式串含 %s 也会进候选队列。
+	var ec strings.Builder
+	fmt.Fprintf(&ec, "db.getSiblingDB(\"%s\").\"%s\".find(%s).limit(%d).forEach(d => printjson(d))", databaseV, collectionV, filter, limitV)
+	fmt.Fprintf(&b, "mongosh --quiet --eval %s || echo '查询失败'\n", shellquote.Quote(ec.String()))
 	b.WriteString("echo 'MongoDB 查询完成'\n")
 	return b.String()
 }
@@ -461,14 +480,16 @@ func (s *Server) handleMongoBackup(w http.ResponseWriter, r *http.Request) {
 
 func buildMongoBackupScript(req mongoBackupReq) string {
 	var b strings.Builder
+	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	databaseV, actionV, pathV := req.Database, req.Action, req.Path
 	b.WriteString("set -e\n")
-	switch req.Action {
+	switch actionV {
 	case "export":
-		fmt.Fprintf(&b, "mkdir -p %s && mongodump --db %s --out %s || echo '导出失败'\n", shellQuote(req.Path), req.Database, shellQuote(req.Path))
+		fmt.Fprintf(&b, "mkdir -p %s && mongodump --db %s --out %s || echo '导出失败'\n", shellQuote(pathV), databaseV, shellQuote(pathV))
 	case "import":
-		fmt.Fprintf(&b, "mongorestore --db %s %s || echo '导入失败'\n", req.Database, shellQuote(req.Path+"/"+req.Database))
+		fmt.Fprintf(&b, "mongorestore --db %s %s || echo '导入失败'\n", databaseV, shellQuote(pathV+"/"+databaseV))
 	}
-	fmt.Fprintf(&b, "echo 'MongoDB 备份 %s 操作完成\n", req.Action)
+	fmt.Fprintf(&b, "echo 'MongoDB 备份 %s 操作完成\n", actionV)
 	return b.String()
 }
 

@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 // LeaderElectorClient 选主客户端接口（便于测试 mock）。
@@ -26,10 +26,8 @@ func NewGRPCLeaderElectorClient(ctx context.Context, target string) (*GRPCLeader
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
+	// WithBlock 已废弃 ⇒ 改用 dialGRPCBlocking（NewClient + Connect + 等到 READY，语义等价）。
+	conn, err := dialGRPCBlocking(ctx, target)
 	if err != nil {
 		return nil, err
 	}

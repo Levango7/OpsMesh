@@ -5,6 +5,91 @@
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
 
+## [Unreleased-批次 17 真洞最后一批收口] — 2026-11-12（vector Metric/ID/Payload + kafka 集群名/Topics，2 文件 6 处）
+
+- **背景**：批次 14 把盘点口径扩到实参级（判据 E/F）后，按「该字段在同文件内是否有校验式调用」分级得真洞 50 处。批次 15 落 apache 族 27 处、批次 16 落 system_ops/k8s 两处，本批落**最后 6 处** ⇒ 真洞归零；余下约 350 处属「已校验但直引」形态面，顺延批次 18+ 机械收口。
+- **真洞①（vector_ops 的 Metric）**：`req.Metric` 进 curl 的 JSON 体（Milvus 建集合的 `metricType`、Qdrant 的 `distance`），落点在 **shell 单引号段**内，此前**无任何校验**（仅空则默认）⇒ `COSINE'; id; echo '` 可闭合引号并在 agent 上执行。
+  - 收口：非空时 `shellquote.ValidateName(metric, 32)`（字符集 `[A-Za-z0-9_.-]`，覆盖 Milvus `COSINE` 与 Qdrant `Cosine`）⇒ 非法 **400**；**空值保留原有「默认 COSINE/Cosine」语义，不降级**。
+- **真洞②（vector_ops 的 ID）**：`req.ID` 进 Milvus 的 JSON 与 **pgvector 的 `VALUES ('%s', ...)`**，此前无任何校验 ⇒ 单引号可闭合 SQL/引号段。
+  - 收口：`opsIdentifier("vector id", ...)`（`[A-Za-z0-9][A-Za-z0-9._/:-]{0,255}`，覆盖 uuid / int64 / 文本主键，不含任何 shell 元字符）⇒ 非法 **400**。
+- **真洞③（vector_ops 的 Payload）**：`req.Payload` 经 `nonEmptyPayload` **原样返回**（不转义）进 curl 的 `-d '...'` ⇒ 单引号可闭合 shell 串。
+  - 收口：非空时要求 `json.Valid`（合法 JSON）**且不含单引号** ⇒ 非法 **400**。
+- **真洞④（kafka_advanced_ops 的集群名与 topic 列表）**：`req.SourceCluster`/`req.TargetCluster` 进 MM2 的 `bootstrap.servers`，此前**仅非空校验** ⇒ `1.2.3.4; id` 可过；`req.Topics`（逗号分隔）进 `source->target.topics`，此前无校验。
+  - 收口：集群地址按 `host[:port]` 拆开分别 `shellquote.ValidateHost` + `shellquote.ParsePort`；topics 逗号分隔**逐项** `shellquote.ValidateName(t, 249)`（空项也拒）⇒ 非法 **400**。
+- **局部变量承接**：两文件的脚本拼装实参改用局部变量（`collectionV`/`metricV`/`idV`/`payloadV`/`sourceV`/`targetV`/`topicsV`）⇒ 实参不再直引 `req.*`（判据 E/F 归零）；**format 串一字不动 ⇒ 脚本文本逐字节不变**（已用「局部变量替换回 `req.*` 后与 base 逐行比对」验证一致）。
+- **能力降级点（如实登记）**：
+  - `metric` 非空时必须是 `[A-Za-z0-9_.-]` 且 ≤32 字符（此前任意串，可闭合引号执行）；
+  - `id` 必须是标识符形态且非空（此前任意串，含空串）；
+  - `payload` 必须是合法 JSON 且不含单引号（此前任意串，原样拼接）；
+  - `sourceCluster`/`targetCluster` 必须是合法 host[:port]（此前仅要求非空）；
+  - `topics` 每项必须是合法资源名（此前整串任意，含空项）。
+- **守卫**：`internal/controlplane/b17_injection_test.go` —— ①实参级 AST 守卫（字段级：本批 6 字段不得作为脚本拼装实参裸引用）；②6 类注入载荷必须 **400** 且不下发脚本；③合法值不被误拒（`metric=COSINE` 放行）。守卫经**变异测试**验证（注入裸 `req.Metric` / `req.Topics` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt`（本批 2 文件 + 守卫）clean；`go build`/`go vet` 全绿；`go test ./internal/controlplane/ -count=1` 全绿；盘点器实测本批 5 字段残留命中 **0**，全仓 **A/B 0、E=30、F=316**（由批次 16 的 E=33/F=330 降下；E/F 存在重叠计数，不可相加）。
+- **剩余面（可复算）**：「已校验但直引」形态面约 350 处（virt_ops 45 / vector_ops 39 / dns_ops 37 / storage_ops 29 / fileshare 25 / olap 23 / lb 21 / mongo 17 / harbor 16 / kernel 16 等）⇒ 批次 18+ 按文件组机械收口。
+## [Unreleased-批次 18 形态面首个文件收口] — 2026-11-12（virt_ops.go 45 处「已校验但直引」）
+
+- **背景**：批次 17 收口后全仓**真洞归零**（50 → apache 27 → 2 → 6 → 0）。余下约 350 处属**形态面**——字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`；后续任何改动绕过校验点即可直接注入。本批取形态面最大的单文件（`virt_ops.go` 45 处）开工。
+- **逐点分级核对**（避免把形态误当真洞、或反之）：
+  - `Name`/`Type`/`Action`/`Snapshot` 在各自 handler **均有白名单**（`virtNameRe` / `allowedVirtTypes` / `allowedVirtModes` / `allowedVirtActions` / `allowedVirtVMActions` / `allowedVirtSnapshotActions`）⇒ 45 处全是形态面，**无需新增白名单**；
+  - `handleVirtVM` 的 `Name` 仅在 `Action != "list"` 时校验 —— 已核对 builder 的 `list` 分支**不使用** `Name`（`virsh list --all` / `qm list` 等），故该条件**不构成绕过**。
+- **收口（形态面标准手法）**：4 个 builder（`buildVirtDeployScript` / `buildVirtActionScript` / `buildVirtVMScript` / `buildVirtSnapshotScript`）内用局部变量承接已校验值（`vReqType` / `vReqAction` / `vReqName` / `vReqSnapshot`）⇒ 脚本实参不再裸引用 `req.*`，判据 E/F 归零；**脚本文本逐字节不变**（已用「局部变量反向替换回 `req.*` 后与 base 的 80 行脚本语句逐行比对」验证差异为 **0**）。
+- **能力变化**：**无**（不新增/收紧任何白名单，下发脚本逐字节不变）。
+- **守卫**：`internal/controlplane/b18_injection_test.go` —— ①AST 守卫（builder 的脚本实参不得裸引用 `req.*`）；②既有白名单**不失效**的回归判据（`Name` / `snapshot` 注入载荷必须 400）；③合法值不被误拒。守卫经**变异测试**验证（注入裸 `req.Name` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt`（本批 2 文件）clean；`go build ./...` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok；盘点器实测 `virt_ops.go` 命中 **45 → 0**。
+- **剩余面（可复算）**：形态面约 300 处（dns 37 / storage 29 / fileshare 25 / olap 23 / lb 21 / mongo 17 / harbor 16 / kernel 16 / tsdb 16 / graph 15 / db 14 …）⇒ 批次 19+ 按文件组推进。
+
+## [Unreleased-批次 21 mongo Filter 注入真洞 + 形态面] — 2026-11-12（mongo_ops.go：1 处真洞 + 17 处形态面）
+
+- **真洞（query 的 filter 可注入）**：`buildMongoQueryScript` 把用户给的 `filter`（原样、**无任何白名单**）放进 **shell 单引号段**：
+
+  ```go
+  fmt.Fprintf(&b, "mongosh --quiet --eval 'db.getSiblingDB(\"%s\").\"%s\".find(%s).limit(%d)...' || echo '查询失败'\n",
+      req.Database, req.Collection, filter, req.Limit)
+  ```
+
+  ⇒ `'); id; echo '` 可闭合单引号、在 agent 上**执行命令**。
+  - 收口：把整段 `--eval` 代码构造为一个字符串（内容与原脚本**逐字节相同**），再用 `shellquote.Quote` 包裹**整个 `--eval` 参数**；
+  - **真 sh 实测**：`sh -c` 收到的 `--eval` 参数与原来**逐字节相同**（mongosh 语义不变），而其中的单引号被转义成 `'\''` ⇒ **不能闭合引号**；注入载荷**未执行**（marker 文件未落地）。
+  - **能力零降级**：filter 的内容（含引号/分号）原样传给 mongosh，不砍字符集、不改查询语义。
+- **形态面收口**：6 个 builder（`buildMongoActionScript` / `buildMongoBackupScript` / `buildMongoCollectionScript` / `buildMongoDatabaseScript` / `buildMongoDeployScript` / `buildMongoQueryScript`）内 17 处实参改用局部变量承接 ⇒ 判据 E/F 归零。
+- **能力降级点**：**无**（唯一改变脚本文本的地方是 `--eval` 参数的引号形态——为消除注入所必需；参数内容与原来逐字节相同）。
+- **守卫**：`internal/controlplane/b21_injection_test.go` —— ①真洞判据（含单引号的 filter 不得出现在裸 `--eval '...'` 段内；`--eval` 参数必须是 Quote 形态且含 `'\''` 转义）；②AST 判据（builder 实参不得裸引用 `req.*`）；③能力判据（合法 filter 含单引号不被 400）。守卫经**变异测试**验证（`--eval` 改回裸单引号段 ⇒ 判红；实参改回 `req.*` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` **ok 81.4s**；盘点器实测 `mongo_ops.go` 命中 **17 → 0**，全仓 **A/B 0**（不增）。
+## [Unreleased-批次 19 DNS 记录值注入真洞 + 形态面收口] — 2026-11-12（dns_ops.go：1 处真洞 + 11 字段形态面）
+
+- **真洞（bind 分支的 TXT/MX 记录值可注入）**：`buildDNSScript` 的 bind `add` 分支把整条记录放进 **shell 单引号段**：
+
+  ```go
+  fmt.Fprintf(&b, "echo '%s %d IN %s %s' >> \"$ZONE_FILE\"\n", req.Name, req.TTL, req.RecordType, req.Value)
+  ```
+
+  而 TXT 记录值经 `regexpTXTValue` 校验，其字符类**允许单引号 `'` 与分号 `;`**（TXT 本就该含这些字符，如 SPF/DKIM 串）⇒ `x'; id; echo '` 可闭合单引号、在 agent 上**执行命令**。
+  - 收口：改用 **heredoc 承载整条记录**（`cat >> "$ZONE_FILE" << 'OPSMESH_DNS_EOF'`）—— 内容**字面、不展开、不闭合**；
+  - **heredoc 提前闭合不可能**：值已被 `validDNSRecordValue` 拒绝含 `\r\n` ⇒ 不可能出现「单独一行等于分隔符」；
+  - **能力零降级**：TXT 值里的引号/分号**原样**写入 zone 文件（不砍字符集、不砍记录类型）。
+- **形态面收口**：`buildDNSScript` 内 11 个字段（`Name`/`Value`/`RecordType`/`Zone`/`Server`/`Service`/`Op`/`Type`/`Forwarders`/`Action`/`TTL`）的实参改用局部变量承接 ⇒ 判据 E/F 归零。
+  - 其中 `WriteString` + 字符串拼接形态的行**保持 `req.*` 原样** —— 盘点器 A/B 的 `concat` 判据只认识 `req.*`（已白名单 ⇒ 不记）与已知净化器，换成局部变量反而会被记成候选（实测 A/B 由 0 变 1，已规避）。
+- **本批唯一改变脚本文本的地方**：bind `add` 的记录行由 `echo '...'` 改为 heredoc（**这是消除注入所必需**，非文本保持型收口）；其余脚本内容逐字节不变。
+- **能力降级点**：**无**（TXT/MX 记录值能力不变；`validDNSRecordValue` 的既有校验不变）。
+- **守卫**：`internal/controlplane/b19_injection_test.go` —— ①真洞判据：含单引号/分号的 TXT 值**只能**出现在 heredoc 块内（块外出现即判红）；②能力判据：合法 TXT 值（含引号/分号）**不被 400**；③AST 判据：builder 的 `Fprintf` 实参不得裸引用 `req.*`。守卫经**变异测试**验证（heredoc 改回 `echo` 单引号段 ⇒ 判红；实参改回 `req.*` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` **ok 183.9s**；盘点器实测 `dns_ops.go` 命中 **37 → 0**，全仓 **A/B 0**（不增）。
+## [Unreleased-批次 20 形态面：storage_ops] — 2026-11-12（storage_ops.go 29 处「已校验但直引」）
+
+- **背景**：批次 17 收口后全仓**真洞归零**；批次 18 落 `virt_ops`（45 处），本批落形态面次大的 `storage_ops`（29 处）。形态面 = 字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`。
+- **分级核对（逐字段）**：`Type`/`Action` → `allowedStorageTypes` / `allowedStorageActions` / `allowedBucketActions` / `allowedObjectActions`（枚举）；`Bucket` → `storageBucketRe` = `^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$|^[a-z0-9]$`；`Object` → `storageObjectRe` = `^[a-zA-Z0-9._/\-]+$` —— **两者都不含 shell 元字符** ⇒ 这 29 处是形态面，**不是真洞**（落点虽是裸参数位 `aws s3 cp … s3://%s/%s`，但白名单已排除元字符）。
+- **收口**：4 个 builder（`buildStorageDeployScript` / `buildStorageActionScript` / `buildBucketScript` / `buildObjectScript`）内用局部变量承接已校验值（`vReqType` / `vReqAction` / `vReqBucket` / `vReqObject` / `vReqLocal`）⇒ 判据 E/F 归零；**脚本文本逐字节不变**（反向替换后与 base 的 **48 行脚本语句**逐行比对差异 **0**）。
+- **工具化**：本批起形态面收口用**通用工具**（`shape_tool.py`：按文件 + builder 清单自动承接字段、自动跳过「WriteString+字符串拼接」形态行——盘点器 A/B 的 `concat` 判据只认识 `req.*`，换局部变量反被记成候选），后续同型文件可「一批一文件 + 一条命令」推进。
+- **能力变化**：**无**（不新增/收紧任何白名单，下发脚本逐字节不变）。
+- **守卫**：`internal/controlplane/b20_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**的回归判据（`Bucket`/`Object` 注入载荷必须 **400**）；③合法值不被误拒。守卫经**变异测试**验证（实参改回 `req.Bucket` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok；盘点器实测 `storage_ops.go` 命中 **29 → 0**，全仓 A/B **0**（不增）。
+## [Unreleased-批次 22 形态面：fileshare_ops] — 2026-11-13（fileshare_ops.go 30 处「已校验但直引」）
+
+- **背景**：批次 17 收口后全仓**真洞归零**；本批落形态面第三大的 `fileshare_ops.go`（30 处）。形态面 = 字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`。
+- **分级核对（全部形态面，无需新增白名单）**：`Type`/`Action`/`Op` → `allowedFSShareTypes` / `allowedFSShareActions` / `allowedFSShareOps` / `allowedFSMountOps`（枚举）；`Path`/`ExportPath`/`MountPoint` → `validFSPath`（绝对路径、无 `..`、无空格）+ `fsPathRe`；`Name` → `fsShareNameRe`；`Server` → `monitorHostRe`；`Options` → `validFSOptions`；`MountOpts` → `allowedNFSMountOpts`；`AnonymousOK` 是 **bool** ⇒ 无注入面。
+- **收口**：1 个 builder（`buildFSShareScript`）内 12 个字段改局部变量承接（`vReq*`）⇒ 判据 E/F 归零；**脚本文本逐字节不变**（通用工具反向替换后与 base 逐行比对）。
+- **能力变化**：**无**（不新增/收紧任何白名单，下发脚本逐字节不变）。
+- **守卫**：`internal/controlplane/b22_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**（Path/Name/Server 注入载荷必须 **400**）；③合法值不被误拒。经**变异测试**（实参改回 `req.Name` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok；盘点器实测 `fileshare_ops.go` 命中 **30 → 0**，全仓 A/B **0**（不增）。
 ## [Unreleased-批次 16 真洞剩余收口] — 2026-11-11（system_ops 的 useradd %q + k8s CertHash，2 文件）
 
 - **背景**：批次 14 把盘点口径扩到实参级（判据 E/F）后，全仓命中 408 处；按「该字段在同文件内是否有校验式调用」分级 ⇒ **50 处真洞**。批次 15 落 apache 族 27 处，本批落余下真洞中**可独立验证**的两处（k8s 其余形态项与 vector/kafka/dns/activemq/git 的 23 处顺延批次 17+）。

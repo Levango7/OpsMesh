@@ -57,12 +57,12 @@ type Config struct {
 	ControlplaneEndpoints string
 	// 负载均衡策略：round-robin（轮询）| failover（主备切换，默认）。
 	// 单控制面地址时退化为始终用该地址（不破坏现有行为）。
-	LBStrategy  string
-	Segment     string // agent 所属网段（分桶键）
-	HTTPPort    int    // 控制面 HTTP(B/S) 端口（约定 8080）
-	GRPCPort    int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
+	LBStrategy      string
+	Segment         string // agent 所属网段（分桶键）
+	HTTPPort        int    // 控制面 HTTP(B/S) 端口（约定 8080）
+	GRPCPort        int    // gRPC 端口（约定 9090，真实 gRPC 注册通道）
 	TaskSvcGRPCAddr string // task-svc gRPC 地址（TD-60 任务域切流，默认 localhost:9090）
-	MetricsPort int    // metrics 端口（约定 9091）
+	MetricsPort     int    // metrics 端口（约定 9091）
 	// 数据本地化：持久化后端选择。
 	Store     string // 持久化后端: memory（默认） | mysql
 	MySQLDSN  string // MySQL DSN（--store=mysql 时生效），如 user:pass@tcp(host:3306)/ops_device
