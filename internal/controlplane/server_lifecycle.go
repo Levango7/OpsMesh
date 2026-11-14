@@ -514,8 +514,9 @@ func (s *Server) Start() error {
 						s.rateLimitMiddleware( // 5 限流
 							s.securityHeadersMiddleware( // 6 安全头
 								s.csrfOriginCheck( // 7 CSRF
-									bodyLimitMiddleware( // 8 请求体上限（413）
-										&paginate.JSONErrorMux{Inner: mux})))))))), // 9 404/405 JSON → mux
+									s.defaultDenyMiddleware( // 8 默认拒绝（生产 /api/v1/* 统一要求身份）
+										bodyLimitMiddleware( // 9 请求体上限（413）
+											&paginate.JSONErrorMux{Inner: mux}))))))))), // 10 404/405 JSON → mux
 		// 审计整改批次20：补全读写/空闲超时（此前只有 ReadHeaderTimeout，
 		// body 慢速上传与慢客户端会长期占用 goroutine/连接）。
 		// SSE 在 handler 内用 ResponseController 取消写超时（见 sse.go），不影响长连接。

@@ -188,8 +188,52 @@ func recoveryMiddleware(h http.Handler) http.Handler {
 }
 
 // ============================================================================
-// 审计整改批次21：全局请求体上限
+// 审计整改批次23：默认拒绝（default-deny）鉴权网
 // ============================================================================
+
+// isPublicAPIPath 返回无需 JWT 的公开 API 白名单。
+// 仅列出「业务上必须匿名可达」的端点；其余 /api/v1/* 一律要求身份。
+func isPublicAPIPath(p string) bool {
+	switch p {
+	case "/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/refresh":
+		return true
+	case "/api/v1/version":
+		return true
+	}
+	// 联邦入站：由 HMAC 验签（verifyFederationRequest），不依赖 JWT。
+	if strings.HasPrefix(p, "/api/v1/federation/") {
+		return true
+	}
+	// agent 引导注册：install token 在设备域/下游校验。
+	if strings.HasPrefix(p, "/api/v1/device-svc/provision/") {
+		return true
+	}
+	return false
+}
+
+// defaultDenyMiddleware 生产模式下对 /api/v1/* 统一要求身份（默认拒绝）。
+//
+// 审计整改批次23：此前鉴权完全依赖各 handler 自觉调用 requireTenantContext/
+// requireProd，新路由漏挂即匿名可达（G1 类缺陷反复出现）。本中间件提供兜底网：
+//   - 仅在 requireAuth=true（生产）时启用；demo/单测保持原有 handler 级校验
+//   - 公开端点白名单见 isPublicAPIPath
+//   - 校验复用 requireTenantContext（JWT/租户头交叉校验），失败时已写响应
+func (s *Server) defaultDenyMiddleware(h http.Handler) http.Handler {
+	if !s.requireAuth {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if !strings.HasPrefix(p, "/api/v1/") || isPublicAPIPath(p) {
+			h.ServeHTTP(w, r)
+			return
+		}
+		if _, ok := s.requireTenantContext(w, r); !ok {
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
 
 const (
 	// maxBodyBytesGlobal 非代理接口的请求体上限（与原 decodeJSONBody 一致）。
