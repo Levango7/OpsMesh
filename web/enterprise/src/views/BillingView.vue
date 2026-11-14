@@ -26,7 +26,7 @@
       </div>
       <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable v-else :columns="planCols" :rows="plans" row-key="id" :empty-text="$t('billing.empty_plans')">
+      <DataTable :loading="loading" v-else :columns="planCols" :rows="plans" row-key="id" :empty-text="$t('billing.empty_plans')">
         <template #cell-name="{ value }"><code>{{ value }}</code></template>
         <template #cell-price="{ value }">{{ fmtPrice(value) }}</template>
         <template #cell-interval="{ value }">{{ fmtInterval(value) }}</template>
@@ -54,7 +54,7 @@
         </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable v-else :columns="subCols" :rows="subs" row-key="id" :empty-text="$t('billing.empty_subs')">
+      <DataTable :loading="loading" v-else :columns="subCols" :rows="subs" row-key="id" :empty-text="$t('billing.empty_subs')">
         <template #cell-planID="{ row }">{{ planName(row.planID) }}</template>
         <template #cell-status="{ value }">
           <StatusBadge :status="value === 'active' ? 'ok' : 'fail'" :text="fmtSubStatus(value)" />
@@ -79,7 +79,7 @@
         </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable v-else :columns="invoiceCols" :rows="invoices" row-key="id" :empty-text="$t('billing.empty_invoices')">
+      <DataTable :loading="loading" v-else :columns="invoiceCols" :rows="invoices" row-key="id" :empty-text="$t('billing.empty_invoices')">
         <template #cell-amount="{ value }">{{ fmtPrice(value) }}</template>
         <template #cell-status="{ value }">
           <StatusBadge

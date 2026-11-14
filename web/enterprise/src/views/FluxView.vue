@@ -23,7 +23,7 @@
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
-      <DataTable :columns="columns" :rows="apps" row-key="id" :empty-text="$t('flux.empty')">
+      <DataTable :loading="loading" :columns="columns" :rows="apps" row-key="id" :empty-text="$t('flux.empty')">
         <template #cell-name="{ value }"><code>{{ value }}</code></template>
         <template #cell-namespace="{ value }"><span class="tag">{{ value }}</span></template>
         <template #cell-type="{ value }">{{ $t('flux.type_' + value) }}</template>

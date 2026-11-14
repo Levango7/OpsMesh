@@ -15,7 +15,7 @@
       </div>
 
       <div v-if="store.loading && !store.clusters.length" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable
+      <DataTable :loading="store.loading"
         v-else
         :columns="clusterCols"
         :rows="store.clusters"

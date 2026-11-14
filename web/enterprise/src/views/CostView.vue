@@ -53,7 +53,7 @@
       <div class="flowbar">
         <h3 class="card__title">{{ $t('cost.alerts_title') }}</h3>
       </div>
-      <DataTable
+      <DataTable :loading="loading"
         :columns="alertColumns"
         :rows="store.alerts"
         row-key="timestamp"
@@ -90,12 +90,12 @@
         <!-- 按提供商 -->
         <div v-if="store.report.byProvider" class="report-section">
           <h4>{{ $t('cost.by_provider') }}</h4>
-          <DataTable :columns="providerColumns" :rows="providerRows" row-key="name" />
+          <DataTable :loading="loading" :columns="providerColumns" :rows="providerRows" row-key="name" />
         </div>
         <!-- 按模型 -->
         <div v-if="store.report.byModel" class="report-section">
           <h4>{{ $t('cost.by_model') }}</h4>
-          <DataTable :columns="modelColumns" :rows="modelRows" row-key="name" />
+          <DataTable :loading="loading" :columns="modelColumns" :rows="modelRows" row-key="name" />
         </div>
       </div>
       <div v-else class="muted">{{ $t('cost.no_report') }}</div>
@@ -107,7 +107,7 @@
         <h3 class="card__title">{{ $t('cost.routes_title') }}</h3>
         <Button variant="ghost" size="sm" :disabled="routesLoading" @click="refreshRoutes">{{ $t('common.refresh') }}</Button>
       </div>
-      <DataTable
+      <DataTable :loading="loading"
         v-if="store.routes.length"
         :columns="routeColumns"
         :rows="store.routes"

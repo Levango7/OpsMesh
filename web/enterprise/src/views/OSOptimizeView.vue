@@ -22,7 +22,7 @@
     <div class="card">
       <h3 class="card__title">{{ $t('osopt.title') }}</h3>
       <div v-if="store.loading && !store.templates.length" class="muted">{{ $t('osopt.loading') }}</div>
-      <DataTable
+      <DataTable :loading="store.loading"
         v-else
         :columns="columns"
         :rows="store.templates"
@@ -63,7 +63,7 @@
         <pre class="code-block">{{ tpl.commands || '' }}</pre>
         <div v-if="tpl.params && tpl.params.length" class="params-section">
           <h4>{{ $t('mwdep.detailParams') }}</h4>
-          <DataTable :columns="paramCols" :rows="tpl.params" row-key="name" :empty-text="$t('osopt.noParams')">
+          <DataTable :loading="store.loading" :columns="paramCols" :rows="tpl.params" row-key="name" :empty-text="$t('osopt.noParams')">
             <template #cell-name="{ value }"><code>{{ value }}</code></template>
             <template #cell-required="{ value }">
               <StatusBadge v-if="value" status="failed" :text="$t('mwdep.param.required')" />

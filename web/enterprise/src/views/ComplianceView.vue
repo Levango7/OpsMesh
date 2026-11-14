@@ -15,7 +15,7 @@
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
       <!-- 规则目录 -->
-      <DataTable :columns="ruleColumns" :rows="rules" row-key="id" :empty-text="$t('compliance.empty')">
+      <DataTable :loading="loading" :columns="ruleColumns" :rows="rules" row-key="id" :empty-text="$t('compliance.empty')">
         <template #cell-id="{ value }"><code>{{ value }}</code></template>
         <template #cell-category="{ value }">
           <span class="tag">{{ value }}</span>
@@ -39,7 +39,7 @@
 
       <!-- 扫描报告 -->
       <h3 class="section-title">{{ $t('compliance.reports') }}</h3>
-      <DataTable :columns="reportColumns" :rows="reports" row-key="id" :empty-text="$t('compliance.no_reports')">
+      <DataTable :loading="loading" :columns="reportColumns" :rows="reports" row-key="id" :empty-text="$t('compliance.no_reports')">
         <template #cell-deviceID="{ value }"><code>{{ value }}</code></template>
         <template #cell-score="{ value }">
           <span class="tag" :class="value >= 80 ? 'score-high' : value >= 60 ? 'score-mid' : 'score-low'">{{ value }}</span>
@@ -61,7 +61,7 @@
           <span>{{ $t('compliance.score_label') }}: <b>{{ detail.score }}</b></span>
           <span>{{ fmtTime(detail.createdAt) }}</span>
         </div>
-        <DataTable :columns="detailColumns" :rows="detail.results || []" :empty-text="$t('compliance.no_results')">
+        <DataTable :loading="loading" :columns="detailColumns" :rows="detail.results || []" :empty-text="$t('compliance.no_results')">
           <template #cell-ruleId="{ value }"><code>{{ value }}</code></template>
           <template #cell-passed="{ value }">
             <span class="tag" :class="value ? 'pass' : 'nopass'">{{ value ? $t('compliance.passed') : $t('compliance.failed') }}</span>

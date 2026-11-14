@@ -16,7 +16,7 @@
           {{ g.group || '—' }}
           <span class="count">({{ g.items.length }})</span>
         </h3>
-        <DataTable :columns="columns" :rows="g.items" row-key="id" :empty-text="$t('permissions.empty')">
+        <DataTable :loading="loading" :columns="columns" :rows="g.items" row-key="id" :empty-text="$t('permissions.empty')">
           <template #cell-name="{ value }"><code>{{ value }}</code></template>
         </DataTable>
       </div>

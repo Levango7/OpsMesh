@@ -31,7 +31,7 @@
             <Button variant="ghost" size="sm" @click="store.fetchIncidents()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.loading && !store.incidents.length" class="muted">{{ $t('common.loading') }}</div>
-          <DataTable v-else :columns="incidentCols" :rows="store.incidents" row-key="id" :empty-text="$t('incident.noIncidents')">
+          <DataTable :loading="store.loading" v-else :columns="incidentCols" :rows="store.incidents" row-key="id" :empty-text="$t('incident.noIncidents')">
             <template #cell-title="{ row }">
               <b>{{ row.title }}</b><br><code>{{ row.id }}</code>
             </template>

@@ -13,7 +13,7 @@
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
-      <DataTable :columns="columns" :rows="roles" row-key="id" :empty-text="$t('roles.empty')">
+      <DataTable :loading="loading" :columns="columns" :rows="roles" row-key="id" :empty-text="$t('roles.empty')">
         <template #cell-name="{ value }"><code>{{ value }}</code></template>
         <template #cell-permissions="{ row }">
           <span class="perm-count">{{ (row.permissions || []).length }}</span>

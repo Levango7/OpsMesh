@@ -36,7 +36,7 @@
     </form>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
-    <DataTable
+    <DataTable :loading="loading"
       v-else
       :columns="columns"
       :rows="pagedAudits"

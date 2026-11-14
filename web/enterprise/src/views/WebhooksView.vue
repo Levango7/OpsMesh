@@ -19,7 +19,7 @@
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
       <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
-      <DataTable :columns="columns" :rows="webhooks" row-key="id" :empty-text="$t('webhooks.empty')">
+      <DataTable :loading="loading" :columns="columns" :rows="webhooks" row-key="id" :empty-text="$t('webhooks.empty')">
         <template #cell-url="{ value }"><code class="url-cell">{{ value }}</code></template>
         <template #cell-events="{ value }">
           <span class="muted">{{ (value || []).join(', ') || '—' }}</span>
@@ -78,7 +78,7 @@
     <!-- 投递记录抽屉 -->
     <DetailDrawer :open="!!deliveryRow" :title="$t('webhooks.deliveries_title', { name: deliveryRow?.name || '' })" @close="deliveryRow = null">
       <div v-if="deliveriesLoading" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable v-else :columns="deliveryColumns" :rows="deliveries" row-key="id" :empty-text="$t('webhooks.no_deliveries')">
+      <DataTable :loading="loading" v-else :columns="deliveryColumns" :rows="deliveries" row-key="id" :empty-text="$t('webhooks.no_deliveries')">
         <template #cell-event="{ value }"><code>{{ value }}</code></template>
         <template #cell-statusCode="{ value }">
           <span class="status-pill" :class="value >= 200 && value < 300 ? 'ok' : 'bad'">{{ value }}</span>

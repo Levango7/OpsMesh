@@ -46,7 +46,7 @@
         <h3 class="card__title">{{ $t('knowledge.sync_title') }}</h3>
         <Button variant="primary" size="sm" @click="syncAll" :disabled="store.loading">{{ $t('knowledge.sync_all') }}</Button>
       </div>
-      <DataTable
+      <DataTable :loading="store.loading"
         v-if="store.syncConfigs.length"
         :columns="syncColumns"
         :rows="store.syncConfigs"
@@ -73,7 +73,7 @@
         </select>
         <Button variant="ghost" size="sm" @click="fetchDocs">{{ $t('common.refresh') }}</Button>
       </div>
-      <DataTable
+      <DataTable :loading="store.loading"
         v-if="store.documents.length"
         :columns="docColumns"
         :rows="store.documents"

@@ -92,7 +92,7 @@
     <!-- 待审批任务段 -->
     <div class="card" v-if="authStore.hasPerm('task:write')">
       <h3 class="card__title" data-testid="task-approval-title">{{ $t('tasks.pending_approval_title') }}</h3>
-      <DataTable :columns="approvalColumns" :rows="store.pendingApprovals" row-key="taskID" :empty-text="$t('tasks.empty')">
+      <DataTable :loading="store.loading" :columns="approvalColumns" :rows="store.pendingApprovals" row-key="taskID" :empty-text="$t('tasks.empty')">
         <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
         <template #cell-command="{ value }"><code>{{ value }}</code></template>
         <template #cell-status="{ value }">

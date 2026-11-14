@@ -15,7 +15,7 @@
             <Button variant="ghost" size="sm" @click="store.fetchRunbooks()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.loading && !store.runbooks.length" class="muted">{{ $t('common.loading') }}</div>
-          <DataTable v-else :columns="runbookCols" :rows="store.runbooks" row-key="id" :empty-text="$t('runbook.noRunbooks')">
+          <DataTable :loading="store.loading" v-else :columns="runbookCols" :rows="store.runbooks" row-key="id" :empty-text="$t('runbook.noRunbooks')">
             <template #cell-name="{ row }">
               <b>{{ row.name }}</b><br><code>{{ row.id }}</code>
             </template>
@@ -39,7 +39,7 @@
           <h3>{{ $t('runbook.executions') }} · <code v-if="store.currentRunbook">{{ store.currentRunbook.name }}</code></h3>
           <p class="hint">{{ store.currentRunbook ? store.currentRunbook.name : $t('runbook.selectRunbookHint') }}</p>
           <div v-if="store.executionsLoading && !store.executions.length" class="muted">{{ $t('common.loading') }}</div>
-          <DataTable v-else :columns="executionCols" :rows="store.executions" row-key="id" :empty-text="$t('runbook.noExecutions')">
+          <DataTable :loading="store.loading" v-else :columns="executionCols" :rows="store.executions" row-key="id" :empty-text="$t('runbook.noExecutions')">
             <template #cell-status="{ value }">
               <StatusBadge :status="executionStatus(value)" :text="value || '-'" />
             </template>

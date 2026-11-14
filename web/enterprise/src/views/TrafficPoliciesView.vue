@@ -14,7 +14,7 @@
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
       <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
-      <DataTable :columns="columns" :rows="policies" row-key="id" :empty-text="$t('traffic.empty')">
+      <DataTable :loading="loading" :columns="columns" :rows="policies" row-key="id" :empty-text="$t('traffic.empty')">
         <template #cell-type="{ value }"><code>{{ typeText(value) }}</code></template>
         <template #cell-status="{ value }">
           <span class="status-pill" :class="value === 'active' ? 'ok' : 'off'">{{ statusText(value) }}</span>

@@ -100,7 +100,7 @@
         </div>
 
         <h4 class="drawer__section-title">{{ $t('devices.tasks_title') }}</h4>
-        <DataTable
+        <DataTable :loading="store.loading"
           :columns="taskCols"
           :rows="store.current.tasks || []"
           row-key="taskID"
@@ -110,7 +110,7 @@
         </DataTable>
 
         <h4 class="drawer__section-title">{{ $t('devices.recent_results') }}</h4>
-        <DataTable
+        <DataTable :loading="store.loading"
           :columns="resultCols"
           :rows="(store.current.results || []).slice(0, 5)"
           :empty-text="$t('devices.no_results')"

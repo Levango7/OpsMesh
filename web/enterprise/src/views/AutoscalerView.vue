@@ -15,7 +15,7 @@
             <Button variant="ghost" size="sm" @click="store.fetchRules()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.loading && !store.rules.length" class="muted">{{ $t('common.loading') }}</div>
-          <DataTable v-else :columns="ruleCols" :rows="store.rules" row-key="id" :empty-text="$t('autoscaler.noRules')">
+          <DataTable :loading="store.loading" v-else :columns="ruleCols" :rows="store.rules" row-key="id" :empty-text="$t('autoscaler.noRules')">
             <template #cell-name="{ row }">
               <b>{{ row.name }}</b><br><code>{{ row.id }}</code>
             </template>
@@ -37,7 +37,7 @@
         <div class="card">
           <h3>{{ $t('autoscaler.cooldowns') }}</h3>
           <div v-if="!store.cooldowns.length" class="muted">{{ $t('autoscaler.noCooldowns') }}</div>
-          <DataTable v-else :columns="cooldownCols" :rows="store.cooldowns" row-key="ruleId" :empty-text="$t('autoscaler.noCooldowns')">
+          <DataTable :loading="store.loading" v-else :columns="cooldownCols" :rows="store.cooldowns" row-key="ruleId" :empty-text="$t('autoscaler.noCooldowns')">
             <template #cell-remaining="{ value }">
               <span class="cooldown-badge">{{ value }}s</span>
             </template>
@@ -66,7 +66,7 @@
               />
             </div>
           </div>
-          <DataTable v-if="store.decisions.length" :columns="decisionCols" :rows="store.decisions.slice(0, 10)" row-key="id" :empty-text="$t('autoscaler.noDecisions')">
+          <DataTable :loading="store.loading" v-if="store.decisions.length" :columns="decisionCols" :rows="store.decisions.slice(0, 10)" row-key="id" :empty-text="$t('autoscaler.noDecisions')">
             <template #cell-action="{ value }">
               <StatusBadge :status="value === 'scale-up' ? 'success' : 'info'" :text="value || '-'" />
             </template>

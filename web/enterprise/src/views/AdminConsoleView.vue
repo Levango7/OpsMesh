@@ -33,7 +33,7 @@
         <div v-if="storeFailures.total === 0" class="muted">{{ $t('admin_console.no_failures') }}</div>
         <div v-else>
           <p>{{ $t('admin_console.total_failures') }}: {{ storeFailures.total }}</p>
-          <DataTable :columns="failureCols" :rows="storeFailures.topOps || []" :empty-text="$t('admin_console.no_failures')" />
+          <DataTable :loading="loading" :columns="failureCols" :rows="storeFailures.topOps || []" :empty-text="$t('admin_console.no_failures')" />
           <pre v-if="storeFailures.recentFailures?.length" class="code-block">{{ JSON.stringify(storeFailures.recentFailures, null, 2) }}</pre>
         </div>
       </div>
@@ -41,14 +41,14 @@
       <!-- TD-60 服务路由表 -->
       <div class="card">
         <h3 class="card__title">{{ $t('admin_console.service_routing_title') }}</h3>
-        <DataTable :columns="routingCols" :rows="serviceRouting.domains || []" :empty-text="$t('admin_console.no_data')" />
+        <DataTable :loading="loading" :columns="routingCols" :rows="serviceRouting.domains || []" :empty-text="$t('admin_console.no_data')" />
       </div>
 
       <!-- TD-60 服务流量计数器 -->
       <div class="card">
         <h3 class="card__title">{{ $t('admin_console.service_traffic_title') }}</h3>
         <p class="muted">{{ serviceTraffic.window }}</p>
-        <DataTable :columns="trafficCols" :rows="serviceTraffic.domains || []" :empty-text="$t('admin_console.no_data')" />
+        <DataTable :loading="loading" :columns="trafficCols" :rows="serviceTraffic.domains || []" :empty-text="$t('admin_console.no_data')" />
       </div>
     </div>
   </PageShell>

@@ -33,7 +33,7 @@
 
     <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
-    <DataTable v-else :columns="columns" :rows="routes" row-key="id" :empty-text="$t('gateway_routes.empty')">
+    <DataTable :loading="loading" v-else :columns="columns" :rows="routes" row-key="id" :empty-text="$t('gateway_routes.empty')">
       <template #cell-name="{ value }"><code>{{ value }}</code></template>
       <template #cell-pathPrefix="{ value }"><code>{{ value }}</code></template>
       <template #cell-targetBackend="{ value }"><code>{{ value }}</code></template>

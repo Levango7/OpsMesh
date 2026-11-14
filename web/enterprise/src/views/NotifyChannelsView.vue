@@ -28,7 +28,7 @@
         </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable v-else :columns="channelCols" :rows="channels" row-key="id" :empty-text="$t('notify.empty_channels')">
+      <DataTable :loading="loading" v-else :columns="channelCols" :rows="channels" row-key="id" :empty-text="$t('notify.empty_channels')">
         <template #cell-name="{ value }"><code>{{ value }}</code></template>
         <template #cell-type="{ value }">
           <span class="type-tag">{{ fmtChannelType(value) }}</span>
@@ -61,7 +61,7 @@
         </Button>
       </div>
       <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable v-else :columns="templateCols" :rows="templates" row-key="id" :empty-text="$t('notify.empty_templates')">
+      <DataTable :loading="loading" v-else :columns="templateCols" :rows="templates" row-key="id" :empty-text="$t('notify.empty_templates')">
         <template #cell-name="{ value }"><code>{{ value }}</code></template>
         <template #cell-type="{ value }"><span class="type-tag">{{ fmtChannelType(value) }}</span></template>
         <template #cell-format="{ value }"><span class="type-tag">{{ value || '—' }}</span></template>

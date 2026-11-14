@@ -27,7 +27,7 @@
             </Button>
           </div>
           <div v-if="store.loading && !store.nodes.length" class="muted">{{ $t('common.loading') }}</div>
-          <DataTable v-else :columns="nodeCols" :rows="store.nodes" row-key="id" :empty-text="$t('gpu.noNodes')">
+          <DataTable :loading="store.loading" v-else :columns="nodeCols" :rows="store.nodes" row-key="id" :empty-text="$t('gpu.noNodes')">
             <template #cell-name="{ row }">
               <b>{{ row.name }}</b><br><code>{{ row.id }}</code>
             </template>
@@ -94,7 +94,7 @@
             </Button>
           </div>
           <div v-if="store.workloadsLoading && !store.workloads.length" class="muted">{{ $t('common.loading') }}</div>
-          <DataTable v-else :columns="workloadCols" :rows="store.workloads" row-key="id" :empty-text="$t('gpu.noWorkloads')">
+          <DataTable :loading="store.loading" v-else :columns="workloadCols" :rows="store.workloads" row-key="id" :empty-text="$t('gpu.noWorkloads')">
             <template #cell-name="{ row }"><b>{{ row.name }}</b><br><code>{{ row.id }}</code></template>
             <template #cell-type="{ value }"><StatusBadge :status="workloadTypeStatus(value)" :text="value || '-'" /></template>
             <template #cell-status="{ value }">
@@ -125,7 +125,7 @@
         </Button>
       </div>
       <div v-if="store.modelsLoading && !store.models.length" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable v-else :columns="modelCols" :rows="store.models" row-key="name" :empty-text="$t('gpu.noModels')">
+      <DataTable :loading="store.loading" v-else :columns="modelCols" :rows="store.models" row-key="name" :empty-text="$t('gpu.noModels')">
         <template #cell-name="{ value }"><code>{{ value }}</code></template>
         <template #cell-size="{ value }">{{ value || '-' }}</template>
         <template #cell-status="{ value }">
@@ -149,7 +149,7 @@
           <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
         </Button>
       </div>
-      <DataTable :columns="quotaCols" :rows="store.quotas" row-key="tenantId" :empty-text="$t('gpu.noQuotas')">
+      <DataTable :loading="store.loading" :columns="quotaCols" :rows="store.quotas" row-key="tenantId" :empty-text="$t('gpu.noQuotas')">
         <template #cell-tenantId="{ value }"><code>{{ value }}</code></template>
         <template #cell-usage="{ row }">
           <div class="util-bar">

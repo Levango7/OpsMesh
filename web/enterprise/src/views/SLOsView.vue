@@ -14,7 +14,7 @@
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
       <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
-      <DataTable :columns="columns" :rows="slos" row-key="id" :empty-text="$t('slos.empty')">
+      <DataTable :loading="loading" :columns="columns" :rows="slos" row-key="id" :empty-text="$t('slos.empty')">
         <template #cell-target="{ value }"><span class="target-badge">{{ value }}%</span></template>
         <template #cell-window="{ value }"><code>{{ value }}</code></template>
         <template #cell-actions="{ row }">
@@ -65,7 +65,7 @@
     <!-- SLI 状态抽屉 -->
     <DetailDrawer :open="!!statusRow" :title="$t('slos.status_title', { name: statusRow?.name || '' })" @close="statusRow = null">
       <div v-if="statusLoading" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable v-else :columns="statusColumns" :rows="sliStatus" row-key="sliName" :empty-text="$t('slos.no_status')">
+      <DataTable :loading="loading" v-else :columns="statusColumns" :rows="sliStatus" row-key="sliName" :empty-text="$t('slos.no_status')">
         <template #cell-status="{ value }">
           <span class="status-pill" :class="value === 'met' ? 'ok' : (value === 'breached' ? 'bad' : 'off')">
             {{ value === 'met' ? $t('slos.st_met') : (value === 'breached' ? $t('slos.st_breached') : $t('slos.st_nodata')) }}

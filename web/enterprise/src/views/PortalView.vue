@@ -78,7 +78,7 @@
             <Button variant="ghost" size="sm" @click="store.fetchMyRequests()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.loading && !store.myRequests.length" class="muted">{{ $t('common.loading') }}</div>
-          <DataTable v-else :columns="requestCols" :rows="store.myRequests" row-key="id" :empty-text="$t('portal.noRequests')">
+          <DataTable :loading="store.loading" v-else :columns="requestCols" :rows="store.myRequests" row-key="id" :empty-text="$t('portal.noRequests')">
             <template #cell-type="{ value }"><code>{{ value }}</code></template>
             <template #cell-status="{ value }">
               <StatusBadge :status="requestStatus(value)" :text="value || '-'" />
@@ -96,7 +96,7 @@
         <Button variant="ghost" size="sm" @click="store.fetchApprovalQueue()">↻ {{ $t('common.refresh') }}</Button>
       </div>
       <div v-if="store.loading && !store.approvalQueue.length" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable v-else :columns="approvalCols" :rows="store.approvalQueue" row-key="id" :empty-text="$t('portal.noApprovals')">
+      <DataTable :loading="store.loading" v-else :columns="approvalCols" :rows="store.approvalQueue" row-key="id" :empty-text="$t('portal.noApprovals')">
         <template #cell-type="{ value }"><code>{{ value }}</code></template>
         <template #cell-requester="{ value }">{{ value || '-' }}</template>
         <template #cell-actions="{ row }">

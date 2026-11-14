@@ -19,7 +19,7 @@
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
       <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
-      <DataTable :columns="columns" :rows="scripts" row-key="id" :empty-text="$t('scripts.empty')">
+      <DataTable :loading="loading" :columns="columns" :rows="scripts" row-key="id" :empty-text="$t('scripts.empty')">
         <template #cell-language="{ value }"><code>{{ value }}</code></template>
         <template #cell-enabled="{ row }">
           <span class="status-pill" :class="row.enabled ? 'ok' : 'off'">{{ row.enabled ? $t('scripts.enabled') : $t('scripts.disabled') }}</span>
@@ -88,7 +88,7 @@
     <!-- 执行记录抽屉 -->
     <DetailDrawer :open="!!execRow" :title="$t('scripts.executions_title', { name: execRow?.name || '' })" @close="execRow = null">
       <div v-if="execLoading" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable v-else :columns="execColumns" :rows="executions" row-key="id" :empty-text="$t('scripts.no_executions')">
+      <DataTable :loading="loading" v-else :columns="execColumns" :rows="executions" row-key="id" :empty-text="$t('scripts.no_executions')">
         <template #cell-status="{ value }">
           <span class="status-pill" :class="value === 'succeeded' ? 'ok' : (value === 'failed' ? 'bad' : 'warn')">{{ value }}</span>
         </template>

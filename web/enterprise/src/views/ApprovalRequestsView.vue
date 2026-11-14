@@ -99,7 +99,7 @@
     <!-- 审批历史抽屉 -->
     <DetailDrawer :open="historyOpen" :title="$t('approval.history_title')" @close="historyOpen = false">
       <div v-if="store.loading" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable
+      <DataTable :loading="store.loading"
         v-else
         :columns="historyColumns"
         :rows="store.history"

@@ -13,7 +13,7 @@
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else data-testid="users-table-wrap">
-      <DataTable :columns="columns" :rows="users" row-key="id" :empty-text="$t('users.empty')" data-testid="users-table" scrollable>
+      <DataTable :loading="loading" :columns="columns" :rows="users" row-key="id" :empty-text="$t('users.empty')" data-testid="users-table" scrollable>
         <template #cell-username="{ value }"><code>{{ value }}</code></template>
         <template #cell-status="{ row }">
           <StatusBadge

@@ -18,7 +18,7 @@
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
-      <DataTable :columns="columns" :rows="apps" row-key="id" :empty-text="$t('argocd.empty')">
+      <DataTable :loading="loading" :columns="columns" :rows="apps" row-key="id" :empty-text="$t('argocd.empty')">
         <template #cell-name="{ value }"><code>{{ value }}</code></template>
         <template #cell-namespace="{ value }">
           <span class="tag">{{ value }}</span>

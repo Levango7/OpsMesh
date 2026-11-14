@@ -48,7 +48,7 @@
 
       <!-- 实例列表 -->
       <h3 class="section-title">{{ $t('ha.instances') }}</h3>
-      <DataTable :columns="columns" :rows="instances" row-key="instanceID" :empty-text="$t('ha.empty')">
+      <DataTable :loading="loading" :columns="columns" :rows="instances" row-key="instanceID" :empty-text="$t('ha.empty')">
         <template #cell-instanceID="{ value }"><code>{{ value }}</code></template>
         <template #cell-role="{ value }">
           <span class="tag" :class="value === 'leader' ? 'leader' : 'follower'">{{ value }}</span>

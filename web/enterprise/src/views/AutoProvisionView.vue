@@ -47,7 +47,7 @@
       </div>
 
       <h4>{{ $t('provision.devices_title') }}</h4>
-      <DataTable
+      <DataTable :loading="store.loading"
         :columns="deviceColumns"
         :rows="store.result.devices || []"
         row-key="ip"

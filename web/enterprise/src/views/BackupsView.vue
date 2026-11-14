@@ -18,7 +18,7 @@
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
-      <DataTable :columns="columns" :rows="backups" row-key="id" :empty-text="$t('backups.empty')">
+      <DataTable :loading="loading" :columns="columns" :rows="backups" row-key="id" :empty-text="$t('backups.empty')">
         <template #cell-id="{ value }"><code>{{ value }}</code></template>
         <template #cell-type="{ value }">
           <span class="tag">{{ $t('backups.type_' + value) }}</span>

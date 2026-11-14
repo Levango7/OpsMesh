@@ -104,7 +104,7 @@
       </div>
 
       <div v-if="store.loading && !store.connectivity.length" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable
+      <DataTable :loading="store.loading"
         v-else-if="store.connectivity.length"
         :columns="connectivityColumns"
         :rows="store.connectivity"

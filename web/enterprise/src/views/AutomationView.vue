@@ -19,7 +19,7 @@
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
       <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
-      <DataTable :columns="columns" :rows="rules" row-key="id" :empty-text="$t('automation.empty')">
+      <DataTable :loading="loading" :columns="columns" :rows="rules" row-key="id" :empty-text="$t('automation.empty')">
         <template #cell-triggerType="{ value }"><code>{{ value }}</code></template>
         <template #cell-actions-list="{ row }">
           <span class="muted">{{ (row.actions || []).map((a) => a.type).join(', ') || '—' }}</span>
@@ -42,7 +42,7 @@
 
       <!-- 执行历史 -->
       <h4 class="section-title">{{ $t('automation.executions') }}</h4>
-      <DataTable :columns="execColumns" :rows="executions" row-key="id" :empty-text="$t('automation.no_executions')">
+      <DataTable :loading="loading" :columns="execColumns" :rows="executions" row-key="id" :empty-text="$t('automation.no_executions')">
         <template #cell-status="{ value }">
           <span class="status-pill" :class="value === 'succeeded' ? 'ok' : (value === 'failed' ? 'bad' : 'warn')">{{ value }}</span>
         </template>

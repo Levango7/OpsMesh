@@ -49,7 +49,7 @@
       <!-- 模板目录表 -->
       <template v-if="view === 'templates'">
         <div v-if="store.loading && !store.templates.length" class="muted">{{ $t('mwdep.loading') }}</div>
-        <DataTable
+        <DataTable :loading="store.loading"
           v-else
           :columns="tplColumns"
           :rows="store.templates"
@@ -91,7 +91,7 @@
       <template v-else>
         <p class="hint">{{ $t('mwdep.instancesHint') }}</p>
         <div v-if="store.instancesLoading && !store.instances.length" class="muted">{{ $t('mwdep.loading') }}</div>
-        <DataTable
+        <DataTable :loading="store.loading"
           v-else
           :columns="insColumns"
           :rows="store.instances"
@@ -153,7 +153,7 @@
         </div>
         <div v-if="tpl.params && tpl.params.length" class="params-section">
           <h4>{{ $t('mwdep.detailParams') }}</h4>
-          <DataTable :columns="paramCols" :rows="tpl.params" row-key="name" :empty-text="$t('mwdep.noParams')">
+          <DataTable :loading="store.loading" :columns="paramCols" :rows="tpl.params" row-key="name" :empty-text="$t('mwdep.noParams')">
             <template #cell-param-name="{ value }"><code>{{ value }}</code></template>
             <template #cell-param-required="{ value }">
               <StatusBadge v-if="value" status="failed" :text="$t('mwdep.param.required')" />

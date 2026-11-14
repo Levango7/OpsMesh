@@ -14,7 +14,7 @@
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
     <div v-else>
       <!-- 模板列表 -->
-      <DataTable :columns="tplColumns" :rows="templates" row-key="id" :empty-text="$t('pipeline.empty')">
+      <DataTable :loading="loading" :columns="tplColumns" :rows="templates" row-key="id" :empty-text="$t('pipeline.empty')">
         <template #cell-name="{ value }"><code>{{ value }}</code></template>
         <template #cell-type="{ value }">
           <span class="tag">{{ value }}</span>
@@ -31,7 +31,7 @@
 
       <!-- 运行记录 -->
       <h3 class="section-title">{{ $t('pipeline.runs') }}</h3>
-      <DataTable :columns="runColumns" :rows="runs" row-key="id" :empty-text="$t('pipeline.no_runs')">
+      <DataTable :loading="loading" :columns="runColumns" :rows="runs" row-key="id" :empty-text="$t('pipeline.no_runs')">
         <template #cell-templateName="{ value }"><code>{{ value }}</code></template>
         <template #cell-status="{ value }">
           <span class="tag" :class="'st-' + value">{{ $t('pipeline.status_' + value) }}</span>
