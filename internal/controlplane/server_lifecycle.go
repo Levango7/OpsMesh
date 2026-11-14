@@ -931,9 +931,9 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 			// 但并没有重新创建任务 ⇒ 假成功。真正的重试需以原任务参数重建（且要处理
 			// claim_epoch/审批等语义），未接线前显式 501。
 			paginate.WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
-				"code":    "ERR_NOT_IMPLEMENTED",
-				"error":   "任务重试尚未接线：需要按原任务参数重建（当前仅支持死信队列的 retry 语义）",
-				"taskId":  id,
+				"code":   "ERR_NOT_IMPLEMENTED",
+				"error":  "任务重试尚未接线：需要按原任务参数重建（当前仅支持死信队列的 retry 语义）",
+				"taskId": id,
 			})
 			return
 		default:

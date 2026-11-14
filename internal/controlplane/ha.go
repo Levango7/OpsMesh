@@ -158,9 +158,9 @@ func (s *Server) handleHAFailover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	paginate.WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
-		"code":    "ERR_NOT_IMPLEMENTED",
-		"error":   "手动 leader 切换尚未接线：选主由 leader_lease 续租驱动（权威源 task-svc）",
-		"current": s.haCurrentInstance(),
+		"code":        "ERR_NOT_IMPLEMENTED",
+		"error":       "手动 leader 切换尚未接线：选主由 leader_lease 续租驱动（权威源 task-svc）",
+		"current":     s.haCurrentInstance(),
 		"alternative": "摘除当前 leader 实例（滚动重启/缩容）后，租约过期将自动触发重新选主",
 	})
 }

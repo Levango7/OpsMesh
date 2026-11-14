@@ -21,22 +21,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Levango7/OpsMesh/internal/logx"
-
 	gnet "github.com/shirou/gopsutil/v3/net"
 
 	"go.opentelemetry.io/otel/attribute"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/Levango7/OpsMesh/internal/circuitbreaker"
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/discovery"
 	"github.com/Levango7/OpsMesh/internal/grpcx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 	"github.com/Levango7/OpsMesh/internal/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
@@ -872,20 +871,20 @@ func (a *Agent) claimTask(ctx context.Context) (*proto.Task, error) {
 	}
 	// Convert taskv1.Task to proto.Task
 	return &proto.Task{
-		TaskID:      resp.TaskId,
-		AgentID:     resp.AgentId,
-		TenantID:    resp.TenantId,
-		Type:        resp.Type,
-		Command:     resp.Command,
-		Content:     resp.Content,
-		Path:        resp.Path,
-		Status:      resp.Status,
-		ClaimedBy:   resp.ClaimedBy,
-		ClaimedAt:   resp.ClaimedAt.AsTime(),
-		CreatedAt:   resp.CreatedAt.AsTime(),
-		RetryCount:  int(resp.RetryCount),
-		DeadLetter:  resp.DeadLetter,
-		ClaimEpoch:  resp.ClaimEpoch,
+		TaskID:     resp.TaskId,
+		AgentID:    resp.AgentId,
+		TenantID:   resp.TenantId,
+		Type:       resp.Type,
+		Command:    resp.Command,
+		Content:    resp.Content,
+		Path:       resp.Path,
+		Status:     resp.Status,
+		ClaimedBy:  resp.ClaimedBy,
+		ClaimedAt:  resp.ClaimedAt.AsTime(),
+		CreatedAt:  resp.CreatedAt.AsTime(),
+		RetryCount: int(resp.RetryCount),
+		DeadLetter: resp.DeadLetter,
+		ClaimEpoch: resp.ClaimEpoch,
 	}, nil
 }
 
