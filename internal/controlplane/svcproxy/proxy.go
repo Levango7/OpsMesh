@@ -300,6 +300,18 @@ var DeviceExtras = []Rule{
 			{Method: http.MethodGet, Perm: "network:read"},
 		},
 	},
+	{
+		// TD-60 device 域下沉：netsec 六端点（ips/siem/honeypot/traffic/vpn/zerotrust）。
+		// 上游 device-svc 用 pkg/netsec 同一份脚本构建逻辑；任务下发经 task-svc。
+		// 权限对齐本地 netsec 语义（网络安全写操作）：统一 network:write。
+		Domain:         "device",
+		PublicPrefix:   "/api/v1/device-svc/netsec",
+		UpstreamPrefix: "/api/v1/netsec",
+		DomainPrefix:   "/api/v1/device-svc/netsec",
+		EnvKey:         "DEVICE_SVC_URL",
+		DefaultURL:     "http://127.0.0.1:8081",
+		Perm:           "network:write", // 兜底：全部为 POST 动作（status 也走 POST）
+	},
 }
 
 // TaskExtras task 域转发规则（TD-60 阶段 2「三域接通」：task-svc REST 网关接线）。

@@ -30,6 +30,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/server"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/service"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
+	"github.com/Levango7/OpsMesh/services/device-svc/internal/taskclient"
 	"github.com/Levango7/OpsMesh/services/device-svc/pkg/config"
 )
 
@@ -165,6 +166,17 @@ func main() {
 	}
 	httpGateway := httpgw.NewGateway(ds, as, cs, disc, provisionStore, advertiseAddr)
 	httpGateway.SetAgentBinDir(cfg.AgentBinDir)
+	// TD-60 device 域下沉：netsec 端点的任务下发通道（gRPC → task-svc）。
+	// TASK_SVC_GRPC_ADDR 为空或连接失败时降级为「未注入」——netsec 端点返回 503
+	// （显式失败优先于假装成功），其余端点不受影响。
+	if addr := os.Getenv("TASK_SVC_GRPC_ADDR"); addr != "" {
+		if tc, err := taskclient.New(context.Background(), addr); err != nil {
+			lgr.Warnf(context.Background(), "task-svc 客户端初始化失败（netsec 端点将 503）: %v", err)
+		} else {
+			httpGateway.SetTaskDispatcher(tc)
+			lgr.Infof(context.Background(), "task-svc 客户端已接入（netsec 任务下发，target=%s）", addr)
+		}
+	}
 	httpGateway.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

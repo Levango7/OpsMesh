@@ -46,6 +46,9 @@ type Gateway struct {
 	// taskResultFetcher 是可选注入的任务/结果获取接口（P0 端点补齐）。
 	// 未注入时 GET /api/v1/devices/{id} 聚合响应的 tasks/results 为空数组（降级安全）。
 	taskResultFetcher store.TaskResultFetcher
+	// taskDispatcher 是可选注入的任务下发通道（TD-60 device 域 netsec 下沉）。
+	// 生产由 task-svc gRPC 实现；未注入时 netsec 端点返回 503（显式失败优先于假成功）。
+	taskDispatcher TaskDispatcher
 }
 
 // NewGateway 构造 Gateway 实例。
@@ -95,6 +98,9 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux, auth func(http.Handler) htt
 	mux.HandleFunc("/install.sh", g.handleInstallSh)
 	mux.HandleFunc("/bin/opsmesh-agent", g.handleServeAgent)
 	mux.HandleFunc("/api/v1/provision/register", g.handleProvisionRegister)
+	// 扩展网络安全（TD-60 device 域下沉）：脚本构建复用 pkg/netsec，
+	// 任务下发经 taskDispatcher（未注入时 503）。
+	g.RegisterNetSecRoutes(mux, auth)
 }
 
 // ============ 设备 ============
