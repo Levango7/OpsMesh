@@ -79,9 +79,10 @@
         v-for="n in store.current.dag"
         :key="n.id"
         class="node"
-        :class="{ sel: store.selectedNode === n.id, run: store.status[n.id] === 'running', fail: store.status[n.id] === 'failed' }"
+        :class="{ sel: store.selectedNode === n.id, run: store.status[n.id] === 'running', fail: store.status[n.id] === 'failed', dragging: drag.id === n.id }"
         :transform="`translate(${(store.nodePos[n.id] || {x:60,y:60}).x},${(store.nodePos[n.id] || {x:60,y:60}).y})`"
         :data-testid="'workflows-node-' + n.id"
+        @mousedown.stop.prevent="startDrag(n.id, $event)"
         @click.stop="store.selectedNode = n.id"
       >
         <rect class="card" width="170" height="66" rx="10" ry="10" />
@@ -152,7 +153,7 @@
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
-import { computed, onMounted, reactive, ref, defineAsyncComponent } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, defineAsyncComponent } from 'vue'
 import { useWorkflowStore } from '@/stores/workflow'
 import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
@@ -195,6 +196,56 @@ function edgeEnd(dstId) {
   return { x: p.x + NODE_W / 2, y: p.y }
 }
 function onCanvasClick() { store.selectedNode = null }
+
+// 审计整改批次13：画布节点拖拽（此前只能 autoLayout，无法手工布线）。
+const drag = reactive({ id: '', offX: 0, offY: 0, active: false })
+
+function svgPoint(evt) {
+  const svg = canvasRef.value
+  if (!svg) return { x: 0, y: 0 }
+  const r = svg.getBoundingClientRect()
+  const vb = svg.viewBox && svg.viewBox.baseVal
+  if (vb && vb.width > 0 && vb.height > 0) {
+    return {
+      x: (evt.clientX - r.left) * (vb.width / r.width) + vb.x,
+      y: (evt.clientY - r.top) * (vb.height / r.height) + vb.y,
+    }
+  }
+  // 无 viewBox：1:1 像素坐标（宽高由 CSS 拉伸时按比例换算）
+  const sx = r.width ? svg.clientWidth / r.width : 1
+  const sy = r.height ? svg.clientHeight / r.height : 1
+  return { x: (evt.clientX - r.left) * sx, y: (evt.clientY - r.top) * sy }
+}
+
+function startDrag(id, evt) {
+  const p = store.nodePos[id] || { x: 60, y: 60 }
+  const cur = svgPoint(evt)
+  drag.id = id
+  drag.active = true
+  drag.offX = cur.x - p.x
+  drag.offY = cur.y - p.y
+  store.selectedNode = id
+  window.addEventListener('mousemove', onDragMove)
+  window.addEventListener('mouseup', endDrag)
+}
+
+function onDragMove(evt) {
+  if (!drag.active) return
+  const cur = svgPoint(evt)
+  store.nodePos[drag.id] = {
+    x: Math.max(0, Math.round(cur.x - drag.offX)),
+    y: Math.max(0, Math.round(cur.y - drag.offY)),
+  }
+}
+
+function endDrag() {
+  drag.active = false
+  drag.id = ''
+  window.removeEventListener('mousemove', onDragMove)
+  window.removeEventListener('mouseup', endDrag)
+}
+
+onBeforeUnmount(endDrag)
 function onDepsChange(e) {
   if (!currentNode.value) return
   currentNode.value.dependsOn = e.target.value
@@ -267,7 +318,9 @@ onMounted(async () => {
 .canvas .grid-dot { fill: var(--border-2); }
 .canvas .arrow-head { fill: var(--text-3); }
 .canvas .card { fill: var(--surface); stroke: var(--border-2); stroke-width: 1.5px; }
-.canvas .node { cursor: pointer; }
+.canvas .node { cursor: grab; }
+.canvas .node.dragging { cursor: grabbing; }
+.canvas .node.dragging .card { filter: drop-shadow(0 8px 16px rgba(0,0,0,.25)); }
 .canvas .node.sel .card { stroke: var(--accent); stroke-width: 2.5px; filter: drop-shadow(0 4px 10px rgba(99,102,241,.2)); }
 .canvas .ntitle { fill: var(--text); font-size: 13px; font-weight: 600; pointer-events: none; }
 .canvas .ncmd { fill: var(--text-3); font-size: 11px; pointer-events: none; }
