@@ -436,10 +436,20 @@ type K8sLifecycleHandler struct {
 	etcdMgr    *EtcdManager
 	store      LifecycleJobStore // 用于持久化作业状态
 
+	// clusterInfo 真实集群信息源（审计整改批次1）。
+	// nil=未装配 ⇒ 升级/回滚/证书轮换在预检阶段显式失败，绝不回退到模拟节点。
+	clusterInfo func(ctx context.Context, clusterID string) (*ClusterInfo, error)
+
 	// Authorize 鉴权回调（由 controlplane 注入），语义同 cmdb/log/deploy/orch 的
 	// Authorize：失败时回调已写响应并返回 ok=false，调用方直接 return。
 	// nil 时不启用鉴权（独立使用与单测的向后兼容路径）。
 	Authorize func(w http.ResponseWriter, r *http.Request, perm string) (authctx.Context, bool)
+}
+
+// SetClusterInfoSource 注入真实集群信息源（生产装配调用）。
+// fn 返回的 ClusterInfo 至少要有 1 个 CP 节点，否则预检拒绝执行。
+func (h *K8sLifecycleHandler) SetClusterInfoSource(fn func(ctx context.Context, clusterID string) (*ClusterInfo, error)) {
+	h.clusterInfo = fn
 }
 
 // authorize 按请求方法映射权限：GET/HEAD/OPTIONS 只读 → readPerm，其余 → writePerm。
@@ -988,22 +998,26 @@ func (h *K8sLifecycleHandler) precheckUpgrade(ctx context.Context, jobID string,
 	return nil
 }
 
-// getClusterInfo 获取集群信息（CP 节点、Worker 节点、当前版本）
+// getClusterInfo 获取集群信息（CP 节点、Worker 节点、当前版本）。
+//
+// 安全边界（审计整改批次1）：**不做任何模拟数据回退**。真实集群信息来源必须由
+// 装配方通过 SetClusterInfoSource 注入；未注入时直接报错，让升级/回滚/证书轮换
+// 在预检阶段显式失败，而不是把 SSH 打到硬编码的假节点上。
 func (h *K8sLifecycleHandler) getClusterInfo(ctx context.Context, clusterID string) (*ClusterInfo, error) {
-	// 从 store 获取集群信息
-	if h.store == nil {
-		return nil, fmt.Errorf("store not available")
+	if h.clusterInfo == nil {
+		return nil, fmt.Errorf("cluster info source not configured: k8s lifecycle execution requires SetClusterInfoSource wiring (clusterID=%s)", clusterID)
 	}
-	// 这里需要根据实际的 cluster store 接口获取
-	// 暂时返回模拟数据，实际需对接 store
-	return &ClusterInfo{
-		ClusterID:      "test-cluster",
-		CurrentVersion: "1.29.4",
-		CPNodes: []NodeSpec{
-			{ID: "cp-1", Host: "10.0.0.1", Port: 22, User: "root"},
-		},
-		WorkerNodes: []string{"10.0.0.2", "10.0.0.3"},
-	}, nil
+	info, err := h.clusterInfo(ctx, clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("cluster info lookup failed (clusterID=%s): %w", clusterID, err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("cluster not found: %s", clusterID)
+	}
+	if len(info.CPNodes) == 0 {
+		return nil, fmt.Errorf("cluster %s has no control-plane nodes configured", clusterID)
+	}
+	return info, nil
 }
 
 type ClusterInfo struct {
@@ -1175,7 +1189,7 @@ func (h *K8sLifecycleHandler) upgradeSingleControlPlane(ctx context.Context, cpN
 
 	// 7. 等待节点 Ready - 带轮询和超时
 	h.updateJobPhase(context.Background(), "", "control_plane_upgrading", 75, "waiting for node Ready")
-	if err := h.waitNodeReady(context.Background(), cpNode, maxNodeReadyWait); err != nil {
+	if err := h.waitNodeReady(context.Background(), cpNode, cpNode, maxNodeReadyWait); err != nil {
 		return fmt.Errorf("node %s not ready after upgrade: %w", cpNode, err)
 	}
 
@@ -1214,7 +1228,7 @@ func (h *K8sLifecycleHandler) upgradeWorkers(ctx context.Context, jobID string, 
 		h.updateJobPhase(ctx, jobID, "worker_upgrading", 55+int(float64(i)/float64(len(cluster.WorkerNodes))*40), fmt.Sprintf("upgrading batch %d/%d: %v", i/batchSize+1, (len(cluster.WorkerNodes)+batchSize-1)/batchSize, batch))
 
 		for _, node := range batch {
-			if err := h.upgradeSingleWorker(ctx, node, spec.TargetVersion); err != nil {
+			if err := h.upgradeSingleWorker(ctx, cluster.CPNodes[0].Host, node, spec.TargetVersion); err != nil {
 				return fmt.Errorf("upgrade worker %s failed: %w", node, err)
 			}
 		}
@@ -1229,13 +1243,13 @@ func (h *K8sLifecycleHandler) upgradeWorkers(ctx context.Context, jobID string, 
 	return nil
 }
 
-func (h *K8sLifecycleHandler) upgradeSingleWorker(ctx context.Context, node, targetVersion string) error {
-	logx.Info(ctx, "开始升级 Worker 节点", "node", node, "targetVersion", targetVersion)
+func (h *K8sLifecycleHandler) upgradeSingleWorker(ctx context.Context, kubectlHost, node, targetVersion string) error {
+	logx.Info(ctx, "开始升级 Worker 节点", "node", node, "targetVersion", targetVersion, "kubectlHost", kubectlHost)
 
-	// 1. drain 节点 - 幂等
+	// 1. drain 节点（kubectl 必须在控制面执行——worker 通常无 admin kubeconfig）
 	h.updateJobPhase(context.Background(), "", "worker_upgrading", 55, fmt.Sprintf("draining worker %s", node))
 	cmd := fmt.Sprintf("kubectl drain %s --ignore-daemonsets --delete-emptydir-data --force --grace-period=%d", node, drainGracePeriod)
-	if _, stderr, code, err := h.execSSH(context.Background(), node, cmd); err != nil || code != 0 {
+	if _, stderr, code, err := h.execSSH(context.Background(), kubectlHost, cmd); err != nil || code != 0 {
 		if strings.Contains(stderr, "already cordoned") || strings.Contains(stderr, "already drained") {
 			logx.Info(context.Background(), "Worker 节点已 drain，跳过", "node", node)
 		} else {
@@ -1260,9 +1274,9 @@ func (h *K8sLifecycleHandler) upgradeSingleWorker(ctx context.Context, node, tar
 		return fmt.Errorf("restart kubelet failed: %v, stderr: %s", err, stderr)
 	}
 
-	// 4. uncordon 节点 - 幂等
+	// 4. uncordon 节点 - 幂等（kubectl 在控制面执行）
 	cmd = "kubectl uncordon " + node
-	if _, stderr, code, err := h.execSSH(context.Background(), node, cmd); err != nil || code != 0 {
+	if _, stderr, code, err := h.execSSH(context.Background(), kubectlHost, cmd); err != nil || code != 0 {
 		if strings.Contains(stderr, "not cordoned") {
 			logx.Info(context.Background(), "Worker 节点未被 cordon，跳过 uncordon", "node", node)
 		} else {
@@ -1271,7 +1285,7 @@ func (h *K8sLifecycleHandler) upgradeSingleWorker(ctx context.Context, node, tar
 	}
 
 	// 5. 等待节点 Ready - 带轮询和超时
-	if err := h.waitNodeReady(context.Background(), node, maxNodeReadyWait); err != nil {
+	if err := h.waitNodeReady(context.Background(), kubectlHost, node, maxNodeReadyWait); err != nil {
 		return fmt.Errorf("worker %s not ready after upgrade: %w", node, err)
 	}
 
@@ -1445,9 +1459,11 @@ func (h *K8sLifecycleHandler) completeJob(ctx context.Context, jobID, msg string
 	}
 }
 
-// isValidVersionJump 检查版本跳跃是否合法
-// waitNodeReady 等待节点变为 Ready 状态（带轮询和超时）
-func (h *K8sLifecycleHandler) waitNodeReady(ctx context.Context, node string, timeout time.Duration) error {
+// waitNodeReady 等待节点变为 Ready 状态（带轮询和超时）。
+// kubectlHost 是执行 kubectl 的控制面节点（必须有 kubeconfig）；
+// node 是被等待的目标节点名（可以是 worker）。
+// 审计整改批次1：原实现固定 SSH 到硬编码 10.0.0.1，worker 等待链路同样被误路由。
+func (h *K8sLifecycleHandler) waitNodeReady(ctx context.Context, kubectlHost, node string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(nodeReadyPollInterval)
 	defer ticker.Stop()
@@ -1461,7 +1477,7 @@ func (h *K8sLifecycleHandler) waitNodeReady(ctx context.Context, node string, ti
 				return fmt.Errorf("timeout waiting for node %s to become Ready", node)
 			}
 			cmd := fmt.Sprintf("kubectl get node %s -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'", node)
-			out, _, code, err := h.execSSH(context.Background(), "10.0.0.1", cmd)
+			out, _, code, err := h.execSSH(ctx, kubectlHost, cmd)
 			if err != nil || code != 0 {
 				continue // 继续重试
 			}
@@ -1821,7 +1837,7 @@ func (h *K8sLifecycleHandler) rollbackSingleControlPlane(ctx context.Context, cp
 	}
 
 	// 7. 等待节点 Ready
-	if err := h.waitNodeReady(context.Background(), cpNode, maxNodeReadyWait); err != nil {
+	if err := h.waitNodeReady(context.Background(), cpNode, cpNode, maxNodeReadyWait); err != nil {
 		return fmt.Errorf("node %s not ready after rollback: %w", cpNode, err)
 	}
 
@@ -1841,19 +1857,19 @@ func (h *K8sLifecycleHandler) rollbackWorkers(ctx context.Context, jobID string,
 		node := cluster.WorkerNodes[i]
 		h.updateJobPhase(ctx, jobID, "worker_rollback", 70+int(float64(i)/float64(len(cluster.WorkerNodes))*20), fmt.Sprintf("rolling back worker %d/%d: %s", i+1, len(cluster.WorkerNodes), node))
 
-		if err := h.rollbackSingleWorker(ctx, node, spec.TargetVersion); err != nil {
+		if err := h.rollbackSingleWorker(ctx, cluster.CPNodes[0].Host, node, spec.TargetVersion); err != nil {
 			return fmt.Errorf("rollback worker %s failed: %w", node, err)
 		}
 	}
 	return nil
 }
 
-func (h *K8sLifecycleHandler) rollbackSingleWorker(ctx context.Context, node, targetVersion string) error {
-	logx.Info(ctx, "开始回滚 Worker 节点", "node", node, "targetVersion", targetVersion)
+func (h *K8sLifecycleHandler) rollbackSingleWorker(ctx context.Context, kubectlHost, node, targetVersion string) error {
+	logx.Info(ctx, "开始回滚 Worker 节点", "node", node, "targetVersion", targetVersion, "kubectlHost", kubectlHost)
 
-	// 1. drain 节点
+	// 1. drain 节点（kubectl 在控制面执行）
 	cmd := fmt.Sprintf("kubectl drain %s --ignore-daemonsets --delete-emptydir-data --force --grace-period=%d", node, drainGracePeriod)
-	if _, stderr, code, err := h.execSSH(context.Background(), node, cmd); err != nil || code != 0 {
+	if _, stderr, code, err := h.execSSH(context.Background(), kubectlHost, cmd); err != nil || code != 0 {
 		if strings.Contains(stderr, "already cordoned") || strings.Contains(stderr, "already drained") {
 			logx.Info(context.Background(), "Worker 节点已 drain，跳过", "node", node)
 		} else {
@@ -1877,9 +1893,9 @@ func (h *K8sLifecycleHandler) rollbackSingleWorker(ctx context.Context, node, ta
 		return fmt.Errorf("restart kubelet failed: %v, stderr: %s", err, stderr)
 	}
 
-	// 4. uncordon
+	// 4. uncordon（kubectl 在控制面执行）
 	cmd = "kubectl uncordon " + node
-	if _, stderr, code, err := h.execSSH(context.Background(), node, cmd); err != nil || code != 0 {
+	if _, stderr, code, err := h.execSSH(context.Background(), kubectlHost, cmd); err != nil || code != 0 {
 		if strings.Contains(stderr, "not cordoned") {
 			logx.Info(context.Background(), "Worker 节点未被 cordon，跳过 uncordon", "node", node)
 		} else {
@@ -1888,7 +1904,7 @@ func (h *K8sLifecycleHandler) rollbackSingleWorker(ctx context.Context, node, ta
 	}
 
 	// 等待节点 Ready
-	if err := h.waitNodeReady(context.Background(), node, maxNodeReadyWait); err != nil {
+	if err := h.waitNodeReady(context.Background(), kubectlHost, node, maxNodeReadyWait); err != nil {
 		return fmt.Errorf("worker %s not ready after rollback: %w", node, err)
 	}
 

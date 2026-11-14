@@ -4,6 +4,7 @@
 package cache
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -30,14 +31,15 @@ func TestSessionStore_DegradedMode(t *testing.T) {
 		t.Error("降级模式 Validate 应返回 nil session（不阻止）")
 	}
 
-	// Revoke：no-op。
-	if err := ss.Revoke("s1"); err != nil {
-		t.Fatalf("降级模式 Revoke 应 no-op，实际 %v", err)
+	// Revoke：审计整改批次2——降级时不再静默 no-op，必须返回
+	// ErrSessionStoreUnavailable（access token 仍有效到自然过期）。
+	if err := ss.Revoke("s1"); !errors.Is(err, ErrSessionStoreUnavailable) {
+		t.Fatalf("降级模式 Revoke 应返回 ErrSessionStoreUnavailable，实际 %v", err)
 	}
 
-	// RevokeAllForUser：no-op。
-	if err := ss.RevokeAllForUser("u1"); err != nil {
-		t.Fatalf("降级模式 RevokeAllForUser 应 no-op，实际 %v", err)
+	// RevokeAllForUser：同上。
+	if err := ss.RevokeAllForUser("u1"); !errors.Is(err, ErrSessionStoreUnavailable) {
+		t.Fatalf("降级模式 RevokeAllForUser 应返回 ErrSessionStoreUnavailable，实际 %v", err)
 	}
 
 	// Refresh：no-op。

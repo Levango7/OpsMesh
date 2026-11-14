@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -161,39 +162,44 @@ func (s *StubTaskServiceClient) GetTask(ctx context.Context, req *taskv1.GetTask
 	return nil, fmt.Errorf("task not found: %s", req.TaskId)
 }
 
-// ListTasks 存根实现。
+// ErrTaskServiceStub 表示当前为存根实现（未配置 TASK_SVC_GRPC_ADDR）。
+// 审计整改批次1：原存根对多数方法返回 (nil, nil)，handler 侧
+// writeTaskResponse(nil) 会空指针；改为返回该 sentinel，由调用方转 503。
+var ErrTaskServiceStub = errors.New("task service stub: operation requires TASK_SVC_GRPC_ADDR wiring")
+
+// ListTasks 存根实现（未装配 ⇒ 显式错误，不返回空成功）。
 func (s *StubTaskServiceClient) ListTasks(ctx context.Context, req *taskv1.ListTasksRequest, opts ...grpc.CallOption) (*taskv1.ListTasksResponse, error) {
-	return nil, nil
+	return nil, ErrTaskServiceStub
 }
 
-// ClaimTask 存根实现。
+// ClaimTask 存根实现（未装配 ⇒ 显式错误）。
 func (s *StubTaskServiceClient) ClaimTask(ctx context.Context, req *taskv1.ClaimTaskRequest, opts ...grpc.CallOption) (*taskv1.Task, error) {
-	return nil, nil
+	return nil, ErrTaskServiceStub
 }
 
-// ReportResult 存根实现。
+// ReportResult 存根实现（未装配 ⇒ 显式错误）。
 func (s *StubTaskServiceClient) ReportResult(ctx context.Context, req *taskv1.ReportResultRequest, opts ...grpc.CallOption) (*taskv1.TaskResult, error) {
-	return nil, nil
+	return nil, ErrTaskServiceStub
 }
 
-// CancelTask 存根实现。
+// CancelTask 存根实现（未装配 ⇒ 显式错误，避免"取消成功"假象）。
 func (s *StubTaskServiceClient) CancelTask(ctx context.Context, req *taskv1.CancelTaskRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	return nil, nil
+	return nil, ErrTaskServiceStub
 }
 
-// ApproveTask 存根实现。
+// ApproveTask 存根实现（未装配 ⇒ 显式错误）。
 func (s *StubTaskServiceClient) ApproveTask(ctx context.Context, req *taskv1.ApproveTaskRequest, opts ...grpc.CallOption) (*taskv1.Task, error) {
-	return nil, nil
+	return nil, ErrTaskServiceStub
 }
 
-// RejectTask 存根实现。
+// RejectTask 存根实现（未装配 ⇒ 显式错误）。
 func (s *StubTaskServiceClient) RejectTask(ctx context.Context, req *taskv1.RejectTaskRequest, opts ...grpc.CallOption) (*taskv1.Task, error) {
-	return nil, nil
+	return nil, ErrTaskServiceStub
 }
 
-// GetTaskStatus 存根实现。
+// GetTaskStatus 存根实现（未装配 ⇒ 显式错误）。
 func (s *StubTaskServiceClient) GetTaskStatus(ctx context.Context, req *taskv1.GetTaskStatusRequest, opts ...grpc.CallOption) (*taskv1.TaskStatusResponse, error) {
-	return nil, nil
+	return nil, ErrTaskServiceStub
 }
 
 // Close 存根实现。

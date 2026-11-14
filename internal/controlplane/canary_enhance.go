@@ -167,7 +167,10 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "canary release not found"})
 		return
 	}
-	// 查询真实指标：最近 5 分钟均值
+	// 查询真实指标：最近 5 分钟均值。
+	// 审计整改批次1：当前只按租户聚合，无法区分 baseline 与 canary 流量
+	//（两者是同一份数据）⇒ 显式标 simulated:true + 说明字段，避免灰度决策
+	// 建立在"无差异的伪对比"上。真正的分组对比需按 canary 批次标签打点后再接。
 	since := time.Now().Add(-5 * time.Minute)
 	metrics := s.store.QueryNetworkMetrics(actx.TenantID, since)
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
@@ -176,6 +179,7 @@ func (s *Server) handleCanaryMetrics(w http.ResponseWriter, r *http.Request, id 
 		"canary":     metrics,
 		"percentage": canary.Percentage,
 		"comparedAt": time.Now(),
-		"simulated":  false,
+		"simulated":  true,
+		"note":       "baseline 与 canary 使用同一份租户级指标：按批次标签的分组对比尚未接线",
 	})
 }

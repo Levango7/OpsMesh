@@ -252,8 +252,15 @@ func (g *Gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 	rt := readCookie(r, refreshTokenCookieName)
 	// TD-60 Session 撤销（Redis 可用时即时失效；不可用时 JWT 黑名单兜底）。
 	// sessionID = SHA-256(access token)，与 handleLogin 创建时一致。
-	if g.sessions != nil && g.sessions.Enabled() && at != "" {
-		_ = g.sessions.Revoke(sessionIDFromToken(at))
+	// 审计整改批次2：不再静默跳过——未启用时在响应中如实标注 sessionRevocation。
+	sessionRevocation := "revoked"
+	if g.sessions == nil || !g.sessions.Enabled() {
+		sessionRevocation = "unavailable (Redis disabled): access token remains valid until expiry; jti blacklist + refresh-token deletion applied"
+	} else if at != "" {
+		if err := g.sessions.Revoke(sessionIDFromToken(at)); err != nil {
+			sessionRevocation = "failed: " + err.Error()
+			log.Printf("[gateway] logout: session revoke failed: %v", err)
+		}
 	}
 	// 复用 service.Logout（jti 黑名单 + rt 删除）。
 	_, _ = g.svc.Logout(r.Context(), &authv1.LogoutRequest{
@@ -261,7 +268,7 @@ func (g *Gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: rt,
 	})
 	g.clearCookies(w)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "sessionRevocation": sessionRevocation})
 }
 
 // handleRefresh POST /api/v1/auth/refresh → 静默旋转（R2：只写 Cookie，无 token body）。
@@ -715,18 +722,22 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		n := g.svc.Store().DeleteRefreshTokensByUser(u.ID)
-		// Redis 会话（启用时）一并撤；未启用/不可达时为 no-op（JWT 无状态模式本就没有会话表）。
-		if g.sessions != nil {
-			if err := g.sessions.RevokeAllForUser(u.ID); err != nil {
-				// 不落原始 user id：它来自路径参数（外部可控），gosec G706 的污点分析不认 %%q，
-				// 仓内先例是"修法不落原值"而非加豁免（见 .golangci.services.yml 的 G 规则注释）。
-				// 该 id 已在响应体里返回给调用方，日志只需说明"Redis 侧撤销失败"这一事实。
-				log.Printf("[gateway] revoke-sessions: Redis 会话撤销失败（用户 id 见响应体）: %v", err)
-			}
+		// Redis 会话（启用时）一并撤；未启用时如实标注（审计整改批次2：
+		// 不再让调用方误以为服务端会话已全部撤销）。
+		sessionRevocation := "revoked"
+		if g.sessions == nil || !g.sessions.Enabled() {
+			sessionRevocation = "unavailable (Redis disabled): access tokens remain valid until expiry"
+		} else if err := g.sessions.RevokeAllForUser(u.ID); err != nil {
+			// 不落原始 user id：它来自路径参数（外部可控），gosec G706 的污点分析不认 %%q，
+			// 仓内先例是"修法不落原值"而非加豁免（见 .golangci.services.yml 的 G 规则注释）。
+			// 该 id 已在响应体里返回给调用方，日志只需说明"Redis 侧撤销失败"这一事实。
+			log.Printf("[gateway] revoke-sessions: Redis 会话撤销失败（用户 id 见响应体）: %v", err)
+			sessionRevocation = "failed: " + err.Error()
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "revoked", "userID": u.ID, "username": u.Username,
 			"refreshTokensDeleted": n,
+			"sessionRevocation":    sessionRevocation,
 		})
 		return
 	}

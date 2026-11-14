@@ -18,8 +18,11 @@ var (
 	ErrRequestInvalid    = errors.New("resource request invalid")
 	ErrInvalidTransition = errors.New("invalid status transition")
 	ErrQuotaExceeded     = errors.New("quota exceeded")
-	ErrBudgetNotFound    = errors.New("budget not found")
-	ErrQuotaNotFound     = errors.New("quota not found")
+	// ErrQuotaCheckUnavailable 用量不可计算（存储/依赖故障）——fail-closed 拒绝，
+	// 与 ErrQuotaExceeded 区分：前者应映射为 503，后者 429。
+	ErrQuotaCheckUnavailable = errors.New("quota check unavailable")
+	ErrBudgetNotFound        = errors.New("budget not found")
+	ErrQuotaNotFound         = errors.New("quota not found")
 )
 
 // Service implements the portal business logic.
@@ -354,6 +357,10 @@ func (s *Service) GetQuotaUsage(tenantID string) (*models.QuotaUsage, error) {
 }
 
 // checkQuota verifies a request does not exceed tenant quota.
+//
+// 审计整改批次2：用量查询失败时**不得 fail-open**（原实现 return nil 会直接放行
+// 超限请求）。改为 fail-closed：用量不可计算即拒绝，错误语义与超限区分开，
+// 便于上层决定 429（超限）还是 503（依赖不可用）。
 func (s *Service) checkQuota(r *models.ResourceRequest) error {
 	q := s.store.GetQuota(r.TenantID)
 	if q == nil {
@@ -362,7 +369,7 @@ func (s *Service) checkQuota(r *models.ResourceRequest) error {
 
 	usage, err := s.GetQuotaUsage(r.TenantID)
 	if err != nil {
-		return nil
+		return fmt.Errorf("%w: quota usage unavailable: %v", ErrQuotaCheckUnavailable, err)
 	}
 
 	if q.MaxCPU > 0 && usage.UsedCPU+r.CPU > q.MaxCPU {

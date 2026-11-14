@@ -33,7 +33,9 @@ func newCanarySimTestServer() *Server {
 	}
 }
 
-// TestHandleCanaryMetrics_SimulatedFlag 验证 canary metrics 响应含 simulated:false（真实指标）。
+// TestHandleCanaryMetrics_SimulatedFlag 验证 canary metrics 响应含 simulated:true。
+// 审计整改批次1：baseline 与 canary 目前使用同一份租户级指标，必须如实标记为
+// simulated（此前误标 false，会让灰度决策建立在无差异的伪对比上）。
 func TestHandleCanaryMetrics_SimulatedFlag(t *testing.T) {
 	s := newCanarySimTestServer()
 	auth := loginAsAdmin(t, s)
@@ -51,17 +53,23 @@ func TestHandleCanaryMetrics_SimulatedFlag(t *testing.T) {
 		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
-		Simulated bool `json:"simulated"`
+		Simulated bool   `json:"simulated"`
+		Note      string `json:"note"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Simulated {
-		t.Fatal("simulated=true, want false (real metrics)")
+	if !resp.Simulated {
+		t.Fatal("simulated=false, want true (baseline/canary 共用同一份租户级指标，按批次标签的分组对比尚未接线)")
+	}
+	if resp.Note == "" {
+		t.Fatal("note 为空：simulated 响应必须说明原因")
 	}
 }
 
-// TestHandleHAFailover_SimulatedFlag 验证 ha failover 响应含 simulated:false（真实状态）。
+// TestHandleHAFailover_SimulatedFlag 验证 ha failover 不再假成功（审计整改批次1）。
+// 手动切主未接线 ⇒ 必须返回 501 + ERR_NOT_IMPLEMENTED，且不得出现
+// status:"accepted"/simulated:false 这类"看起来已执行"的字段。
 func TestHandleHAFailover_SimulatedFlag(t *testing.T) {
 	s := newHATestServer()
 	auth := loginAsAdmin(t, s)
@@ -69,17 +77,25 @@ func TestHandleHAFailover_SimulatedFlag(t *testing.T) {
 	req.Header.Set("Authorization", auth)
 	w := httptest.NewRecorder()
 	s.handleHAFailover(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("status=%d, want 501 (手动切主未接线必须显式失败); body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
-		Simulated bool `json:"simulated"`
+		Code    string `json:"code"`
+		Error   string `json:"error"`
+		Status  string `json:"status"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Simulated {
-		t.Fatal("simulated=true, want false (real HA status)")
+	if resp.Code != "ERR_NOT_IMPLEMENTED" {
+		t.Fatalf("code=%q, want ERR_NOT_IMPLEMENTED", resp.Code)
+	}
+	if resp.Status == "accepted" {
+		t.Fatal("501 响应不得带 status:accepted（假成功回归）")
+	}
+	if resp.Error == "" {
+		t.Fatal("error 为空：必须说明未接线原因")
 	}
 }
 

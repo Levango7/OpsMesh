@@ -3,6 +3,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -888,7 +889,7 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 				TenantId: tenantID,
 			})
 			if err != nil {
-				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task cancel failed"})
+				writeTaskSvcError(w, err)
 				return
 			}
 			paginate.WriteJSON(w, http.StatusOK, map[string]string{"message": "task cancelled"})
@@ -899,7 +900,7 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 				TenantId: tenantID,
 			})
 			if err != nil {
-				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task approve failed"})
+				writeTaskSvcError(w, err)
 				return
 			}
 			s.writeTaskResponse(w, resp)
@@ -910,7 +911,7 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 				TenantId: tenantID,
 			})
 			if err != nil {
-				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task reject failed"})
+				writeTaskSvcError(w, err)
 				return
 			}
 			s.writeTaskResponse(w, resp)
@@ -920,23 +921,20 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 				AgentId: tenantID, // 这里用 tenantID 作为 agentID，实际应该从请求中获取
 			})
 			if err != nil {
-				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task claim failed"})
+				writeTaskSvcError(w, err)
 				return
 			}
 			s.writeTaskResponse(w, resp)
 			return
 		case "retry":
-			// retry 实际上是取消并重新创建，这里先取消
-			_, err := s.taskServiceClient.CancelTask(ctx, &taskv1.CancelTaskRequest{
-				TaskId:   id,
-				TenantId: tenantID,
+			// 审计整改批次1：原实现只 CancelTask 后返回 200 "task cancelled for retry"，
+			// 但并没有重新创建任务 ⇒ 假成功。真正的重试需以原任务参数重建（且要处理
+			// claim_epoch/审批等语义），未接线前显式 501。
+			paginate.WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
+				"code":    "ERR_NOT_IMPLEMENTED",
+				"error":   "任务重试尚未接线：需要按原任务参数重建（当前仅支持死信队列的 retry 语义）",
+				"taskId":  id,
 			})
-			if err != nil {
-				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task cancel failed"})
-				return
-			}
-			// TODO: 真正的重试需要重新创建任务，暂返回成功
-			paginate.WriteJSON(w, http.StatusOK, map[string]string{"message": "task cancelled for retry"})
 			return
 		default:
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
@@ -951,7 +949,7 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 				TenantId: tenantID,
 			})
 			if err != nil {
-				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "dead letter purge failed"})
+				writeTaskSvcError(w, err)
 				return
 			}
 			paginate.WriteJSON(w, http.StatusOK, map[string]string{"message": "dead letter purged"})
@@ -964,8 +962,29 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 
 }
 
+// writeTaskSvcError 统一任务服务错误响应：存根/未装配 ⇒ 503，其余 ⇒ 502。
+// 审计整改批次1：原实现把存根错误也写成 500，且部分路径直接假成功。
+func writeTaskSvcError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrTaskServiceStub) {
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "task service not configured (TASK_SVC_GRPC_ADDR empty)",
+		})
+		return
+	}
+	paginate.WriteJSON(w, http.StatusBadGateway, map[string]string{
+		"error": "task service error: " + err.Error(),
+	})
+}
+
 // writeTaskResponse 将 taskv1.Task 写入 HTTP 响应（统一格式）。
+// 审计整改批次1：nil 防御——存根/异常实现可能返回 (nil,nil)，直接解引用会 panic。
 func (s *Server) writeTaskResponse(w http.ResponseWriter, resp *taskv1.Task) {
+	if resp == nil {
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "task service returned empty response (stub or upstream bug)",
+		})
+		return
+	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]any{
 		"taskId":           resp.TaskId,
 		"agentId":          resp.AgentId,
@@ -998,7 +1017,14 @@ func (s *Server) writeTaskResponse(w http.ResponseWriter, resp *taskv1.Task) {
 }
 
 // writeTaskResultResponse 将 taskv1.TaskResult 写入 HTTP 响应。
+// 审计整改批次1：nil 防御（同 writeTaskResponse）。
 func (s *Server) writeTaskResultResponse(w http.ResponseWriter, resp *taskv1.TaskResult) {
+	if resp == nil {
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "task result service returned empty response (stub or upstream bug)",
+		})
+		return
+	}
 	paginate.WriteJSON(w, http.StatusOK, map[string]any{
 		"taskId":     resp.TaskId,
 		"exitCode":   resp.ExitCode,

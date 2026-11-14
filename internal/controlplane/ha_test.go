@@ -84,7 +84,8 @@ func TestHandleHAInstances(t *testing.T) {
 	}
 }
 
-// TestHandleHAFailover 验证手动切换 leader 返回 200 + accepted。
+// TestHandleHAFailover 验证手动切换 leader 显式 501（审计整改批次1：
+// 原实现返回 200 accepted 但不做任何切换，属假成功）。
 func TestHandleHAFailover(t *testing.T) {
 	s := newHATestServer()
 	auth := loginAsAdmin(t, s)
@@ -94,17 +95,21 @@ func TestHandleHAFailover(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleHAFailover(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d, body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("status=%d, want 501; body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
+		Code   string `json:"code"`
 		Status string `json:"status"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Status != "accepted" {
-		t.Fatalf("status=%s, want accepted", resp.Status)
+	if resp.Code != "ERR_NOT_IMPLEMENTED" {
+		t.Fatalf("code=%q, want ERR_NOT_IMPLEMENTED", resp.Code)
+	}
+	if resp.Status == "accepted" {
+		t.Fatal("501 响应不得带 status:accepted（假成功回归）")
 	}
 }
 

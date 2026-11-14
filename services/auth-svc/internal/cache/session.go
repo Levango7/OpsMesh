@@ -17,6 +17,7 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"time"
@@ -144,11 +145,17 @@ func (s *SessionStore) Validate(sessionID string) (*Session, error) {
 	return &sess, nil
 }
 
+// ErrSessionStoreUnavailable 会话存储未启用/不可达。
+// 审计整改批次2：Revoke 系列此前在 Redis 未启用时静默返回 nil，调用方会误以为
+// 服务端会话已撤销（实际 access token 仍有效到自然过期）。改为显式 sentinel，
+// 调用方必须如实标注「服务端撤销不可用」。
+var ErrSessionStoreUnavailable = errors.New("session store unavailable (Redis disabled or unreachable)")
+
 // Revoke 撤销 Session（登出/封禁）。
-// Redis 不可用时 no-op（降级：JWT 自然过期兜底）。
+// Redis 未启用时返回 ErrSessionStoreUnavailable（不再静默 no-op）。
 func (s *SessionStore) Revoke(sessionID string) error {
 	if !s.enabled {
-		return nil
+		return ErrSessionStoreUnavailable
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
@@ -158,10 +165,10 @@ func (s *SessionStore) Revoke(sessionID string) error {
 // RevokeAllForUser 撤销某用户的所有 Session（改密/封禁用户）。
 //
 // 实现方式：维护 user→{sessionIDs} 反向索引（key=user_sessions:{userID}，Set 结构）。
-// 撤销时遍历 Set 逐个 Delete。Redis 不可用时 no-op。
+// 撤销时遍历 Set 逐个 Delete。Redis 未启用时返回 ErrSessionStoreUnavailable。
 func (s *SessionStore) RevokeAllForUser(userID string) error {
 	if !s.enabled {
-		return nil
+		return ErrSessionStoreUnavailable
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()

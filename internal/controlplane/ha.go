@@ -144,8 +144,11 @@ func (s *Server) handleHAInstances(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHAFailover 处理 POST /api/v1/ha/failover：手动切换 leader。
-// 真实状态：返回当前实例角色 + leader 租约信息。
-// 实际选主由 leader_lease 表续租驱动，手动切换需运维摘掉当前 leader Pod。
+//
+// 审计整改批次1：原实现返回 200 "accepted"+simulated:false 但**不做任何切换**，
+// 属假成功（运维会误以为已触发切主）。选主由 leader_lease 续租驱动、task-svc
+// 为权威源，"强制作废当前 leader 租约" 的跨实例操作尚未接线 ⇒ 显式 501，
+// 并给出可执行的替代路径（摘掉当前 leader 实例，租约自然过期后重新选主）。
 func (s *Server) handleHAFailover(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "ha:write"); !ok {
 		return
@@ -154,12 +157,11 @@ func (s *Server) handleHAFailover(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	current := s.haCurrentInstance()
-	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"status":    "accepted",
-		"message":   "failover triggered; new leader will be elected via leader_lease renewal",
-		"current":   current,
-		"simulated": false,
+	paginate.WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
+		"code":    "ERR_NOT_IMPLEMENTED",
+		"error":   "手动 leader 切换尚未接线：选主由 leader_lease 续租驱动（权威源 task-svc）",
+		"current": s.haCurrentInstance(),
+		"alternative": "摘除当前 leader 实例（滚动重启/缩容）后，租约过期将自动触发重新选主",
 	})
 }
 

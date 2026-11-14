@@ -53,7 +53,7 @@ type Config struct {
 
 // Load returns a Config populated from environment variables with defaults.
 func Load() *Config {
-	return &Config{
+	cfg := &Config{
 		GRPCPort:           getEnvInt("TASK_SVC_GRPC_PORT", 50052),
 		HTTPPort:           getEnvInt("TASK_SVC_HTTP_PORT", 8081),
 		StoreType:          getEnv("TASK_SVC_STORE_TYPE", "memory"),
@@ -67,11 +67,22 @@ func Load() *Config {
 		ShadowMode:         getEnv("TASK_SVC_SHADOW_MODE", "false") == "true",
 		HTTPGatewayEnabled: getEnv("TASK_SVC_HTTP_GATEWAY_ENABLED", "true") != "false",
 		JWTSecret:          getEnv("JWT_SECRET", ""),
-		LeaderMode:         getEnv("TASK_SVC_LEADER_MODE", "stub"),
+		LeaderMode:         getEnv("TASK_SVC_LEADER_MODE", ""),
 		LeaderLeaseName:    getEnv("TASK_SVC_LEADER_LEASE", "task-svc-leader"),
 		LeaderHolderID:     getEnv("TASK_SVC_LEADER_HOLDER", getEnv("HOSTNAME", "task-svc-single")),
 		LeaderTTL:          getEnvDuration("TASK_SVC_LEADER_TTL", 15*time.Second),
 	}
+	// 审计整改批次2：选主默认值不再无条件 stub——SQL 形态默认走 mysql 真选主，
+	// 避免多副本部署忘记设置 TASK_SVC_LEADER_MODE 时重复调度（stub 的 IsLeader 恒 true）。
+	// memory 形态（单副本/开发）保留 stub。显式设置优先。
+	if cfg.LeaderMode == "" {
+		if cfg.StoreType == "sql" {
+			cfg.LeaderMode = "mysql"
+		} else {
+			cfg.LeaderMode = "stub"
+		}
+	}
+	return cfg
 }
 
 func getEnv(key, def string) string {
