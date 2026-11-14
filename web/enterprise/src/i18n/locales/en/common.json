@@ -353,7 +353,8 @@
     "web_base": "Base: /enterprise/",
     "back": "Back",
     "menu": "Menu",
-    "load_failed": "Load failed"
+    "load_failed": "Load failed",
+    "tip": "Tips"
   },
   "alerts": {
     "root_cause": "Root Cause",

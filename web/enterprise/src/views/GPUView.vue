@@ -235,13 +235,27 @@
         </div>
       </div>
     </div>
+
+    <!-- 审计整改批次10：原生 confirm()/alert() 替换为统一弹窗 -->
+    <ConfirmModal
+      v-model="deleteConfirm.show"
+      :title="$t('common.confirm')"
+      :message="deleteConfirm.message"
+      @confirm="onDeleteConfirm"
+    />
+    <ConfirmModal
+      v-model="infoModal.show"
+      :title="$t('common.error')"
+      :message="infoModal.message"
+      info
+    />
   </PageShell>
 </template>
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useGpuStore } from '@/stores/gpu'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -249,6 +263,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import MetricsCard from '@/components/MetricsCard.vue'
 import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const store = useGpuStore()
 
@@ -346,15 +361,37 @@ async function confirmAddWorkload() {
   }
 }
 
-async function onDeleteWorkload(id) {
-  if (!confirm(t('gpu.deleteWorkloadConfirm'))) return
+// 审计整改批次10：删除确认/错误提示统一走弹窗
+const deleteConfirm = reactive({ show: false, kind: '', id: '', message: '' })
+const infoModal = reactive({ show: false, message: '' })
+
+function onDeleteWorkload(id) {
+  deleteConfirm.kind = 'workload'
+  deleteConfirm.id = id
+  deleteConfirm.message = t('gpu.deleteWorkloadConfirm')
+  deleteConfirm.show = true
+}
+
+function onDeleteModel(name) {
+  deleteConfirm.kind = 'model'
+  deleteConfirm.id = name
+  deleteConfirm.message = t('gpu.deleteModelConfirm')
+  deleteConfirm.show = true
+}
+
+async function onDeleteConfirm() {
+  const { kind, id } = deleteConfirm
   try {
-    const r = await store.removeWorkload(id)
-    if (r.s === 204 || (r.s >= 200 && r.s < 300)) {
-      await store.fetchWorkloads()
+    if (kind === 'workload') {
+      const r = await store.removeWorkload(id)
+      if (r.s === 204 || (r.s >= 200 && r.s < 300)) await store.fetchWorkloads()
+    } else if (kind === 'model') {
+      const r = await store.removeModel(id)
+      if (r.s === 204 || (r.s >= 200 && r.s < 300)) await store.fetchModels()
     }
   } catch (e) {
-    alert(e.j?.error || t('gpu.deleteWorkloadFail'))
+    infoModal.message = e.j?.error || (kind === 'model' ? t('gpu.deleteModelFail') : t('gpu.deleteWorkloadFail'))
+    infoModal.show = true
   }
 }
 
@@ -387,18 +424,6 @@ async function confirmPullModel() {
     pullMsg.value = e.j?.error || t('gpu.pullModelFail'); pullOk.value = false
   } finally {
     pulling.value = false
-  }
-}
-
-async function onDeleteModel(name) {
-  if (!confirm(t('gpu.deleteModelConfirm'))) return
-  try {
-    const r = await store.removeModel(name)
-    if (r.s === 204 || (r.s >= 200 && r.s < 300)) {
-      await store.fetchModels()
-    }
-  } catch (e) {
-    alert(e.j?.error || t('gpu.deleteModelFail'))
   }
 }
 

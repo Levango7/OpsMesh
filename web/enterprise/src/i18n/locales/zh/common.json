@@ -353,7 +353,8 @@
     "web_base": "Base: /enterprise/",
     "back": "返回",
     "menu": "菜单",
-    "load_failed": "加载失败"
+    "load_failed": "加载失败",
+    "tip": "提示"
   },
   "alerts": {
     "root_cause": "根因",

@@ -116,18 +116,33 @@
         </div>
       </div>
     </div>
+
+    <!-- 审计整改批次10：原生 confirm()/alert() 替换为统一弹窗 -->
+    <ConfirmModal
+      v-model="actionConfirm.show"
+      :title="$t('common.confirm')"
+      :message="actionConfirm.message"
+      @confirm="onActionConfirm"
+    />
+    <ConfirmModal
+      v-model="infoModal.show"
+      :title="$t('common.tip')"
+      :message="infoModal.message"
+      info
+    />
   </PageShell>
 </template>
 
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRunbookStore } from '@/stores/runbook'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Button from "@/components/ui/Button.vue"
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const store = useRunbookStore()
 const editorContent = ref('')
@@ -193,36 +208,56 @@ async function confirmAdd() {
   }
 }
 
-async function onDelete(id) {
-  if (!confirm(t('runbook.deleteConfirm'))) return
-  try {
-    const r = await store.removeRunbook(id)
-    if (r.s === 204 || (r.s >= 200 && r.s < 300)) {
-      await store.fetchRunbooks()
-      if (store.currentRunbookId === id) {
-        store.currentRunbookId = ''
-        store.executions = []
-      }
-    }
-  } catch (e) {
-    alert(e.j?.error || t('runbook.deleteFail'))
-  }
+// 审计整改批次10：删除/执行确认与结果提示统一走弹窗
+const actionConfirm = reactive({ show: false, kind: '', id: '', message: '' })
+const infoModal = reactive({ show: false, message: '' })
+
+function onDelete(id) {
+  actionConfirm.kind = 'delete'
+  actionConfirm.id = id
+  actionConfirm.message = t('runbook.deleteConfirm')
+  actionConfirm.show = true
 }
 
-async function onExecute(id) {
-  if (!confirm(t('runbook.executeConfirm'))) return
+function onExecute(id) {
+  actionConfirm.kind = 'execute'
+  actionConfirm.id = id
+  actionConfirm.message = t('runbook.executeConfirm')
+  actionConfirm.show = true
+}
+
+async function onActionConfirm() {
+  const { kind, id } = actionConfirm
+  if (kind === 'delete') {
+    try {
+      const r = await store.removeRunbook(id)
+      if (r.s === 204 || (r.s >= 200 && r.s < 300)) {
+        await store.fetchRunbooks()
+        if (store.currentRunbookId === id) {
+          store.currentRunbookId = ''
+          store.executions = []
+        }
+      }
+    } catch (e) {
+      infoModal.message = e.j?.error || t('runbook.deleteFail')
+      infoModal.show = true
+    }
+    return
+  }
+  // execute
   try {
     const r = await store.runRunbook(id)
     if (r.s >= 200 && r.s < 300) {
-      alert(t('runbook.executeSuccess'))
-      if (store.currentRunbookId === id) {
-        await store.fetchExecutions(id)
-      }
+      infoModal.message = t('runbook.executeSuccess')
+      infoModal.show = true
+      if (store.currentRunbookId === id) await store.fetchExecutions(id)
     } else {
-      alert(r.j?.error || t('runbook.executeFail'))
+      infoModal.message = r.j?.error || t('runbook.executeFail')
+      infoModal.show = true
     }
   } catch (e) {
-    alert(e.j?.error || t('runbook.executeFail'))
+    infoModal.message = e.j?.error || t('runbook.executeFail')
+    infoModal.show = true
   }
 }
 
@@ -238,7 +273,8 @@ async function viewLogs(executionId) {
 
 async function saveEditor() {
   if (!store.currentRunbookId || !store.currentRunbook) {
-    alert(t('runbook.selectRunbookFirst'))
+    infoModal.message = t('runbook.selectRunbookFirst')
+    infoModal.show = true
     return
   }
   // 此前是 alert(t('runbook.saved')) 假动作——编辑器内容从未落库（§5.10 取证的
@@ -247,9 +283,11 @@ async function saveEditor() {
     const rb = store.currentRunbook
     await store.editRunbook(store.currentRunbookId, rb.name, rb.description, editorContent.value, rb.triggers || [])
     await store.fetchRunbooks()
-    alert(t('runbook.saved'))
+    infoModal.message = t('runbook.saved')
+    infoModal.show = true
   } catch (e) {
-    alert(e.j?.error || t('runbook.saveFail'))
+    infoModal.message = e.j?.error || t('runbook.saveFail')
+    infoModal.show = true
   }
 }
 

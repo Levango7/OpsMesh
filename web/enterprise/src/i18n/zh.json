@@ -278,7 +278,8 @@
     "api_base": "API: /api/v1",
     "web_base": "Base: /enterprise/",
     "back": "返回",
-    "menu": "菜单"
+    "menu": "菜单",
+    "tip": "提示"
   },
   "devices": {
     "title": "设备纳管",

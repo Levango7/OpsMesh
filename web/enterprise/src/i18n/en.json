@@ -278,7 +278,8 @@
     "api_base": "API: /api/v1",
     "web_base": "Base: /enterprise/",
     "back": "Back",
-    "menu": "Menu"
+    "menu": "Menu",
+    "tip": "Tips"
   },
   "devices": {
     "title": "Devices",
