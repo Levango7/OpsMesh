@@ -703,6 +703,16 @@ onUnmounted(() => {
   border: 1px solid var(--color-hairline, #23252a);
   font-size: 12px;
 }
+/* 审计整改批次5：固定列宽单元格补省略号策略——长用户名/PID/i18n 文案
+   在窄屏下会顶破列（此前无 overflow/ellipsis）。 */
+.proc-pid,
+.proc-cpu,
+.proc-mem,
+.proc-user {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .proc-pid {
   width: 50px;
   color: var(--color-ink-tertiary, #62666d);
@@ -710,6 +720,10 @@ onUnmounted(() => {
 }
 .proc-name {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--color-ink, #f7f8f8);
   font-weight: 500;
 }

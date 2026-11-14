@@ -259,7 +259,8 @@ onMounted(async () => {
 .flowbar label { margin: 0; }
 
 .canvas {
-  display: block; width: 100%; height: 560px;
+  /* 审计整改批次5：560px 固定高在手机上占满整屏；改为视口感知高度。 */
+  display: block; width: 100%; height: min(560px, 70vh); min-height: 320px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow);
 }

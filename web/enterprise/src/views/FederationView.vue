@@ -347,7 +347,10 @@ onMounted(() => {
   border-radius: var(--radius-sm);
   font-size: 13px;
   min-width: 240px;
+  max-width: 100%;
+  box-sizing: border-box;
 }
+@media (max-width: 640px) { .search-input { min-width: 0; width: 100%; } }
 
 .peer-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .peer-chip {

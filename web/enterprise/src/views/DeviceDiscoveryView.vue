@@ -187,5 +187,6 @@ async function provisionDiscovered(row) {
 </script>
 
 <style scoped>
-.cidr-input { width: 260px; }
+.cidr-input { width: 260px; max-width: 100%; }
+@media (max-width: 640px) { .cidr-input { width: 100%; } }
 </style>

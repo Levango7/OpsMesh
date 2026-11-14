@@ -1,5 +1,5 @@
 <template>
-  <div class="dt-wrap">
+  <div class="dt-wrap" :class="{ 'dt-wrap--scroll': scrollable }">
     <table class="data-table">
       <thead>
         <tr>
@@ -67,7 +67,10 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   // 外部受控排序：传入则使用外部值，否则使用内部状态
   sortKey: { type: String, default: '' },
-  sortOrder: { type: String, default: 'asc' }   // 'asc' | 'desc'
+  sortOrder: { type: String, default: 'asc' },  // 'asc' | 'desc'
+  // 审计整改批次6：可滚动 + 表头吸顶（长列表）。开启后容器限高 65vh，
+  // 表头 sticky 钉在容器顶部；未开启时行为与旧版完全一致。
+  scrollable: { type: Boolean, default: false }
 })
 const emit = defineEmits(['row-click', 'sort-change'])
 
@@ -167,6 +170,11 @@ function formatCell(row, col) {
 
 <style scoped>
 .dt-wrap { overflow-x: auto; }
+/* 审计整改批次6：长列表滚动容器 + 表头吸顶 */
+.dt-wrap--scroll { max-height: 65vh; overflow-y: auto; }
+.dt-wrap--scroll .data-table thead th {
+  position: sticky; top: 0; z-index: 2;
+}
 .data-table {
   border-collapse: separate; border-spacing: 0; width: 100%;
   margin-top: 8px; font-size: 13px;

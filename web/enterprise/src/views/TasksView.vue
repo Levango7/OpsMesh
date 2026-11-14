@@ -72,7 +72,7 @@
         </Button>
       </div>
 
-      <DataTable data-testid="tasks-table" :columns="columns" :rows="store.list" row-key="taskID" :loading="store.loading" :empty-text="$t('tasks.empty')">
+      <DataTable data-testid="tasks-table" :columns="columns" :rows="store.list" row-key="taskID" :loading="store.loading" :empty-text="$t('tasks.empty')" scrollable>
         <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
         <template #cell-command="{ value }"><code>{{ truncateCmd(value) }}</code></template>
         <template #cell-status="{ value }">
