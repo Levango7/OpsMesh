@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -304,8 +305,16 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		out = append(out, domain.TaskFromProto(t))
 	}
 	// 修复 3：分页（向后兼容：不传 page 返回全量）。
+	// 审计整改批次26：全量模式加硬上限 2000，防单请求拉全表；
+	// 截断时用 X-Truncated / X-Total-Count 响应头如实告知。
+	const maxUnpagedTasks = 2000
 	page, pageSize := paginate.ParsePagination(r.URL.Query())
 	if page == 0 {
+		if len(out) > maxUnpagedTasks {
+			w.Header().Set("X-Truncated", "true")
+			w.Header().Set("X-Total-Count", strconv.Itoa(len(out)))
+			out = out[:maxUnpagedTasks]
+		}
 		paginate.WriteJSON(w, http.StatusOK, out)
 		return
 	}

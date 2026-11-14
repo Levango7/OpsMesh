@@ -1001,7 +1001,8 @@ func (s *Server) handleTaskProxyRoot(w http.ResponseWriter, r *http.Request, ctx
 			TenantId: tenantID,
 			Status:   q.Get("status"),
 			AgentId:  q.Get("agent_id"),
-			Limit:    100000, // 与本地 "不传分页返回全量" 兼容
+			// 审计整改批次26：原 100000 等于允许单请求拉全表；限到 2000 并如实标记截断。
+			Limit: 2000,
 		})
 		if err != nil {
 			writeTaskSvcError(w, err)
@@ -1013,6 +1014,9 @@ func (s *Server) handleTaskProxyRoot(w http.ResponseWriter, r *http.Request, ctx
 				continue
 			}
 			out = append(out, taskToAPIMap(t, false))
+		}
+		if len(out) >= 2000 {
+			w.Header().Set("X-Truncated", "true")
 		}
 		paginate.WriteJSON(w, http.StatusOK, out)
 		return
