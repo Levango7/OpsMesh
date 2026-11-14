@@ -72,7 +72,7 @@
         </Button>
       </div>
 
-      <DataTable data-testid="tasks-table" :columns="columns" :rows="store.list" row-key="taskID" :loading="store.loading" :empty-text="$t('tasks.empty')" scrollable>
+      <DataTable data-testid="tasks-table" :columns="columns" :rows="pagedList" row-key="taskID" :loading="store.loading" :empty-text="$t('tasks.empty')" scrollable>
         <template #cell-taskID="{ value }"><code>{{ value }}</code></template>
         <template #cell-command="{ value }"><code>{{ truncateCmd(value) }}</code></template>
         <template #cell-status="{ value }">
@@ -87,6 +87,15 @@
           <span v-else class="muted">—</span>
         </template>
       </DataTable>
+      <!-- 审计整改批次18：客户端分页（后端列表返回全量时的长列表导航） -->
+      <Pagination
+        v-if="store.list.length > pageSize"
+        :page="page"
+        :page-size="pagedList.length"
+        :limit="pageSize"
+        @prev="page = Math.max(1, page - 1)"
+        @next="page = page + 1"
+      />
     </div>
 
     <!-- 待审批任务段 -->
@@ -134,7 +143,7 @@
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useTaskStore } from '@/stores/task'
 import { useAuthStore } from '@/stores/auth'
 import { getAgents } from '@/api/device'
@@ -144,12 +153,26 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
 import { Button } from '@/components/ui'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import Pagination from '@/components/Pagination.vue'
 
 const store = useTaskStore()
 const authStore = useAuthStore()
 const agents = ref([])
 const form = ref({ agentID: '', type: 'shell', command: '', path: '', content: '' })
 const msg = ref('')
+
+// 审计整改批次18：客户端分页状态（后端返回全量列表时长列表可导航）
+const page = ref(1)
+const pageSize = 20
+const maxPage = computed(() => Math.max(1, Math.ceil(store.list.length / pageSize)))
+// 列表收缩（筛选/刷新）时把页码夹回合法范围（watch 中做副作用，computed 保持纯函数）
+watch(maxPage, (m) => {
+  if (page.value > m) page.value = m
+})
+const pagedList = computed(() => {
+  const start = (page.value - 1) * pageSize
+  return store.list.slice(start, start + pageSize)
+})
 const msgOk = ref(false)
 const submitting = ref(false)
 
