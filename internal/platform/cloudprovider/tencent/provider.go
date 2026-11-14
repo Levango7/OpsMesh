@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/logx"
@@ -450,14 +451,112 @@ func (p *TencentProvider) DiscoverClusters(ctx context.Context, creds types.Cred
 	return resources, nil
 }
 
+// CreateResource 创建云资源（审计整改批次14：接线真实 CVM RunInstances）。
+//
+// 仅支持 resourceType=instance（CVM 云服务器）：
+// Properties 必填 imageId、instanceType、zone；可选 vpcId、subnetId、
+// internetMaxBandwidthOut（默认 0：不分配公网 IP）。
+// 其他资源类型返回明确的不支持错误（不再统一 ErrNotImplemented）。
 func (p *TencentProvider) CreateResource(ctx context.Context, creds types.Credentials, req types.CreateResourceRequest) (types.Resource, error) {
-	return types.Resource{}, types.ErrNotImplemented
+	if req.ResourceType != "" && req.ResourceType != "instance" {
+		return types.Resource{}, fmt.Errorf("tencent CreateResource: unsupported resourceType %q (only instance)", req.ResourceType)
+	}
+	imageID := req.Properties["imageId"]
+	instanceType := req.Properties["instanceType"]
+	zone := req.Properties["zone"]
+	if imageID == "" || instanceType == "" || zone == "" {
+		return types.Resource{}, fmt.Errorf("tencent CreateResource: properties imageId/instanceType/zone are required")
+	}
+	region := req.Region
+	if region == "" {
+		region = creds.Region
+	}
+	if region == "" {
+		region = "ap-guangzhou"
+	}
+
+	body := map[string]interface{}{
+		"ImageId":            imageID,
+		"InstanceType":       instanceType,
+		"Placement":          map[string]interface{}{"Zone": zone},
+		"InstanceChargeType": "POSTPAID_BY_HOUR",
+		"InstanceCount":      1,
+		"InstanceName":       req.Name,
+	}
+	if vpcID := req.Properties["vpcId"]; vpcID != "" {
+		vpc := map[string]interface{}{"VpcId": vpcID}
+		if subnetID := req.Properties["subnetId"]; subnetID != "" {
+			vpc["SubnetId"] = subnetID
+		}
+		body["VirtualPrivateCloud"] = vpc
+	}
+	if bw := req.Properties["internetMaxBandwidthOut"]; bw != "" {
+		if n, err := strconv.Atoi(bw); err == nil && n > 0 {
+			body["InternetAccessible"] = map[string]interface{}{"InternetMaxBandwidthOut": n, "PublicIpAssigned": true}
+		}
+	}
+	// 标签：腾讯云 RunInstances 支持 TagSpecification（资源类型 instance）。
+	if len(req.Tags) > 0 {
+		tagList := make([]map[string]interface{}, 0, len(req.Tags))
+		for k, v := range req.Tags {
+			tagList = append(tagList, map[string]interface{}{"Key": k, "Value": v})
+		}
+		body["TagSpecification"] = []map[string]interface{}{{"ResourceType": "instance", "Tags": tagList}}
+	}
+
+	client := newTencentClient(creds)
+	result, err := client.call(ctx, "cvm.tencentcloudapi.com", "cvm", "RunInstances", "2017-03-12", region, body)
+	if err != nil {
+		return types.Resource{}, fmt.Errorf("tencent RunInstances failed: %w", err)
+	}
+	data := unwrapResponse(result)
+	instanceID := ""
+	if ids, ok := data["InstanceIdSet"].([]interface{}); ok && len(ids) > 0 {
+		if s, ok := ids[0].(string); ok {
+			instanceID = s
+		}
+	}
+	if instanceID == "" {
+		return types.Resource{}, fmt.Errorf("tencent RunInstances: response missing InstanceIdSet")
+	}
+	logx.Info(ctx, "tencent instance created", "instanceID", instanceID, "region", region)
+	return types.Resource{
+		ID:           instanceID,
+		Provider:     types.ProviderTypeTencent,
+		Region:       region,
+		ResourceType: "instance",
+		ResourceID:   instanceID,
+		ResourceName: req.Name,
+		Status:       "creating",
+	}, nil
 }
 
+// DeleteResource 销毁云资源（审计整改批次14：接线 CVM TerminateInstances）。
+// resourceID 为 CVM InstanceId（ins-xxx）。实际计费停止依赖云侧回收策略。
 func (p *TencentProvider) DeleteResource(ctx context.Context, creds types.Credentials, resourceID string) error {
-	return types.ErrNotImplemented
+	if resourceID == "" {
+		return fmt.Errorf("tencent DeleteResource: resourceID is required")
+	}
+	region := creds.Region
+	if region == "" {
+		region = "ap-guangzhou"
+	}
+	client := newTencentClient(creds)
+	if _, err := client.call(ctx, "cvm.tencentcloudapi.com", "cvm", "TerminateInstances", "2017-03-12", region, map[string]interface{}{
+		"InstanceIds": []string{resourceID},
+	}); err != nil {
+		return fmt.Errorf("tencent TerminateInstances %s failed: %w", resourceID, err)
+	}
+	logx.Info(ctx, "tencent instance terminated", "instanceID", resourceID, "region", region)
+	return nil
 }
 
+// SyncTags 同步资源标签。
+//
+// 腾讯云标签走独立 Tag 服务（tag.tencentcloudapi.com），其 ResourceList 需
+// QCS 全限定名（qcs::cvm:<region>:uin/<UIN>:instance/<id>），而我们的
+// Credentials 不含 UIN（账号 ID）。为避免拼接出错误标识导致误改他账号资源，
+// 此处返回带原因的明确错误；待凭据模型补充 UIN 后再接线。
 func (p *TencentProvider) SyncTags(ctx context.Context, creds types.Credentials, resourceID string, tags map[string]string) error {
-	return types.ErrNotImplemented
+	return fmt.Errorf("tencent SyncTags: requires account UIN for QCS resource identifier (qcs::cvm:<region>:uin/<UIN>:instance/<id>); credentials do not carry UIN — unsupported for now")
 }
