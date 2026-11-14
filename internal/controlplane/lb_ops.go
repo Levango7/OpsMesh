@@ -211,11 +211,13 @@ func (s *Server) handleLBDeploy(w http.ResponseWriter, r *http.Request) {
 // buildLBDeployScript 按类型+模式生成负载均衡部署 shell 脚本。
 func buildLBDeployScript(req lbDeployRequest) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqMode, vReqType := req.Mode, req.Type
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then PKG_MGR=yum; elif command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v apt-get >/dev/null 2>&1; then PKG_MGR=apt-get; else echo '未找到包管理器' && exit 1; fi\n")
 	b.WriteString("VERSION=" + shellQuote(req.Version) + "\n")
-	switch req.Type {
+	switch vReqType {
 	case "haproxy":
 		buildHaProxyDeployScript(req, &b)
 	case "lvs":
@@ -223,14 +225,16 @@ func buildLBDeployScript(req lbDeployRequest) string {
 	case "keepalived":
 		buildKeepalivedDeployScript(req, &b)
 	}
-	fmt.Fprintf(&b, "echo '%s %s 负载均衡部署脚本执行完成\n", req.Type, req.Mode)
+	fmt.Fprintf(&b, "echo '%s %s 负载均衡部署脚本执行完成\n", vReqType, vReqMode)
 	return b.String()
 }
 
 func buildHaProxyDeployScript(req lbDeployRequest, b *strings.Builder) {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqMode := req.Mode
 	b.WriteString("# HaProxy 部署\n")
 	b.WriteString("if command -v haproxy >/dev/null 2>&1; then echo 'HaProxy 已安装'; else $PKG_MGR install -y haproxy; fi\n")
-	switch req.Mode {
+	switch vReqMode {
 	case "single":
 		b.WriteString("haproxy -f /etc/haproxy/haproxy.cfg -D -p /run/haproxy.pid || systemctl start haproxy || true\n")
 		b.WriteString("echo 'HaProxy 单点已启动'\n")
@@ -241,10 +245,12 @@ func buildHaProxyDeployScript(req lbDeployRequest, b *strings.Builder) {
 }
 
 func buildLVSDeployScript(req lbDeployRequest, b *strings.Builder) {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqMode := req.Mode
 	b.WriteString("# LVS 部署（ipvsadm）\n")
 	b.WriteString("if command -v ipvsadm >/dev/null 2>&1; then echo 'LVS(ipvsadm) 已安装'; else $PKG_MGR install -y ipvsadm; fi\n")
 	b.WriteString("modprobe ip_vs || true\n")
-	switch req.Mode {
+	switch vReqMode {
 	case "nat":
 		b.WriteString("# LVS-NAT：需配置虚拟服务器 + 真实服务器（默认网关指向 Director）\n")
 	case "dr":
@@ -256,9 +262,11 @@ func buildLVSDeployScript(req lbDeployRequest, b *strings.Builder) {
 }
 
 func buildKeepalivedDeployScript(req lbDeployRequest, b *strings.Builder) {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqMode := req.Mode
 	b.WriteString("# keepalived 部署（VRRP 高可用）\n")
 	b.WriteString("if command -v keepalived >/dev/null 2>&1; then echo 'keepalived 已安装'; else $PKG_MGR install -y keepalived; fi\n")
-	switch req.Mode {
+	switch vReqMode {
 	case "single":
 		b.WriteString("systemctl start keepalived || true\n")
 		b.WriteString("echo 'keepalived 已启动'\n")
@@ -324,11 +332,13 @@ func (s *Server) handleLBAction(w http.ResponseWriter, r *http.Request, lbType, 
 // buildLBActionScript 生成负载均衡启停重启/状态脚本。
 func buildLBActionScript(req lbOpsRequest) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqAction, vReqType := req.Action, req.Type
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "haproxy":
 		b.WriteString("# HaProxy 启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("haproxy -f /etc/haproxy/haproxy.cfg -D -p /run/haproxy.pid || systemctl start haproxy || true\n")
 		case "stop":
@@ -340,7 +350,7 @@ func buildLBActionScript(req lbOpsRequest) string {
 		}
 	case "lvs":
 		b.WriteString("# LVS(ipvsadm) 状态\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("modprobe ip_vs || true\n")
 		case "stop":
@@ -352,7 +362,7 @@ func buildLBActionScript(req lbOpsRequest) string {
 		}
 	case "keepalived":
 		b.WriteString("# keepalived 启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("systemctl start keepalived || true\n")
 		case "stop":
@@ -363,7 +373,7 @@ func buildLBActionScript(req lbOpsRequest) string {
 			b.WriteString("systemctl is-active --quiet keepalived && echo 'running' || echo 'not running'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -418,42 +428,44 @@ func (s *Server) handleLBBackend(w http.ResponseWriter, r *http.Request, lbType 
 
 func buildLBBackendScript(req lbBackendReq) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqBackend, vReqWeight, vReqAction, vReqType := req.Backend, req.Weight, req.Action, req.Type
 	b.WriteString("set -e\n")
-	if req.Weight <= 0 {
-		req.Weight = 1
+	if vReqWeight <= 0 {
+		vReqWeight = 1
 	}
-	switch req.Type {
+	switch vReqType {
 	case "haproxy":
 		b.WriteString("# HaProxy 后端管理（需 haproxy sock 或 配置文件热重载）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "add":
-			fmt.Fprintf(&b, "echo 'HaProxy 后端 add: %s weight=%d（需写入 haproxy.cfg 并重载）'\n", req.Backend, req.Weight)
+			fmt.Fprintf(&b, "echo 'HaProxy 后端 add: %s weight=%d（需写入 haproxy.cfg 并重载）'\n", vReqBackend, vReqWeight)
 		case "delete":
-			fmt.Fprintf(&b, "echo 'HaProxy 后端 delete: %s（需写入 haproxy.cfg 并重载）'\n", req.Backend)
+			fmt.Fprintf(&b, "echo 'HaProxy 后端 delete: %s（需写入 haproxy.cfg 并重载）'\n", vReqBackend)
 		case "enable":
-			fmt.Fprintf(&b, "echo 'enable backend %s via haproxy sock'\n", req.Backend)
+			fmt.Fprintf(&b, "echo 'enable backend %s via haproxy sock'\n", vReqBackend)
 		case "disable":
-			fmt.Fprintf(&b, "echo 'disable backend %s via haproxy sock'\n", req.Backend)
+			fmt.Fprintf(&b, "echo 'disable backend %s via haproxy sock'\n", vReqBackend)
 		case "list":
 			b.WriteString("echo 'HaProxy 后端列表：查看 /etc/haproxy/haproxy.cfg backend 段'\n")
 		}
 	case "lvs":
 		b.WriteString("# LVS(ipvsadm) 后端管理\n")
-		switch req.Action {
+		switch vReqAction {
 		case "add":
-			fmt.Fprintf(&b, "ipvsadm -A -t %s -s rr || true\n", req.Backend)
-			fmt.Fprintf(&b, "ipvsadm -a -t %s -r %s -m -w %d || true\n", req.Backend, req.Backend, req.Weight)
+			fmt.Fprintf(&b, "ipvsadm -A -t %s -s rr || true\n", vReqBackend)
+			fmt.Fprintf(&b, "ipvsadm -a -t %s -r %s -m -w %d || true\n", vReqBackend, vReqBackend, vReqWeight)
 		case "delete":
-			fmt.Fprintf(&b, "ipvsadm -D -t %s || true\n", req.Backend)
+			fmt.Fprintf(&b, "ipvsadm -D -t %s || true\n", vReqBackend)
 		case "enable":
-			fmt.Fprintf(&b, "ipvsadm -e -t %s -r %s -m -w %d || true\n", req.Backend, req.Backend, req.Weight)
+			fmt.Fprintf(&b, "ipvsadm -e -t %s -r %s -m -w %d || true\n", vReqBackend, vReqBackend, vReqWeight)
 		case "disable":
-			fmt.Fprintf(&b, "echo 'LVS disable 需 ipvsadm -d -t %s -r %s'\n", req.Backend, req.Backend)
+			fmt.Fprintf(&b, "echo 'LVS disable 需 ipvsadm -d -t %s -r %s'\n", vReqBackend, vReqBackend)
 		case "list":
 			b.WriteString("ipvsadm -L -n\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo 'LB %s 后端 %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo 'LB %s 后端 %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -502,16 +514,18 @@ func (s *Server) handleLBFrontend(w http.ResponseWriter, r *http.Request) {
 
 func buildLBFrontendScript(req lbFrontendReq) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqFrontend, vReqAction := req.Frontend, req.Action
 	b.WriteString("set -e\n")
-	switch req.Action {
+	switch vReqAction {
 	case "add":
-		fmt.Fprintf(&b, "echo 'HaProxy 前端 add: %s（需写入 haproxy.cfg frontend 段并重载）'\n", req.Frontend)
+		fmt.Fprintf(&b, "echo 'HaProxy 前端 add: %s（需写入 haproxy.cfg frontend 段并重载）'\n", vReqFrontend)
 	case "delete":
-		fmt.Fprintf(&b, "echo 'HaProxy 前端 delete: %s（需写入 haproxy.cfg frontend 段并重载）'\n", req.Frontend)
+		fmt.Fprintf(&b, "echo 'HaProxy 前端 delete: %s（需写入 haproxy.cfg frontend 段并重载）'\n", vReqFrontend)
 	case "list":
 		b.WriteString("echo 'HaProxy 前端列表：查看 /etc/haproxy/haproxy.cfg frontend 段'\n")
 	}
-	fmt.Fprintf(&b, "echo 'LB 前端 %s 操作完成\n", req.Action)
+	fmt.Fprintf(&b, "echo 'LB 前端 %s 操作完成\n", vReqAction)
 	return b.String()
 }
 

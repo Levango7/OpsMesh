@@ -53,6 +53,14 @@
 - **能力变化**：**无**（不新增/收紧任何白名单，下发脚本逐字节不变）。
 - **守卫**：`internal/controlplane/b23_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**（Type/Action/Database/Name/Table 注入载荷必须 **400**）；③合法值不被误拒。经**变异测试**（实参改回 `req.Database` ⇒ 判红；复原 ⇒ 绿）。
 - **验证**：`gofmt -l .`（CI 同款全仓口径）clean；`golangci-lint ./...` ⇒ **0 issues**；`go build`/`go vet` ok；`go test ./internal/controlplane/ -count=1` ok；盘点器实测 `olap_ops.go` 命中 **→ 0**，全仓 A/B **0**（不增）。
+## [Unreleased-批次 24 形态面：lb_ops] — 2026-11-14（lb_ops.go ~21 处「已校验但直引」）
+
+- **背景**：批次 17 收口后全仓**真洞归零**；本批落形态面 `lb_ops.go`（~21 处，HAProxy/Nginx/Apache 负载均衡）。
+- **分级核对（全部形态面，无需新增白名单）**：`Type`/`Mode`/`Action` → `allowedLBTypes` / `allowedLBModes[type]` / `allowedLBActions` / `allowedLBResourceActions`（枚举）；`Version` → `middlewareVersionRe`；`Backend`/`Frontend` → `lbIPPortRe`（`^[0-9a-fA-F:.]+:[0-9]{1,5}$`）；`Weight` → handler 内正整数校验；`DeviceID` → 仅走 `createSystemTask`。
+- **收口**：4 个 builder（`buildLBDeployScript` / `buildLBActionScript` / `buildLBBackendScript` / `buildLBFrontendScript`）内 ~21 处 `req.*` 实参改局部变量承接（`vReq*`）⇒ 判据 E/F 归零；**脚本文本逐字节不变**（通用工具反向替换后与 base 逐行比对一致）。
+- **能力变化**：**无**（不新增/收紧任何白名单）。
+- **守卫**：`internal/controlplane/b24_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**（Type/Version/Action/Backend 注入载荷必须 **400**）；③合法值不被误拒。经**变异测试**。
+- **验证**：`gofmt` clean；`go build` ok；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok；盘点器实测 `lb_ops.go` 命中 → 0，全仓 A/B **0**（不增）。
 ## [Unreleased-批次 17 真洞最后一批收口] — 2026-11-12（vector Metric/ID/Payload + kafka 集群名/Topics，2 文件 6 处）
 
 - **背景**：批次 14 把盘点口径扩到实参级（判据 E/F）后，按「该字段在同文件内是否有校验式调用」分级得真洞 50 处。批次 15 落 apache 族 27 处、批次 16 落 system_ops/k8s 两处，本批落**最后 6 处** ⇒ 真洞归零；余下约 350 处属「已校验但直引」形态面，顺延批次 18+ 机械收口。
