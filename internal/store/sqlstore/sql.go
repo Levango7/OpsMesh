@@ -1214,3 +1214,61 @@ func (s *SQLStore) GetActiveLifecycleJob(ctx context.Context, clusterID, kind st
 	}
 	return &job, nil
 }
+
+// ============================================================================
+// 控制面实例心跳（审计整改批次16：HA 多实例枚举）
+// ============================================================================
+
+// ControlplaneInstance 控制面实例心跳记录。
+type ControlplaneInstance struct {
+	InstanceID    string    `json:"instanceId"`
+	Hostname      string    `json:"hostname"`
+	HTTPPort      int       `json:"httpPort"`
+	GRPCPort      int       `json:"grpcPort"`
+	Role          string    `json:"role"` // leader/follower
+	Version       string    `json:"version"`
+	StartedAt     time.Time `json:"startedAt"`
+	LastHeartbeat time.Time `json:"lastHeartbeat"`
+}
+
+// UpsertControlplaneInstance 写入/刷新实例心跳（role 随选主结果变化）。
+func (s *SQLStore) UpsertControlplaneInstance(ctx context.Context, inst *ControlplaneInstance) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO controlplane_instances (instance_id, hostname, http_port, grpc_port, role, version, started_at, last_heartbeat)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+		ON DUPLICATE KEY UPDATE
+			hostname=VALUES(hostname), http_port=VALUES(http_port), grpc_port=VALUES(grpc_port),
+			role=VALUES(role), version=VALUES(version), last_heartbeat=NOW()
+	`, inst.InstanceID, inst.Hostname, inst.HTTPPort, inst.GRPCPort, inst.Role, inst.Version, inst.StartedAt)
+	return err
+}
+
+// ListControlplaneInstances 列出 recentSince 之后有心跳的实例（含角色）。
+func (s *SQLStore) ListControlplaneInstances(ctx context.Context, recentSince time.Time) ([]*ControlplaneInstance, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT instance_id, hostname, http_port, grpc_port, role, version, started_at, last_heartbeat
+		FROM controlplane_instances WHERE last_heartbeat >= ? ORDER BY last_heartbeat DESC
+	`, recentSince)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*ControlplaneInstance
+	for rows.Next() {
+		var inst ControlplaneInstance
+		if err := rows.Scan(&inst.InstanceID, &inst.Hostname, &inst.HTTPPort, &inst.GRPCPort, &inst.Role, &inst.Version, &inst.StartedAt, &inst.LastHeartbeat); err != nil {
+			return nil, err
+		}
+		out = append(out, &inst)
+	}
+	return out, rows.Err()
+}
+
+// DeleteStaleControlplaneInstances 清理过期心跳（心跳循环顺带调用，防表膨胀）。
+func (s *SQLStore) DeleteStaleControlplaneInstances(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM controlplane_instances WHERE last_heartbeat < ?`, before)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

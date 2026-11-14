@@ -231,6 +231,10 @@ type Server struct {
 	scheduleMgr    *cron.Manager
 	approvalEngine *approval.Engine
 
+	// abacPolicies ABAC 策略镜像（审计整改批次17：服务端评估用；policy-create 时同步登记）。
+	abacMu       sync.RWMutex
+	abacPolicies []abacPolicy
+
 	// M6 集成：网络拓扑缓存。
 	// networkTopologyCache 持有最近一次探测的拓扑数据 + 5 分钟过期时间，
 	// 由 handleNetworkTopology 在 ?refresh=true 时刷新，handleNetworkTopologyCache 读取。
@@ -618,6 +622,43 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// 此前无任何鉴权闸，匿名即可触发；本文件只做接线，升级/回滚/轮换的占位语义另行裁决。
 	if s.k8sLifecycleHandler != nil { // 防御：构造恒非空，此守卫与路由注册处对齐
 		s.k8sLifecycleHandler.Authorize = s.subsystemAuthorize
+		// 审计整改批次15：升级审批真实接入（替换 precheck 中的 TODO 占位）。
+		// 约定：审批请求 triggerType=k8s_upgrade、target=clusterId、detail=targetVersion。
+		// requestID 非空时精确校验该请求；否则在租户已批准请求中按三元组匹配。
+		s.k8sLifecycleHandler.SetApprovalChecker(func(ctx context.Context, tenantID, requestID, clusterID, targetVersion string) (bool, string) {
+			eng := s.approvalEngine
+			if eng == nil {
+				return false, "approval engine not initialized"
+			}
+			if requestID != "" {
+				req, err := eng.GetRequest(requestID)
+				if err != nil || req == nil {
+					return false, "approval request not found: " + requestID
+				}
+				if req.TenantID != tenantID {
+					return false, "approval request tenant mismatch"
+				}
+				if req.Status != approval.StatusApproved {
+					return false, "approval request not approved (status=" + string(req.Status) + ")"
+				}
+				if req.Target != clusterID {
+					return false, "approval request target mismatch (want " + clusterID + ", got " + req.Target + ")"
+				}
+				if req.Detail != targetVersion {
+					return false, "approval request version mismatch (want " + targetVersion + ", got " + req.Detail + ")"
+				}
+				return true, req.ID
+			}
+			for _, req := range eng.ListRequests(tenantID, "") {
+				if req == nil {
+					continue
+				}
+				if req.TriggerType == "k8s_upgrade" && req.Target == clusterID && req.Detail == targetVersion && req.Status == approval.StatusApproved {
+					return true, req.ID
+				}
+			}
+			return false, "no approved approval request for k8s_upgrade " + clusterID + " -> " + targetVersion + " (submit via /api/v1/approval-requests or set force=true)"
+		})
 	}
 	// 同款 G1 缺口：AI Agent 六条路由（execute/classify/decompose/memory×2/tools）
 	// 由此前完全无闸变为按 ai:read/ai:write 把关；execute 还会驱动 execute_command

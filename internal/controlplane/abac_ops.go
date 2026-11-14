@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 )
 
@@ -68,10 +69,54 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 审计整改批次17：evaluate / policy-list(无 deviceID) 走服务端真实引擎；
+	// 其余动作（policy-create/policy-delete/带 deviceID 的 policy-list）保持设备下发。
+	if req.Action == "evaluate" {
+		if req.Subject == "" || req.Resource == "" || req.ActionAttr == "" {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject, resource, and actionAttr are required"})
+			return
+		}
+		tenantID := authctx.FromContext(r.Context()).TenantID
+		allowed, policyID, reason := s.evaluateABAC(tenantID, req.Subject, req.Resource, req.ActionAttr, req.Context)
+		decision := "deny"
+		if allowed {
+			decision = "allow"
+		}
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"decision":        decision,
+			"allowed":         allowed,
+			"matchedPolicyID": policyID,
+			"reason":          reason,
+		})
+		return
+	}
+	if req.Action == "policy-list" && req.DeviceID == "" {
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"policies": s.listABACPolicies(authctx.FromContext(r.Context()).TenantID),
+			"note":     "控制面策略镜像（设备侧文件仍由 policy-create 下发）",
+		})
+		return
+	}
+	if req.Action == "policy-delete" {
+		s.removeABACPolicy(req.ActionAttr + "|" + req.Subject + "|" + req.Resource)
+	}
+
 	script, status, errMsg := buildABACScript(req.Action, req.Subject, req.Resource, req.ActionAttr, req.Context)
 	if errMsg != "" {
 		paginate.WriteJSON(w, status, map[string]string{"error": errMsg})
 		return
+	}
+
+	// policy-create：同步登记控制面策略镜像（供 evaluate 使用）。
+	if req.Action == "policy-create" {
+		s.addABACPolicy(abacPolicy{
+			ID:       req.ActionAttr + "|" + req.Subject + "|" + req.Resource,
+			TenantID: authctx.FromContext(r.Context()).TenantID,
+			Subject:  req.Subject,
+			Resource: req.Resource,
+			Action:   req.ActionAttr,
+			Effect:   "allow",
+		})
 	}
 
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "abac_"+req.Action)

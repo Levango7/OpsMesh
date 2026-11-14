@@ -60,6 +60,9 @@ type UpgradeSpec struct {
 	Nodes         []string `json:"nodes"`         // 节点列表 (空=全部)
 	DrainNodes    bool     `json:"drainNodes"`    // 升级前 drain
 	Force         bool     `json:"force"`         // 强制升级 (跳过预检)
+	// ApprovalRequestID 可选：显式引用审批请求（triggerType=k8s_upgrade，
+	// target=clusterId，detail=targetVersion）。非 force 时必须能匹配到已批准请求。
+	ApprovalRequestID string `json:"approvalRequestId,omitempty"`
 }
 
 // UpgradeStatus 升级状态
@@ -440,6 +443,10 @@ type K8sLifecycleHandler struct {
 	// nil=未装配 ⇒ 升级/回滚/证书轮换在预检阶段显式失败，绝不回退到模拟节点。
 	clusterInfo func(ctx context.Context, clusterID string) (*ClusterInfo, error)
 
+	// approvalChecker 升级审批校验（审计整改批次15，接 controlplane 审批引擎）。
+	// nil 且非 force ⇒ 预检拒绝执行（显式失败，不静默放行）。
+	approvalChecker func(ctx context.Context, tenantID, requestID, clusterID, targetVersion string) (bool, string)
+
 	// Authorize 鉴权回调（由 controlplane 注入），语义同 cmdb/log/deploy/orch 的
 	// Authorize：失败时回调已写响应并返回 ok=false，调用方直接 return。
 	// nil 时不启用鉴权（独立使用与单测的向后兼容路径）。
@@ -450,6 +457,13 @@ type K8sLifecycleHandler struct {
 // fn 返回的 ClusterInfo 至少要有 1 个 CP 节点，否则预检拒绝执行。
 func (h *K8sLifecycleHandler) SetClusterInfoSource(fn func(ctx context.Context, clusterID string) (*ClusterInfo, error)) {
 	h.clusterInfo = fn
+}
+
+// SetApprovalChecker 注入升级审批校验（生产装配调用，接 controlplane 审批引擎）。
+// 返回 (approved, reason)：approved=false 时 reason 说明未满足原因。
+// 非 force 升级在预检第 6 步必须通过该校验（审计整改：替换原 TODO 占位）。
+func (h *K8sLifecycleHandler) SetApprovalChecker(fn func(ctx context.Context, tenantID, requestID, clusterID, targetVersion string) (bool, string)) {
+	h.approvalChecker = fn
 }
 
 // authorize 按请求方法映射权限：GET/HEAD/OPTIONS 只读 → readPerm，其余 → writePerm。
@@ -565,7 +579,7 @@ func (h *K8sLifecycleHandler) HandleUpgrade(w http.ResponseWriter, r *http.Reque
 	}
 
 	// 启动异步升级
-	go h.runUpgrade(r.Context(), jobID, spec)
+	go h.runUpgrade(r.Context(), tenantID, jobID, spec)
 
 	// 返回 202 Accepted
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]string{
@@ -899,12 +913,12 @@ func (h *K8sLifecycleHandler) HandleEtcdListBackups(w http.ResponseWriter, r *ht
 // 全部经 authorize 包装：GET 需要 k8s:read，其余（含 etcd-restore / node-scale 这类
 // 真副作用动作）需要 k8s:write。若未来要给 etcd-restore 更细的权限点，需先扩 RBAC 目录。
 // runUpgrade 真实执行 K8s 集群升级（异步后台任务）
-func (h *K8sLifecycleHandler) runUpgrade(ctx context.Context, jobID string, spec UpgradeSpec) {
+func (h *K8sLifecycleHandler) runUpgrade(ctx context.Context, tenantID, jobID string, spec UpgradeSpec) {
 	// 更新作业状态：预检阶段
 	h.updateJobPhase(ctx, jobID, "precheck", 5, "precheck: running preflight checks")
 
-	// 1. 预检：版本兼容性、节点健康、etcd 健康度、控制面 Pod 数、升级计划确认
-	if err := h.precheckUpgrade(ctx, jobID, spec); err != nil {
+	// 1. 预检：版本兼容性、节点健康、etcd 健康度、控制面 Pod 数、审批确认
+	if err := h.precheckUpgrade(ctx, tenantID, jobID, spec); err != nil {
 		h.failJob(ctx, jobID, "precheck failed: "+err.Error())
 		return
 	}
@@ -938,7 +952,7 @@ func (h *K8sLifecycleHandler) runUpgrade(ctx context.Context, jobID string, spec
 }
 
 // precheckUpgrade 预检升级前置条件
-func (h *K8sLifecycleHandler) precheckUpgrade(ctx context.Context, jobID string, spec UpgradeSpec) error {
+func (h *K8sLifecycleHandler) precheckUpgrade(ctx context.Context, tenantID, jobID string, spec UpgradeSpec) error {
 	h.updateJobPhase(ctx, jobID, "precheck", 5, "precheck: fetching cluster info")
 
 	// 1. 获取集群信息和 CP 节点
@@ -984,13 +998,15 @@ func (h *K8sLifecycleHandler) precheckUpgrade(ctx context.Context, jobID string,
 		return fmt.Errorf("control plane pods check failed: %w", err)
 	}
 
-	// 6. 确认升级计划
-	h.updateJobPhase(ctx, jobID, "precheck", 90, "precheck: plan confirmed")
+	// 6. 确认升级计划（审计整改批次15：审批流真实接入，替换原 TODO 占位）
+	h.updateJobPhase(ctx, jobID, "precheck", 90, "precheck: approval check")
 	if !spec.Force {
-		// 非强制模式需要人工确认（实际场景可结合审批流）
-		planConfirmed := spec.Force // TODO: 接入审批流确认
-		if !planConfirmed {
-			return fmt.Errorf("upgrade plan not confirmed (set force=true to skip)")
+		if h.approvalChecker == nil {
+			return fmt.Errorf("upgrade requires approval: approval checker not configured (submit an approval request and wire SetApprovalChecker, or set force=true)")
+		}
+		approved, reason := h.approvalChecker(ctx, tenantID, spec.ApprovalRequestID, spec.ClusterID, spec.TargetVersion)
+		if !approved {
+			return fmt.Errorf("upgrade approval check failed: %s", reason)
 		}
 	}
 

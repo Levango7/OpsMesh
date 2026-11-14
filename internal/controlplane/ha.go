@@ -25,17 +25,71 @@ import (
 	"github.com/Levango7/OpsMesh/internal/logx"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
 )
 
 // haInstanceInfo 控制面实例信息（HA 状态查询返回）。
 type haInstanceInfo struct {
-	InstanceID       string `json:"instanceId"`
-	Hostname         string `json:"hostname"`
-	HTTPPort         int    `json:"httpPort"`
-	GRPCPort         int    `json:"grpcPort"`
-	Role             string `json:"role"` // "leader" | "follower"
-	IsLeader         bool   `json:"isLeader"`
-	LeaderInstanceID string `json:"leaderInstanceId,omitempty"`
+	InstanceID       string    `json:"instanceId"`
+	Hostname         string    `json:"hostname"`
+	HTTPPort         int       `json:"httpPort"`
+	GRPCPort         int       `json:"grpcPort"`
+	Role             string    `json:"role"` // "leader" | "follower"
+	IsLeader         bool      `json:"isLeader"`
+	LeaderInstanceID string    `json:"leaderInstanceId,omitempty"`
+	Version          string    `json:"version,omitempty"`
+	LastHeartbeat    time.Time `json:"lastHeartbeat,omitempty"`
+}
+
+// haInstanceLister 控制面实例心跳枚举能力（SQLStore 实现；memory 无此能力）。
+type haInstanceLister interface {
+	ListControlplaneInstances(ctx context.Context, recentSince time.Time) ([]*sqlstore.ControlplaneInstance, error)
+}
+
+// haInstanceBeater 实例心跳写入能力（SQLStore 实现）。
+type haInstanceBeater interface {
+	UpsertControlplaneInstance(ctx context.Context, inst *sqlstore.ControlplaneInstance) error
+	DeleteStaleControlplaneInstances(ctx context.Context, before time.Time) (int64, error)
+}
+
+// instanceHeartbeatLoop 周期写实例心跳 + 角色，并清理过期行（审计整改批次16）。
+// 仅在存储具备心跳能力时运行；memory 模式直接返回（单副本无需枚举）。
+func (s *Server) instanceHeartbeatLoop(ctx context.Context) {
+	beater, ok := s.store.(haInstanceBeater)
+	if !ok {
+		return
+	}
+	startedAt := time.Now()
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	beat := func() {
+		cur := s.haCurrentInstance()
+		if err := beater.UpsertControlplaneInstance(ctx, &sqlstore.ControlplaneInstance{
+			InstanceID: cur.InstanceID,
+			Hostname:   cur.Hostname,
+			HTTPPort:   cur.HTTPPort,
+			GRPCPort:   cur.GRPCPort,
+			Role:       cur.Role,
+			Version:    cur.Version,
+			StartedAt:  startedAt,
+		}); err != nil {
+			logx.Warn(ctx, "实例心跳写入失败", "error", err)
+		}
+		if _, err := beater.DeleteStaleControlplaneInstances(ctx, time.Now().Add(-time.Minute)); err != nil {
+			logx.Warn(ctx, "清理过期实例心跳失败", "error", err)
+		}
+	}
+
+	beat()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			beat()
+		}
+	}
 }
 
 // haStatusResponse HA 状态响应。
@@ -91,6 +145,9 @@ func (s *Server) haCurrentInstance() haInstanceInfo {
 }
 
 // handleHAStatus 处理 GET /api/v1/ha/status：获取 HA 状态。
+//
+// 审计整改批次16：多副本时经 controlplane_instances 心跳表枚举全部实例，
+// 而不是只返回当前实例 + "unknown" leader 占位。
 func (s *Server) handleHAStatus(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "ha:read"); !ok {
 		return
@@ -100,10 +157,16 @@ func (s *Server) handleHAStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := s.haCurrentInstance()
-	instances := []haInstanceInfo{current}
+	instances := s.haListInstances(r.Context(), current)
 	leader := current
-	if !current.IsLeader {
-		// MVP：非 leader 实例无法得知 leader 详情，返回占位。
+	for _, inst := range instances {
+		if inst.IsLeader {
+			leader = inst
+			break
+		}
+	}
+	if !leader.IsLeader && !current.IsLeader {
+		// 时钟偏差/心跳缺失时兜底：保留占位语义，但带 LeaderInstanceID。
 		leader = haInstanceInfo{
 			InstanceID:       "unknown",
 			Hostname:         "unknown",
@@ -116,18 +179,45 @@ func (s *Server) handleHAStatus(w http.ResponseWriter, r *http.Request) {
 		Leader:      leader,
 		Current:     current,
 		Instances:   instances,
-		Replicas:    1,
+		Replicas:    len(instances),
 		GeneratedAt: time.Now(),
 	}
-	if s.cfg != nil {
+	if s.cfg != nil && s.cfg.Replicas > resp.Replicas {
 		resp.Replicas = s.cfg.Replicas
 	}
 	paginate.WriteJSON(w, http.StatusOK, resp)
 }
 
+// haListInstances 通过心跳表枚举存活实例；无该能力（memory/未迁移库）时退回当前实例。
+func (s *Server) haListInstances(ctx context.Context, current haInstanceInfo) []haInstanceInfo {
+	lister, ok := s.store.(haInstanceLister)
+	if !ok {
+		return []haInstanceInfo{current}
+	}
+	rows, err := lister.ListControlplaneInstances(ctx, time.Now().Add(-30*time.Second))
+	if err != nil || len(rows) == 0 {
+		return []haInstanceInfo{current}
+	}
+	out := make([]haInstanceInfo, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, haInstanceInfo{
+			InstanceID:    row.InstanceID,
+			Hostname:      row.Hostname,
+			HTTPPort:      row.HTTPPort,
+			GRPCPort:      row.GRPCPort,
+			Role:          row.Role,
+			IsLeader:      row.Role == "leader",
+			Version:       row.Version,
+			LastHeartbeat: row.LastHeartbeat,
+		})
+	}
+	return out
+}
+
 // handleHAInstances 处理 GET /api/v1/ha/instances：列出所有控制面实例。
 //
-// MVP：仅返回当前实例（多副本需经 leader_lease 表查询全部活跃实例）。
+// 审计整改批次16：经 controlplane_instances 心跳表枚举（30s TTL）；
+// 无该能力时退回当前实例。
 func (s *Server) handleHAInstances(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "ha:read"); !ok {
 		return
@@ -137,9 +227,10 @@ func (s *Server) handleHAInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current := s.haCurrentInstance()
+	instances := s.haListInstances(r.Context(), current)
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"instances": []haInstanceInfo{current},
-		"count":     1,
+		"instances": instances,
+		"count":     len(instances),
 	})
 }
 
