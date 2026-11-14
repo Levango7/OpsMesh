@@ -120,6 +120,9 @@ CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展�
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
+  docker-compose.yaml,Dockerfile.task-svc,internal/controlplane/server_netsec.go <- opencode  (ttl=24h by opencode)
+  internal/agent/agent.go,internal/agent/task_service_client.go <- opencode  (ttl=24h by opencode)
+  internal/config/config.go,internal/agent/agent.go,docker-compose.yaml <- opencode  (ttl=24h by opencode)
   internal/controlplane/harbor_ops.go,internal/controlplane/b25_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
   internal/controlplane/lb_ops.go,internal/controlplane/b24_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
   internal/controlplane/olap_ops.go,internal/controlplane/b23_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
@@ -148,7 +151,7 @@ ISSUES:
   CLAIM 过期未闭环：proto/buf.yaml,proto/opsmesh/task/v1/task.proto,internal/proto/buf_module_scope_test.go,internal/controlplane/ha.go,internal/config/config.go,internal/controlplane/leader_elector_client.go,internal/controlplane/routing_fixes_test.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/task_service_client.go,services/task-svc/internal/server/server.go,internal/controlplane/grpc_dial_blocking.go（认领人 opencode，ttl 12h）
   CLAIM 过期未闭环：proto/opsmesh/task/v1/task.proto（认领人 opencode，ttl 12h）
 
-CONFLICT: 同 scope 重复认领：proto/buf.yaml,proto/opsmesh/task/v1/task.proto,internal/proto/buf_module_scope_test.go,internal/controlplane/ha.go,internal/config/config.go,internal/controlplane/leader_elector_client.go,internal/controlplane/routing_fixes_test.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/task_service_client.go,services/task-svc/internal/server/server.go, proto/buf.yaml,proto/opsmesh/task/v1/task.proto,internal/proto/buf_module_scope_test.go,internal/controlplane/ha.go,internal/config/config.go,internal/controlplane/leader_elector_client.go,internal/controlplane/routing_fixes_test.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/task_service_client.go,services/task-svc/internal/server/server.go,internal/controlplane/grpc_dial_blocking.go
+CONFLICT: 同 scope 重复认领：docker-compose.yaml,Dockerfile.task-svc,internal/controlplane/server_netsec.go, internal/platform/cloudprovider/tencent/provider.go, proto/buf.yaml,proto/opsmesh/task/v1/task.proto,internal/proto/buf_module_scope_test.go,internal/controlplane/ha.go,internal/config/config.go,internal/controlplane/leader_elector_client.go,internal/controlplane/routing_fixes_test.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/task_service_client.go,services/task-svc/internal/server/server.go, proto/buf.yaml,proto/opsmesh/task/v1/task.proto,internal/proto/buf_module_scope_test.go,internal/controlplane/ha.go,internal/config/config.go,internal/controlplane/leader_elector_client.go,internal/controlplane/routing_fixes_test.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/task_service_client.go,services/task-svc/internal/server/server.go,internal/controlplane/grpc_dial_blocking.go
 ```
 
 ---
