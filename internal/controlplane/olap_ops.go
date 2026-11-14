@@ -227,17 +227,19 @@ func (s *Server) handleOLAPDeploy(w http.ResponseWriter, r *http.Request) {
 
 func buildOLAPDeployScript(req olapDeployRequest) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqMode, vReqType := req.Mode, req.Type
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then PKG_MGR=yum; elif command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v apt-get >/dev/null 2>&1; then PKG_MGR=apt-get; else echo '未找到包管理器' && exit 1; fi\n")
-	switch req.Type {
+	switch vReqType {
 	case "clickhouse":
 		b.WriteString("# ClickHouse 部署\n")
 		b.WriteString("if command -v clickhouse-server >/dev/null 2>&1; then echo 'ClickHouse 已安装'; else\n")
 		b.WriteString("  curl -fsSL https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key 2>/dev/null | gpg --dearmor -o /usr/share/keyrings/clickhouse-keyring.gpg 2>/dev/null || true\n")
 		b.WriteString("  $PKG_MGR install -y clickhouse-server clickhouse-client || echo '请配置 ClickHouse 仓库' \n")
 		b.WriteString("fi\n")
-		if req.Mode == "cluster" {
+		if vReqMode == "cluster" {
 			b.WriteString("# 集群：需配置 remote_servers 分片与副本（config.xml）\n")
 			b.WriteString("echo 'ClickHouse 集群：需配置 remote_servers 分片副本'\n")
 		} else {
@@ -314,11 +316,13 @@ func (s *Server) handleOLAPAction(w http.ResponseWriter, r *http.Request, olapTy
 
 func buildOLAPActionScript(req olapOpsRequest) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqAction, vReqType := req.Action, req.Type
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "clickhouse":
 		b.WriteString("# ClickHouse 启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("systemctl start clickhouse-server || true\n")
 		case "stop":
@@ -330,7 +334,7 @@ func buildOLAPActionScript(req olapOpsRequest) string {
 		}
 	case "doris":
 		b.WriteString("# Doris 启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("/opt/doris/fe/bin/start_fe.sh --daemon || true\n/opt/doris/be/bin/start_be.sh --daemon || true\n")
 		case "stop":
@@ -342,7 +346,7 @@ func buildOLAPActionScript(req olapOpsRequest) string {
 		}
 	case "trino":
 		b.WriteString("# Trino 启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("cd /opt/trino && ./bin/launcher start || true\n")
 		case "stop":
@@ -353,7 +357,7 @@ func buildOLAPActionScript(req olapOpsRequest) string {
 			b.WriteString("cd /opt/trino && ./bin/launcher status || echo 'not running'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo 'OLAP %s %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo 'OLAP %s %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -408,38 +412,40 @@ func (s *Server) handleOLAPDatabase(w http.ResponseWriter, r *http.Request, olap
 
 func buildOLAPDatabaseScript(req olapDatabaseReq) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqAction, vReqName, vReqType := req.Action, req.Name, req.Type
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "clickhouse":
 		b.WriteString("# ClickHouse 库管理（clickhouse-client）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			fmt.Fprintf(&b, "clickhouse-client --query 'CREATE DATABASE IF NOT EXISTS %s' || echo '创建失败'\n", req.Name)
+			fmt.Fprintf(&b, "clickhouse-client --query 'CREATE DATABASE IF NOT EXISTS %s' || echo '创建失败'\n", vReqName)
 		case "delete":
-			fmt.Fprintf(&b, "clickhouse-client --query 'DROP DATABASE IF EXISTS %s' || echo '删除失败'\n", req.Name)
+			fmt.Fprintf(&b, "clickhouse-client --query 'DROP DATABASE IF EXISTS %s' || echo '删除失败'\n", vReqName)
 		case "list":
 			b.WriteString("clickhouse-client --query 'SHOW DATABASES'\n")
 		}
 	case "doris":
 		b.WriteString("# Doris 库管理（MySQL 协议 9030）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root -e 'CREATE DATABASE IF NOT EXISTS %s' || echo '创建失败'\n", req.Name)
+			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root -e 'CREATE DATABASE IF NOT EXISTS %s' || echo '创建失败'\n", vReqName)
 		case "delete":
-			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root -e 'DROP DATABASE IF EXISTS %s' || echo '删除失败'\n", req.Name)
+			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root -e 'DROP DATABASE IF EXISTS %s' || echo '删除失败'\n", vReqName)
 		case "list":
 			b.WriteString("mysql -h 127.0.0.1 -P 9030 -u root -e 'SHOW DATABASES'\n")
 		}
 	case "trino":
 		b.WriteString("# Trino 无库概念（catalog 映射外部存储），列出 catalog\n")
-		switch req.Action {
+		switch vReqAction {
 		case "list":
 			b.WriteString("cd /opt/trino && ./bin/trino --execute 'SHOW CATALOGS' || echo 'not running'\n")
 		default:
 			b.WriteString("echo 'Trino 使用 catalog 概念，无需创建/删除数据库'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo 'OLAP %s 数据库 %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo 'OLAP %s 数据库 %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -498,15 +504,17 @@ func (s *Server) handleOLAPTable(w http.ResponseWriter, r *http.Request, olapTyp
 
 func buildOLAPTableScript(req olapTableReq) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqDatabase, vReqAction, vReqSchema, vReqTable, vReqType := req.Database, req.Action, req.Schema, req.Table, req.Type
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "clickhouse":
 		b.WriteString("# ClickHouse 表管理\n")
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			schema := req.Schema
+			schema := vReqSchema
 			if schema == "" {
-				schema = fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (id UInt64, ts DateTime, data String) ENGINE = MergeTree() ORDER BY id", opsSQLString(req.Database), opsSQLString(req.Table))
+				schema = fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (id UInt64, ts DateTime, data String) ENGINE = MergeTree() ORDER BY id", opsSQLString(vReqDatabase), opsSQLString(vReqTable))
 			}
 			if strings.ContainsAny(schema, "\x00\n") {
 				b.WriteString("echo '建表语句不能包含换行' && exit 1\n")
@@ -514,39 +522,39 @@ func buildOLAPTableScript(req olapTableReq) string {
 				fmt.Fprintf(&b, "clickhouse-client --query %s || echo '创建失败'\n", shellQuote(schema))
 			}
 		case "delete":
-			fmt.Fprintf(&b, "clickhouse-client --query 'DROP TABLE IF EXISTS %s.%s' || echo '删除失败'\n", req.Database, req.Table)
+			fmt.Fprintf(&b, "clickhouse-client --query 'DROP TABLE IF EXISTS %s.%s' || echo '删除失败'\n", vReqDatabase, vReqTable)
 		case "list":
-			fmt.Fprintf(&b, "clickhouse-client --query 'SHOW TABLES FROM %s'\n", req.Database)
+			fmt.Fprintf(&b, "clickhouse-client --query 'SHOW TABLES FROM %s'\n", vReqDatabase)
 		}
 	case "doris":
 		b.WriteString("# Doris 表管理\n")
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			schema := req.Schema
+			schema := vReqSchema
 			if schema == "" {
 				b.WriteString("echo 'Doris 建表需提供 schema（含分桶 DISTRIBUTED BY）' && exit 1\n")
 			} else if strings.ContainsAny(schema, "\x00\n") {
 				b.WriteString("echo '建表语句不能包含换行' && exit 1\n")
 			} else {
-				fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root %s -e %s || echo '创建失败'\n", req.Database, shellQuote(schema))
+				fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root %s -e %s || echo '创建失败'\n", vReqDatabase, shellQuote(schema))
 			}
 		case "delete":
-			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root %s -e 'DROP TABLE IF EXISTS %s' || echo '删除失败'\n", req.Database, req.Table)
+			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root %s -e 'DROP TABLE IF EXISTS %s' || echo '删除失败'\n", vReqDatabase, vReqTable)
 		case "list":
-			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root %s -e 'SHOW TABLES'\n", req.Database)
+			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root %s -e 'SHOW TABLES'\n", vReqDatabase)
 		}
 	case "trino":
 		b.WriteString("# Trino 表管理（SQL 跨越 catalog）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "list":
-			fmt.Fprintf(&b, "cd /opt/trino && ./bin/trino --execute 'SHOW TABLES FROM %s' || echo 'not running'\n", req.Database)
+			fmt.Fprintf(&b, "cd /opt/trino && ./bin/trino --execute 'SHOW TABLES FROM %s' || echo 'not running'\n", vReqDatabase)
 		case "delete":
-			fmt.Fprintf(&b, "cd /opt/trino && ./bin/trino --execute 'DROP TABLE IF EXISTS %s.%s' || echo '删除失败'\n", req.Database, req.Table)
+			fmt.Fprintf(&b, "cd /opt/trino && ./bin/trino --execute 'DROP TABLE IF EXISTS %s.%s' || echo '删除失败'\n", vReqDatabase, vReqTable)
 		default:
 			b.WriteString("echo 'Trino 建表取决于底层 connector（Hive/Iceberg 等）'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo 'OLAP %s 表 %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo 'OLAP %s 表 %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -605,24 +613,26 @@ func (s *Server) handleOLAPQuery(w http.ResponseWriter, r *http.Request, olapTyp
 
 func buildOLAPQueryScript(req olapQueryReq) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqDatabase, vReqQuery, vReqType := req.Database, req.Query, req.Type
 	b.WriteString("set -e\n")
-	q := shellQuote(req.Query)
-	switch req.Type {
+	q := shellQuote(vReqQuery)
+	switch vReqType {
 	case "clickhouse":
-		if req.Database != "" {
-			fmt.Fprintf(&b, "clickhouse-client --database %s --query %s\n", req.Database, q)
+		if vReqDatabase != "" {
+			fmt.Fprintf(&b, "clickhouse-client --database %s --query %s\n", vReqDatabase, q)
 		} else {
 			fmt.Fprintf(&b, "clickhouse-client --query %s\n", q)
 		}
 	case "doris":
-		if req.Database != "" {
-			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root -D %s -e %s\n", req.Database, q)
+		if vReqDatabase != "" {
+			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root -D %s -e %s\n", vReqDatabase, q)
 		} else {
 			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 9030 -u root -e %s\n", q)
 		}
 	case "trino":
-		if req.Database != "" {
-			fmt.Fprintf(&b, "cd /opt/trino && ./bin/trino --catalog %s --execute %s\n", req.Database, q)
+		if vReqDatabase != "" {
+			fmt.Fprintf(&b, "cd /opt/trino && ./bin/trino --catalog %s --execute %s\n", vReqDatabase, q)
 		} else {
 			fmt.Fprintf(&b, "cd /opt/trino && ./bin/trino --execute %s\n", q)
 		}

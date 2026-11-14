@@ -73,10 +73,10 @@ var tenantStoreVerdicts = map[string]storeVerdict{
 	"internal/notify/template.go::TemplateStore":       {kindNoTenant, "", "", "引擎侧平台级默认模板（LoadDefaultTemplates）；对外 /api/v1/notify-templates 由带租户的 store 处理"},
 	"internal/store/sqlstore/sql.go::SQLStore":         {kindNoTenant, "", "", "仅两张进程级缓存（deviceMetrics/agentSecretCache）；数据隔离由 SQL 层与租户过滤负责"},
 
-	// —— 待裁定（issue #27）——
-	"services/autoscaler-svc/internal/store/store.go::MemoryStore": {kindNoTenant, "", "", "全仓零 tenant 痕迹；定性待 issue #27（平台级共享面 or 租户隔离）"},
-	"services/runbook-svc/internal/store/store.go::MemoryStore":    {kindNoTenant, "", "", "全仓零 tenant 痕迹；定性待 issue #27"},
-	"services/incident-svc/internal/models/models.go::MemoryStore": {kindNoTenant, "", "", "全仓零 tenant 痕迹（连 SQL 列都没有）；定性待 issue #27"},
+	// —— 原「待裁定（issue #27）」，2026-11-14 裁决②（租户级数据）落地后改判 tenant-field ——
+	"services/autoscaler-svc/internal/store/store.go::MemoryStore": {kindTenantField, "Tenant", "services/autoscaler-svc/internal/store/store.go", "issue #27 裁决②：MemoryStore 带 TenantID 并按租户过滤；真实数据面是未装配的 Evaluator（见 issue #48），已同步租户化"},
+	"services/runbook-svc/internal/store/store.go::MemoryStore":    {kindTenantField, "Tenant", "services/runbook-svc/internal/store/store.go", "issue #27 裁决②：Runbook/ExecutionRecord 带 TenantID，逐方法过滤 + 空租户拒写 + 跨租户同 ID 不覆盖"},
+	"services/incident-svc/internal/models/models.go::MemoryStore": {kindTenantField, "Tenant", "services/incident-svc/internal/models/models.go", "issue #27 裁决②：Incident 带 TenantID，逐方法过滤 + 空租户拒写；时间线归属由父单派生"},
 }
 
 // detectStores 在 content 里找「名字以 Store 结尾且 struct 体含 map 字段」的 struct，返回类型名。

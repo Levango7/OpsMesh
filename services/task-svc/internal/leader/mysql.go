@@ -65,10 +65,13 @@ func (m *MySQLLeaseOps) Acquire(ctx context.Context, leaseName, holderID string,
 	if err != nil {
 		return false
 	}
-	n, err := res.RowsAffected()
-	if err != nil || n == 0 {
+	_, err = res.RowsAffected()
+	if err != nil {
 		return false
 	}
+	// MySQL 在所有字段值完全相同（含 updated_at=NOW(3) 的同一毫秒内）时
+	// 报 RowsAffected=0。此时行存在、且由本调用方持有 ⇒ 合法的幂等重入。
+	// 不再以 n==0 直接判输；由 heldBy 最终裁决，单赢家语义不变（竞争者 heldBy 返回 false）。
 	return m.heldBy(ctx, leaseName, holderID)
 }
 

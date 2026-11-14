@@ -189,3 +189,27 @@ func TestMySQLLeaseOps_ConcurrentAcquire(t *testing.T) {
 		t.Fatalf("并发 Acquire 应恰好 1 个赢家，实际 %d", count)
 	}
 }
+
+// TestMySQLLeaseOps_IdempotentReAcquireSameMillisecond 持有者在毫秒内重复 Acquire：
+// 该场景在 CI 真 MySQL 后端连续执行时极常出现（test 整体跑完 <10ms，三次 NOW(3) 全部落
+// 在同一毫秒），MySQL 在所有字段值完全相同（holder_identity/lease_until/updated_at 全部
+// 不变）时 RowsAffected 返回 0；Acquire 若把 n==0 直接判输就是"持有者幂等重入失败"。
+// 本用例把同毫秒内的 re-quire 变成必然判据（不 sleep）。
+// 触发形态：CI services job 的 TestMySQLLeaseOps_AcquireRenewRelease，0.01s 内三个 SQL
+// 调用全部落在同一毫秒，首次插入成功、第二次同毫秒幂等重入 n=0 ⇒ 之前 Acquire 判输。
+func TestMySQLLeaseOps_IdempotentReAcquireSameMillisecond(t *testing.T) {
+	ops, cleanup := newTestMySQLLeaseOps(t)
+	defer cleanup()
+	ctx := context.Background()
+	lease := "lease-test-idempotent-re"
+	holder := "pod-a-idem-" + time.Now().Format("150405.000")
+
+	if !ops.Acquire(ctx, lease, holder, 10*time.Second) {
+		t.Fatal("首次 Acquire 应成功")
+	}
+	for i := 0; i < 10; i++ {
+		if !ops.Acquire(ctx, lease, holder, 10*time.Second) {
+			t.Fatalf("第 %d 次同毫秒幂等 Acquire 应成功", i)
+		}
+	}
+}
