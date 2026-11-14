@@ -120,19 +120,32 @@ CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展�
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  internal/controlplane/ha.go,internal/controlplane/leader_elector_client.go,internal/controlplane/server.go,internal/config/config.go <- opencode  (ttl=12h by opencode)
-  internal/controlplane/ha.go,internal/controlplane/leader_elector_client.go,internal/controlplane/server.go,internal/config/config.go,services/task-svc/internal/server/server.go <- opencode  (ttl=12h by opencode)
-  internal/controlplane/vector_ops.go,internal/controlplane/kafka_advanced_ops.go,internal/controlplane/b17_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
-  internal/controlplane/virt_ops.go,internal/controlplane/b18_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
-  internal/gates/tenant_store_verdict_gate_test.go <- zcode  (ttl=72h by zcode)
-  proto/buf.yaml                                 <- opencode  (ttl=12h by opencode)
+  internal/controlplane/dns_ops.go,internal/controlplane/b19_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/controlplane/fileshare_ops.go,internal/controlplane/b22_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/controlplane/harbor_ops.go,internal/controlplane/b25_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/controlplane/lb_ops.go,internal/controlplane/b24_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/controlplane/mongo_ops.go,internal/controlplane/b21_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/controlplane/olap_ops.go,internal/controlplane/b23_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/controlplane/storage_ops.go,internal/controlplane/b20_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
 
 TASKS:
   (无)
 
 ISSUES:
   CLAIM 过期未闭环：go.mod,.github/workflows/ci.yml,.github/workflows/release.yml（认领人 opencode，ttl 6h）
+  CLAIM 过期未闭环：go.mod,go.sum,Dockerfile,Dockerfile.agent,docs/CLAIMS.md（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：internal/controlplane/ha.go,internal/controlplane/leader_elector_client.go,internal/controlplane/server.go,internal/config/config.go（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：internal/controlplane/ha.go,internal/controlplane/leader_elector_client.go,internal/controlplane/server.go,internal/config/config.go,services/task-svc/internal/server/server.go（认领人 opencode，ttl 12h）
   CLAIM 过期未闭环：internal/controlplane/server.go,internal/controlplane/k8s_lifecycle_auth_wiring_test.go（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：internal/controlplane/server_lifecycle.go,internal/controlplane/task_service_client.go,internal/controlplane/routing_fixes_test.go,docs/CLAIMS.md（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：internal/controlplane/vector_ops.go,internal/controlplane/kafka_advanced_ops.go,internal/controlplane/b17_injection_test.go,CHANGELOG.md（认领人 opencode，ttl 24h）
+  CLAIM 过期未闭环：internal/controlplane/virt_ops.go,internal/controlplane/b18_injection_test.go,CHANGELOG.md（认领人 opencode，ttl 24h）
+  CLAIM 过期未闭环：internal/gates/tenant_store_verdict_gate_test.go（认领人 zcode，ttl 72h）
+  CLAIM 过期未闭环：proto/buf.yaml,proto/opsmesh/task/v1/task.proto,internal/proto/buf_module_scope_test.go,internal/controlplane/ha.go,internal/config/config.go,internal/controlplane/leader_elector_client.go,internal/controlplane/routing_fixes_test.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/task_service_client.go,services/task-svc/internal/server/server.go（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：proto/buf.yaml,proto/opsmesh/task/v1/task.proto,internal/proto/buf_module_scope_test.go,internal/controlplane/ha.go,internal/config/config.go,internal/controlplane/leader_elector_client.go,internal/controlplane/routing_fixes_test.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/task_service_client.go,services/task-svc/internal/server/server.go,internal/controlplane/grpc_dial_blocking.go（认领人 opencode，ttl 12h）
+  CLAIM 过期未闭环：proto/opsmesh/task/v1/task.proto（认领人 opencode，ttl 12h）
+
+CONFLICT: 同 scope 重复认领：proto/buf.yaml,proto/opsmesh/task/v1/task.proto,internal/proto/buf_module_scope_test.go,internal/controlplane/ha.go,internal/config/config.go,internal/controlplane/leader_elector_client.go,internal/controlplane/routing_fixes_test.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/task_service_client.go,services/task-svc/internal/server/server.go, proto/buf.yaml,proto/opsmesh/task/v1/task.proto,internal/proto/buf_module_scope_test.go,internal/controlplane/ha.go,internal/config/config.go,internal/controlplane/leader_elector_client.go,internal/controlplane/routing_fixes_test.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/task_service_client.go,services/task-svc/internal/server/server.go,internal/controlplane/grpc_dial_blocking.go
 ```
 
 ---
