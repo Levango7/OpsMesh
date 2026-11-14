@@ -24,6 +24,7 @@ func TestListIncidents_EmptyListIsJSONArray(t *testing.T) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/incidents", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
