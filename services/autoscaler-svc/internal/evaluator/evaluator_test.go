@@ -64,7 +64,7 @@ func newTestEvaluator() *Evaluator {
 
 func TestAddRule(t *testing.T) {
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "High CPU Scale Up",
 		Deployment:         "web-app",
@@ -81,7 +81,7 @@ func TestAddRule(t *testing.T) {
 		t.Fatalf("AddRule failed: %v", err)
 	}
 
-	rules := e.ListRules()
+	rules := e.ListRules("t1")
 	if len(rules) != 1 {
 		t.Errorf("expected 1 rule, got %d", len(rules))
 	}
@@ -95,10 +95,10 @@ func TestAddRuleInvalid(t *testing.T) {
 		rule *models.ScaleRule
 	}{
 		{"nil rule", nil},
-		{"empty ID", &models.ScaleRule{ID: ""}},
-		{"negative min", &models.ScaleRule{ID: "r1", MinReplicas: -1, MaxReplicas: 5, ScaleUpThreshold: 80, ScaleDownThreshold: 20}},
-		{"max <= min", &models.ScaleRule{ID: "r1", MinReplicas: 5, MaxReplicas: 5, ScaleUpThreshold: 80, ScaleDownThreshold: 20}},
-		{"up <= down", &models.ScaleRule{ID: "r1", MinReplicas: 1, MaxReplicas: 10, ScaleUpThreshold: 20, ScaleDownThreshold: 80}},
+		{"empty ID", &models.ScaleRule{TenantID: "t1", ID: ""}},
+		{"negative min", &models.ScaleRule{TenantID: "t1", ID: "r1", MinReplicas: -1, MaxReplicas: 5, ScaleUpThreshold: 80, ScaleDownThreshold: 20}},
+		{"max <= min", &models.ScaleRule{TenantID: "t1", ID: "r1", MinReplicas: 5, MaxReplicas: 5, ScaleUpThreshold: 80, ScaleDownThreshold: 20}},
+		{"up <= down", &models.ScaleRule{TenantID: "t1", ID: "r1", MinReplicas: 1, MaxReplicas: 10, ScaleUpThreshold: 20, ScaleDownThreshold: 80}},
 	}
 
 	for _, tt := range tests {
@@ -112,7 +112,7 @@ func TestAddRuleInvalid(t *testing.T) {
 
 func TestUpdateRule(t *testing.T) {
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "Original",
 		Deployment:         "web-app",
@@ -130,11 +130,11 @@ func TestUpdateRule(t *testing.T) {
 
 	rule.Name = "Updated"
 	rule.ScaleUpThreshold = 85.0
-	if err := e.UpdateRule(rule); err != nil {
+	if err := e.UpdateRule(rule, "t1"); err != nil {
 		t.Fatalf("UpdateRule failed: %v", err)
 	}
 
-	updated, err := e.GetRule("rule-1")
+	updated, err := e.GetRule("rule-1", "t1")
 	if err != nil {
 		t.Fatalf("GetRule failed: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestUpdateRule(t *testing.T) {
 
 func TestUpdateRuleNotFound(t *testing.T) {
 	e := newTestEvaluator()
-	err := e.UpdateRule(&models.ScaleRule{ID: "nonexistent"})
+	err := e.UpdateRule(&models.ScaleRule{TenantID: "t1", ID: "nonexistent"}, "t1")
 	if err == nil {
 		t.Error("expected error for nonexistent rule")
 	}
@@ -156,7 +156,7 @@ func TestUpdateRuleNotFound(t *testing.T) {
 
 func TestDeleteRule(t *testing.T) {
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "ToDelete",
 		Deployment:         "web-app",
@@ -172,11 +172,11 @@ func TestDeleteRule(t *testing.T) {
 		t.Fatalf("AddRule failed: %v", err)
 	}
 
-	if err := e.DeleteRule("rule-1"); err != nil {
+	if err := e.DeleteRule("rule-1", "t1"); err != nil {
 		t.Fatalf("DeleteRule failed: %v", err)
 	}
 
-	_, err := e.GetRule("rule-1")
+	_, err := e.GetRule("rule-1", "t1")
 	if err == nil {
 		t.Error("expected error after delete")
 	}
@@ -184,7 +184,7 @@ func TestDeleteRule(t *testing.T) {
 
 func TestDeleteRuleNotFound(t *testing.T) {
 	e := newTestEvaluator()
-	err := e.DeleteRule("nonexistent")
+	err := e.DeleteRule("nonexistent", "t1")
 	if err == nil {
 		t.Error("expected error for nonexistent rule")
 	}
@@ -192,7 +192,7 @@ func TestDeleteRuleNotFound(t *testing.T) {
 
 func TestEvaluateScaleUp(t *testing.T) {
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "High CPU",
 		Deployment:         "web-app",
@@ -216,7 +216,7 @@ func TestEvaluateScaleUp(t *testing.T) {
 		replicas: map[string]int32{"default/web-app": 3},
 	}
 
-	decisions, err := e.Evaluate(reader, scaler, "")
+	decisions, err := e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestEvaluateScaleUp(t *testing.T) {
 
 func TestEvaluateScaleDown(t *testing.T) {
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "Low CPU",
 		Deployment:         "web-app",
@@ -263,7 +263,7 @@ func TestEvaluateScaleDown(t *testing.T) {
 		replicas: map[string]int32{"default/web-app": 5},
 	}
 
-	decisions, err := e.Evaluate(reader, scaler, "")
+	decisions, err := e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestEvaluateScaleDown(t *testing.T) {
 
 func TestEvaluateNoAction(t *testing.T) {
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "Normal",
 		Deployment:         "web-app",
@@ -310,7 +310,7 @@ func TestEvaluateNoAction(t *testing.T) {
 		replicas: map[string]int32{"default/web-app": 3},
 	}
 
-	decisions, err := e.Evaluate(reader, scaler, "")
+	decisions, err := e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestEvaluateNoAction(t *testing.T) {
 
 func TestEvaluateMaxReplicasLimit(t *testing.T) {
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "At Max",
 		Deployment:         "web-app",
@@ -350,7 +350,7 @@ func TestEvaluateMaxReplicasLimit(t *testing.T) {
 		replicas: map[string]int32{"default/web-app": 5},
 	}
 
-	decisions, err := e.Evaluate(reader, scaler, "")
+	decisions, err := e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestEvaluateMaxReplicasLimit(t *testing.T) {
 
 func TestEvaluateMinReplicasLimit(t *testing.T) {
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "At Min",
 		Deployment:         "web-app",
@@ -389,7 +389,7 @@ func TestEvaluateMinReplicasLimit(t *testing.T) {
 		replicas: map[string]int32{"default/web-app": 2},
 	}
 
-	decisions, err := e.Evaluate(reader, scaler, "")
+	decisions, err := e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestEvaluateMinReplicasLimit(t *testing.T) {
 
 func TestEvaluateDisabledRule(t *testing.T) {
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "Disabled",
 		Deployment:         "web-app",
@@ -428,7 +428,7 @@ func TestEvaluateDisabledRule(t *testing.T) {
 		replicas: map[string]int32{"default/web-app": 3},
 	}
 
-	decisions, err := e.Evaluate(reader, scaler, "")
+	decisions, err := e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestEvaluateCooldown(t *testing.T) {
 	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
 	e.now = func() time.Time { return now }
 
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "Cooldown Test",
 		Deployment:         "web-app",
@@ -468,7 +468,7 @@ func TestEvaluateCooldown(t *testing.T) {
 		replicas: map[string]int32{"default/web-app": 3},
 	}
 
-	decisions, err := e.Evaluate(reader, scaler, "")
+	decisions, err := e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestEvaluateCooldown(t *testing.T) {
 
 	scaler.replicas["default/web-app"] = 4
 
-	decisions, err = e.Evaluate(reader, scaler, "")
+	decisions, err = e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
@@ -492,7 +492,7 @@ func TestEvaluateCooldown(t *testing.T) {
 
 func TestDecisionsHistory(t *testing.T) {
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "History Test",
 		Deployment:         "web-app",
@@ -516,12 +516,12 @@ func TestDecisionsHistory(t *testing.T) {
 		replicas: map[string]int32{"default/web-app": 3},
 	}
 
-	_, err := e.Evaluate(reader, scaler, "")
+	_, err := e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
 
-	decisions := e.Decisions()
+	decisions := e.Decisions("t1")
 	if len(decisions) != 1 {
 		t.Errorf("expected 1 decision in history, got %d", len(decisions))
 	}
@@ -543,7 +543,7 @@ func renderMetrics(t *testing.T) string {
 func TestDecisionHistoryTrimmedToCap(t *testing.T) {
 	metrics.Init("autoscaler-svc-test")
 	e := newTestEvaluator()
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "History Cap",
 		Deployment:         "web-app",
@@ -565,7 +565,7 @@ func TestDecisionHistoryTrimmedToCap(t *testing.T) {
 
 	const inserted = maxDecisionHistory + 200
 	for i := 0; i < inserted; i++ {
-		if _, err := e.Evaluate(reader, scaler, ""); err != nil {
+		if _, err := e.Evaluate(reader, scaler, "", "t1"); err != nil {
 			t.Fatalf("Evaluate #%d failed: %v", i, err)
 		}
 	}
@@ -573,7 +573,7 @@ func TestDecisionHistoryTrimmedToCap(t *testing.T) {
 	if got := e.DecisionHistoryLen(); got != maxDecisionHistory {
 		t.Errorf("灌入 %d 条后 DecisionHistoryLen=%d，期望上限 %d", inserted, got, maxDecisionHistory)
 	}
-	if got := len(e.Decisions()); got != maxDecisionHistory {
+	if got := len(e.Decisions("t1")); got != maxDecisionHistory {
 		t.Errorf("Decisions() 返回 %d 条，期望 %d", got, maxDecisionHistory)
 	}
 
@@ -598,14 +598,14 @@ func TestDecisionHistoryKeepsMostRecent(t *testing.T) {
 	ids := make([]string, inserted)
 	for i := 0; i < inserted; i++ {
 		ids[i] = fmt.Sprintf("rule-%04d", i)
-		e.RecordDecision(&models.ScaleDecision{
+		e.RecordDecision(&models.ScaleDecision{TenantID: "t1",
 			RuleID:     ids[i],
 			Deployment: "web-app",
 			Action:     "no_action",
 		})
 	}
 
-	got := e.Decisions()
+	got := e.Decisions("t1")
 	if len(got) != maxDecisionHistory {
 		t.Fatalf("长度 %d，期望 %d", len(got), maxDecisionHistory)
 	}
@@ -636,7 +636,7 @@ func TestCooldownStillWorksAfterHistoryWrap(t *testing.T) {
 	// 先把历史灌满 filler：与 rule-1 无关（ruleID 不同、action=no_action 不参与冷却判定），
 	// 但会占满容量，使随后的任何写入都触发一次绕回。
 	for i := 0; i < maxDecisionHistory; i++ {
-		e.RecordDecision(&models.ScaleDecision{
+		e.RecordDecision(&models.ScaleDecision{TenantID: "t1",
 			RuleID:     "filler",
 			Deployment: "other-app",
 			Action:     "no_action",
@@ -644,7 +644,7 @@ func TestCooldownStillWorksAfterHistoryWrap(t *testing.T) {
 		})
 	}
 
-	rule := &models.ScaleRule{
+	rule := &models.ScaleRule{TenantID: "t1",
 		ID:                 "rule-1",
 		Name:               "Wrap Cooldown",
 		Deployment:         "web-app",
@@ -663,7 +663,7 @@ func TestCooldownStillWorksAfterHistoryWrap(t *testing.T) {
 	reader := &mockMetricsReader{values: map[string]float64{"web-app/default/cpu_usage": 95.0}}
 	scaler := &mockK8sScaler{replicas: map[string]int32{"default/web-app": 3}}
 
-	decisions, err := e.Evaluate(reader, scaler, "")
+	decisions, err := e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
@@ -673,7 +673,7 @@ func TestCooldownStillWorksAfterHistoryWrap(t *testing.T) {
 
 	// 绕回继续发生：scale_up 被挤到缓冲区中段（既不在头也不在尾）。
 	for i := 0; i < 5; i++ {
-		e.RecordDecision(&models.ScaleDecision{
+		e.RecordDecision(&models.ScaleDecision{TenantID: "t1",
 			RuleID:     "filler",
 			Deployment: "other-app",
 			Action:     "no_action",
@@ -684,7 +684,7 @@ func TestCooldownStillWorksAfterHistoryWrap(t *testing.T) {
 	}
 
 	scaler.replicas["default/web-app"] = 4
-	decisions, err = e.Evaluate(reader, scaler, "")
+	decisions, err = e.Evaluate(reader, scaler, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}

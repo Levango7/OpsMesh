@@ -4,7 +4,10 @@ import "time"
 
 // ScaleRule defines a scaling rule with thresholds and limits.
 type ScaleRule struct {
-	ID                 string        `json:"id"`
+	ID string `json:"id"`
+	// TenantID 是行级租户隔离键（D4 / issue #27 裁决②）：扩缩容规则及其决策都属于租户，
+	// 写入必钉（空值拒绝），读取/更新/删除/决策一律按它过滤。
+	TenantID           string        `json:"tenantId,omitempty"`
 	Name               string        `json:"name"`
 	Deployment         string        `json:"deployment"`
 	Namespace          string        `json:"namespace"`
@@ -22,7 +25,9 @@ type ScaleRule struct {
 
 // ScaleDecision records a scaling action that was taken.
 type ScaleDecision struct {
-	ID           string  `json:"id"`
+	ID string `json:"id"`
+	// TenantID 与所属 Rule 一致（归属由父规则派生，不接受调用方指定）。
+	TenantID     string  `json:"tenantId,omitempty"`
 	RuleID       string  `json:"ruleId"`
 	Deployment   string  `json:"deployment"`
 	Namespace    string  `json:"namespace"`

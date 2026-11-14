@@ -63,6 +63,8 @@ func initSchema(db *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS scaling_rules (
 			id VARCHAR(64) PRIMARY KEY,
+			-- tenant_id：行级租户隔离键（D4 / issue #27 裁决②）
+			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
 			name VARCHAR(255) NOT NULL,
 			deployment VARCHAR(255),
 			namespace VARCHAR(255),
@@ -76,10 +78,13 @@ func initSchema(db *sql.DB) error {
 			enabled TINYINT(1) DEFAULT 1,
 			created_at DATETIME,
 			updated_at DATETIME,
-			INDEX idx_deployment (deployment)
+			INDEX idx_deployment (deployment),
+			INDEX idx_rule_tenant (tenant_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS scaling_decisions (
 			id VARCHAR(64) PRIMARY KEY,
+			-- 归属由父 scaling_rule 派生（不接受调用方指定）
+			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
 			rule_id VARCHAR(64) NOT NULL,
 			deployment VARCHAR(255),
 			namespace VARCHAR(255),
@@ -90,7 +95,8 @@ func initSchema(db *sql.DB) error {
 			metric_value DOUBLE,
 			timestamp DATETIME,
 			INDEX idx_rule (rule_id),
-			INDEX idx_timestamp (timestamp)
+			INDEX idx_timestamp (timestamp),
+			INDEX idx_decision_tenant (tenant_id)
 		)`,
 	}
 	for _, s := range stmts {
@@ -101,9 +107,13 @@ func initSchema(db *sql.DB) error {
 	return nil
 }
 
+// CreateRule 空租户拒绝写入；tenant_id 不参与 ON DUPLICATE 更新（归属不可改挂）。
 func (m *MySQLStore) CreateRule(rule *models.ScaleRule) (*models.ScaleRule, error) {
 	if rule == nil {
 		return nil, nil
+	}
+	if rule.TenantID == "" {
+		return nil, ErrTenantMismatch
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -112,13 +122,13 @@ func (m *MySQLStore) CreateRule(rule *models.ScaleRule) (*models.ScaleRule, erro
 	}
 	rule.UpdatedAt = time.Now().UTC()
 	_, err := m.db.ExecContext(ctx,
-		`INSERT INTO scaling_rules (id, name, deployment, namespace, metric, scale_up_threshold, scale_down_threshold, min_replicas, max_replicas, cooldown_up, cooldown_down, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO scaling_rules (id, tenant_id, name, deployment, namespace, metric, scale_up_threshold, scale_down_threshold, min_replicas, max_replicas, cooldown_up, cooldown_down, enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE name=VALUES(name), deployment=VALUES(deployment), namespace=VALUES(namespace),
 		   metric=VALUES(metric), scale_up_threshold=VALUES(scale_up_threshold), scale_down_threshold=VALUES(scale_down_threshold),
 		   min_replicas=VALUES(min_replicas), max_replicas=VALUES(max_replicas), cooldown_up=VALUES(cooldown_up),
 		   cooldown_down=VALUES(cooldown_down), enabled=VALUES(enabled), updated_at=VALUES(updated_at)`,
-		rule.ID, rule.Name, rule.Deployment, rule.Namespace, rule.Metric, rule.ScaleUpThreshold, rule.ScaleDownThreshold,
+		rule.ID, rule.TenantID, rule.Name, rule.Deployment, rule.Namespace, rule.Metric, rule.ScaleUpThreshold, rule.ScaleDownThreshold,
 		rule.MinReplicas, rule.MaxReplicas, int64(rule.CooldownUp), int64(rule.CooldownDown),
 		boolToInt(rule.Enabled), nullTime(rule.CreatedAt), nullTime(rule.UpdatedAt))
 	if err != nil {
@@ -127,17 +137,18 @@ func (m *MySQLStore) CreateRule(rule *models.ScaleRule) (*models.ScaleRule, erro
 	return rule, nil
 }
 
-func (m *MySQLStore) GetRule(id string) (*models.ScaleRule, bool) {
+// GetRule 按 id + 租户取；跨租户与不存在同样返回 false。
+func (m *MySQLStore) GetRule(id, tenantID string) (*models.ScaleRule, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	row := m.db.QueryRowContext(ctx,
-		`SELECT id, name, deployment, namespace, metric, scale_up_threshold, scale_down_threshold, min_replicas, max_replicas, cooldown_up, cooldown_down, enabled, created_at, updated_at FROM scaling_rules WHERE id=?`, id)
+		`SELECT id, tenant_id, name, deployment, namespace, metric, scale_up_threshold, scale_down_threshold, min_replicas, max_replicas, cooldown_up, cooldown_down, enabled, created_at, updated_at FROM scaling_rules WHERE id=? AND tenant_id=?`, id, tenantID)
 	r := &models.ScaleRule{}
 	var deployment, namespace, metric sql.NullString
 	var scaleUp, scaleDown sql.NullFloat64
 	var minReplicas, maxReplicas, cooldownUp, cooldownDown sql.NullInt64
 	var createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&r.ID, &r.Name, &deployment, &namespace, &metric, &scaleUp, &scaleDown,
+	if err := row.Scan(&r.ID, &r.TenantID, &r.Name, &deployment, &namespace, &metric, &scaleUp, &scaleDown,
 		&minReplicas, &maxReplicas, &cooldownUp, &cooldownDown, &r.Enabled, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[store] GetRule 查询失败: %v", err)
@@ -157,7 +168,8 @@ func (m *MySQLStore) GetRule(id string) (*models.ScaleRule, bool) {
 	return r, true
 }
 
-func (m *MySQLStore) UpdateRule(rule *models.ScaleRule) error {
+// UpdateRule 跨租户不可改；SET 不含 tenant_id（归属不可改挂）。
+func (m *MySQLStore) UpdateRule(rule *models.ScaleRule, tenantID string) error {
 	if rule == nil {
 		return nil
 	}
@@ -165,17 +177,18 @@ func (m *MySQLStore) UpdateRule(rule *models.ScaleRule) error {
 	defer cancel()
 	rule.UpdatedAt = time.Now().UTC()
 	_, err := m.db.ExecContext(ctx,
-		`UPDATE scaling_rules SET name=?, deployment=?, namespace=?, metric=?, scale_up_threshold=?, scale_down_threshold=?, min_replicas=?, max_replicas=?, cooldown_up=?, cooldown_down=?, enabled=?, updated_at=? WHERE id=?`,
+		`UPDATE scaling_rules SET name=?, deployment=?, namespace=?, metric=?, scale_up_threshold=?, scale_down_threshold=?, min_replicas=?, max_replicas=?, cooldown_up=?, cooldown_down=?, enabled=?, updated_at=? WHERE id=? AND tenant_id=?`,
 		rule.Name, rule.Deployment, rule.Namespace, rule.Metric, rule.ScaleUpThreshold, rule.ScaleDownThreshold,
 		rule.MinReplicas, rule.MaxReplicas, int64(rule.CooldownUp), int64(rule.CooldownDown),
-		boolToInt(rule.Enabled), nullTime(rule.UpdatedAt), rule.ID)
+		boolToInt(rule.Enabled), nullTime(rule.UpdatedAt), rule.ID, tenantID)
 	return err
 }
 
-func (m *MySQLStore) DeleteRule(id string) bool {
+// DeleteRule 跨租户删不掉。
+func (m *MySQLStore) DeleteRule(id, tenantID string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	res, err := m.db.ExecContext(ctx, `DELETE FROM scaling_rules WHERE id=?`, id)
+	res, err := m.db.ExecContext(ctx, `DELETE FROM scaling_rules WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
 		log.Printf("[store] DeleteRule 失败: %v", err)
 		return false
@@ -187,11 +200,12 @@ func (m *MySQLStore) DeleteRule(id string) bool {
 	return n > 0
 }
 
-func (m *MySQLStore) ListRules() []*models.ScaleRule {
+// ListRules 只返回该租户的规则。
+func (m *MySQLStore) ListRules(tenantID string) []*models.ScaleRule {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	rows, err := m.db.QueryContext(ctx,
-		`SELECT id, name, deployment, namespace, metric, scale_up_threshold, scale_down_threshold, min_replicas, max_replicas, cooldown_up, cooldown_down, enabled, created_at, updated_at FROM scaling_rules`)
+		`SELECT id, tenant_id, name, deployment, namespace, metric, scale_up_threshold, scale_down_threshold, min_replicas, max_replicas, cooldown_up, cooldown_down, enabled, created_at, updated_at FROM scaling_rules WHERE tenant_id=?`, tenantID)
 	if err != nil {
 		log.Printf("[store] ListRules 失败: %v", err)
 		return nil
@@ -204,7 +218,7 @@ func (m *MySQLStore) ListRules() []*models.ScaleRule {
 		var scaleUp, scaleDown sql.NullFloat64
 		var minReplicas, maxReplicas, cooldownUp, cooldownDown sql.NullInt64
 		var createdAt, updatedAt sql.NullTime
-		if err := rows.Scan(&r.ID, &r.Name, &deployment, &namespace, &metric, &scaleUp, &scaleDown,
+		if err := rows.Scan(&r.ID, &r.TenantID, &r.Name, &deployment, &namespace, &metric, &scaleUp, &scaleDown,
 			&minReplicas, &maxReplicas, &cooldownUp, &cooldownDown, &r.Enabled, &createdAt, &updatedAt); err != nil {
 			continue
 		}
@@ -223,9 +237,13 @@ func (m *MySQLStore) ListRules() []*models.ScaleRule {
 	return out
 }
 
+// CreateDecision 归属由父规则决定：父规则不属于该租户 ⇒ 拒收。
 func (m *MySQLStore) CreateDecision(d *models.ScaleDecision) (*models.ScaleDecision, error) {
 	if d == nil {
 		return nil, nil
+	}
+	if _, ok := m.GetRule(d.RuleID, d.TenantID); !ok {
+		return nil, ErrTenantMismatch
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -233,21 +251,22 @@ func (m *MySQLStore) CreateDecision(d *models.ScaleDecision) (*models.ScaleDecis
 		d.Timestamp = time.Now().UTC()
 	}
 	_, err := m.db.ExecContext(ctx,
-		`INSERT INTO scaling_decisions (id, rule_id, deployment, namespace, action, from_replicas, to_replicas, reason, metric_value, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.ID, d.RuleID, d.Deployment, d.Namespace, d.Action, d.FromReplicas, d.ToReplicas, d.Reason, d.MetricValue, nullTime(d.Timestamp))
+		`INSERT INTO scaling_decisions (id, tenant_id, rule_id, deployment, namespace, action, from_replicas, to_replicas, reason, metric_value, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.ID, d.TenantID, d.RuleID, d.Deployment, d.Namespace, d.Action, d.FromReplicas, d.ToReplicas, d.Reason, d.MetricValue, nullTime(d.Timestamp))
 	if err != nil {
 		return nil, err
 	}
 	return d, nil
 }
 
-func (m *MySQLStore) ListDecisions(ruleID string, limit int) []*models.ScaleDecision {
+// ListDecisions 只返回该租户的决策（可按规则再收窄）。
+func (m *MySQLStore) ListDecisions(tenantID, ruleID string, limit int) []*models.ScaleDecision {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	q := `SELECT id, rule_id, deployment, namespace, action, from_replicas, to_replicas, reason, metric_value, timestamp FROM scaling_decisions`
-	var args []interface{}
+	q := `SELECT id, tenant_id, rule_id, deployment, namespace, action, from_replicas, to_replicas, reason, metric_value, timestamp FROM scaling_decisions WHERE tenant_id=?`
+	args := []interface{}{tenantID}
 	if ruleID != "" {
-		q += " WHERE rule_id=?"
+		q += " AND rule_id=?"
 		args = append(args, ruleID)
 	}
 	q += " ORDER BY timestamp DESC"
@@ -267,7 +286,7 @@ func (m *MySQLStore) ListDecisions(ruleID string, limit int) []*models.ScaleDeci
 		var deployment, namespace, action, reason sql.NullString
 		var fromReplicas, toReplicas sql.NullInt64
 		var metricValue sql.NullFloat64
-		if err := rows.Scan(&d.ID, &d.RuleID, &deployment, &namespace, &action, &fromReplicas, &toReplicas, &reason, &metricValue, &ts); err != nil {
+		if err := rows.Scan(&d.ID, &d.TenantID, &d.RuleID, &deployment, &namespace, &action, &fromReplicas, &toReplicas, &reason, &metricValue, &ts); err != nil {
 			continue
 		}
 		d.Deployment, d.Namespace, d.Action = deployment.String, namespace.String, action.String
