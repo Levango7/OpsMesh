@@ -50,6 +50,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/store"
 	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
 	"github.com/Levango7/OpsMesh/internal/tlsutil"
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 // Server 控制面服务（HTTP + gRPC + metrics）。
@@ -149,6 +150,16 @@ type Server struct {
 	// 为 nil 或总闸关闭时全部请求按本地处理（与切流前逐字一致）。
 	// 见 internal/controlplane/cutover 与 docs/td60-cutover-signal-design.md。
 	cutoverRouter *cutover.Router
+
+	// electorClient 任务域选主客户端（TD-60 任务域切流）。
+	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc LeaderElectorService。
+	// taskServiceClient 任务服务 gRPC 客户端（TD-60 任务域 HTTP 切流）。
+	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc TaskService。
+	taskServiceClient taskv1.TaskServiceClient
+	// resultServiceClient 任务结果服务 gRPC 客户端（TD-60 任务域 HTTP 切流）。
+	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc ResultService。
+	resultServiceClient taskv1.ResultServiceClient
+	electorClient       LeaderElectorClient
 
 	// DeviceFP deadline：超过此时刻签发的 refresh token 必须绑定 DeviceFP（非空）。
 	// 零值=不强制（向后兼容）；非零=渐进式强制设备绑定。
@@ -393,34 +404,38 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		cfg:                  cfg,
-		store:                st,
-		httpPort:             cfg.HTTPPort,
-		grpcPort:             cfg.GRPCPort,
-		metricsPort:          cfg.MetricsPort,
-		metricsCounts:        metricscache.AppCountsCache{TTL: cfg.MetricsCacheTTL},
-		requireAuth:          cfg.RequireAuth,
-		tlsCert:              cfg.TLSCert,
-		tlsKey:               cfg.TLSKey,
-		clientCA:             cfg.ClientCA,
-		shutdownWait:         cfg.ShutdownTimeout,
-		bus:                  bus,
-		metrics:              metrics.New(),
-		cmdbHandler:          factory.NewCMDBHandler(st),
-		logHandler:           factory.NewLogHandler(st, cfg),
-		deployHandler:        deployHandler,
-		orchHandler:          orchHandler,
-		aiopsHandler:         aiops.NewHandler(aiops.NewEngine(cfg, st)),
-		aiopsEngine:          aiops.NewEngine(cfg, st),
-		costHandler:          newSharedCostHandler(),
-		aiGatewayHandler:     newBudgetedAIGatewayHandler(),
-		agentHandler:         newBudgetedAgentHandler(),
-		knowledgeHandler:     newBudgetedKnowledgeHandler(),
-		k8sLifecycleHandler:  func() *k8slifecycle.K8sLifecycleHandler {
+		cfg:              cfg,
+		store:            st,
+		httpPort:         cfg.HTTPPort,
+		grpcPort:         cfg.GRPCPort,
+		metricsPort:      cfg.MetricsPort,
+		metricsCounts:    metricscache.AppCountsCache{TTL: cfg.MetricsCacheTTL},
+		requireAuth:      cfg.RequireAuth,
+		tlsCert:          cfg.TLSCert,
+		tlsKey:           cfg.TLSKey,
+		clientCA:         cfg.ClientCA,
+		shutdownWait:     cfg.ShutdownTimeout,
+		bus:              bus,
+		metrics:          metrics.New(),
+		cmdbHandler:      factory.NewCMDBHandler(st),
+		logHandler:       factory.NewLogHandler(st, cfg),
+		deployHandler:    deployHandler,
+		orchHandler:      orchHandler,
+		aiopsHandler:     aiops.NewHandler(aiops.NewEngine(cfg, st)),
+		aiopsEngine:      aiops.NewEngine(cfg, st),
+		costHandler:      newSharedCostHandler(),
+		aiGatewayHandler: newBudgetedAIGatewayHandler(),
+		agentHandler:     newBudgetedAgentHandler(),
+		knowledgeHandler: newBudgetedKnowledgeHandler(),
+		k8sLifecycleHandler: func() *k8slifecycle.K8sLifecycleHandler {
 			if sqlStore, ok := st.(*sqlstore.SQLStore); ok {
 				return k8slifecycle.NewK8sLifecycleHandler(sqlStore)
 			}
-			return nil
+			// memory 模式同样构造（store=nil）：handler 的持久化调用点全部
+			// h.store != nil 守卫（仅跳过作业持久化）；且接线测试
+			// （ai_agent / k8s_lifecycle）在 memory 模式断言 handler 非空，
+			// 此前返回 nil 直接在 NewServer 接线处 panic（main 自 846208a 连红）。
+			return k8slifecycle.NewK8sLifecycleHandler(nil)
 		}(),
 		cloudProviderFactory: cloudprovider.NewAdapterFactory(),
 		eventSubs:            make(map[chan SSEEvent]struct{}), // SSE 订阅者集合
@@ -601,7 +616,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	s.orchHandler.Authorize = s.subsystemAuthorize
 	// 同款 G1 缺口：k8s 生命周期 9 条路由（含 etcd-restore / node-scale 这类真副作用动作）
 	// 此前无任何鉴权闸，匿名即可触发；本文件只做接线，升级/回滚/轮换的占位语义另行裁决。
-	s.k8sLifecycleHandler.Authorize = s.subsystemAuthorize
+	if s.k8sLifecycleHandler != nil { // 防御：构造恒非空，此守卫与路由注册处对齐
+		s.k8sLifecycleHandler.Authorize = s.subsystemAuthorize
+	}
 	// 同款 G1 缺口：AI Agent 六条路由（execute/classify/decompose/memory×2/tools）
 	// 由此前完全无闸变为按 ai:read/ai:write 把关；execute 还会驱动 execute_command
 	// （远程 shell）这类工具，匿名可触发等于把远程执行入口挂在公网上。
@@ -890,6 +907,60 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		notifier: s.alertNotifier,
 		bus:      bus,
 	})
+
+	// TD-60 任务域切流：初始化选主客户端（gRPC 调用 task-svc LeaderElectorService）。
+	// 使用 task-svc 的 gRPC 地址（默认 localhost:9090，可通过配置覆盖）。
+	// 若配置为空或连接失败，回退到存根实现（单副本/开发模式）。
+	if cfg.TaskSvcGRPCAddr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := NewGRPCLeaderElectorClient(ctx, cfg.TaskSvcGRPCAddr)
+		if err != nil {
+			logx.Warn(context.Background(), "Task leader 客户端初始化失败，回退存根", "err", err)
+			s.electorClient = NewStubLeaderElectorClient(true)
+		} else {
+			s.electorClient = client
+			logx.Info(context.Background(), "Task leader 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
+		}
+		cancel()
+	} else {
+		s.electorClient = NewStubLeaderElectorClient(true)
+		logx.Info(context.Background(), "Task leader 客户端使用存根实现（单副本/开发模式）")
+	}
+
+	// TD-60 任务域切流：初始化任务服务 gRPC 客户端（HTTP 代理转发到 task-svc TaskService）。
+	if cfg.TaskSvcGRPCAddr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := NewGRPCTaskServiceClient(ctx, cfg.TaskSvcGRPCAddr)
+		if err != nil {
+			logx.Warn(context.Background(), "Task service 客户端初始化失败，回退存根", "err", err)
+			s.taskServiceClient = NewStubTaskServiceClient()
+		} else {
+			s.taskServiceClient = client
+			logx.Info(context.Background(), "Task service 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
+		}
+		cancel()
+	} else {
+		s.taskServiceClient = NewStubTaskServiceClient()
+		logx.Info(context.Background(), "Task service 客户端使用存根实现（单副本/开发模式）")
+	}
+
+	// TD-60 任务域切流：初始化任务结果服务 gRPC 客户端（HTTP 代理转发到 task-svc ResultService）。
+	if cfg.TaskSvcGRPCAddr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := NewGRPCResultServiceClient(ctx, cfg.TaskSvcGRPCAddr)
+		if err != nil {
+			logx.Warn(context.Background(), "Result service 客户端初始化失败，回退存根", "err", err)
+			s.resultServiceClient = NewStubResultServiceClient()
+		} else {
+			s.resultServiceClient = client
+			logx.Info(context.Background(), "Result service 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
+		}
+		cancel()
+	} else {
+		s.resultServiceClient = NewStubResultServiceClient()
+		logx.Info(context.Background(), "Result service 客户端使用存根实现（单副本/开发模式）")
+	}
+
 	return s, nil
 }
 

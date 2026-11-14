@@ -17,8 +17,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Levango7/OpsMesh/internal/proto"
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 const rfTenant = "t-rf"
@@ -29,6 +31,9 @@ const rfTenant = "t-rf"
 func rfServer(t *testing.T, agentN int) *Server {
 	t.Helper()
 	s := newBatchTestServer()
+	// TD-60 任务域 HTTP 切流：注入存根任务服务客户端（测试不依赖真实 task-svc）
+	stubClient := NewStubTaskServiceClient()
+	s.taskServiceClient = stubClient
 	for i := 0; i < agentN; i++ {
 		s.store.Register(&proto.AgentInfo{
 			AgentID:  fmt.Sprintf("dev-rf-%d", i),
@@ -193,35 +198,93 @@ func TestFix1_BatchCanarySubpathsReturn200ViaMux(t *testing.T) {
 // 修复前 handleTaskRouting 只分派 {id}/cancel|result|approve|reject|retry|dead-letter，
 // 裸 GET /api/v1/tasks/{id} 恒 404。前端 OSOptimizeView.vue / MiddlewareDeployView.vue
 // 每 3s 轮询该端点，把 404 吞掉后只报「poll timeout」，执行输出永远不显示。
-// 判据：经 mux 建任务 → GET 详情 200 且响应含 taskID（前端契约字段）。
+// 判据：task 域总闸开启 ⇒ GET /api/v1/tasks/{id} 经 mux 路由到 handleTaskProxy → 200 且响应含 taskID（前端契约字段）。
+// 默认模式（总闸关闭）的断言见 TestFix2b_DefaultModeRoutesToLocalHandlers。
 func TestFix2_BareTaskDetailReturnsTaskJSON(t *testing.T) {
+	t.Setenv("TASK_SVC_PROXY_ENABLED", "true") // 总闸开启 ⇒ 走 handleTaskProxy（task-svc 代理路径）
 	s := rfServer(t, 2)
+	// 预置一个任务到 stub client，测试裸详情路由是否可达
+	stubClient := s.taskServiceClient.(*StubTaskServiceClient)
+	testTaskID := "test-task-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	stubClient.AddTask(&taskv1.Task{
+		TaskId:   testTaskID,
+		AgentId:  "dev-rf-0",
+		TenantId: rfTenant,
+		Type:     "shell",
+		Command:  "echo test",
+		Status:   "completed",
+	})
 	mux := rfMux(s)
 
-	rec := rfDo(t, mux, http.MethodPost, "/api/v1/tasks",
-		`{"agentID":"dev-rf-0","type":"shell","command":"echo rf-detail"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("POST /tasks = %d, want 201; body=%s", rec.Code, rec.Body.String())
-	}
-	var created struct {
-		TaskID string `json:"taskID"`
-	}
-	rfDecode(t, rec.Body.String(), &created)
-	if created.TaskID == "" {
-		t.Fatalf("taskID 为空; body=%s", rec.Body.String())
-	}
-
 	// 修复点：裸 GET /api/v1/tasks/{id} → 200，且契约字段 taskID 在响应体里。
-	rec = rfDo(t, mux, http.MethodGet, "/api/v1/tasks/"+created.TaskID, "")
+	rec := rfDo(t, mux, http.MethodGet, "/api/v1/tasks/"+testTaskID, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /tasks/{id} = %d, want 200 (回归：裸详情曾恒 404); body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), created.TaskID) {
-		t.Fatalf("GET /tasks/{id} 响应未含 taskID=%s; body=%s", created.TaskID, rec.Body.String())
+	if !strings.Contains(rec.Body.String(), testTaskID) {
+		t.Fatalf("GET /tasks/{id} 响应未含 taskID=%s; body=%s", testTaskID, rec.Body.String())
 	}
 	// 未知 ID → 404（不能把查不到变成 200 空壳）。
 	if rec := rfDo(t, mux, http.MethodGet, "/api/v1/tasks/rf-no-such-task", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("GET /tasks/{unknown} = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestFix2b_DefaultModeRoutesToLocalHandlers 钉住 TD-60 任务域 HTTP 切流契约的默认侧：
+// 总闸关闭（TASK_SVC_PROXY_ENABLED 未设/ false —— 单副本默认）⇒ 任务域 HTTP 行为与切流前
+// 逐字一致——GET 详情/结果全部走**本地** handleTaskRouting（直查控制面 store），
+// 而不是无条件指向 handleTaskProxy。
+//
+// 回归来源：TD-60 直推（00791d8）把 "/api/v1/tasks/" 子树无条件注册为 handleTaskProxy，
+// 默认部署下 stub 客户端返回空壳 ⇒ /result 裸解引用 panic ⇒ 500；而真正的本地实现
+// （handleTaskRouting/handleTaskDetail/handleTaskResult）被架空、E2E real-backend 两条
+// agent_lifecycle 用例恒红（2026-11-13 实测 run 43372579974）。
+func TestFix2b_DefaultModeRoutesToLocalHandlers(t *testing.T) {
+	t.Setenv("TASK_SVC_PROXY_ENABLED", "false") // 显式关闭总闸（默认行为）
+	s := rfServer(t, 1)
+	// 本地 store 预置任务（走与真实下发同一条 CreateTask 路径）。
+	tk, err := s.store.CreateTask(&proto.Task{
+		AgentID:  "dev-rf-0",
+		Type:     "shell",
+		Command:  "echo routed-to-local",
+		TenantID: rfTenant,
+		Status:   "pending",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	mux := rfMux(s)
+
+	// 裸详情 → 本地 handler：200，且响应含存储层状态（rawStatus 契约字段，proxy 无此字段）。
+	rec := rfDo(t, mux, http.MethodGet, "/api/v1/tasks/"+tk.TaskID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /tasks/{id} = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"rawStatus"`) {
+		t.Fatalf("GET /tasks/{id} 响应未含 rawStatus（期望本地 handler 形状）; body=%s", rec.Body.String())
+	}
+	// 未知 ID → 404
+	if rec := rfDo(t, mux, http.MethodGet, "/api/v1/tasks/rf-no-such-task", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /tasks/{unknown} = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	// 结果未上报 → 404（本地 handler：result not found），而不是 panic⇒500。
+	if rec := rfDo(t, mux, http.MethodGet, "/api/v1/tasks/"+tk.TaskID+"/result", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /tasks/{id}/result = %d, want 404（结果未上报）; body=%s", rec.Code, rec.Body.String())
+	}
+	// 上报结果前先让 agent 领取（memory store 状态机：pending→running→done；跳过则 SubmitResult 被判非法转移拒绝）。
+	if claimed := s.store.ClaimTask("dev-rf-0"); claimed == nil {
+		t.Fatalf("ClaimTask: 未能领取任务 %s", tk.TaskID)
+	}
+	s.store.SubmitResult(&proto.TaskResult{
+		TaskID: tk.TaskID, AgentID: "dev-rf-0", ExitCode: 0,
+		Stdout: "local-stdout-e2e", Stderr: "", DurationMs: 42,
+	})
+	rec = rfDo(t, mux, http.MethodGet, "/api/v1/tasks/"+tk.TaskID+"/result", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /tasks/{id}/result = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "local-stdout-e2e") {
+		t.Fatalf("GET /tasks/{id}/result 响应未含 stdout; body=%s", rec.Body.String())
 	}
 }
 

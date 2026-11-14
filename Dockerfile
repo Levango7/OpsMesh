@@ -35,6 +35,10 @@ ENV GOPROXY=https://goproxy.cn,direct
 ENV GOWORK=off
 WORKDIR /src
 COPY go.mod go.sum ./
+# root go.mod 含 local replace（github.com/Levango7/OpsMesh/services/task-svc => ./services/task-svc）：
+# go mod download 在 COPY . . 之前执行，必须先看到被替换模块的描述文件，否则解析失败。
+COPY services/task-svc/go.mod services/task-svc/go.mod
+COPY services/task-svc/go.sum services/task-svc/go.sum
 # 构建期校验模块完整性（防供应链投毒 / go.sum 漂移，task 安全 P2-5）。
 # M11：先 download 再 verify，校验已下载模块内容与 go.sum 哈希一致。
 # 依赖拉取带退避重试：goproxy 偶发把模块流截断（CI 实测 `cloud.google.com/go/auth@v0.18.2: read …` 失败），

@@ -67,6 +67,10 @@ var k8sVersionRe = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)
 var k8sClusterNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]{0,62}$`)
 var k8sTokenRe = regexp.MustCompile(`^[a-zA-Z0-9_.:]+$`)
 
+// k8sCertHashRe 是 kubeadm 的 CA 证书哈希形态：sha256:<十六进制>。
+// 该值进 `kubeadm join --discovery-token-ca-cert-hash` 命令位 ⇒ 必须是窄白名单。
+var k8sCertHashRe = regexp.MustCompile(`^sha256:[a-fA-F0-9]{32,128}$`)
+
 // k8sProvisionReq K8s 部署请求体。
 type k8sProvisionReq struct {
 	DeviceID    string `json:"deviceID"`
@@ -379,6 +383,10 @@ func (s *Server) handleK8sJoin(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid master address"})
 		return
 	}
+	if req.CertHash != "" && !k8sCertHashRe.MatchString(req.CertHash) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid certHash (expected sha256:<hex>)"})
+		return
+	}
 	if !k8sTokenRe.MatchString(req.Token) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid token"})
 		return
@@ -405,18 +413,20 @@ func (s *Server) handleK8sJoin(w http.ResponseWriter, r *http.Request) {
 
 func buildK8sJoinScript(req k8sJoinReq) string {
 	var b strings.Builder
+	// 收口（批次 16）：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
+	certHashV, masterAddrV, tokenV := req.CertHash, req.MasterAddr, req.Token
 	b.WriteString("set -e\n")
 	switch req.Tool {
 	case "kubeadm":
 		b.WriteString("# kubeadm 节点加入\n")
 		if req.Role == "controlplane" {
-			fmt.Fprintf(&b, "kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash %s --control-plane || true\n", req.MasterAddr, req.Token, defaultIfEmpty(req.CertHash, "sha256:<hash>"))
+			fmt.Fprintf(&b, "kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash %s --control-plane || true\n", masterAddrV, tokenV, defaultIfEmpty(certHashV, "sha256:<hash>"))
 		} else {
-			fmt.Fprintf(&b, "kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash %s || true\n", req.MasterAddr, req.Token, defaultIfEmpty(req.CertHash, "sha256:<hash>"))
+			fmt.Fprintf(&b, "kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash %s || true\n", masterAddrV, tokenV, defaultIfEmpty(certHashV, "sha256:<hash>"))
 		}
 	case "k3s":
 		b.WriteString("# k3s 节点加入（agent）\n")
-		fmt.Fprintf(&b, "curl -sfL https://get.k3s.io | K3S_URL=https://%s:6443 K3S_TOKEN=%s sh - || true\n", req.MasterAddr, req.Token)
+		fmt.Fprintf(&b, "curl -sfL https://get.k3s.io | K3S_URL=https://%s:6443 K3S_TOKEN=%s sh - || true\n", masterAddrV, tokenV)
 	}
 	b.WriteString("echo '节点加入完成'\n")
 	return b.String()

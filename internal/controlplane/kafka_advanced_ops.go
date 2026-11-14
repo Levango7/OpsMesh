@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/pkg/shellquote"
@@ -91,6 +92,41 @@ func (s *Server) handleKafkaShareGroup(w http.ResponseWriter, r *http.Request) {
 // ============================================================================
 
 // handleMirrorMaker 处理 POST /api/v1/middleware/kafka/mirror-maker
+// validateKafkaBootstrap 校验 MM2 的 bootstrap.servers 取值：host[:port]。
+// 此前仅判空 ⇒ `1.2.3.4; id` 可进配置（heredoc 内）。
+func validateKafkaBootstrap(s string) error {
+	host, port := s, ""
+	if i := strings.LastIndex(s, ":"); i >= 0 {
+		host, port = s[:i], s[i+1:]
+	}
+	if err := shellquote.ValidateHost(host); err != nil {
+		return err
+	}
+	if port != "" {
+		if _, err := shellquote.ParsePort(port); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateKafkaTopics 校验逗号分隔的 topic 列表：逐项必须是合法资源名。
+func validateKafkaTopics(topics string) error {
+	if topics == "" {
+		return nil
+	}
+	for _, t := range strings.Split(topics, ",") {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			return fmt.Errorf("empty topic name")
+		}
+		if err := shellquote.ValidateName(t, 249); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Server) handleMirrorMaker(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -110,10 +146,26 @@ func (s *Server) handleMirrorMaker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 收口（批次 17）：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
+	sourceV, targetV, topicsV := req.SourceCluster, req.TargetCluster, req.Topics
 	switch req.Action {
 	case "start":
-		if req.SourceCluster == "" || req.TargetCluster == "" {
+		if sourceV == "" || targetV == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "sourceCluster and targetCluster are required"})
+			return
+		}
+		// 白名单（批次 17）：集群地址与 topic 列表此前**仅非空校验** ⇒ `1.2.3.4; id` 可过，
+		// 落进 MM2 配置（heredoc 内）。
+		if err := validateKafkaBootstrap(sourceV); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "sourceCluster: " + err.Error()})
+			return
+		}
+		if err := validateKafkaBootstrap(targetV); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "targetCluster: " + err.Error()})
+			return
+		}
+		if err := validateKafkaTopics(topicsV); err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "topics: " + err.Error()})
 			return
 		}
 		mm2Config := req.Config
@@ -126,7 +178,7 @@ source->target.topics = %s
 replication.factor = 3
 checkpoints.topic.replication.factor = 3
 heartbeats.topic.replication.factor = 3
-offset.syncs.topic.replication.factor = 3`, req.SourceCluster, req.TargetCluster, req.Topics)
+offset.syncs.topic.replication.factor = 3`, sourceV, targetV, topicsV)
 		}
 		// 注入面（批次 10）：**heredoc** 形态。内容在 `<< 'EOF'` 里本应字面，但载荷里
 		// 出现**一行恰好等于 EOF** 就会让 heredoc **提前闭合** ⇒ 其后的内容被 shell
