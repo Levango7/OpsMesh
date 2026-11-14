@@ -90,7 +90,7 @@
         </div>
         <div v-if="actionError" class="msg err">{{ actionError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.confirm') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="saving"><Icon name="success" :size="14" /> {{ $t('common.confirm') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="actionForm = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
@@ -207,6 +207,7 @@ function searchRequests() {
 // ---------- approve/reject/cancel ----------
 const actionForm = ref(null)
 const actionError = ref('')
+const saving = ref(false)
 const actionTitle = ref('')
 
 function openApprove(row) {
@@ -228,6 +229,8 @@ function openCancel(row) {
 }
 
 async function onActionSubmit() {
+  if (saving.value) return
+  saving.value = true
   actionError.value = ''
   const { type, id, comment } = actionForm.value
   const body = { comment }
@@ -239,6 +242,8 @@ async function onActionSubmit() {
     toast.success(t('approval.action_success'))
   } catch (e) {
     actionError.value = e.j?.error || t('approval.action_failed')
+  } finally {
+    saving.value = false
   }
 }
 

@@ -109,7 +109,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('notify.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="saving"><Icon name="success" :size="14" /> {{ $t('notify.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="channelForm = null">{{ $t('notify.cancel') }}</Button>
         </div>
       </form>
@@ -148,7 +148,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('notify.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="saving"><Icon name="success" :size="14" /> {{ $t('notify.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="templateForm = null">{{ $t('notify.cancel') }}</Button>
         </div>
       </form>
@@ -194,6 +194,7 @@ import Button from "@/components/ui/Button.vue"
 
 const tab = ref('channels')
 const loading = ref(false)
+const saving = ref(false)
 const formError = ref('')
 const loadErr = ref('')
 
@@ -282,6 +283,8 @@ function openChannelEdit(row) {
 }
 
 async function onSaveChannel() {
+  if (saving.value) return
+  saving.value = true
   formError.value = ''
   const body = {
     name: channelForm.value.name,
@@ -301,6 +304,8 @@ async function onSaveChannel() {
     await fetchChannels()
   } catch (e) {
     formError.value = e.j?.error || t('notify.save_failed')
+  } finally {
+    saving.value = false
   }
 }
 

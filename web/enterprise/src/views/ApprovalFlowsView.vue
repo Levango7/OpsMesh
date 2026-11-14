@@ -45,7 +45,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="saving"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
@@ -96,6 +96,7 @@ const columns = computed(() => [
   { key: 'actions', title: t('approval.col_actions'), slot: 'cell-actions', width: '90px' }
 ])
 
+const saving = ref(false)
 const form = ref(null)
 
 function openCreate() {
@@ -120,6 +121,7 @@ function formatSteps(v) {
 }
 
 async function onSave() {
+  if (saving.value) return
   formError.value = ''
   let steps
   try {
@@ -128,6 +130,7 @@ async function onSave() {
     formError.value = t('approval.steps_invalid')
     return
   }
+  saving.value = true
   try {
     const body = {
       name: form.value.name,
@@ -140,6 +143,8 @@ async function onSave() {
     toast.success(t('approval.flow_saved'))
   } catch (e) {
     formError.value = e.j?.error || t('approval.flow_save_failed')
+  } finally {
+    saving.value = false
   }
 }
 

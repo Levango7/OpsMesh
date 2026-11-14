@@ -63,7 +63,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar">
-          <Button type="submit" variant="primary" size="sm"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button type="submit" variant="primary" size="sm" :disabled="saving"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button type="button" variant="ghost" size="sm" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
@@ -96,7 +96,7 @@
         </div>
         <div v-if="rollbackError" class="msg err">{{ rollbackError }}</div>
         <div class="btnbar">
-          <Button type="submit" variant="primary" size="sm"><Icon name="success" :size="14" /> {{ $t('helm.rollback') }}</Button>
+          <Button type="submit" variant="primary" size="sm" :disabled="saving"><Icon name="success" :size="14" /> {{ $t('helm.rollback') }}</Button>
           <Button type="button" variant="ghost" size="sm" @click="rollbackForm = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
@@ -139,6 +139,7 @@ import { Button } from '@/components/ui'
 const store = useHelmStore()
 const route = useRoute()
 const formError = ref('')
+const saving = ref(false)
 const rollbackError = ref('')
 const uninstallConfirm = reactive({ show: false, name: null })
 const errorConfirm = reactive({ show: false, message: '' })
@@ -202,6 +203,7 @@ function parseValues(raw) {
 }
 
 async function onSave() {
+  if (saving.value) return
   formError.value = ''
   if (!form.value.name || !form.value.namespace || !form.value.chart) {
     formError.value = t('helm.release_form_required')
@@ -212,6 +214,7 @@ async function onSave() {
     formError.value = t('helm.values_invalid')
     return
   }
+  saving.value = true
   try {
     const body = {
       name: form.value.name,
@@ -230,6 +233,8 @@ async function onSave() {
     form.value = null
   } catch (e) {
     formError.value = e.j?.error || (form.value.mode === 'upgrade' ? t('helm.release_upgrade_failed') : t('helm.release_install_failed'))
+  } finally {
+    saving.value = false
   }
 }
 
@@ -252,18 +257,22 @@ function openRollback(row) {
 }
 
 async function onRollbackConfirm() {
+  if (saving.value) return
   rollbackError.value = ''
   const { name, revision } = rollbackForm.value
   if (!name || !revision || revision < 1) {
     rollbackError.value = t('helm.rollback_invalid')
     return
   }
+  saving.value = true
   try {
     await store.rollbackRelease(name, { revision })
     toast.success(t('helm.release_rolled_back'))
     rollbackForm.value = null
   } catch (e) {
     rollbackError.value = e.j?.error || t('error.helmRollbackFailed')
+  } finally {
+    saving.value = false
   }
 }
 

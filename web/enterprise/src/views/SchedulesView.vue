@@ -6,7 +6,7 @@
     :error="loadErr"
   >
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate" data-testid="schedules-opencreate-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
+      <Button variant="primary" size="md" @click="openCreate" data-testid="schedules-opencreate-btn" :disabled="!canWrite || saving" :title="canWrite ? '' : $t('common.write_denied')">
         <Icon name="add" :size="14" />
         {{ $t('schedules.add') }}
       </Button>
@@ -114,6 +114,7 @@ const canWrite = computed(() => auth.hasPerm('schedule:write'))
 
 const schedules = ref([])
 const loading = ref(false)
+const saving = ref(false)
 const form = ref(null)
 const formError = ref('')
 const loadErr = ref('')
@@ -165,6 +166,8 @@ function openEdit(row) {
 }
 
 async function onSave() {
+  if (saving.value) return
+  saving.value = true
   formError.value = ''
   try {
     if (form.value.id) {
@@ -181,6 +184,8 @@ async function onSave() {
     await fetchSchedules()
   } catch (e) {
     formError.value = e.j?.error || t('schedules.save_failed')
+  } finally {
+    saving.value = false
   }
 }
 

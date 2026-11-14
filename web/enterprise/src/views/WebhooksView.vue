@@ -6,7 +6,7 @@
     :error="loadErr"
   >
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate" data-testid="webhooks-opencreate-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
+      <Button variant="primary" size="md" @click="openCreate" data-testid="webhooks-opencreate-btn" :disabled="!canWrite || saving" :title="canWrite ? '' : $t('common.write_denied')">
         <Icon name="add" :size="14" />
         {{ $t('webhooks.add') }}
       </Button>
@@ -132,6 +132,7 @@ const canWrite = computed(() => auth.hasPerm('webhook:write'))
 
 const webhooks = ref([])
 const loading = ref(false)
+const saving = ref(false)
 const form = ref(null)
 const formError = ref('')
 const loadErr = ref('')
@@ -195,6 +196,8 @@ function openEdit(row) {
 }
 
 async function onSave() {
+  if (saving.value) return
+  saving.value = true
   formError.value = ''
   try {
     // 事件列表：逗号分隔文本 → 数组
@@ -218,6 +221,8 @@ async function onSave() {
     await fetchWebhooks()
   } catch (e) {
     formError.value = e.j?.error || (e instanceof SyntaxError ? t('webhooks.headers_invalid') : '') || t('webhooks.save_failed')
+  } finally {
+    saving.value = false
   }
 }
 
