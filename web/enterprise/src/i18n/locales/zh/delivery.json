@@ -19,6 +19,8 @@
     "auto_layout_btn": "⊞ 自动布局",
     "load_demo_btn": "载入示例",
     "clear_btn": "✕ 清空",
+    "clear_confirm": "确认清空当前 DAG？所有未保存的节点将丢失。",
+    "delete_node_confirm": "确认删除该节点？引用它的下游依赖将失效。",
     "no_command": "(无命令)",
     "edit_node_title": "编辑节点 {id}",
     "type_label": "类型",

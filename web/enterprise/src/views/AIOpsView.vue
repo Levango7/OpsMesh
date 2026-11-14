@@ -213,7 +213,7 @@
 
       <div v-if="executionsLoading" class="muted">{{ $t('common.loading') }}</div>
       <div v-else-if="executions.length === 0" class="muted">{{ $t('aiops.history_no_data') }}</div>
-      <div v-else>
+      <div v-else class="table-scroll">
         <table class="data-table">
           <thead>
             <tr>
@@ -441,6 +441,10 @@ code { background: var(--muted); padding: 2px 6px; border-radius: var(--radius-s
 
 .data-table th, .data-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
 .data-table th { background: var(--muted); color: var(--text-2); font-size: 12px; }
+
+/* 审计整改批次3：原生表格纳入统一横向滚动容器（此前窄屏撑破卡片）。 */
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 560px; }
 
 @media (max-width: 768px) { .metrics-row { grid-template-columns: repeat(2, 1fr); } }
 </style>

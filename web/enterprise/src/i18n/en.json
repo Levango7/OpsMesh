@@ -469,7 +469,9 @@
     "demo_step_pull": "Pull Image",
     "demo_step_stop": "Stop Old Container",
     "demo_step_start": "Start New Container",
-    "demo_loaded_msg": "Demo workflow loaded (not saved yet)"
+    "demo_loaded_msg": "Demo workflow loaded (not saved yet)",
+    "clear_confirm": "Clear the current DAG? All unsaved nodes will be lost.",
+    "delete_node_confirm": "Delete this node? Downstream dependencies referencing it will break."
   },
   "deploys": {
     "title": "Deploys",
@@ -1965,7 +1967,8 @@
     "col_status": "Status",
     "col_output": "Output",
     "col_batch_id": "Batch ID",
-    "col_actions": "Actions"
+    "col_actions": "Actions",
+    "confirm_dispatch": "Dispatch to {count} device(s)? This executes the command on every selected agent."
   },
   "canary": {
     "title": "Canary Release",

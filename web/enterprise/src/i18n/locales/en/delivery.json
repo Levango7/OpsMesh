@@ -19,6 +19,8 @@
     "auto_layout_btn": "⊞ Auto Layout",
     "load_demo_btn": "Load Demo",
     "clear_btn": "✕ Clear",
+    "clear_confirm": "Clear the current DAG? All unsaved nodes will be lost.",
+    "delete_node_confirm": "Delete this node? Downstream dependencies referencing it will break.",
     "no_command": "(no command)",
     "edit_node_title": "Edit Node {id}",
     "type_label": "Type",

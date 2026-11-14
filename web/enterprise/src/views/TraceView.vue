@@ -73,7 +73,8 @@
       <div class="flowbar">
         <h3 style="margin: 0">{{ $t('trace.results') }} ({{ traces.length }})</h3>
       </div>
-      <table class="data-table">
+      <div class="table-scroll">
+        <table class="data-table">
         <thead>
           <tr>
             <th>{{ $t('trace.trace_id') }}</th>
@@ -102,7 +103,8 @@
             </td>
           </tr>
         </tbody>
-      </table>
+        </table>
+      </div>
     </div>
 
     <div v-else-if="!queryLoading && searched" class="muted">{{ $t('trace.no_traces') }}</div>
@@ -328,6 +330,10 @@ watch(
 
 .data-table th, .data-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
 .data-table th { background: var(--muted); color: var(--text-2); font-size: 12px; }
+
+/* 审计整改批次3：原生表格纳入横向滚动容器（7 列窄屏必溢出）。 */
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 720px; }
 
 .trace-id { font-size: 11px; font-family: monospace; color: var(--text-2); }
 .spans-tree { margin-top: 12px; }

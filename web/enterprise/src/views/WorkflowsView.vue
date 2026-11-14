@@ -38,13 +38,13 @@
     </div>
 
     <div class="btnbar">
-      <Button variant="primary" size="md" data-testid="workflows-save-btn" @click="onSave">{{ $t('workflows.save_btn') }}</Button>
-      <Button variant="primary" size="md" :class="['teal']" data-testid="workflows-run-btn" @click="onRun" :disabled="!store.current.id">{{ $t('workflows.run_btn') }}</Button>
+      <Button variant="primary" size="md" data-testid="workflows-save-btn" :disabled="saving" @click="onSave">{{ $t('workflows.save_btn') }}</Button>
+      <Button variant="primary" size="md" :class="['teal']" data-testid="workflows-run-btn" @click="onRun" :disabled="!store.current.id || running">{{ $t('workflows.run_btn') }}</Button>
       <Button variant="primary" size="md" data-testid="workflows-schedule-btn" @click="onSchedule" :disabled="!store.current.id">{{ $t('workflows.schedule_btn') }}</Button>
       <Button variant="primary" size="md" data-testid="workflows-add-step-btn" @click="store.addNode()">{{ $t('workflows.add_step_btn') }}</Button>
       <Button variant="primary" size="md" data-testid="workflows-auto-layout-btn" @click="store.autoLayout()">{{ $t('workflows.auto_layout_btn') }}</Button>
       <Button variant="primary" size="md" data-testid="workflows-load-demo-btn" @click="loadDemo">{{ $t('workflows.load_demo_btn') }}</Button>
-      <Button variant="primary" size="md" data-testid="workflows-clear-btn" @click="store.reset()">{{ $t('workflows.clear_btn') }}</Button>
+      <Button variant="primary" size="md" data-testid="workflows-clear-btn" @click="clearConfirm.show = true">{{ $t('workflows.clear_btn') }}</Button>
     </div>
 
     <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']" data-testid="workflows-msg">{{ store.msg }}</p>
@@ -118,7 +118,7 @@
         <label>{{ $t('workflows.depends_label') }}</label>
         <input :value="(currentNode.dependsOn || []).join(', ')" data-testid="input-node-depends" @change="onDepsChange" />
       </div>
-      <Button variant="danger" size="sm" data-testid="workflows-delete-node-btn" @click="store.deleteNode(currentNode.id)">{{ $t('workflows.delete_node_btn') }}</Button>
+      <Button variant="danger" size="sm" data-testid="workflows-delete-node-btn" @click="nodeConfirm.show = true">{{ $t('workflows.delete_node_btn') }}</Button>
     </div>
 
     <!-- Cron 定时输入（替代 prompt） -->
@@ -131,6 +131,22 @@
       placeholder="*/5 * * * *"
       @confirm="onCronConfirm"
     />
+
+    <!-- 审计整改批次4：清空 DAG / 删除节点的破坏性操作补确认 -->
+    <ConfirmModal
+      v-model="clearConfirm.show"
+      data-testid="workflows-clear-confirm"
+      :title="$t('workflows.clear_btn')"
+      :message="$t('workflows.clear_confirm')"
+      @confirm="store.reset()"
+    />
+    <ConfirmModal
+      v-model="nodeConfirm.show"
+      data-testid="workflows-delete-node-confirm"
+      :title="$t('workflows.delete_node_btn')"
+      :message="$t('workflows.delete_node_confirm')"
+      @confirm="onDeleteNodeConfirm"
+    />
   </PageShell>
 </template>
 
@@ -141,6 +157,7 @@ import { useWorkflowStore } from '@/stores/workflow'
 import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
 import Button from "@/components/ui/Button.vue"
+import ConfirmModal from '@/components/ConfirmModal.vue'
 // PromptModal 仅少数页面使用，改为异步加载减小首屏 components chunk
 const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.vue'))
 
@@ -149,6 +166,11 @@ const agents = ref([])
 const selectedId = ref('')
 const canvasRef = ref(null)
 const cronModal = reactive({ show: false })
+// 审计整改批次4：保存/运行在飞防重 + 破坏性操作确认。
+const saving = ref(false)
+const running = ref(false)
+const clearConfirm = reactive({ show: false })
+const nodeConfirm = reactive({ show: false })
 
 const NODE_W = 170, NODE_H = 66
 // 节点类型配色改用主题 token（--indigo/--teal/--amber 及对应 soft），
@@ -182,16 +204,25 @@ async function onOpen() {
   await store.open(selectedId.value)
 }
 async function onSave() {
+  if (saving.value) return
+  saving.value = true
   try { await store.save(); store.msg = t('workflows.saved_msg', { id: store.current.id }); store.error = '' }
   // 全局 toast 由 api/request.js 拦截器负责（非 401 都会弹）；这里补**页内**可见错误——
   // 否则失败后抽屉不关、横幅不动，用户会以为"没反应"（2026-11-06 五维排查批 2）。
   catch (e) { store.error = (e && e.j && e.j.error) || t('workflows.save_failed') }
+  finally { saving.value = false }
 }
 async function onRun() {
+  if (running.value) return
+  running.value = true
   try {
     const r = await store.run()
     store.msg = `[${r.s}] ${JSON.stringify(r.j)}`; store.error = r.s >= 400 ? 'run' : ''
   } catch (e) { store.error = (e && e.j && e.j.error) || t('workflows.run_failed') }
+  finally { running.value = false }
+}
+function onDeleteNodeConfirm() {
+  if (currentNode.value) store.deleteNode(currentNode.value.id)
 }
 async function onSchedule() {
   cronModal.show = true

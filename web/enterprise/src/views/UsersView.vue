@@ -72,7 +72,7 @@
         </div>
         <div v-if="formError" class="msg err" data-testid="users-form-error">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit" data-testid="users-save-btn"><Icon name="success" :size="14" /> {{ $t('users.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="saving" data-testid="users-save-btn"><Icon name="success" :size="14" /> {{ $t('users.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" data-testid="users-cancel-btn" @click="form = null">{{ $t('users.cancel') }}</Button>
         </div>
       </form>
@@ -122,6 +122,7 @@ import Button from "@/components/ui/Button.vue"
 const users = ref([])
 const roles = ref([])
 const loading = ref(false)
+const saving = ref(false)
 const form = ref(null)
 const formError = ref('')
 const loadErr = ref('')
@@ -219,6 +220,8 @@ function openEdit(row) {
 }
 
 async function onSave() {
+  if (saving.value) return
+  saving.value = true
   formError.value = ''
   try {
     if (form.value.id) {
@@ -241,6 +244,8 @@ async function onSave() {
     await fetchUsers()
   } catch (e) {
     formError.value = e.j?.error || t('users.save_failed')
+  } finally {
+    saving.value = false
   }
 }
 

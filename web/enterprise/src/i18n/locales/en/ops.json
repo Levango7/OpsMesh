@@ -869,6 +869,7 @@
     "content": "Content",
     "submit": "Dispatch",
     "status_title": "Execution Status",
+    "confirm_dispatch": "Dispatch to {count} device(s)? This executes the command on every selected agent.",
     "stat_total": "Total",
     "stat_succeeded": "Succeeded",
     "stat_failed": "Failed",

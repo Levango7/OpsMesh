@@ -165,9 +165,16 @@ describe('WorkflowsView 视图', () => {
       expect(mockAddNode).toHaveBeenCalledTimes(1)
     })
 
-    it('点击清空按钮调用 store.reset', async () => {
+    it('点击清空按钮先弹确认，确认后才调用 store.reset（审计整改批次4）', async () => {
       const wrapper = mountWorkflows()
       await wrapper.find('[data-testid="workflows-clear-btn"]').trigger('click')
+      // 危险操作不再直接执行：先弹确认框，未确认时不得调用 store.reset。
+      expect(mockReset).toHaveBeenCalledTimes(0)
+      // ConfirmModal 使用 Teleport to body，需从 document.body 取确认按钮。
+      const confirmBtn = document.body.querySelector('[data-testid="confirm-modal-confirm"]')
+      expect(confirmBtn).not.toBeNull()
+      confirmBtn.click()
+      await wrapper.vm.$nextTick()
       expect(mockReset).toHaveBeenCalledTimes(1)
     })
   })

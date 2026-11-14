@@ -469,7 +469,9 @@
     "demo_step_pull": "拉取镜像",
     "demo_step_stop": "停旧容器",
     "demo_step_start": "起新容器",
-    "demo_loaded_msg": "已载入示例作业流（尚未保存）"
+    "demo_loaded_msg": "已载入示例作业流（尚未保存）",
+    "clear_confirm": "确认清空当前 DAG？所有未保存的节点将丢失。",
+    "delete_node_confirm": "确认删除该节点？引用它的下游依赖将失效。"
   },
   "deploys": {
     "title": "部署中心",
@@ -1965,7 +1967,8 @@
     "col_status": "状态",
     "col_output": "输出",
     "col_batch_id": "批次 ID",
-    "col_actions": "操作"
+    "col_actions": "操作",
+    "confirm_dispatch": "确认向 {count} 台设备批量下发？命令将在每个选中的 agent 上执行。"
   },
   "canary": {
     "title": "灰度发布",

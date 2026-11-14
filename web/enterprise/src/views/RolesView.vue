@@ -54,7 +54,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('roles.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="saving"><Icon name="success" :size="14" /> {{ $t('roles.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('roles.cancel') }}</Button>
         </div>
       </form>
@@ -95,6 +95,7 @@ import Button from "@/components/ui/Button.vue"
 const roles = ref([])
 const permissions = ref([])
 const loading = ref(false)
+const saving = ref(false)
 const form = ref(null)
 const formError = ref('')
 const loadErr = ref('')
@@ -160,6 +161,8 @@ function openEdit(row) {
 }
 
 async function onSave() {
+  if (saving.value) return
+  saving.value = true
   formError.value = ''
   try {
     if (form.value.id) {
@@ -178,6 +181,8 @@ async function onSave() {
     await fetchRoles()
   } catch (e) {
     formError.value = e.j?.error || t('roles.save_failed')
+  } finally {
+    saving.value = false
   }
 }
 

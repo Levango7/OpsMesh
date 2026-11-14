@@ -3,7 +3,7 @@
     <!-- 批量下发表单（详情页不显示） -->
     <div v-if="!detailId" class="card card--raised">
       <h3>{{ $t('batch.dispatch_form_title') }}</h3>
-      <form @submit.prevent="onSubmit">
+      <form @submit.prevent="confirmSubmit">
         <div class="field field--fixed">
           <label>{{ $t('batch.agent_select') }}</label>
           <div class="agent-picker">
@@ -121,6 +121,15 @@
     <Modal v-model="errorConfirm.show" :title="$t('common.error')">
       {{ errorConfirm.message }}
     </Modal>
+
+    <!-- 审计整改批次4：跨设备批量下发前补确认（误点代价高）。 -->
+    <ConfirmModal
+      v-model="submitConfirm.show"
+      data-testid="batch-submit-confirm"
+      :title="$t('batch.submit')"
+      :message="$t('batch.confirm_dispatch', { count: agentIDs.length })"
+      @confirm="onSubmit"
+    />
   </PageShell>
 </template>
 
@@ -136,6 +145,7 @@ import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
 import { Button, Input, Select, Table, Modal } from '@/components/ui'
 import Icon from '@/components/Icon.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const route = useRoute()
 const store = useBatchStore()
@@ -148,6 +158,13 @@ const msgOk = ref(false)
 const submitting = ref(false)
 
 const errorConfirm = reactive({ show: false, message: '' })
+// 审计整改批次4：批量下发确认
+const submitConfirm = reactive({ show: false })
+
+function confirmSubmit() {
+  if (submitting.value || !agentIDs.value.length) return
+  submitConfirm.show = true
+}
 
 const detailId = computed(() => route.params.id || '')
 

@@ -640,8 +640,11 @@ onUnmounted(() => {
 .view-head__actions { display: inline-flex; align-items: center; gap: 8px; }
 
 /* 分段开关（对齐 .k8s-subnav 模式：容器内嵌，选中项浮起） */
+/* 审计整改批次3：容器允许换行并限制最大宽，避免窄屏整组顶出视口
+   （子项仍保持 nowrap，仅在容器内折行）。 */
 .segmented {
   display: inline-flex; align-items: center; gap: 4px;
+  flex-wrap: wrap; max-width: 100%;
   padding: 4px; background: var(--color-surface-2, #f7f9fc);
   border: 1px solid var(--color-hairline, #d3dbe8);
   border-radius: var(--radius-lg, 8px);

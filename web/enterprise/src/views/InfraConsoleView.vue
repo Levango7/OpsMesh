@@ -441,5 +441,8 @@ button:focus-visible {
     position: static;
     max-height: none;
   }
+  /* 审计整改批次3：纵向排列后必须复位桌面端 380px 最小宽，否则
+     视口 ≤380px（iPhone SE 375 / Galaxy 360）时整页横向溢出。 */
+  .action-panel { min-width: 0; width: 100%; }
 }
 </style>

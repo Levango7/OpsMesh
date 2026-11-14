@@ -63,7 +63,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('tenants.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="saving"><Icon name="success" :size="14" /> {{ $t('tenants.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('tenants.cancel') }}</Button>
         </div>
       </form>
@@ -113,6 +113,7 @@ import Button from "@/components/ui/Button.vue"
 
 const tenants = ref([])
 const loading = ref(false)
+const saving = ref(false)
 const form = ref(null)
 const formError = ref('')
 const loadErr = ref('')
@@ -168,6 +169,8 @@ function openEdit(row) {
 }
 
 async function onSave() {
+  if (saving.value) return
+  saving.value = true
   formError.value = ''
   if (!form.value.name) {
     formError.value = t('tenants.name_required')
@@ -190,6 +193,8 @@ async function onSave() {
     await fetchTenants()
   } catch (e) {
     formError.value = e.j?.error || t('tenants.save_failed')
+  } finally {
+    saving.value = false
   }
 }
 

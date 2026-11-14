@@ -1152,6 +1152,7 @@
     "content": "内容",
     "submit": "下发",
     "status_title": "执行状态",
+    "confirm_dispatch": "确认向 {count} 台设备批量下发？命令将在每个选中的 agent 上执行。",
     "stat_total": "总数",
     "stat_succeeded": "成功",
     "stat_failed": "失败",

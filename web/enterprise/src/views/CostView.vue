@@ -42,7 +42,7 @@
           <input v-model.number="budgetForm.threshold" type="number" min="0" max="1" step="0.1" />
         </div>
         <div class="field field--fixed">
-          <Button variant="primary" size="sm" @click="updateBudget">{{ $t('cost.save_budget') }}</Button>
+          <Button variant="primary" size="sm" :disabled="saving" @click="updateBudget">{{ $t('cost.save_budget') }}</Button>
         </div>
       </div>
       <p class="muted" data-testid="cost-budget-note">{{ $t('cost.budget_note') }}</p>
@@ -64,10 +64,11 @@
     <div class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('cost.report_title') }}</h3>
-        <Button variant="primary" size="sm" @click="fetchReport">{{ $t('common.refresh') }}</Button>
+        <Button variant="primary" size="sm" :disabled="reportLoading" @click="fetchReport">{{ $t('common.refresh') }}</Button>
         <Button variant="ghost" size="sm" @click="exportMarkdown">{{ $t('cost.export_md') }}</Button>
       </div>
-      <div v-if="store.report">
+      <div v-if="loading && !store.report" class="muted">{{ $t('common.loading') }}</div>
+      <div v-else-if="store.report">
         <div class="report-summary">
           <div class="summary-item">
             <span class="summary-label">{{ $t('cost.total_cost') }}</span>
@@ -104,7 +105,7 @@
     <div class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('cost.routes_title') }}</h3>
-        <Button variant="ghost" size="sm" @click="store.fetchRoutes()">{{ $t('common.refresh') }}</Button>
+        <Button variant="ghost" size="sm" :disabled="routesLoading" @click="refreshRoutes">{{ $t('common.refresh') }}</Button>
       </div>
       <DataTable
         v-if="store.routes.length"
@@ -131,6 +132,12 @@ const store = useCostStore()
 
 // 预算保存/报告刷新/导出此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
 const loadErr = ref('')
+
+// 审计整改批次4：补 loading/防重（此前 4 个异步请求全无加载态、保存按钮无防重）。
+const loading = ref(true)
+const saving = ref(false)
+const reportLoading = ref(false)
+const routesLoading = ref(false)
 
 const budgetForm = ref({ daily: 100000, monthly: 1000000, threshold: 0.8 })
 
@@ -171,13 +178,24 @@ const modelRows = computed(() => {
 })
 
 async function updateBudget() {
+  saving.value = true
   try { await store.updateBudget('default', budgetForm.value.daily, budgetForm.value.monthly, budgetForm.value.threshold) }
   catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
+  finally { saving.value = false }
 }
 
 async function fetchReport() {
+  reportLoading.value = true
   try { await store.fetchReport('default') }
   catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
+  finally { reportLoading.value = false }
+}
+
+async function refreshRoutes() {
+  routesLoading.value = true
+  try { await store.fetchRoutes() }
+  catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
+  finally { routesLoading.value = false }
 }
 
 async function exportMarkdown() {
@@ -196,11 +214,17 @@ async function exportMarkdown() {
   } catch (e) { loadErr.value = e.j?.error || t('common.load_failed') }
 }
 
-onMounted(() => {
-  store.fetchBudget('default')
-  store.fetchAlerts('default')
-  store.fetchReport('default')
-  store.fetchRoutes()
+onMounted(async () => {
+  try {
+    await Promise.allSettled([
+      store.fetchBudget('default'),
+      store.fetchAlerts('default'),
+      store.fetchReport('default'),
+      store.fetchRoutes()
+    ])
+  } finally {
+    loading.value = false
+  }
 })
 </script>
 

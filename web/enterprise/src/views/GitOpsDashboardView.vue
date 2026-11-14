@@ -90,7 +90,8 @@
     <div class="card">
       <h3>{{ $t('gitops.recent_syncs') }}</h3>
       <div v-if="recentSyncs.length === 0" class="muted">{{ $t('gitops.no_syncs') }}</div>
-      <table class="data-table" v-else>
+      <div v-else class="table-scroll">
+        <table class="data-table">
         <thead>
           <tr>
             <th>{{ $t('gitops.col_app') }}</th>
@@ -107,7 +108,8 @@
             <td>{{ fmtTime(s.updatedAt) }}</td>
           </tr>
         </tbody>
-      </table>
+        </table>
+      </div>
     </div>
 
     <!-- 快捷入口 -->
@@ -316,6 +318,10 @@ onMounted(() => {
   color: var(--text-2);
   font-size: 12px;
 }
+
+/* 审计整改批次3：原生表格纳入横向滚动容器。 */
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 480px; }
 
 .quick-links {
   padding: 12px;
