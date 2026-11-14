@@ -216,6 +216,9 @@ services:
       - GOMAXPROCS=4
       # TD-60 任务域切流：agent 侧 claimTask/reportResult 改走 task-svc gRPC（compose 内网）。
       - OPSMESH_TASK_SVC_GRPC_ADDR=task-svc:50052
+      # E2E 失败回执 spec 需要一次失败+重试+死信在 30s 轮询窗口内到终态：
+      # 默认 15s 派发间隔 → 3 次失败 ≈ 45s 才到 failed，必然超时。dev 环境调小。
+      - OPSMESH_TASK_DISPATCH_INTERVAL=2s
     ulimits:
       nproc: 1048576
       nofile:

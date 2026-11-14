@@ -764,10 +764,14 @@ func (a *Agent) collectDeviceMetrics() *proto.DeviceMetrics {
 	return m
 }
 
-// dispatchLoop 每 15s 触发一次 drainTasks：尽量把当前所有 pending 任务领取并投入 worker 队列，
+// dispatchLoop 每 task-dispatch-interval（默认 15s）触发一次 drainTasks：尽量把当前所有 pending 任务领取并投入 worker 队列，
 // 避免每轮只领 1 条导致大量任务排队过久（吞吐修复）。
 func (a *Agent) dispatchLoop(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Second)
+	interval := a.cfg.TaskDispatchInterval
+	if interval <= 0 {
+		interval = 15 * time.Second // 零值/负值兜底：保持既有默认行为
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {

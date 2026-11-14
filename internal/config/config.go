@@ -73,8 +73,9 @@ type Config struct {
 	RedisPassword string
 	RequireAuth   bool // 生产模式：要求网关注入租户头，缺失则拒绝（MVP 默认 false=开发降级）
 	// 运行健壮性
-	TaskTimeout     time.Duration // agent 单任务执行超时（默认 120s）
-	ShutdownTimeout time.Duration // 收到 SIGTERM 后的优雅退出窗口（默认 15s）
+	TaskTimeout          time.Duration // agent 单任务执行超时（默认 120s）
+	TaskDispatchInterval time.Duration // agent 派发轮询间隔（默认 15s；<=0=用默认；E2E/dev 可经 env 调小）
+	ShutdownTimeout      time.Duration // 收到 SIGTERM 后的优雅退出窗口（默认 15s）
 	// gRPC TLS / mTLS（默认空=关闭，仅内网友好网用；等保生产建议开启）
 	TLSCert  string // 服务端证书 / 客户端证书 文件路径
 	TLSKey   string // 私钥 文件路径
@@ -495,6 +496,7 @@ func Load() *Config {
 	redisPassword := flag.String("redis-password", "", "Redis 认证口令（服务端 --requirepass）；空=不认证（仅限未设密码的 Redis，生产必须配置）；或 env OPSMESH_REDIS_PASSWORD")
 	requireAuth := flag.Bool("require-auth", false, "要求网关注入 X-Tenant-ID，缺失则拒绝（生产 hardening）")
 	taskTimeout := flag.Duration("task-timeout", 120*time.Second, "agent 单任务执行超时")
+	taskDispatchInterval := flag.Duration("task-dispatch-interval", 15*time.Second, "agent 派发轮询间隔（<=0=用默认 15s）")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 15*time.Second, "SIGTERM 优雅退出窗口")
 	tlsCert := flag.String("tls-cert", "", "gRPC TLS 证书路径（空=关闭）；--http-tls=auto 时同时用于 Web/REST HTTPS")
 	tlsKey := flag.String("tls-key", "", "gRPC TLS 私钥路径；--http-tls=auto 时同时用于 Web/REST HTTPS")
@@ -734,6 +736,7 @@ func Load() *Config {
 		RedisPassword:            val("redis-password", *redisPassword, "OPSMESH_REDIS_PASSWORD"),
 		RequireAuth:              valBool("require-auth", *requireAuth, "OPSMESH_REQUIRE_AUTH"),
 		TaskTimeout:              valDur("task-timeout", *taskTimeout, "OPSMESH_TASK_TIMEOUT"),
+		TaskDispatchInterval:     valDur("task-dispatch-interval", *taskDispatchInterval, "OPSMESH_TASK_DISPATCH_INTERVAL"),
 		ShutdownTimeout:          valDur("shutdown-timeout", *shutdownTimeout, "OPSMESH_SHUTDOWN_TIMEOUT"),
 		TLSCert:                  val("tls-cert", *tlsCert, "OPSMESH_TLS_CERT"),
 		TLSKey:                   val("tls-key", *tlsKey, "OPSMESH_TLS_KEY"),

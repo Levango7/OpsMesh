@@ -194,7 +194,11 @@ func (s *Service) ClaimTask(ctx context.Context, req *taskv1.ClaimTaskRequest) (
 			mt = s.taskStore.ClaimTask(req.AgentId)
 			if mt == nil {
 				execErr = ErrTaskNotFound
-				return ErrTaskNotFound
+				// 空队列是正常控制流（不是后端故障），**不计入熔断器**：
+				// 否则空轮询会把熔断器打死，之后所有 claim 被短路
+				// （agent 表现为永远领不到任务，E2E agent_lifecycle 必超时）。
+				// 与 ReportResult 对 ErrClaimEpochMismatch 的处置同一原则。
+				return nil
 			}
 			return nil
 		})
@@ -210,6 +214,12 @@ func (s *Service) ClaimTask(ctx context.Context, req *taskv1.ClaimTaskRequest) (
 		if mt == nil {
 			return nil, ErrTaskNotFound
 		}
+	}
+	// 空队列（控制流，不熔断的路径）显式返回 not found——覆盖 breaker 路径下
+	// mt==nil 且 err==nil 的情形；不能落到下面的 taskToProto(mt) 解引用 nil。
+	// （else 分支已各自返回 ErrTaskNotFound，这里只兜 breaker 路径。）
+	if mt == nil {
+		return nil, ErrTaskNotFound
 	}
 	metrics.AddBusinessMetric("task_claims", 1, nil)
 	// A-2 阶段：任务生命周期事件审计（分配/领取）
