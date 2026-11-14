@@ -142,46 +142,6 @@ func TestReclaimLoop_CancelExits(t *testing.T) {
 	runLoopAndWait(t, "reclaimLoop", s.reclaimLoop, 100*time.Millisecond)
 }
 
-// --- leaderLoop ---
-
-// TestLeaderLoop_CancelExits 验证 leaderLoop 在 context cancel 时正常退出。
-// leaderLoop 无早退条件，ticker=LeaderTickSec（默认回退 5s）。
-func TestLeaderLoop_CancelExits(t *testing.T) {
-	s := newLoopTestServer()
-	s.cfg.LeaderTickSec = 1 // 加快续租频率便于测试
-	s.cfg.LeaderTTLSec = 3
-	runLoopAndWait(t, "leaderLoop", s.leaderLoop, 150*time.Millisecond)
-}
-
-// TestLeaderLoop_SingleReplicaIsLeader 验证单副本（MemoryStore）下 leaderLoop 始终为 leader。
-// MemoryStore.RenewLeadership/IsLeader 恒返回 true，leaderLoop 续租后 reg.IsLeader() 应为 true。
-func TestLeaderLoop_SingleReplicaIsLeader(t *testing.T) {
-	s := newLoopTestServer()
-	s.cfg.LeaderTickSec = 1
-	s.cfg.LeaderTTLSec = 3
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		s.leaderLoop(ctx)
-	}()
-
-	// 等待至少一次续租 tick（LeaderTickSec=1s）触发 RenewLeadership
-	time.Sleep(1200 * time.Millisecond)
-	if !s.store.IsLeader() {
-		cancel()
-		t.Fatal("单副本 MemoryStore 下 reg.IsLeader()=false，期望始终为 leader")
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("leaderLoop 未在 5s 内退出，疑似 goroutine 泄漏")
-	}
-}
-
 // --- autoProvisionLoop ---
 
 // TestAutoProvisionLoop_DisabledReturns 验证 Discover=false 时 autoProvisionLoop 立即返回。

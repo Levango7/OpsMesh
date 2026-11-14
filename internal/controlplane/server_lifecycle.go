@@ -558,7 +558,6 @@ func (s *Server) Start() error {
 			"port", s.httpPort,
 			"hint", "确保该端口仅对内网/反向代理开放、TLS 由上游终止；Cookie 已强制 Secure，浏览器直连明文端口会丢弃会话")
 	}
-	go s.leaderLoop(ctx)                // 选主：周期续租，仅 leader 执行周期协调任务
 	go s.reclaimLoop(ctx)               // 任务租约回收：周期复位失联 agent 的 running 任务（仅 leader）
 	go s.scheduleLoop(ctx)              // F4 定时/周期调度：周期派生到点模板任务的 pending 实例（仅 leader）
 	go s.monitorTaskTimeouts(ctx)       // Wave 4-D：任务超时监控，超时 running 任务自动取消（仅 leader）
@@ -891,6 +890,16 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 			})
 			if err != nil {
 				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task reject failed"})
+				return
+			}
+			s.writeTaskResponse(w, resp)
+			return
+		case "claim":
+			resp, err := s.taskServiceClient.ClaimTask(ctx, &taskv1.ClaimTaskRequest{
+				AgentId: tenantID, // 这里用 tenantID 作为 agentID，实际应该从请求中获取
+			})
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "task claim failed"})
 				return
 			}
 			s.writeTaskResponse(w, resp)

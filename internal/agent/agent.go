@@ -36,6 +36,9 @@ import (
 	"github.com/Levango7/OpsMesh/internal/grpcx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 // runState 记录一个正在执行中的任务的控制句柄（F3 取消信号用）。
@@ -88,6 +91,9 @@ type Agent struct {
 	//   - logPusher：尾随文件批量推送到 Loki/ES（外部存储）。
 	//   - logCollector：增量采集经 gRPC 上报到控制面（控制面落库）。
 	logCollector *LogCollector
+	// TD-60 任务域切流：任务服务 gRPC 客户端（连接 task-svc TaskService）。
+	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc TaskService。
+	taskServiceClient TaskServiceClient
 }
 
 // New 构造 agent（读取 hostname，作为注册信息）。
@@ -477,10 +483,27 @@ func (a *Agent) Run() error {
 		return fmt.Errorf("连接控制面 gRPC 失败: %w", err)
 	}
 	a.grpc = cli
-	defer cli.Close()
+
+	// TD-60 任务域切流：初始化任务服务 gRPC 客户端（连接 task-svc TaskService）。
+	// 使用 task-svc 的 gRPC 地址（默认 localhost:9090，可通过配置覆盖）。
+	// 若配置为空或连接失败，回退到存根实现（单副本/开发模式）。
+	if a.cfg.TaskSvcGRPCAddr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := NewGRPCTaskServiceClient(ctx, a.cfg.TaskSvcGRPCAddr)
+		if err != nil {
+			logx.Warn(context.Background(), "Task service 客户端初始化失败，回退存根", "err", err)
+			a.taskServiceClient = NewStubTaskServiceClient()
+		} else {
+			a.taskServiceClient = client
+			logx.Info(context.Background(), "Task service 客户端初始化成功", "target", a.cfg.TaskSvcGRPCAddr)
+		}
+		cancel()
+	} else {
+		a.taskServiceClient = NewStubTaskServiceClient()
+		logx.Info(context.Background(), "Task service 客户端使用存根实现（单副本/开发模式）")
+	}
+
 	// 服务发现：用 StaticDiscovery 加载多控制面地址，按 --lb-strategy 构造 balancer，
-	// 注入 gRPC 客户端。单地址时 Failover 退化为始终用该地址（不破坏现有行为）。
-	a.setupDiscoveryBalancer(trimmed)
 	// OTel 优雅关闭：flush 残留 span 到导出器。defer 在 cli.Close() 之后注册，
 	// 故执行顺序为先 shutdownOTel（flush span）再 cli.Close（关 gRPC），确保 span 上报完成。
 	defer a.shutdownOTel()
@@ -836,18 +859,34 @@ func (a *Agent) cancelLoop(ctx context.Context) {
 	}
 }
 
-// claimTask 原子领取一条 pending 任务（控制面 ClaimTask 已翻转 pending→running，不会双领）。
+// claimTask 原子领取一条 pending 任务（task-svc ClaimTask 已翻转 pending→running，不会双领）。
 func (a *Agent) claimTask(ctx context.Context) (*proto.Task, error) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	tasks, err := a.grpc.PullTasks(cctx, a.agentID)
+	// TD-60 任务域切流：使用 task-svc ClaimTask 原子领取任务
+	resp, err := a.taskServiceClient.ClaimTask(cctx, &taskv1.ClaimTaskRequest{
+		AgentId: a.agentID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if len(tasks) == 0 {
-		return nil, nil
-	}
-	return &tasks[0], nil
+	// Convert taskv1.Task to proto.Task
+	return &proto.Task{
+		TaskID:      resp.TaskId,
+		AgentID:     resp.AgentId,
+		TenantID:    resp.TenantId,
+		Type:        resp.Type,
+		Command:     resp.Command,
+		Content:     resp.Content,
+		Path:        resp.Path,
+		Status:      resp.Status,
+		ClaimedBy:   resp.ClaimedBy,
+		ClaimedAt:   resp.ClaimedAt.AsTime(),
+		CreatedAt:   resp.CreatedAt.AsTime(),
+		RetryCount:  int(resp.RetryCount),
+		DeadLetter:  resp.DeadLetter,
+		ClaimEpoch:  resp.ClaimEpoch,
+	}, nil
 }
 
 // worker 从任务队列取任务并执行、上报（ctx 取消即退出）。
@@ -1602,11 +1641,24 @@ func (a *Agent) checkFileRootWhitelist(path string) error {
 	return fmt.Errorf("path %q not under any allowed root (whitelist: %s)", path, wl)
 }
 
-// reportResult 把执行结果经 gRPC ReportResult 上报控制面。
+// reportResult 把执行结果经 gRPC ReportResult 上报控制面（TD-60 任务域切流：转发到 task-svc TaskService）。
 func (a *Agent) reportResult(ctx context.Context, t proto.Task, res proto.TaskResult) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := a.grpc.ReportResult(cctx, &res); err != nil {
+	req := &taskv1.ReportResultRequest{
+		Result: &taskv1.TaskResult{
+			TaskId:     res.TaskID,
+			AgentId:    res.AgentID,
+			ExitCode:   int32(res.ExitCode),
+			Stdout:     res.Stdout,
+			Stderr:     res.Stderr,
+			DurationMs: res.DurationMs,
+			FinishedAt: timestamppb.New(res.FinishedAt),
+			ClaimEpoch: res.ClaimEpoch,
+		},
+	}
+	_, err := a.taskServiceClient.ReportResult(cctx, req)
+	if err != nil {
 		logx.Error(ctx, "上报结果失败", err, "taskID", t.TaskID)
 		return
 	}

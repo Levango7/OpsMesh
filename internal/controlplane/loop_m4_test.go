@@ -59,46 +59,6 @@ func newLoopM4Server() *Server {
 	return s
 }
 
-// --- leaderLoop (选主续租) ---
-
-// TestLoopM4_LeaderLoop_RenewsLeadership 验证 leaderLoop 启动后经一次续租 tick，
-// store.IsLeader()==true 且 RenewLeadership 返回 true（单副本 MemoryStore 恒为 leader），
-// 随后 context cancel 正常退出。
-func TestLoopM4_LeaderLoop_RenewsLeadership(t *testing.T) {
-	s := newLoopM4Server()
-	s.cfg.LeaderTickSec = 1 // 加快续租频率，1s 内触发一次 RenewLeadership
-	s.cfg.LeaderTTLSec = 3
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		s.leaderLoop(ctx)
-	}()
-
-	// 等待至少一次续租 tick（LeaderTickSec=1s）触发 RenewLeadership。
-	time.Sleep(1200 * time.Millisecond)
-
-	// 行为断言：单副本 MemoryStore 下续租后始终为 leader。
-	if !s.store.IsLeader() {
-		cancel()
-		t.Fatal("leaderLoop 续租后 store.IsLeader()=false，期望 true（单副本恒为 leader）")
-	}
-	if !s.store.RenewLeadership(3 * time.Second) {
-		cancel()
-		t.Fatal("store.RenewLeadership 返回 false，期望 true（单副本续租恒成功）")
-	}
-
-	// 启停断言：context cancel 后 5s 内退出。
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("leaderLoop 未在 5s 内退出，疑似 goroutine 泄漏")
-	}
-}
-
 // --- notifyLoop (M7 告警 Webhook 推送) ---
 
 // TestLoopM4_NotifyLoop_PushesFiringAlert 验证 notifyLoop 推送行为：

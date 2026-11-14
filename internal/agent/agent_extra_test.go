@@ -990,7 +990,7 @@ func TestClaimTask_NoTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &Agent{agentID: "test", grpc: cli}
+	a := &Agent{agentID: "test", grpc: cli, taskServiceClient: NewStubTaskServiceClient()}
 	// 不连真实服务器，invoke 会失败，claimTask 应返回 error；
 	// 即使连不上但返回 nil task（err == nil）也 ok。不 panic 即可。
 	_, _ = a.claimTask(context.Background())

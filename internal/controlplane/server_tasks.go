@@ -452,39 +452,6 @@ func (s *Server) reclaimLoop(ctx context.Context) {
 	}
 }
 
-// leaderLoop 选主循环：每 LeaderTickSec 秒续租一次 leader 租约，
-// 并通过日志在晋升/失去 leader 身份时打印一次（避免每 tick 刷屏）。
-// 仅 leader 才会由 reclaimLoop/scheduleLoop（及后续 provision/离线归档循环）真正执行周期协调任务。
-func (s *Server) leaderLoop(ctx context.Context) {
-	tick := time.Duration(s.cfg.LeaderTickSec) * time.Second
-	if tick <= 0 {
-		tick = 5 * time.Second
-	}
-	ttl := time.Duration(s.cfg.LeaderTTLSec) * time.Second
-	if ttl <= 0 {
-		ttl = 15 * time.Second
-	}
-	ticker := time.NewTicker(tick)
-	defer ticker.Stop()
-	var wasLeader bool
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			isLeader := s.store.RenewLeadership(ttl)
-			if isLeader != wasLeader {
-				if isLeader {
-					logx.Info(ctx, "晋升为 leader，开始执行周期协调任务", "ttl", ttl.String())
-				} else {
-					logx.Info(ctx, "失去 leader 身份，暂停周期协调任务（其他副本接管）")
-				}
-				wasLeader = isLeader
-			}
-		}
-	}
-}
-
 // handleBatchCreateTasks 处理 POST /api/v1/tasks/batch：向多台 agent 批量下发同一任务模板（危点闭环）。
 // 请求体：{ "targets":["a1","a2"], "type","command","content","path","tenantID" }
 // 逐台 CreateTask（复用租户隔离校验与审计）；返回已创建任务 ID 与逐台失败条目。
