@@ -102,13 +102,15 @@ func initSchema(db *sql.DB) error {
 	return ensureIncidentColumns(db)
 }
 
-// ensureIncidentColumns 给**既有**表补上后加的列。
+// ensureIncidentColumns 给**既有**表补上后加的列（occurred_at / tenant_id）。
 //
 // 背景（2026-10-01 复核出的部署路径依赖缺陷）：occurred_at（MTTD 起点）最初只加进了
 // deploy/docker/scripts/init-mysql.sql，而本包 initSchema 的 CREATE TABLE IF NOT EXISTS
 // 不含该列——于是在「服务自建表」的部署（K8s / 自备 MySQL，即本服务默认路径）里，
 // 表根本没有 occurred_at，CreateIncident 的 INSERT 每次都以 Unknown column 失败；
-// 而已有库上 IF NOT EXISTS 是 no-op，永远不会补列。
+// 而已有库上 IF NOT EXISTS 是 no-op，永远不会补列。tenant_id（D4 / issue #27 裁决②）
+// 是同一形态的第二次出现：存量库若不会补列，升级后 CreateIncident/GetIncident 立即
+// Unknown column 'tenant_id'。
 //
 // MySQL 8 无 ADD COLUMN IF NOT EXISTS，故先查 information_schema 再决定是否 ALTER
 // （幂等：重复启动不会报 Duplicate column）。失败即返回错误——由 NewMySQLStore 向上抛，
@@ -116,20 +118,34 @@ func initSchema(db *sql.DB) error {
 func ensureIncidentColumns(db *sql.DB) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	// 两列各自独立判存在：任一列已存在都不能让另一列被跳过（早退会漏补）。
+	if err := ensureColumn(ctx, db, "incidents", "occurred_at",
+		`ALTER TABLE incidents ADD COLUMN occurred_at DATETIME NULL COMMENT '最早已知故障发生时刻（MTTD 起点，可空=未知不计入）'`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "incidents", "tenant_id",
+		`ALTER TABLE incidents ADD COLUMN tenant_id VARCHAR(64) NOT NULL DEFAULT '' COMMENT '行级租户隔离键（D4 / issue #27 裁决②）'`); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureColumn 在列不存在时执行给定 DDL 补列；已存在则什么都不做（MySQL 8 无 ADD COLUMN IF NOT EXISTS）。
+// 表名/列名只进查询条件，DDL 由调用方以字面量提供（不接受外部输入拼接）。
+func ensureColumn(ctx context.Context, db *sql.DB, table, column, ddl string) error {
 	var n int
 	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM information_schema.columns
-		  WHERE table_schema = DATABASE() AND table_name = 'incidents' AND column_name = 'occurred_at'`).Scan(&n); err != nil {
-		return fmt.Errorf("检查 incidents.occurred_at: %w", err)
+		 WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`, table, column).Scan(&n); err != nil {
+		return fmt.Errorf("检查 %s.%s: %w", table, column, err)
 	}
 	if n > 0 {
 		return nil
 	}
-	if _, err := db.ExecContext(ctx,
-		`ALTER TABLE incidents ADD COLUMN occurred_at DATETIME NULL COMMENT '最早已知故障发生时刻（MTTD 起点，可空=未知不计入）'`); err != nil {
-		return fmt.Errorf("补列 incidents.occurred_at: %w", err)
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		return fmt.Errorf("补列 %s.%s: %w", table, column, err)
 	}
-	log.Printf("[store] incidents 表已补列 occurred_at（既有库迁移）")
+	log.Printf("[store] %s 表已补列 %s（既有库迁移）", table, column)
 	return nil
 }
 
