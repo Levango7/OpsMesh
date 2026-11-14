@@ -2,14 +2,20 @@
   <Teleport to="body">
     <transition name="modal">
       <div v-if="modelValue" class="modal-overlay" data-testid="confirm-modal" @click.self="onCancel">
-        <div class="modal-box">
-          <h3 class="modal-title">{{ title }}</h3>
-          <p class="modal-message">{{ message }}</p>
+        <div
+          class="modal-box"
+          role="dialog"
+          aria-modal="true"
+          :aria-labelledby="titleId"
+          :aria-describedby="messageId"
+        >
+          <h3 :id="titleId" class="modal-title">{{ title }}</h3>
+          <p :id="messageId" class="modal-message">{{ message }}</p>
           <div class="modal-actions">
             <button v-if="!info" class="outline" @click="onCancel" data-testid="confirm-modal-cancel">
               {{ cancelText || $t('common.cancel') }}
             </button>
-            <button class="primary" @click="onConfirm" data-testid="confirm-modal-confirm">
+            <button ref="confirmBtnRef" class="primary" @click="onConfirm" data-testid="confirm-modal-confirm">
               {{ confirmText || (info ? $t('common.ok') : $t('common.confirm')) }}
             </button>
           </div>
@@ -23,7 +29,7 @@
 // 通用确认/信息对话框 — 替换原生 confirm()/alert()
 // - 普通模式：显示「取消 + 确认」两个按钮，emit confirm/cancel
 // - info 模式：只显示「确定」按钮，用于信息提示（替代 alert）
-import { watch } from 'vue'
+import { ref, watch } from 'vue'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -35,6 +41,14 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue', 'confirm', 'cancel'])
+
+// 审计整改批次11：无障碍语义——标题/描述唯一 id + 打开聚焦确认按钮/关闭还原焦点。
+// role=dialog / aria-modal 绑定在 .modal-box（见模板）。
+const uid = Math.random().toString(36).slice(2, 9)
+const titleId = `confirm-modal-title-${uid}`
+const messageId = `confirm-modal-message-${uid}`
+const confirmBtnRef = ref(null)
+let lastActive = null
 
 function close() {
   emit('update:modelValue', false)
@@ -52,15 +66,19 @@ function onCancel() {
   close()
 }
 
-// 兼容 ESC 关闭（非 info 模式）
+// 兼容 ESC 关闭（非 info 模式）+ 焦点管理
 if (typeof window !== 'undefined') {
   watch(
     () => props.modelValue,
     (v) => {
-      if (v && !props.info) {
-        window.addEventListener('keydown', onEsc)
+      if (v) {
+        if (!props.info) window.addEventListener('keydown', onEsc)
+        lastActive = document.activeElement
+        requestAnimationFrame(() => confirmBtnRef.value?.focus?.())
       } else {
         window.removeEventListener('keydown', onEsc)
+        if (lastActive && typeof lastActive.focus === 'function') lastActive.focus()
+        lastActive = null
       }
     }
   )
