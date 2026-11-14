@@ -197,6 +197,12 @@ func isPublicAPIPath(p string) bool {
 	switch p {
 	case "/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/refresh":
 		return true
+	// 首登强制改密：用户本**没有 JWT**（登录只发 changePasswordToken），该一次性、
+	// 5 分钟、单次消费的 token 就是本端点唯一的鉴权凭证——与 refresh 同族（无 JWT、
+	// 用一次性 token 自证）。漏收即预置弱口令（admin/admin123 强制改密）的生产环境
+	// 永远无法登录。与审计批次23 的默认拒绝兜底网同族设计。
+	case "/api/v1/auth/change-password":
+		return true
 	case "/api/v1/version":
 		return true
 	}
