@@ -134,9 +134,11 @@ func TestExecutionRecordJSONContract(t *testing.T) {
 }
 
 func TestWebhookPayloadJSONContract(t *testing.T) {
-	obj := marshalToObject(t, WebhookPayload{EventType: "alert", Source: "prometheus",
+	obj := marshalToObject(t, WebhookPayload{TenantID: "t1", EventType: "alert", Source: "prometheus",
 		Data: map[string]string{"device": "web-01"}})
-	assertKeySet(t, obj, "event_type", "source", "data")
+	// tenant_id 是 webhook 契约的一部分（D4 / issue #27 裁决②）：外部触发必须声明租户，
+	// 否则 handler 400、服务端不会跨租户匹配 runbook。
+	assertKeySet(t, obj, "tenant_id", "event_type", "source", "data")
 	if obj["event_type"] != "alert" {
 		t.Fatalf("event_type = %v", obj["event_type"])
 	}

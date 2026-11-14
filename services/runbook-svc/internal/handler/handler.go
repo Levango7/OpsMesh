@@ -170,11 +170,17 @@ func decodeRunbookRequest(body io.Reader) (*models.Runbook, error) {
 }
 
 func (h *Handler) createRunbook(w http.ResponseWriter, r *http.Request) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	rb, err := decodeRunbookRequest(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	// 租户归属由服务端钉住（请求体里的 tenant_id 不作为信任来源，防越权改挂）。
+	rb.TenantID = tid
 
 	created, err := h.svc.CreateRunbook(r.Context(), rb)
 	if err != nil {
@@ -190,7 +196,11 @@ func (h *Handler) createRunbook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listRunbooks(w http.ResponseWriter, r *http.Request) {
-	runbooks, err := h.svc.ListRunbooks(r.Context())
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	runbooks, err := h.svc.ListRunbooks(r.Context(), tid)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -199,7 +209,11 @@ func (h *Handler) listRunbooks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getRunbook(w http.ResponseWriter, r *http.Request, id string) {
-	rb, err := h.svc.GetRunbook(r.Context(), id)
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	rb, err := h.svc.GetRunbook(r.Context(), id, tid)
 	if err != nil {
 		if err == service.ErrRunbookNotFound {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -212,15 +226,20 @@ func (h *Handler) getRunbook(w http.ResponseWriter, r *http.Request, id string) 
 }
 
 func (h *Handler) updateRunbook(w http.ResponseWriter, r *http.Request, id string) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	rb, err := decodeRunbookRequest(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	rb.ID = id
+	rb.TenantID = tid // 归属以网关注入为准（防越权改挂到别的租户）
 	// 前端更新契约不含 enabled：未显式传时保留原值，防止回写为零值 false。
 	if !rb.Enabled {
-		if existing, gerr := h.svc.GetRunbook(r.Context(), id); gerr == nil && existing.Enabled {
+		if existing, gerr := h.svc.GetRunbook(r.Context(), id, tid); gerr == nil && existing.Enabled {
 			var probe map[string]json.RawMessage
 			// decodeRunbookRequest 已保证 enabled 默认 true；此处需区分显式 false。
 			// 重新读原始体不可行（已消费），改由 decodeRunbookRequest 返回值约定：
@@ -231,7 +250,7 @@ func (h *Handler) updateRunbook(w http.ResponseWriter, r *http.Request, id strin
 		}
 	}
 
-	updated, err := h.svc.UpdateRunbook(r.Context(), rb)
+	updated, err := h.svc.UpdateRunbook(r.Context(), rb, tid)
 	if err != nil {
 		if err == service.ErrRunbookNotFound {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -248,7 +267,11 @@ func (h *Handler) updateRunbook(w http.ResponseWriter, r *http.Request, id strin
 }
 
 func (h *Handler) deleteRunbook(w http.ResponseWriter, r *http.Request, id string) {
-	if err := h.svc.DeleteRunbook(r.Context(), id); err != nil {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteRunbook(r.Context(), id, tid); err != nil {
 		if err == service.ErrRunbookNotFound {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
@@ -260,6 +283,10 @@ func (h *Handler) deleteRunbook(w http.ResponseWriter, r *http.Request, id strin
 }
 
 func (h *Handler) triggerRunbook(w http.ResponseWriter, r *http.Request, id string) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	var body struct {
 		TriggeredBy string `json:"triggered_by"`
 	}
@@ -268,7 +295,7 @@ func (h *Handler) triggerRunbook(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 
-	record, err := h.svc.TriggerRunbook(r.Context(), id, body.TriggeredBy)
+	record, err := h.svc.TriggerRunbook(r.Context(), id, body.TriggeredBy, tid)
 	if err != nil {
 		switch err {
 		case service.ErrRunbookNotFound:
@@ -285,7 +312,11 @@ func (h *Handler) triggerRunbook(w http.ResponseWriter, r *http.Request, id stri
 }
 
 func (h *Handler) getHistory(w http.ResponseWriter, r *http.Request, id string) {
-	history, err := h.svc.GetHistory(r.Context(), id)
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	history, err := h.svc.GetHistory(r.Context(), id, tid)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -296,7 +327,11 @@ func (h *Handler) getHistory(w http.ResponseWriter, r *http.Request, id string) 
 // getExecutionLogs serves GET /api/v1/runbooks/{id}/executions/{eid}/logs（前端契约）。
 // 从执行历史定位该执行记录，将各步骤 StepResult.Output 拼接为 {logs: "..."}。
 func (h *Handler) getExecutionLogs(w http.ResponseWriter, r *http.Request, id, execID string) {
-	history, err := h.svc.GetHistory(r.Context(), id)
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	history, err := h.svc.GetHistory(r.Context(), id, tid)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -335,7 +370,12 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	records, err := h.svc.HandleWebhook(r.Context(), &payload)
+	tid := strings.TrimSpace(payload.TenantID)
+	if tid == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant_id in webhook payload")
+		return
+	}
+	records, err := h.svc.HandleWebhook(r.Context(), &payload, tid)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -346,6 +386,17 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		"triggered": len(records),
 		"records":   records,
 	})
+}
+
+// tenantFromRequest 取租户：网关注入的 X-Tenant-ID（require-auth 模式下由网关剥离客户端自带值后重注入）。
+// 缺失即 401——**不兜底 default**：runbook 是租户级数据（issue #27 裁决②），无主请求一律拒绝。
+func tenantFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+	tid := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
+	if tid == "" {
+		writeError(w, http.StatusUnauthorized, "missing X-Tenant-ID (tenant context required)")
+		return "", false
+	}
+	return tid, true
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

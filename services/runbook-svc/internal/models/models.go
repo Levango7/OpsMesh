@@ -4,7 +4,10 @@ import "time"
 
 // Runbook represents an automated playbook with ordered steps.
 type Runbook struct {
-	ID          string `json:"id"`
+	ID string `json:"id"`
+	// TenantID 是行级租户隔离键（D4 / issue #27 裁决②）：runbook 是租户的自动化手册，
+	// 写入必钉（空值拒绝），读取/更新/删除一律按它过滤。
+	TenantID    string `json:"tenant_id,omitempty"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	// Content 是前端编辑器的文本形式契约（web/enterprise/src/api/runbook.js），
@@ -35,7 +38,9 @@ type Step struct {
 
 // ExecutionRecord captures the result of a runbook execution.
 type ExecutionRecord struct {
-	ID           string       `json:"id"`
+	ID string `json:"id"`
+	// TenantID 与所属 Runbook 一致（归属由父对象派生，不接受调用方指定）。
+	TenantID     string       `json:"tenant_id,omitempty"`
 	RunbookID    string       `json:"runbook_id"`
 	TriggeredBy  string       `json:"triggered_by"`
 	Status       string       `json:"status"` // running/success/failed
@@ -58,6 +63,9 @@ type StepResult struct {
 
 // WebhookPayload represents an incoming webhook trigger.
 type WebhookPayload struct {
+	// TenantID：webhook 是外部触发，租户只能由**调用方声明**（缺失即 400）。
+	// 触发范围因此只限该租户的 runbook，不会跨租户触发。
+	TenantID  string            `json:"tenant_id"`
 	EventType string            `json:"event_type"`
 	Source    string            `json:"source"`
 	Data      map[string]string `json:"data"`

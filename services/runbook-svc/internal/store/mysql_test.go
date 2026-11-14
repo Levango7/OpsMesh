@@ -29,6 +29,7 @@ func TestMySQLStore_RunbookCRUD(t *testing.T) {
 
 	r := &models.Runbook{
 		ID:          "rb-itest-1",
+		TenantID:    "t1",
 		Name:        "集成测试 Runbook",
 		Description: "CRUD roundtrip",
 		Content:     "echo hello",
@@ -40,7 +41,7 @@ func TestMySQLStore_RunbookCRUD(t *testing.T) {
 		t.Fatal("CreateRunbook 不应返回 nil")
 	}
 
-	got := m.GetRunbook(r.ID)
+	got := m.GetRunbook(r.ID, "t1")
 	if got == nil {
 		t.Fatal("GetRunbook 应取回刚创建的 runbook")
 	}
@@ -52,14 +53,14 @@ func TestMySQLStore_RunbookCRUD(t *testing.T) {
 	}
 
 	got.Name = "改名后"
-	if !m.UpdateRunbook(got) {
+	if !m.UpdateRunbook(got, "t1") {
 		t.Fatal("UpdateRunbook 应成功")
 	}
-	if m.GetRunbook(r.ID).Name != "改名后" {
+	if m.GetRunbook(r.ID, "t1").Name != "改名后" {
 		t.Fatal("更新未持久化")
 	}
 
-	list := m.ListRunbooks()
+	list := m.ListRunbooks("t1")
 	found := false
 	for _, rb := range list {
 		if rb.ID == r.ID {
@@ -70,13 +71,13 @@ func TestMySQLStore_RunbookCRUD(t *testing.T) {
 		t.Fatal("ListRunbooks 应包含该 runbook")
 	}
 
-	if !m.DeleteRunbook(r.ID) {
+	if !m.DeleteRunbook(r.ID, "t1") {
 		t.Fatal("DeleteRunbook 应成功")
 	}
-	if m.GetRunbook(r.ID) != nil {
+	if m.GetRunbook(r.ID, "t1") != nil {
 		t.Fatal("删除后 GetRunbook 应为 nil")
 	}
-	if m.UpdateRunbook(got) {
+	if m.UpdateRunbook(got, "t1") {
 		t.Fatal("删除后 Update 应失败（not found）")
 	}
 }
@@ -85,11 +86,12 @@ func TestMySQLStore_RunbookCRUD(t *testing.T) {
 func TestMySQLStore_Executions(t *testing.T) {
 	m := newTestMySQLStore(t)
 
-	r := &models.Runbook{ID: "rb-itest-exec", Name: "exec 测试"}
+	r := &models.Runbook{ID: "rb-itest-exec", TenantID: "t1", Name: "exec 测试"}
 	m.CreateRunbook(r)
 
 	e := &models.ExecutionRecord{
 		ID:          "exec-itest-1",
+		TenantID:    "t1",
 		RunbookID:   r.ID,
 		TriggeredBy: "itest",
 		Status:      "success",
@@ -98,7 +100,7 @@ func TestMySQLStore_Executions(t *testing.T) {
 	}
 	m.AddExecution(e)
 
-	got := m.GetExecutions(r.ID)
+	got := m.GetExecutions(r.ID, "t1")
 	if len(got) != 1 {
 		t.Fatalf("期望 1 条执行记录，实际 %d", len(got))
 	}
@@ -106,8 +108,8 @@ func TestMySQLStore_Executions(t *testing.T) {
 		t.Fatalf("执行记录 roundtrip 不一致: %+v", got[0])
 	}
 
-	m.DeleteRunbook(r.ID)
-	if remain := m.GetExecutions(r.ID); len(remain) != 0 {
+	m.DeleteRunbook(r.ID, "t1")
+	if remain := m.GetExecutions(r.ID, "t1"); len(remain) != 0 {
 		t.Fatalf("runbook 删除后执行历史应一并清理，剩 %d 条", len(remain))
 	}
 }

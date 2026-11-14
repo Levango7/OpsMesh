@@ -22,9 +22,10 @@ func TestService_CreateRunbook(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:    "Test Runbook",
-		Steps:   []models.Step{{Name: "s1", Action: "shell", Command: "echo hi", OnError: "stop"}},
-		Enabled: true,
+		TenantID: "t1",
+		Name:     "Test Runbook",
+		Steps:    []models.Step{{Name: "s1", Action: "shell", Command: "echo hi", OnError: "stop"}},
+		Enabled:  true,
 	}
 
 	created, err := svc.CreateRunbook(ctx, rb)
@@ -48,7 +49,7 @@ func TestService_CreateRunbookInvalid(t *testing.T) {
 		t.Fatalf("expected ErrRunbookInvalid, got %v", err)
 	}
 
-	_, err = svc.CreateRunbook(ctx, &models.Runbook{Name: ""})
+	_, err = svc.CreateRunbook(ctx, &models.Runbook{TenantID: "t1", Name: ""})
 	if !errors.Is(err, ErrRunbookInvalid) {
 		t.Fatalf("expected ErrRunbookInvalid for empty name, got %v", err)
 	}
@@ -58,7 +59,7 @@ func TestService_CreateRunbookNoSteps(t *testing.T) {
 	svc, _ := setupTestService()
 	ctx := context.Background()
 
-	rb := &models.Runbook{Name: "No Steps", Enabled: true}
+	rb := &models.Runbook{TenantID: "t1", Name: "No Steps", Enabled: true}
 	_, err := svc.CreateRunbook(ctx, rb)
 	if !errors.Is(err, ErrRunbookInvalid) {
 		t.Fatalf("expected ErrRunbookInvalid for enabled runbook with no steps, got %v", err)
@@ -70,12 +71,13 @@ func TestService_GetRunbook(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:  "Get Test",
-		Steps: []models.Step{{Name: "s1", Action: "shell", Command: "echo get", OnError: "stop"}},
+		TenantID: "t1",
+		Name:     "Get Test",
+		Steps:    []models.Step{{Name: "s1", Action: "shell", Command: "echo get", OnError: "stop"}},
 	}
 	created, _ := svc.CreateRunbook(ctx, rb)
 
-	got, err := svc.GetRunbook(ctx, created.ID)
+	got, err := svc.GetRunbook(ctx, created.ID, "t1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +90,7 @@ func TestService_GetRunbookNotFound(t *testing.T) {
 	svc, _ := setupTestService()
 	ctx := context.Background()
 
-	_, err := svc.GetRunbook(ctx, "nonexistent")
+	_, err := svc.GetRunbook(ctx, "nonexistent", "t1")
 	if !errors.Is(err, ErrRunbookNotFound) {
 		t.Fatalf("expected ErrRunbookNotFound, got %v", err)
 	}
@@ -100,12 +102,13 @@ func TestService_ListRunbooks(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		_, _ = svc.CreateRunbook(ctx, &models.Runbook{
-			Name:  "Runbook",
-			Steps: []models.Step{{Name: "s", Action: "shell", Command: "echo list", OnError: "stop"}},
+			TenantID: "t1",
+			Name:     "Runbook",
+			Steps:    []models.Step{{Name: "s", Action: "shell", Command: "echo list", OnError: "stop"}},
 		})
 	}
 
-	list, err := svc.ListRunbooks(ctx)
+	list, err := svc.ListRunbooks(ctx, "t1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -119,13 +122,14 @@ func TestService_UpdateRunbook(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:  "Update Test",
-		Steps: []models.Step{{Name: "s1", Action: "shell", Command: "echo update", OnError: "stop"}},
+		TenantID: "t1",
+		Name:     "Update Test",
+		Steps:    []models.Step{{Name: "s1", Action: "shell", Command: "echo update", OnError: "stop"}},
 	}
 	created, _ := svc.CreateRunbook(ctx, rb)
 	created.Name = "Updated"
 
-	updated, err := svc.UpdateRunbook(ctx, created)
+	updated, err := svc.UpdateRunbook(ctx, created, "t1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,7 +142,7 @@ func TestService_UpdateRunbookNotFound(t *testing.T) {
 	svc, _ := setupTestService()
 	ctx := context.Background()
 
-	_, err := svc.UpdateRunbook(ctx, &models.Runbook{ID: "ghost", Name: "Ghost"})
+	_, err := svc.UpdateRunbook(ctx, &models.Runbook{ID: "ghost", Name: "Ghost", TenantID: "t1"}, "t1")
 	if !errors.Is(err, ErrRunbookNotFound) {
 		t.Fatalf("expected ErrRunbookNotFound, got %v", err)
 	}
@@ -149,17 +153,18 @@ func TestService_DeleteRunbook(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:  "Delete Test",
-		Steps: []models.Step{{Name: "s1", Action: "shell", Command: "echo delete", OnError: "stop"}},
+		TenantID: "t1",
+		Name:     "Delete Test",
+		Steps:    []models.Step{{Name: "s1", Action: "shell", Command: "echo delete", OnError: "stop"}},
 	}
 	created, _ := svc.CreateRunbook(ctx, rb)
 
-	err := svc.DeleteRunbook(ctx, created.ID)
+	err := svc.DeleteRunbook(ctx, created.ID, "t1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	_, err = svc.GetRunbook(ctx, created.ID)
+	_, err = svc.GetRunbook(ctx, created.ID, "t1")
 	if !errors.Is(err, ErrRunbookNotFound) {
 		t.Fatal("expected runbook to be deleted")
 	}
@@ -169,7 +174,7 @@ func TestService_DeleteRunbookNotFound(t *testing.T) {
 	svc, _ := setupTestService()
 	ctx := context.Background()
 
-	err := svc.DeleteRunbook(ctx, "nonexistent")
+	err := svc.DeleteRunbook(ctx, "nonexistent", "t1")
 	if !errors.Is(err, ErrRunbookNotFound) {
 		t.Fatalf("expected ErrRunbookNotFound, got %v", err)
 	}
@@ -180,13 +185,14 @@ func TestService_TriggerRunbook(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:    "Trigger Test",
-		Enabled: true,
-		Steps:   []models.Step{{Name: "s1", Action: "shell", Command: "echo trigger", OnError: "stop"}},
+		TenantID: "t1",
+		Name:     "Trigger Test",
+		Enabled:  true,
+		Steps:    []models.Step{{Name: "s1", Action: "shell", Command: "echo trigger", OnError: "stop"}},
 	}
 	created, _ := svc.CreateRunbook(ctx, rb)
 
-	record, err := svc.TriggerRunbook(ctx, created.ID, "test")
+	record, err := svc.TriggerRunbook(ctx, created.ID, "test", "t1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -203,13 +209,14 @@ func TestService_TriggerRunbookDisabled(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:    "Disabled",
-		Enabled: false,
-		Steps:   []models.Step{{Name: "s1", Action: "shell", Command: "echo disabled", OnError: "stop"}},
+		TenantID: "t1",
+		Name:     "Disabled",
+		Enabled:  false,
+		Steps:    []models.Step{{Name: "s1", Action: "shell", Command: "echo disabled", OnError: "stop"}},
 	}
 	created, _ := svc.CreateRunbook(ctx, rb)
 
-	_, err := svc.TriggerRunbook(ctx, created.ID, "test")
+	_, err := svc.TriggerRunbook(ctx, created.ID, "test", "t1")
 	if !errors.Is(err, ErrRunbookDisabled) {
 		t.Fatalf("expected ErrRunbookDisabled, got %v", err)
 	}
@@ -219,7 +226,7 @@ func TestService_TriggerRunbookNotFound(t *testing.T) {
 	svc, _ := setupTestService()
 	ctx := context.Background()
 
-	_, err := svc.TriggerRunbook(ctx, "ghost", "test")
+	_, err := svc.TriggerRunbook(ctx, "ghost", "test", "t1")
 	if !errors.Is(err, ErrRunbookNotFound) {
 		t.Fatalf("expected ErrRunbookNotFound, got %v", err)
 	}
@@ -230,16 +237,17 @@ func TestService_GetHistory(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:    "History Test",
-		Enabled: true,
-		Steps:   []models.Step{{Name: "s1", Action: "shell", Command: "echo history", OnError: "stop"}},
+		TenantID: "t1",
+		Name:     "History Test",
+		Enabled:  true,
+		Steps:    []models.Step{{Name: "s1", Action: "shell", Command: "echo history", OnError: "stop"}},
 	}
 	created, _ := svc.CreateRunbook(ctx, rb)
 
-	_, _ = svc.TriggerRunbook(ctx, created.ID, "test1")
-	_, _ = svc.TriggerRunbook(ctx, created.ID, "test2")
+	_, _ = svc.TriggerRunbook(ctx, created.ID, "test1", "t1")
+	_, _ = svc.TriggerRunbook(ctx, created.ID, "test2", "t1")
 
-	history, err := svc.GetHistory(ctx, created.ID)
+	history, err := svc.GetHistory(ctx, created.ID, "t1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -253,8 +261,9 @@ func TestService_HandleWebhook(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:    "Webhook Test",
-		Enabled: true,
+		TenantID: "t1",
+		Name:     "Webhook Test",
+		Enabled:  true,
 		Triggers: []models.TriggerCondition{
 			{EventType: "alert", Filters: map[string]string{"severity": "critical"}},
 		},
@@ -268,7 +277,7 @@ func TestService_HandleWebhook(t *testing.T) {
 		Data:      map[string]string{"severity": "critical", "host": "server1"},
 	}
 
-	records, err := svc.HandleWebhook(ctx, payload)
+	records, err := svc.HandleWebhook(ctx, payload, "t1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -282,8 +291,9 @@ func TestService_HandleWebhookNoMatch(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:    "No Match",
-		Enabled: true,
+		TenantID: "t1",
+		Name:     "No Match",
+		Enabled:  true,
 		Triggers: []models.TriggerCondition{
 			{EventType: "alert", Filters: map[string]string{"severity": "warning"}},
 		},
@@ -297,7 +307,7 @@ func TestService_HandleWebhookNoMatch(t *testing.T) {
 		Data:      map[string]string{"severity": "info"},
 	}
 
-	records, err := svc.HandleWebhook(ctx, payload)
+	records, err := svc.HandleWebhook(ctx, payload, "t1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -310,7 +320,7 @@ func TestService_HandleWebhookNilPayload(t *testing.T) {
 	svc, _ := setupTestService()
 	ctx := context.Background()
 
-	_, err := svc.HandleWebhook(ctx, nil)
+	_, err := svc.HandleWebhook(ctx, nil, "t1")
 	if !errors.Is(err, ErrRunbookInvalid) {
 		t.Fatalf("expected ErrRunbookInvalid, got %v", err)
 	}
@@ -321,8 +331,9 @@ func TestService_WebhookSkipsDisabled(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:    "Disabled Webhook",
-		Enabled: false,
+		TenantID: "t1",
+		Name:     "Disabled Webhook",
+		Enabled:  false,
 		Triggers: []models.TriggerCondition{
 			{EventType: "alert"},
 		},
@@ -331,7 +342,7 @@ func TestService_WebhookSkipsDisabled(t *testing.T) {
 	_, _ = svc.CreateRunbook(ctx, rb)
 
 	payload := &models.WebhookPayload{EventType: "alert", Source: "test"}
-	records, err := svc.HandleWebhook(ctx, payload)
+	records, err := svc.HandleWebhook(ctx, payload, "t1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -345,15 +356,16 @@ func TestService_TriggerRunbookRecordsExecution(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:    "Record Test",
-		Enabled: true,
-		Steps:   []models.Step{{Name: "s1", Action: "shell", Command: "echo record", OnError: "stop"}},
+		TenantID: "t1",
+		Name:     "Record Test",
+		Enabled:  true,
+		Steps:    []models.Step{{Name: "s1", Action: "shell", Command: "echo record", OnError: "stop"}},
 	}
 	created, _ := svc.CreateRunbook(ctx, rb)
 
-	_, _ = svc.TriggerRunbook(ctx, created.ID, "test")
+	_, _ = svc.TriggerRunbook(ctx, created.ID, "test", "t1")
 
-	history, _ := svc.GetHistory(ctx, created.ID)
+	history, _ := svc.GetHistory(ctx, created.ID, "t1")
 	if len(history) != 1 {
 		t.Fatalf("expected execution to be recorded, got %d records", len(history))
 	}
@@ -367,8 +379,9 @@ func TestService_CreateRunbookSetsTimestamps(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:  "Timestamp Test",
-		Steps: []models.Step{{Name: "s1", Action: "shell", Command: "echo ts", OnError: "stop"}},
+		TenantID: "t1",
+		Name:     "Timestamp Test",
+		Steps:    []models.Step{{Name: "s1", Action: "shell", Command: "echo ts", OnError: "stop"}},
 	}
 	created, _ := svc.CreateRunbook(ctx, rb)
 
@@ -388,15 +401,16 @@ func TestService_UpdateRunbookUpdatesTimestamp(t *testing.T) {
 	ctx := context.Background()
 
 	rb := &models.Runbook{
-		Name:  "Update TS",
-		Steps: []models.Step{{Name: "s1", Action: "shell", Command: "echo ts", OnError: "stop"}},
+		TenantID: "t1",
+		Name:     "Update TS",
+		Steps:    []models.Step{{Name: "s1", Action: "shell", Command: "echo ts", OnError: "stop"}},
 	}
 	created, _ := svc.CreateRunbook(ctx, rb)
 	origUpdated := created.UpdatedAt
 
 	time.Sleep(10 * time.Millisecond)
 	created.Name = "Updated TS"
-	updated, _ := svc.UpdateRunbook(ctx, created)
+	updated, _ := svc.UpdateRunbook(ctx, created, "t1")
 
 	if !updated.UpdatedAt.After(origUpdated) {
 		t.Fatal("expected UpdatedAt to be updated")
