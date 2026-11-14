@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
 	"github.com/Levango7/OpsMesh/internal/logx"
@@ -87,6 +87,23 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener, error) {
 	//     使 agent→控制面 gRPC 调用的 trace_id 贯穿。panic 被 recovery 捕获后 span 仍能 End()。
 	otelInterceptor := otelx.GRPCServerUnaryInterceptor("opsmesh-controlplane")
 	opts = append(opts, grpc.ChainUnaryInterceptor(grpcRecoveryInterceptor, otelInterceptor))
+	// 审计整改批次21：keepalive + 消息大小上限。
+	//   - Keepalive：NAT/LB 静默断链可被探测（默认 2h idle 太晚）。
+	//   - EnforcementPolicy：允许 agent 侧 30s 心跳，无活跃流也允许 ping。
+	//   - MaxRecv/SendMsgSize：JSON codec 报文偏大，默认 4MiB 对批量日志不够；
+	//     放宽到 16MiB（与 ReportLogs 批量上限匹配），避免 ResourceExhausted。
+	opts = append(opts,
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    2 * time.Minute,
+			Timeout: 20 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             30 * time.Second,
+			PermitWithoutStream: true,
+		}),
+		grpc.MaxRecvMsgSize(16<<20),
+		grpc.MaxSendMsgSize(16<<20),
+	)
 	gs := grpc.NewServer(opts...)
 	gs.RegisterService(&grpcx.Registration_ServiceDesc, &grpcserver.GrpcServerImpl{
 		Store:       s.store,
@@ -198,6 +215,11 @@ func (s *Server) buildFederationServer() (*http.Server, net.Listener, error) {
 		Handler:           recoveryMiddleware(s.securityHeadersMiddleware(&paginate.JSONErrorMux{Inner: mux})),
 		TLSConfig:         tlsCfg,
 		ReadHeaderTimeout: 10 * time.Second,
+		// 审计整改批次20：联邦面补读写/空闲超时（入站请求体很小，10s 足够）。
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   30 * time.Second,
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 	return srv, lis, nil
 }
@@ -258,7 +280,15 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener, error) {
 		// 才不会出现"规则引用的序列只在另一个端口存在"这类永不触发的告警。
 		s.writeMetricsBody(w)
 	})
-	return &http.Server{Handler: recoveryMiddleware(mux), ReadHeaderTimeout: 5 * time.Second}, lis, nil
+	return &http.Server{
+		Handler:           recoveryMiddleware(mux),
+		ReadHeaderTimeout: 5 * time.Second,
+		// 审计整改批次20：抓取面补完整超时，防慢客户端占用抓取连接。
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   30 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}, lis, nil
 }
 
 // handleDevices 处理 GET /api/v1/devices，按网关注入租户返回 segment -> 设备 列表。

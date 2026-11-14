@@ -507,15 +507,23 @@ func (s *Server) Start() error {
 	// 使 span 覆盖完整业务逻辑（安全头注入不影响 span 边界）。
 	httpSrv := &http.Server{
 		Addr: fmt.Sprintf(":%d", s.httpPort),
-		Handler: s.corsMiddleware( // CORS 白名单（--allowed-origins；空=同源策略不输出 CORS 头）
-			s.httpMetricsMiddleware( // HTTP 指标（计数 + 延迟直方图）
-				recoveryMiddleware( // 兜底盘
-					otelx.HTTPMiddleware("opsmesh-controlplane", // OTel HTTP 自动埋点
-						s.rateLimitMiddleware( // API 限流（429 Too Many Requests）
-							s.securityHeadersMiddleware( // 安全头 + B1 CSP nonce
-								s.csrfOriginCheck( // CSRF Origin 校验（状态变更方法）
-									&paginate.JSONErrorMux{Inner: mux}))))))), // B1 404 JSON
+		Handler: s.corsMiddleware( // 1 CORS
+			s.httpMetricsMiddleware( // 2 指标
+				recoveryMiddleware( // 3 panic 兜底
+					otelx.HTTPMiddleware("opsmesh-controlplane", // 4 OTel
+						s.rateLimitMiddleware( // 5 限流
+							s.securityHeadersMiddleware( // 6 安全头
+								s.csrfOriginCheck( // 7 CSRF
+									bodyLimitMiddleware( // 8 请求体上限（413）
+										&paginate.JSONErrorMux{Inner: mux})))))))), // 9 404/405 JSON → mux
+		// 审计整改批次20：补全读写/空闲超时（此前只有 ReadHeaderTimeout，
+		// body 慢速上传与慢客户端会长期占用 goroutine/连接）。
+		// SSE 在 handler 内用 ResponseController 取消写超时（见 sse.go），不影响长连接。
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	grpcSrv, grpcLis, err := s.buildGRPC()
@@ -1132,6 +1140,8 @@ func resultToAPIMap(resp *taskv1.TaskResult) map[string]any {
 
 // writeTaskSvcError 统一任务服务错误响应：存根/未装配 ⇒ 503，其余 ⇒ 502。
 // 审计整改批次1：原实现把存根错误也写成 500，且部分路径直接假成功。
+// 审计整改批次21：502 不再回吐 err.Error()（gRPC 错误常含内网地址/拓扑），
+// 详情只进服务端日志。
 func writeTaskSvcError(w http.ResponseWriter, err error) {
 	if errors.Is(err, ErrTaskServiceStub) {
 		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
@@ -1139,8 +1149,9 @@ func writeTaskSvcError(w http.ResponseWriter, err error) {
 		})
 		return
 	}
+	logx.Error(context.Background(), "controlplane: task service call failed", err)
 	paginate.WriteJSON(w, http.StatusBadGateway, map[string]string{
-		"error": "task service error: " + err.Error(),
+		"error": "task service temporarily unavailable, please retry",
 	})
 }
 

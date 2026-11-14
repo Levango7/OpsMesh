@@ -27,9 +27,12 @@ func JSONError(w http.ResponseWriter, status int, msg string) {
 	WriteJSON(w, status, map[string]string{"error": msg})
 }
 
-// JSONErrorMux 包装 http.ServeMux，将 404 响应统一为 JSON 格式。
-// 当 mux 无匹配路由时（pattern == ""），返回 JSON 404 而非默认的 text/plain。
-// 405 由各 handler 内部用 JSONError 处理（显式方法检查）。
+// JSONErrorMux 包装 http.ServeMux，将 404/405 响应统一为 JSON 格式。
+//
+// 审计整改批次20：Go 1.22 ServeMux 在「路径命中但方法不匹配」时返回 pattern="" 的
+// 405 handler（带 Allow 头）。原实现见 pattern=="" 直接写 JSON 404，把 405 语义吞掉。
+// 现在改为：pattern=="" 时仍执行 mux 内建 handler（由它决定 404/405 与 Allow 头），
+// 经包装器把纯文本错误体改写成 JSON 信封，**保留原状态码与方法语义**。
 type JSONErrorMux struct {
 	Inner *http.ServeMux
 }
@@ -37,7 +40,10 @@ type JSONErrorMux struct {
 func (m *JSONErrorMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h, pattern := m.Inner.Handler(r)
 	if pattern == "" {
-		WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
+		// mux 内建 handler：未匹配=404、方法不匹配=405（Allow 头已在其中写入）。
+		wrapped := &json404Writer{ResponseWriter: w, path: r.URL.Path, status: http.StatusNotFound}
+		h.ServeHTTP(wrapped, r)
+		wrapped.finish()
 		return
 	}
 	// B3（2026-10-12 模拟用户演练）：**命中 pattern 不等于这个请求存在**。
@@ -66,7 +72,8 @@ func (m *JSONErrorMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type json404Writer struct {
 	http.ResponseWriter
 	path     string
-	deferred bool // 已收到 404 且尚未真正写出头
+	status   int  // 被延迟的状态码：404 或 405
+	deferred bool // 已收到 404/405 且尚未真正写出头
 	swallow  bool // 已改写：丢弃原 handler 的后续 body
 }
 
@@ -82,27 +89,36 @@ func (w *json404Writer) Flush() {
 func (w *json404Writer) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *json404Writer) WriteHeader(code int) {
-	if code == http.StatusNotFound && !w.deferred && !w.swallow {
+	if (code == http.StatusNotFound || code == http.StatusMethodNotAllowed) && !w.deferred && !w.swallow {
+		w.status = code
 		w.deferred = true // 暂缓，等第一次 Write 看 Content-Type
 		return
 	}
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// errorEnvelope 生成与状态码匹配的 JSON 信封。
+func (w *json404Writer) errorEnvelope() []byte {
+	if w.status == http.StatusMethodNotAllowed {
+		return []byte(`{"error":"method not allowed"}`)
+	}
+	body, _ := json.Marshal(map[string]string{"error": "not found", "path": w.path})
+	return body
+}
+
 func (w *json404Writer) Write(b []byte) (int, error) {
 	if w.deferred {
 		w.deferred = false
 		if strings.Contains(w.Header().Get("Content-Type"), "text/plain") {
-			// Go 默认 404（http.NotFound / FileServer）：改写成 JSON 信封并丢弃原 body。
+			// Go 默认 404/405（http.NotFound / mux 405）：改写成 JSON 信封并丢弃原 body。
 			w.swallow = true
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.Header().Del("X-Content-Type-Options") // 那是 http.Error 配纯文本用的
-			w.ResponseWriter.WriteHeader(http.StatusNotFound)
-			body, _ := json.Marshal(map[string]string{"error": "not found", "path": w.path})
-			_, _ = w.ResponseWriter.Write(body)
+			w.ResponseWriter.WriteHeader(w.status)
+			_, _ = w.ResponseWriter.Write(w.errorEnvelope())
 			return len(b), nil
 		}
-		w.ResponseWriter.WriteHeader(http.StatusNotFound) // handler 有意写的 404：原样放行
+		w.ResponseWriter.WriteHeader(w.status) // handler 有意写的错误：原样放行
 	}
 	if w.swallow {
 		return len(b), nil
@@ -110,16 +126,15 @@ func (w *json404Writer) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// finish 处理"只写了 404 头、没写 body"的形态：延迟的头必须补落盘。
+// finish 处理"只写了 404/405 头、没写 body"的形态：延迟的头必须补落盘。
 func (w *json404Writer) finish() {
 	if !w.deferred {
 		return
 	}
 	w.deferred = false
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.ResponseWriter.WriteHeader(http.StatusNotFound)
-	body, _ := json.Marshal(map[string]string{"error": "not found", "path": w.path})
-	_, _ = w.ResponseWriter.Write(body)
+	w.ResponseWriter.WriteHeader(w.status)
+	_, _ = w.ResponseWriter.Write(w.errorEnvelope())
 }
 
 // ============================================================================

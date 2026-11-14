@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -130,33 +131,109 @@ func (s *Server) csrfOriginCheck(h http.Handler) http.Handler {
 // （致命短板——internal/ 生产代码零 recover，某 handler 未预期 panic 会击穿 net/http 默认
 // recover 仅打印日志但仍返回 200 空响应，掩盖故障且无 trace）。此处返回 500 + 结构化错误 + traceID，
 // 并交由 logx 落结构化日志。
+// recoveryResponseWriter 记录是否已写出响应头/响应体。
+// 审计整改批次20：原实现用「Content-Type 是否已设置」判断能否补 500，
+// 但 handler 可能只设了 Content-Type 尚未 WriteHeader —— 此时 panic 会被静默跳过，
+// net/http 最终返回 200 半截响应（故障被伪装成成功）。
+type recoveryResponseWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (w *recoveryResponseWriter) WriteHeader(code int) {
+	w.wrote = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *recoveryResponseWriter) Write(b []byte) (int, error) {
+	w.wrote = true
+	return w.ResponseWriter.Write(b)
+}
+
+// Flush 透传（SSE 流式响应依赖）。
+func (w *recoveryResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap 暴露底层 ResponseWriter（http.ResponseController 约定）。
+func (w *recoveryResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func recoveryMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rw := &recoveryResponseWriter{ResponseWriter: w}
 		defer func() {
 			if rec := recover(); rec != nil {
 				ctx := logx.WithTrace(r.Context(), "http-recover")
+				// 审计整改批次20：补堆栈，线上 panic 才能定位调用链。
 				logx.Error(ctx, "HTTP handler panic recovered",
-					fmt.Errorf("%v", rec), "method", r.Method, "path", r.URL.Path)
-				// net/http 在 WriteHeader 已调用后无法覆写状态码；此时仅记录，避免二次 panic。
-				if w.Header().Get("Content-Type") == "" {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					if err := json.NewEncoder(w).Encode(map[string]string{
-						"error":   "internal server error",
-						"traceId": logx.Trace(ctx),
-					}); err != nil {
-						logx.Error(ctx, "controlplane: panic recover 写错误响应失败", err)
-					}
+					fmt.Errorf("%v", rec), "method", r.Method, "path", r.URL.Path, "stack", string(debug.Stack()))
+				// 已写出响应（头或体）时无法覆写状态码：仅记录，避免二次 panic。
+				if rw.wrote {
+					return
+				}
+				rw.Header().Set("Content-Type", "application/json")
+				rw.WriteHeader(http.StatusInternalServerError)
+				if err := json.NewEncoder(rw).Encode(map[string]string{
+					"error":   "internal server error",
+					"traceId": logx.Trace(ctx),
+				}); err != nil {
+					logx.Error(ctx, "controlplane: panic recover 写错误响应失败", err)
 				}
 			}
 		}()
-		h.ServeHTTP(w, r)
+		h.ServeHTTP(rw, r)
 	})
 }
 
 // ============================================================================
-// ：HTTP 指标中间件（请求计数器 + 延迟直方图）
+// 审计整改批次21：全局请求体上限
 // ============================================================================
+
+const (
+	// maxBodyBytesGlobal 非代理接口的请求体上限（与原 decodeJSONBody 一致）。
+	maxBodyBytesGlobal = 1 << 20 // 1 MiB
+	// maxProxyBodyBytes 代理接口上限（转发到下游服务的合法批量请求更大）。
+	maxProxyBodyBytes = 32 << 20 // 32 MiB
+)
+
+// isProxyPath 判定请求是否走服务代理（这些路径请求体上限放宽）。
+// 约定：/gw/ 前缀 + /api/v1/<name>-svc/ 形态（motor-svc/portal-svc/auth-svc/...）。
+func isProxyPath(p string) bool {
+	if strings.HasPrefix(p, "/gw/") {
+		return true
+	}
+	rest, ok := strings.CutPrefix(p, "/api/v1/")
+	if !ok {
+		return false
+	}
+	name := rest
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		name = rest[:i]
+	}
+	return strings.HasSuffix(name, "-svc")
+}
+
+// bodyLimitMiddleware 在入口按 ContentLength 拒绝超大请求（413）。
+// 审计整改批次21：此前只有 decodeJSONBody 做 1MiB 限制，代理路径完全不限；
+// 且超限返回 400 而非 413。本中间件对诚实客户端（带 Content-Length）快速拒绝，
+// chunked 超大请求仍由 decode 层兜底。
+func bodyLimitMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > 0 {
+			limit := int64(maxBodyBytesGlobal)
+			if isProxyPath(r.URL.Path) {
+				limit = maxProxyBodyBytes
+			}
+			if r.ContentLength > limit {
+				paginate.JSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+				return
+			}
+		}
+		h.ServeHTTP(w, r)
+	})
+}
 
 // httpMetricsMiddleware 记录 HTTP 请求指标到 s.metrics：
 //   - opsmesh_http_requests_total{method,path,status}
