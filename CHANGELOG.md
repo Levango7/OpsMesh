@@ -5,6 +5,46 @@
 > 当前最新已发布版本：`v0.18.0`（**tag 与产物于 2026-11-07 生成，发布提交 `f4e08f2`，Release 2026-11-07 08:58:06Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」）；切 tag 前置：该发布的 main 推送 CI run `42350616936` 全绿后才切 tag——让 tag 构建成为 `:f4e08f2` 的最后写者，`:f4e08f2` 与 `:0.18.0` 因此同 digest；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.18.0` 与 `:f4e08f2e76c5a93e325f1c35edf443080c713ceb` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析、Release 正文含「能力降级清单」**）。上一版 `v0.17.1`（**tag 与产物于 2026-11-03 生成，发布提交 `7315622`，Release 04:34:05Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链 28 个 job 全绿（含「发布前回核」「发布物回核」），tag 的 ci run 13/13 绿；本机独立回核 `PASS=8 FAIL=0`——14/14 镜像 `:0.17.1` 与 `:7315622` 同 manifest digest、`.sig`/`.att` 齐全、chart 渲染引用全部可解析**。上一版 v0.17.0（**tag 与产物于 2026-11-02 生成，发布提交 `ddec516`，Release 02:17:09Z 上线、assets=5**；其 release run `41376901208` 红在「发布前回核」门禁自身把 `--pre-release` 当版本号的缺陷（`6a5364a` 修），产物 14/14 存在；**但 `opsmesh-binary`/`opsmesh-agent` 的 `:ddec516` 被同日 main 推送构建二次覆盖 ⇒ ⑤「同 digest」不成立，按 owner 裁定该 tag 不改写**，根治规则见下方 [0.17.1] 节）。上一版 v0.16.0（**tag 与产物于 2026-10-26 生成，发布提交 `267a104`，Release 00:00:44Z 上线、assets=5（双架构 tar.gz + 双 SBOM + checksums）**；**发布链「发布物回核」等 tag 的 ci run 收敛后自验通过、全 job 绿——TD-95 机制在 v0.15.0 首验后于本版复用成功**。上一版 v0.15.0（**tag 与产物于 2026-10-13 生成，发布提交 `5eba13f`，Release 17:22:00Z 上线、assets=5（双架构 tar.gz + SBOM + checksums）**；**发布链「发布物回核」首跑即绿——29m14s，期间按新逻辑等 tag 的 ci run 收敛到终态，无任何人工重跑**，这正是 TD-95 的交付判据。上一版 v0.14.0（**tag 与产物于 2026-10-13 生成，发布提交 `f4968bb`，产物回核 `PASS=8 FAIL=0`（含 14/14 镜像 `:0.14.0` 与发布提交同 manifest digest）**；其回核 job 的红是门禁自身缺陷、产物完好，见下方 [0.14.0] 与 release-notes 的更正说明）。上一版 v0.13.0（**tag 与产物于 2026-10-07 生成，并已通过发布物回核**：`deploy/scripts/verify-release-artifacts.sh 0.13.0` ⇒ `PASS=8 FAIL=0 UNVERIFIED=0`，含"14 个镜像的 `:0.13.0` 与发布提交 `c4d69b6…` 指向同一 manifest digest"这一项）。上一版 `v0.12.0`（2026-10-04 首次真实发布；此前 2026-10-03 曾把清单/Chart 钉到 0.12.0 却从未打 tag、GHCR 上也没有 0.12.0 镜像，按生产默认值安装的客户直接 ErrImagePull，见该节开头）。再上一版 `v0.11.0`（2026-10-01，可观测性语义收口 + 镜像级 SBOM 证据链 + 三域转正 + 许可合规工程化）、`v0.10.0`（2026-09-29，TD-60 阶段 2 收口）。第九轮（UI 覆盖面+六域接线）、第十轮（部署配置+pkg 测试+3 真 bug）、追加固化（BOM 剥离+CVE 修复）+ 前端 P0-P3 功能补齐均归入 v0.9.0 发布。
 
 
+## [Unreleased-D4 租户隔离] — 2026-11-14（incident / runbook / autoscaler 三服务，issue #27 裁决②）
+
+- **背景（issue #27 裁决②：租户级数据）**：`internal/store/model/perm.go` 把
+  `autoscaler:read/write`、`runbook:read/write`、`incident:read/write` 注册为**租户级可指派**
+  的 RBAC 权限，网关代理规则也用这几条权限把关对应路由；单体对应面
+  （alerts / alertRules / silences / tickets / k8sClusters）全部带 `TenantID` 并逐方法过滤。
+  ⇒ 这三个微服务此前「全仓零 tenant 痕迹」是缺口，不是设计选择。
+- **判定口径（三服务统一）**：
+  - **缺租户 ⇒ 401**，不兜底 default（与网关 require-auth 模式下「客户端自报租户一律被
+    已验签上下文覆盖」同口径）；
+  - 跨租户读/改/删一律按「不存在」处理（不泄露存在性）；
+  - 跨租户同 ID 建规则/建单**不覆盖**（归属不可抢挂）；
+  - 决策 / 执行记录 / 时间线的归属由父对象派生，不接受调用方指定。
+- **incident-svc**：`Incident` / `Alert` 加 `TenantID`；`IncidentStore` 接口逐方法带
+  `tenantID`（Get/Update/Delete/List/Incidents/时间线）；MySQL `incidents` 加
+  `tenant_id` + `idx_tenant`；handler 8 个详情端点 + create/list/metrics/ingest 全链穿租户，
+  `/alerts/ingest` 的租户取自 payload（缺失回落头），两者皆无 ⇒ 400。
+- **runbook-svc**：`Runbook` / `ExecutionRecord` / `WebhookPayload` 加 `TenantID`；
+  MySQL `runbooks` + `runbook_executions` 两表加列 + `idx_exec_tenant`；webhook 负载
+  必须带 `tenant_id`（缺失 400）；create/update 由服务端钉 `TenantID`（不信任 payload）。
+- **autoscaler-svc**：`ScaleRule` / `ScaleDecision` 加 `TenantID`。**真实数据面是
+  Evaluator（纯内存引擎），store 层从未被装配**（见 issue #48）⇒ 租户维度打在
+  Evaluator：`AddRule` 拒空租户、跨租户同 ID 拒写；`Get/List/Update/Delete` 按租户；
+  `Evaluate` 只评估本租户规则；决策/冷却按租户过滤；`RecordDecision` 拒无主决策。
+- **既有库迁移（本批连带修的真实缺陷）**：三服务此前都没有 `tenant_id` 的补列路径
+  （incident 的 `ensureIncidentColumns` 只补 `occurred_at` 且一列存在即早退；runbook /
+  autoscaler 完全没有），而 `CREATE TABLE IF NOT EXISTS` 对存量表是 no-op ⇒ 升级后第一次
+  INSERT/SELECT 就 `Unknown column 'tenant_id'`。统一补 `ensureColumn`
+  （`information_schema` 预检 + `ALTER`，幂等，与 alert-svc `rule_id` 同口径）；
+  autoscaler 的 `schema.sql` 同步列与索引。
+- **守卫**：每服务新增 `tenant_isolation_test.go`（store 层 + handler 层钉子：空租户拒写、
+  跨租户读/列/改/删不可见、跨租户同 ID 不覆盖、缺租户头 401、本租户一切正常）；
+  `internal/gates/tenant_store_verdict_gate_test.go` 判决表三行由 `no-tenant` 改判
+  `tenant-field`（evidence=`Tenant`）。
+- **验证**：三服务 `go build` / `go vet` / `golangci-lint -c .golangci.services.yml`（0 issues）
+  / `go test ./...` 全绿；**本机起 `mysql:8` 预建旧 schema（无 tenant_id）**实测三条迁移
+  路径均补列成功且真库往返通过；期间修掉两个真实缺陷（runbook MySQL `UPDATE` 占位符比
+  参数多一个、其测试夹具漏 `TenantID`）。
+- **关联**：issue #27 收口；issue #48（autoscaler 持久化层接线 or 删除）待裁定。
+
 ## [Unreleased-批次 23 形态面：olap_ops] — 2026-11-14（olap_ops.go ~23 处「已校验但直引」）
 
 - **背景**：批次 17 收口后全仓**真洞归零**；本批落 `olap_ops.go`（~23 处）。形态面 = 字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`。
