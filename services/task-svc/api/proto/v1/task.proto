@@ -196,31 +196,6 @@ message CancelTaskRequest {
   string tenant_id = 2;
 }
 
-// IsLeaderRequest 检查 leader 状态请求。
-message IsLeaderRequest {
-  string instance_id = 1; // 实例 ID，可选（空则查询当前实例）
-}
-
-// IsLeaderResponse 检查 leader 状态响应。
-message IsLeaderResponse {
-  bool is_leader = 1;          // 是否为 leader
-  string leader_instance_id = 2; // 当前 leader 实例 ID（非 leader 时为空）
-}
-
-// RenewRequest 续租 leader 租约请求。
-message RenewRequest {
-  string instance_id = 1;      // 实例 ID，可选（空则当前实例）
-  int64 ttl_seconds = 2;       // 租约 TTL（秒），0 使用默认值
-}
-
-// RenewResponse 续租 leader 租约响应。
-message RenewResponse {
-  bool success = 1;            // 续租成功（仍为 leader）
-  bool is_leader = 2;          // 续租后是否仍为 leader
-  int64 lease_ttl_seconds = 3; // 实际租约 TTL（秒）
-  int64 lease_until_unix = 4;  // 租约过期时间（Unix 时间戳，UTC）
-}
-
 // ApproveTaskRequest 审批通过请求。
 message ApproveTaskRequest {
   string task_id = 1;
@@ -339,4 +314,33 @@ message ListBatchTasksRequest {
 // ListBatchTasksResponse 批量任务列表响应。
 message ListBatchTasksResponse {
   repeated BatchTask batches = 1;
+}
+
+// ============================================================================
+// LeaderElectorService 相关消息 (TD-60 任务域切流)
+// ============================================================================
+
+// IsLeaderRequest 检查 leader 状态请求。
+message IsLeaderRequest {
+  string instance_id = 1; // 实例 ID，可选（空则查询当前实例）
+}
+
+// IsLeaderResponse 检查 leader 状态响应。
+message IsLeaderResponse {
+  bool is_leader = 1;          // 是否为 leader
+  string leader_instance_id = 2; // 当前 leader 实例 ID（非 leader 时为空）
+}
+
+// RenewRequest 续租 leader 租约请求。
+message RenewRequest {
+  string instance_id = 1;      // 实例 ID，可选（空则当前实例）
+  int64 ttl_seconds = 2;       // 租约 TTL（秒），0 使用默认值
+}
+
+// RenewResponse 续租 leader 租约响应。
+message RenewResponse {
+  bool success = 1;            // 续租成功（仍为 leader）
+  bool is_leader = 2;          // 续租后是否仍为 leader
+  int64 lease_ttl_seconds = 3; // 实际租约 TTL（秒）
+  int64 lease_until_unix = 4;  // 租约过期时间（Unix 时间戳，UTC）
 }

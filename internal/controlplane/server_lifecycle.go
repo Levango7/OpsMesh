@@ -3,8 +3,10 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -560,7 +562,7 @@ func (s *Server) Start() error {
 			"hint", "确保该端口仅对内网/反向代理开放、TLS 由上游终止；Cookie 已强制 Secure，浏览器直连明文端口会丢弃会话")
 	}
 	go s.reclaimLoop(ctx)               // 任务租约回收：周期复位失联 agent 的 running 任务（仅 leader）
-	go s.instanceHeartbeatLoop(ctx)    // 控制面实例心跳：HA 多实例枚举（审计整改批次16）
+	go s.instanceHeartbeatLoop(ctx)     // 控制面实例心跳：HA 多实例枚举（审计整改批次16）
 	go s.scheduleLoop(ctx)              // F4 定时/周期调度：周期派生到点模板任务的 pending 实例（仅 leader）
 	go s.monitorTaskTimeouts(ctx)       // Wave 4-D：任务超时监控，超时 running 任务自动取消（仅 leader）
 	go s.archiveLoop(ctx)               // F5 离线超龄自动归档（仅 leader）
@@ -666,16 +668,18 @@ func (s *Server) Start() error {
 //     逐字一致：详情/结果/审批/DLQ 全部直查控制面 store）。否则 default 部署下
 //     /api/v1/tasks/{id}/result 等端点会恒走 task-svc gRPC 桩（空壳，返回 nil ⇒ panic ⇒ 500），
 //     且即便是真 task-svc 也对本地建的任务查无此物 —— 端点整体不可用。
-//   - 总闸开启 ⇒ 走 handleTaskProxy（HTTP → task-svc gRPC）。
+//   - 总闸开启 ⇒ 走 handleTaskProxy（HTTP → task-svc gRPC）。包括根路由：
+//     "GET /api/v1/tasks"（列表）与 "POST /api/v1/tasks"（下发）一并代理到 task-svc ——
+//     否则创建落在控制面本地 store 而 agent claimTask 只读 task-svc 队列，任务永远领不到。
 func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/tasks", s.handleListTasks)
+	// 与 cutover.Router.TaskEnabled() 同一判据（纯环境读取 TASK_SVC_PROXY_ENABLED），
+	// 保证两条装配路径行为一致（未经 NewServer 的测试 Server 也能直测 env 开关）。
 	taskSvcProxied := s.cutoverRouter != nil && s.cutoverRouter.TaskEnabled()
 	if s.cutoverRouter == nil {
-		// 未装配裁决器（如未经 NewServer 的测试 Server）：与 cutover.Router.TaskEnabled()
-		// 同一判据（纯环境读取 TASK_SVC_PROXY_ENABLED），保证两条装配路径行为一致。
 		taskSvcProxied = os.Getenv("TASK_SVC_PROXY_ENABLED") == "true"
 	}
 	if taskSvcProxied {
+		mux.HandleFunc("/api/v1/tasks", s.handleTaskProxy)                           // TD-60 根路由代理：GET 列表 / POST 下发
 		mux.HandleFunc("/api/v1/tasks/", s.handleTaskProxy)                          // 子路径：{id}/cancel、{id}/result、{id}/approve、{id}/reject、{id}/retry、{id}/dead-letter
 		mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskProxy)                  // GET 任务详情（{id} 详情 + 详情外的子树兜底）
 		mux.HandleFunc("GET /api/v1/tasks/dead-letter", s.handleListDeadLetterTasks) // Wave 4-D DLQ 列表（字面量优先）
@@ -683,6 +687,7 @@ func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("DELETE /api/v1/tasks/{id}/dead-letter", s.handleTaskProxy)   // Wave 4-D DLQ 清除
 		return
 	}
+	mux.HandleFunc("/api/v1/tasks", s.handleListTasks)
 	mux.HandleFunc("/api/v1/tasks/", s.handleTaskRouting)                        // 子路径：本地 {id}/cancel、{id}/result、{id}/approve、{id}/reject、{id}/retry、{id}/dead-letter
 	mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleTaskRouting)                // GET 任务详情（本地）
 	mux.HandleFunc("GET /api/v1/tasks/dead-letter", s.handleListDeadLetterTasks) // Wave 4-D DLQ 列表（字面量优先）
@@ -796,6 +801,15 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 
 	// 将租户上下文注入请求 context，供后续 gRPC 调用使用
 	ctx := authctx.NewContext(r.Context(), actx)
+	tenantID := actx.TenantID
+
+	// TD-60 根路由代理：GET /api/v1/tasks（列表）/ POST /api/v1/tasks（下发）。
+	// 见 registerTaskRoutes：不代理根路由，任务创建落在控制面本地 store、
+	// agent claimTask 却只读 task-svc 队列，任务永远领不到，E2E agent_lifecycle 必红。
+	if r.URL.Path == "/api/v1/tasks" {
+		s.handleTaskProxyRoot(w, r, ctx, tenantID)
+		return
+	}
 
 	// 检查 taskServiceClient 是否可用
 	if s.taskServiceClient == nil {
@@ -824,8 +838,6 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 	if len(parts) > 1 {
 		subPath = parts[1]
 	}
-
-	tenantID := actx.TenantID
 
 	// 根据 HTTP 方法和子路径分发到 gRPC 方法
 	switch r.Method {
@@ -932,9 +944,9 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 			// 但并没有重新创建任务 ⇒ 假成功。真正的重试需以原任务参数重建（且要处理
 			// claim_epoch/审批等语义），未接线前显式 501。
 			paginate.WriteJSON(w, http.StatusNotImplemented, map[string]interface{}{
-				"code":    "ERR_NOT_IMPLEMENTED",
-				"error":   "任务重试尚未接线：需要按原任务参数重建（当前仅支持死信队列的 retry 语义）",
-				"taskId":  id,
+				"code":   "ERR_NOT_IMPLEMENTED",
+				"error":  "任务重试尚未接线：需要按原任务参数重建（当前仅支持死信队列的 retry 语义）",
+				"taskId": id,
 			})
 			return
 		default:
@@ -963,6 +975,161 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 
 }
 
+// handleTaskProxyRoot 代理 /api/v1/tasks 根路由到 task-svc（TD-60 根路由切流）。
+//   - GET  ⇒ task-svc ListTasks：返回 JSON 数组（与本地 GET /api/v1/tasks 契约一致，
+//     status 透传 raw——域状态机 done 不映射 completed，调用方轮询 expect 'done'）。
+//   - POST ⇒ task-svc CreateTask：下发任务（与本地 POST /api/v1/tasks 契约一致：agentID+command 必填，201）。
+//
+// 存根/未装配 ⇒ 503（writeTaskSvcError / nil 防御），绝不假成功。
+func (s *Server) handleTaskProxyRoot(w http.ResponseWriter, r *http.Request, ctx context.Context, tenantID string) {
+	if s.taskServiceClient == nil {
+		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "task service unavailable",
+		})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		q := r.URL.Query()
+		resp, err := s.taskServiceClient.ListTasks(ctx, &taskv1.ListTasksRequest{
+			TenantId: tenantID,
+			Status:   q.Get("status"),
+			AgentId:  q.Get("agent_id"),
+			Limit:    100000, // 与本地 "不传分页返回全量" 兼容
+		})
+		if err != nil {
+			writeTaskSvcError(w, err)
+			return
+		}
+		out := make([]map[string]any, 0, len(resp.GetTasks()))
+		for _, t := range resp.GetTasks() {
+			if t == nil {
+				continue
+			}
+			out = append(out, taskToAPIMap(t, false))
+		}
+		paginate.WriteJSON(w, http.StatusOK, out)
+		return
+	case http.MethodPost:
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err != nil {
+			paginate.JSONError(w, http.StatusBadRequest, "read body failed")
+			return
+		}
+		var req struct {
+			AgentID          string   `json:"agentID"`
+			Type             string   `json:"type"`
+			Command          string   `json:"command"`
+			Content          string   `json:"content"`
+			Path             string   `json:"path"`
+			Schedule         string   `json:"schedule"`
+			MaxRetries       int32    `json:"maxRetries"`
+			ApprovalRequired bool     `json:"approvalRequired"`
+			Priority         int32    `json:"priority"`
+			IdempotencyKey   string   `json:"idempotencyKey"`
+			StatusMachine    string   `json:"statusMachine"`
+			DependsOn        []string `json:"dependsOn"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			paginate.JSONError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		// 与本地 handleCreateTask 一致的下发校验：agentID+command 必填；type 默认 shell。
+		if req.AgentID == "" || req.Command == "" {
+			paginate.JSONError(w, http.StatusBadRequest, "agentID and command are required")
+			return
+		}
+		if req.Type == "" {
+			req.Type = "shell"
+		}
+		resp, err := s.taskServiceClient.CreateTask(ctx, &taskv1.CreateTaskRequest{
+			Task: &taskv1.Task{
+				AgentId:          req.AgentID,
+				TenantId:         tenantID,
+				Type:             req.Type,
+				Command:          req.Command,
+				Content:          req.Content,
+				Path:             req.Path,
+				Schedule:         req.Schedule,
+				MaxRetries:       req.MaxRetries,
+				ApprovalRequired: req.ApprovalRequired,
+				Priority:         req.Priority,
+				IdempotencyKey:   req.IdempotencyKey,
+				StatusMachine:    req.StatusMachine,
+				DependsOn:        req.DependsOn,
+			},
+		})
+		if err != nil {
+			writeTaskSvcError(w, err)
+			return
+		}
+		if resp == nil {
+			paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error": "task service returned empty response (stub or upstream bug)",
+			})
+			return
+		}
+		paginate.WriteJSON(w, http.StatusCreated, taskToAPIMap(resp, true))
+		return
+	default:
+		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// taskToAPIMap 将 taskv1.Task 序列化为与 domain.Task（本地 HTTP API 契约）一致的 JSON：
+// taskID/agentID/tenantID 等键名一致；normalizeStatus 为 true 时 done→completed
+// （与本地 TASK detail/handleTaskDetail 一致），false 时透传 raw status（与本地列表一致）。
+func taskToAPIMap(resp *taskv1.Task, normalizeStatus bool) map[string]any {
+	status := resp.GetStatus()
+	if normalizeStatus {
+		status = normalizeTaskStatus(status)
+	}
+	return map[string]any{
+		"taskID":           resp.GetTaskId(),
+		"agentID":          resp.GetAgentId(),
+		"tenantID":         resp.GetTenantId(),
+		"type":             resp.GetType(),
+		"command":          resp.GetCommand(),
+		"content":          resp.GetContent(),
+		"path":             resp.GetPath(),
+		"status":           status,
+		"rawStatus":        resp.GetStatus(),
+		"claimedBy":        resp.GetClaimedBy(),
+		"claimedAt":        resp.GetClaimedAt(),
+		"createdAt":        resp.GetCreatedAt(),
+		"retryCount":       resp.GetRetryCount(),
+		"maxRetries":       resp.GetMaxRetries(),
+		"deadLetter":       resp.GetDeadLetter(),
+		"approvalRequired": resp.GetApprovalRequired(),
+		"claimEpoch":       resp.GetClaimEpoch(),
+		"schedule":         resp.GetSchedule(),
+		"parentID":         resp.GetParentId(),
+		"batchId":          resp.GetBatchId(),
+		"lastFiredAt":      resp.GetLastFiredAt(),
+		"priority":         resp.GetPriority(),
+		"idempotencyKey":   resp.GetIdempotencyKey(),
+		"statusMachine":    resp.GetStatusMachine(),
+		"scriptBody":       resp.GetScriptBody(),
+		"dependsOn":        resp.GetDependsOn(),
+		"approvedBy":       resp.GetApprovedBy(),
+		"approvedAt":       resp.GetApprovedAt(),
+	}
+}
+
+// resultToAPIMap 将 taskv1.TaskResult 序列化为与 domain.TaskResult 一致的 JSON 契约。
+func resultToAPIMap(resp *taskv1.TaskResult) map[string]any {
+	return map[string]any{
+		"taskID":     resp.GetTaskId(),
+		"agentID":    resp.GetAgentId(),
+		"exitCode":   resp.GetExitCode(),
+		"stdout":     resp.GetStdout(),
+		"stderr":     resp.GetStderr(),
+		"durationMs": resp.GetDurationMs(),
+		"finishedAt": resp.GetFinishedAt(),
+		"claimEpoch": resp.GetClaimEpoch(),
+	}
+}
+
 // writeTaskSvcError 统一任务服务错误响应：存根/未装配 ⇒ 503，其余 ⇒ 502。
 // 审计整改批次1：原实现把存根错误也写成 500，且部分路径直接假成功。
 func writeTaskSvcError(w http.ResponseWriter, err error) {
@@ -986,35 +1153,7 @@ func (s *Server) writeTaskResponse(w http.ResponseWriter, resp *taskv1.Task) {
 		})
 		return
 	}
-	paginate.WriteJSON(w, http.StatusOK, map[string]any{
-		"taskId":           resp.TaskId,
-		"agentId":          resp.AgentId,
-		"tenantId":         resp.TenantId,
-		"type":             resp.Type,
-		"command":          resp.Command,
-		"content":          resp.Content,
-		"path":             resp.Path,
-		"status":           normalizeTaskStatus(resp.Status),
-		"rawStatus":        resp.Status,
-		"claimedBy":        resp.ClaimedBy,
-		"claimedAt":        resp.ClaimedAt,
-		"createdAt":        resp.CreatedAt,
-		"retryCount":       resp.RetryCount,
-		"deadLetter":       resp.DeadLetter,
-		"approvalRequired": resp.ApprovalRequired,
-		"claimEpoch":       resp.ClaimEpoch,
-		"schedule":         resp.Schedule,
-		"parentId":         resp.ParentId,
-		"dependsOn":        resp.DependsOn,
-		"approvedBy":       resp.ApprovedBy,
-		"approvedAt":       resp.ApprovedAt,
-		"batchId":          resp.BatchId,
-		"lastFiredAt":      resp.LastFiredAt,
-		"priority":         resp.Priority,
-		"idempotencyKey":   resp.IdempotencyKey,
-		"statusMachine":    resp.StatusMachine,
-		"scriptBody":       resp.ScriptBody,
-	})
+	paginate.WriteJSON(w, http.StatusOK, taskToAPIMap(resp, true))
 }
 
 // writeTaskResultResponse 将 taskv1.TaskResult 写入 HTTP 响应。
@@ -1026,12 +1165,5 @@ func (s *Server) writeTaskResultResponse(w http.ResponseWriter, resp *taskv1.Tas
 		})
 		return
 	}
-	paginate.WriteJSON(w, http.StatusOK, map[string]any{
-		"taskId":     resp.TaskId,
-		"exitCode":   resp.ExitCode,
-		"stdout":     resp.Stdout,
-		"stderr":     resp.Stderr,
-		"durationMs": resp.DurationMs,
-		"finishedAt": resp.FinishedAt,
-	})
+	paginate.WriteJSON(w, http.StatusOK, resultToAPIMap(resp))
 }

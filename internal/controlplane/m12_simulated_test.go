@@ -81,9 +81,9 @@ func TestHandleHAFailover_SimulatedFlag(t *testing.T) {
 		t.Fatalf("status=%d, want 501 (手动切主未接线必须显式失败); body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
-		Code    string `json:"code"`
-		Error   string `json:"error"`
-		Status  string `json:"status"`
+		Code   string `json:"code"`
+		Error  string `json:"error"`
+		Status string `json:"status"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)

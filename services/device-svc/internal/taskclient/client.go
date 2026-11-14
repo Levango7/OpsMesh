@@ -7,9 +7,11 @@ package taskclient
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
@@ -27,12 +29,26 @@ func New(ctx context.Context, target string) (*Client, error) {
 	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(dctx, target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
+	// 与 internal/agent 同款迁移：grpc.DialContext + grpc.WithBlock 已废弃（SA1019）。
+	// NewClient + Connect + WaitForStateChange 等 READY，等价于「拨号即阻塞到就绪或 ctx 超时」。
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
+	}
+	conn.Connect()
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			break
+		}
+		if state == connectivity.Shutdown {
+			_ = conn.Close()
+			return nil, fmt.Errorf("grpc client to %s closed while connecting", target)
+		}
+		if !conn.WaitForStateChange(dctx, state) {
+			_ = conn.Close()
+			return nil, fmt.Errorf("grpc connect to %s: %w", target, dctx.Err())
+		}
 	}
 	return &Client{client: taskv1.NewTaskServiceClient(conn), conn: conn}, nil
 }

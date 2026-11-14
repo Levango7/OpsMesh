@@ -21,22 +21,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Levango7/OpsMesh/internal/logx"
-
 	gnet "github.com/shirou/gopsutil/v3/net"
 
 	"go.opentelemetry.io/otel/attribute"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/Levango7/OpsMesh/internal/circuitbreaker"
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/discovery"
 	"github.com/Levango7/OpsMesh/internal/grpcx"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 	"github.com/Levango7/OpsMesh/internal/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
@@ -765,10 +764,14 @@ func (a *Agent) collectDeviceMetrics() *proto.DeviceMetrics {
 	return m
 }
 
-// dispatchLoop 每 15s 触发一次 drainTasks：尽量把当前所有 pending 任务领取并投入 worker 队列，
+// dispatchLoop 每 task-dispatch-interval（默认 15s）触发一次 drainTasks：尽量把当前所有 pending 任务领取并投入 worker 队列，
 // 避免每轮只领 1 条导致大量任务排队过久（吞吐修复）。
 func (a *Agent) dispatchLoop(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Second)
+	interval := a.cfg.TaskDispatchInterval
+	if interval <= 0 {
+		interval = 15 * time.Second // 零值/负值兜底：保持既有默认行为
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -872,20 +875,20 @@ func (a *Agent) claimTask(ctx context.Context) (*proto.Task, error) {
 	}
 	// Convert taskv1.Task to proto.Task
 	return &proto.Task{
-		TaskID:      resp.TaskId,
-		AgentID:     resp.AgentId,
-		TenantID:    resp.TenantId,
-		Type:        resp.Type,
-		Command:     resp.Command,
-		Content:     resp.Content,
-		Path:        resp.Path,
-		Status:      resp.Status,
-		ClaimedBy:   resp.ClaimedBy,
-		ClaimedAt:   resp.ClaimedAt.AsTime(),
-		CreatedAt:   resp.CreatedAt.AsTime(),
-		RetryCount:  int(resp.RetryCount),
-		DeadLetter:  resp.DeadLetter,
-		ClaimEpoch:  resp.ClaimEpoch,
+		TaskID:     resp.TaskId,
+		AgentID:    resp.AgentId,
+		TenantID:   resp.TenantId,
+		Type:       resp.Type,
+		Command:    resp.Command,
+		Content:    resp.Content,
+		Path:       resp.Path,
+		Status:     resp.Status,
+		ClaimedBy:  resp.ClaimedBy,
+		ClaimedAt:  resp.ClaimedAt.AsTime(),
+		CreatedAt:  resp.CreatedAt.AsTime(),
+		RetryCount: int(resp.RetryCount),
+		DeadLetter: resp.DeadLetter,
+		ClaimEpoch: resp.ClaimEpoch,
 	}, nil
 }
 

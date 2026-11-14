@@ -373,8 +373,26 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// leader 选举检查：非 leader 副本不接写流量（A3 HA 设计）。
-	// MemoryStore 恒为 leader（单实例）；SQLStore 经 leader_lease 表原子抢占。
-	if !s.store.IsLeader() {
+	// TD-60（7c5a835）：选主权归 task-svc LeaderElectorService，控制面本地 leader_lease
+	// 不再续租（leaderLoop 已移除），SQLStore.IsLeader() 恒 false —— 故改为
+	// consult TD-60 选主客户端：gRPC→task-svc；未配置或连接失败时的存根按
+	// 单副本语义恒 true（与 server.go 初始化存根的语义一致）。
+	// RPC 失败 fail-closed（503）：选主结论不可确认时不应接写流量。
+	// electorClient 为 nil（防御，正常不会发生）时回落本地租约判据（向后兼容）。
+	leader := s.store.IsLeader()
+	if s.electorClient != nil {
+		ok, _, err := s.electorClient.IsLeader(ctx)
+		if err != nil {
+			logx.Error(r.Context(), "controlplane: readyz leader 检查失败", err)
+			paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"status": "not_ready",
+				"reason": "leader check unavailable",
+			})
+			return
+		}
+		leader = ok
+	}
+	if !leader {
 		paginate.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "not_ready",
 			"reason": "not leader",

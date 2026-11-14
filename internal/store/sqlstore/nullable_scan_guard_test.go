@@ -43,7 +43,7 @@ func buildNullableSchemaColumns() map[string]map[string]bool {
 			continue
 		}
 		src := string(b)
-		for _, m := range regexp.MustCompile(`(?s)CREATE TABLE(?: IF NOT EXISTS)?\s+(\w+)\s*\((.*?)\n\)`).FindAllStringSubmatch(src, -1) {
+		for _, m := range regexp.MustCompile("(?s)CREATE TABLE(?: IF NOT EXISTS)?\\s+`?([A-Za-z_][A-Za-z0-9_]*)`?\\s*\\((.*?)\\n\\)").FindAllStringSubmatch(src, -1) {
 			tbl, body := m[1], m[2]
 			if _, ok := out[tbl]; !ok {
 				out[tbl] = map[string]bool{}
@@ -415,6 +415,13 @@ var helperScanTables = map[string]string{
 	"scanUser":               "users",
 	"scanWebhook":            "webhooks",
 	"scanWebhookDelivery":    "webhook_deliveries",
+
+	// 批次16（Kilo 直推）ListControlplaneInstances 读侧登记：
+	// 该函数的 SELECT 与 .Scan 之间隔着 rows.Next 循环，按本文件 ①路径
+	// （就近 SELECT）判定需要先 parse controlplane_instances 的 DDL——本 PR 已把
+	// 该迁移从死目录（internal/store/migrations/）移入 embed 目录并泛化了
+	// CREATE TABLE 正则（反引号表名），此登记作为双保险保留。
+	"ListControlplaneInstances": "controlplane_instances",
 
 	// 以下 5 条是接手时补的：它们的 SELECT 或写在调用方、或用变量拼出来，
 	// 就近归属要么抓不到表、要么抓到**上一条**语句（列数必然不等），
