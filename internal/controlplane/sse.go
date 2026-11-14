@@ -42,6 +42,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 )
 
@@ -109,7 +110,10 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	// 审计整改批次20：全局 http.Server 已设 WriteTimeout=120s，SSE 是长连接必须
 	// 显式取消写截止时间（Go 1.20+ ResponseController；失败时降级为依赖心跳续期）。
 	if rc := http.NewResponseController(w); rc != nil {
-		_ = rc.SetWriteDeadline(time.Time{})
+		if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+			// 失败时降级依赖心跳续期（与 Kilo 批次20 注释一致），不阻断 SSE 连接。
+			logx.Warn(r.Context(), "sse 取消写截止时间失败，降级依赖心跳续期", err)
+		}
 	}
 	// SSE 标准响应头
 	w.Header().Set("Content-Type", "text/event-stream")
