@@ -4,7 +4,6 @@ package k8slifecycle
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -26,18 +25,9 @@ const (
 	sshMaxRetries         = 3                 // 最大重试次数
 	sshRetryBackoff       = 5 * time.Second   // 重试间隔
 	drainGracePeriod      = 600               // drain宽限期(秒)
-	nodeReadyWait         = 30 * time.Second  // 节点Ready等待
-	batchHealthWait       = 10 * time.Second  // 批间健康检查等待
 	nodeReadyPollInterval = 10 * time.Second  // 节点Ready轮询间隔
 	maxNodeReadyWait      = 5 * time.Minute   // 节点Ready最大等待
 )
-
-// ErrNotImplemented 表示该动作的真实执行链路尚未实现。
-// HTTP 层必须把它映射为 501：此前 upgrade/rollback/cert-rotate 先返回 202，
-// 再由纯内存状态机把 phase 推进到 Completed——前端与运维看到的是"已完成"，
-// 集群侧却没有任何动作（假成功）。真实现见
-// docs/design/k8s-lifecycle-execution-charter.md（C 项立项）。
-var ErrNotImplemented = errors.New("k8s 生命周期动作尚未实现")
 
 // NodeSpec 节点规格
 type NodeSpec struct {
@@ -506,9 +496,6 @@ func NewK8sLifecycleHandler(store LifecycleJobStore) *K8sLifecycleHandler {
 	}
 }
 
-// writeNotImplemented 把"执行链路未实现"写成 501。
-// 这三条入口此前先返回 202、再由纯内存状态机把 phase 推进到 Completed——
-// 调用方看到"升级/回滚/轮换完成"，集群侧却没有任何动作。A 项裁决：能力不存在就必须明说。
 // HandleUpgrade 处理 POST /api/v1/k8s/lifecycle/upgrade
 func (h *K8sLifecycleHandler) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

@@ -41,9 +41,11 @@ func buildABACScript(action, subject, resource, actionAttr, context string) (str
 		}
 		// 旧实现把「Result: ALLOWED (default policy)」硬编码进 echo——不查任何策略引擎，
 		// 任何输入都"允许"，是假判定（A1 审计 BA-04）。按 owner 已裁口径（未实现=显式 501，
-		// 不造假数据，AI Agent 工具同先例）改为 501：强制层是 RBAC（requirePermission），
-		// ABAC 评估属产品待立项。
-		return "", http.StatusNotImplemented, "ABAC evaluation is not implemented; enforcement is RBAC-based (requirePermission). Policy files are advisory only."
+		// 不造假数据，AI Agent 工具同先例）改为 501：强制层是 RBAC（requirePermission）。
+		// 注（审计整改批次17）：handleABAC 已在入口拦截 evaluate，改走服务端 abac_engine
+		// 真实决策（deny-overrides + default-deny）；本分支仅作为设备脚本路径的显式拒绝
+		// 守卫保留，由 abac_ops_security_test.go 钉住（防"假 ALLOWED"回归）。
+		return "", http.StatusNotImplemented, "ABAC evaluation is not implemented on the device-script path; use the server-side evaluator (POST /api/v1/abac action=evaluate)."
 	default:
 		return "", http.StatusBadRequest, "unknown action: " + action
 	}

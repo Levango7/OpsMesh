@@ -26,6 +26,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
+	"github.com/Levango7/OpsMesh/internal/version"
 )
 
 // haInstanceInfo 控制面实例信息（HA 状态查询返回）。
@@ -141,6 +142,7 @@ func (s *Server) haCurrentInstance() haInstanceInfo {
 		Role:             role,
 		IsLeader:         isLeader,
 		LeaderInstanceID: leaderInstanceID,
+		Version:          version.Version,
 	}
 }
 
