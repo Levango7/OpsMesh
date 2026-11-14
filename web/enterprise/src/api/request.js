@@ -93,29 +93,34 @@ http.interceptors.response.use(
 // 便捷方法：返回原始 data（j），失败抛错。
 // 各方法第 3 个参数 silent 为全局 toast 逃生口：传 true 时该请求的错误
 // 不弹出全局 toast（调用方自行处理提示）。
-export async function getJSON(url, params, silent) {
-  const { j } = await http.get(url, { params, silent })
+// 第 4 个参数 opts 可覆盖 axios 配置（审计整改批次22：长任务传 { timeout: 120000 }）。
+export async function getJSON(url, params, silent, opts) {
+  const { j } = await http.get(url, { params, silent, ...(opts || {}) })
   return j
 }
-export async function postJSON(url, body, silent) {
-  const { s, j } = await http.post(url, body, { silent })
+export async function postJSON(url, body, silent, opts) {
+  const { s, j } = await http.post(url, body, { silent, ...(opts || {}) })
   return { s, j }
 }
-export async function putJSON(url, body, silent) {
-  const { s, j } = await http.put(url, body, { silent })
+export async function putJSON(url, body, silent, opts) {
+  const { s, j } = await http.put(url, body, { silent, ...(opts || {}) })
   return { s, j }
 }
-export async function postEmpty(url, silent) {
-  const { s, j } = await http.post(url, null, { silent })
+export async function postEmpty(url, silent, opts) {
+  const { s, j } = await http.post(url, null, { silent, ...(opts || {}) })
   return { s, j }
 }
 // DELETE 便捷方法
-export async function deleteJSON(url, silent) {
-  const { s, j } = await http.delete(url, { silent })
+export async function deleteJSON(url, silent, opts) {
+  const { s, j } = await http.delete(url, { silent, ...(opts || {}) })
   return { s, j }
 }
 // DELETE 携带请求体（用于用户/组/防火墙删除等需 body 的场景）
-export async function deleteJSONBody(url, body, silent) {
-  const { s, j } = await http.delete(url, { data: body, silent })
+export async function deleteJSONBody(url, body, silent, opts) {
+  const { s, j } = await http.delete(url, { data: body, silent, ...(opts || {}) })
   return { s, j }
 }
+
+// 长任务超时（ms）：AI 推理 / AIOps 分析 / etcd 备份 / 升级 plan 等同步接口
+// 在 15s 默认值下会被前端误判为超时（后端可能已成功），调用方显式透传。
+export const LONG_TASK_TIMEOUT = 120000

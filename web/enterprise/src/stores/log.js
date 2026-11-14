@@ -26,7 +26,8 @@ export const useLogStore = defineStore('log', {
     offset: 0,
     pageSize: 0,           // 当前页条数
     loading: false,
-    error: ''
+    error: '',
+    _seq: 0, // 审计整改批次22：并发请求序号（后发先至丢弃旧响应）
   }),
   getters: {
     page: (s) => Math.floor(s.offset / s.filters.limit) + 1
@@ -34,6 +35,7 @@ export const useLogStore = defineStore('log', {
   actions: {
     // 统一搜索入口：根据 mode 选择 API
     async search(offset = 0) {
+      const seq = ++this._seq
       this.offset = offset
       this.loading = true
       // 注意：不清空 error 在 try 内重置；失败时保留旧 list 仅更新 error
@@ -51,10 +53,12 @@ export const useLogStore = defineStore('log', {
         })
         const apiFn = this.mode === 'advanced' ? queryLogs : getLogs
         const data = await apiFn(params)
+        if (seq !== this._seq) return // 过期响应：已有更新的查询在途/已完成
         this.list = data || []
         this.pageSize = this.list.length
         this.error = ''
       } catch (e) {
+        if (seq !== this._seq) return // 过期请求的错误不覆盖新状态
         // 语法错误（400）或其他错误：保留上次结果，仅显示错误提示
         this.list = previousList
         this.pageSize = previousList.length

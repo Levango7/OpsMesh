@@ -1,7 +1,8 @@
 // AI 网关 API — 对接 /api/v1/ai/*
-import { getJSON, postJSON, putJSON, deleteJSON } from './request'
+import { getJSON, postJSON, putJSON, deleteJSON, LONG_TASK_TIMEOUT } from './request'
 
-export const chat = (body) => postJSON('/ai/chat', body)
+// 审计整改批次22：LLM 推理常超 15s 默认超时，长任务单独放宽。
+export const chat = (body) => postJSON('/ai/chat', body, undefined, { timeout: LONG_TASK_TIMEOUT })
 export const embed = (body) => postJSON('/ai/embed', body)
 export const ragIngest = (body) => postJSON('/ai/rag/ingest', body)
 export const ragSearch = (body) => postJSON('/ai/rag/search', body)

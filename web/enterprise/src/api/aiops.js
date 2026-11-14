@@ -6,16 +6,17 @@
 //   - POST /api/v1/aiops/remediate-nl 自然语言转结构化任务 → {title, steps[], commands[]}
 //   - POST /api/v1/aiops/execute      自动执行修复（下发任务到 agent） → {results[], dispatched, total}
 //   - GET  /api/v1/aiops/status        引擎状态 → {enabled, provider, model, stats, lastErr}
-import { getJSON, postJSON } from './request'
+import { getJSON, postJSON, LONG_TASK_TIMEOUT } from './request'
 
 export const getAIOpsStatus = () => getJSON('/aiops/status')
 
-export const analyzeAIOps = (body) => postJSON('/aiops/analyze', body)
+// 审计整改批次22：LLM 分析走长超时（120s）
+export const analyzeAIOps = (body) => postJSON('/aiops/analyze', body, undefined, { timeout: LONG_TASK_TIMEOUT })
 
-export const generateRemediation = (body) => postJSON('/aiops/remediate', body)
+export const generateRemediation = (body) => postJSON('/aiops/remediate', body, undefined, { timeout: LONG_TASK_TIMEOUT })
 
-export const generateRemediationNL = (body) => postJSON('/aiops/remediate-nl', body)
+export const generateRemediationNL = (body) => postJSON('/aiops/remediate-nl', body, undefined, { timeout: LONG_TASK_TIMEOUT })
 
-export const executeRemediation = (body) => postJSON('/aiops/execute', body)
+export const executeRemediation = (body) => postJSON('/aiops/execute', body, undefined, { timeout: LONG_TASK_TIMEOUT })
 
 export const getAIOpsExecutions = () => getJSON('/aiops/executions')

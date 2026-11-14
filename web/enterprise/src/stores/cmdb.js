@@ -12,6 +12,7 @@ export const useCmdbStore = defineStore('cmdb', {
     graph: null,           // { centerCI, relations }
     loading: false,
     error: '',
+    _instSeq: 0, // 审计整改批次22：类型切换竞态守卫
     msg: ''
   }),
   actions: {
@@ -21,10 +22,18 @@ export const useCmdbStore = defineStore('cmdb', {
     async fetchInstances(type) {
       this.currentType = type || this.currentType
       if (!this.currentType) { this.instances = []; return }
+      const seq = ++this._instSeq
       this.loading = true
-      try { this.instances = await getCIs(this.currentType) || [] }
-      catch (e) { this.error = e.j?.error || t('cmdb.instancesFetchFailed') }
-      finally { this.loading = false }
+      try {
+        const data = await getCIs(this.currentType) || []
+        if (seq !== this._instSeq) return // 类型已切换/已有更新请求
+        this.instances = data
+      } catch (e) {
+        if (seq !== this._instSeq) return
+        this.error = e.j?.error || t('cmdb.instancesFetchFailed')
+      } finally {
+        if (seq === this._instSeq) this.loading = false
+      }
     },
     async fetchTemplates(type) {
       try { this.templates = await getAttrTemplates(type) || [] }

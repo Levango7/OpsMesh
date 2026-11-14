@@ -142,7 +142,7 @@
 import PageShell from '@/components/PageShell.vue'
 import { useAuthStore } from '@/stores/auth'
 
-import { computed, reactive, ref } from 'vue'
+import { computed, onUnmounted, reactive, ref } from 'vue'
 import { useK8sStore } from '@/stores/k8s'
 import { t } from '@/i18n'
 import { deployK8sCluster, getK8sClusterDeployStatus } from '@/api/k8s'
@@ -252,6 +252,14 @@ function startPolling(deployID) {
     }
   }, 3000)
 }
+
+// 审计整改批次22：离开页面必须清理轮询，否则每 3s 请求会一直泄漏到 phase 终态。
+onUnmounted(() => {
+  if (pollTimer.value) {
+    clearInterval(pollTimer.value)
+    pollTimer.value = null
+  }
+})
 </script>
 
 <style scoped>

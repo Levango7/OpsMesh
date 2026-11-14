@@ -102,7 +102,7 @@ export class SSEClient {
    * @param {()=>void} [opts.onConnect]      首次连接成功回调
    * @param {number} [opts.maxRetry=30]      最大退避秒数
    */
-  constructor({ url, headers, onEvent, onDisconnect, onConnect, maxRetry = 30 }) {
+  constructor({ url, headers, onEvent, onDisconnect, onConnect, maxRetry = 30, heartbeatTimeoutMs = 45000 }) {
     this.url = url
     this.headers = headers || {}
     this.onEvent = onEvent
@@ -115,6 +115,11 @@ export class SSEClient {
     this.connected = false
     this._validateCount = 0 // 契约违规计数（测试/观测用）
     this._refreshAttempted = false // ：401 时是否已尝试过 token 刷新（防死循环）
+    // 审计整改批次22：心跳看门狗——服务端每 15s 发 `: ping`，连续 3 个周期
+    // 无任何字节即判定半开连接（TCP 未断但代理不再转发），主动断开重连。
+    this.heartbeatTimeoutMs = heartbeatTimeoutMs
+    this._lastActivity = 0
+    this._watchdog = null
   }
 
   start() {
@@ -125,8 +130,29 @@ export class SSEClient {
   stop() {
     this.stopped = true
     if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null }
+    this._clearWatchdog()
     if (this.abort) this.abort.abort()
     this.abort = null
+  }
+
+  _clearWatchdog() {
+    if (this._watchdog) {
+      clearInterval(this._watchdog)
+      this._watchdog = null
+    }
+  }
+
+  _startWatchdog() {
+    this._clearWatchdog()
+    this._watchdog = setInterval(() => {
+      if (this.stopped || !this.connected) return
+      if (Date.now() - this._lastActivity > this.heartbeatTimeoutMs) {
+        this._clearWatchdog()
+        this.connected = false
+        try { if (this.abort) this.abort.abort() } catch { /* ignore */ }
+        this._scheduleRetry('heartbeat timeout')
+      }
+    }, 15000)
   }
 
   // 是否已建立连接（供调用方判断轮询降级）
@@ -164,6 +190,8 @@ export class SSEClient {
         this.connected = true
         this.retryDelay = 1000 // 连接成功重置退避
         this._refreshAttempted = false // 连接成功重置刷新标记，后续 401 可再次刷新
+        this._lastActivity = Date.now()
+        this._startWatchdog()
         if (this.onConnect) this.onConnect()
         const reader = resp.body.getReader()
         const decoder = new TextDecoder()
@@ -171,6 +199,8 @@ export class SSEClient {
         for (;;) {
           const { done, value } = await reader.read()
           if (done) break
+          // 任何字节（含 `: ping` 心跳注释帧）都算活动时间
+          this._lastActivity = Date.now()
           buf += decoder.decode(value, { stream: true })
           // 按帧边界切分（空行分隔；保留尾部未完成数据到下一块）
 
@@ -183,10 +213,12 @@ export class SSEClient {
           }
         }
         this.connected = false
+        this._clearWatchdog()
         this._scheduleRetry('连接已关闭')
       })
       .catch((err) => {
         this.connected = false
+        this._clearWatchdog()
         if (this.stopped) return // 主动 stop 不算故障
         if (err.name === 'AbortError') return
         this._scheduleRetry(String(err.message || err))
@@ -232,11 +264,13 @@ export class SSEClient {
   _scheduleRetry(reason) {
     if (this.stopped) return
     const delay = Math.min(this.retryDelay, this.maxRetry * 1000)
+    // 审计整改批次22：退避加 0.7–1.3 抖动，避免多客户端同步重连打点。
+    const jittered = Math.round(delay * (0.7 + Math.random() * 0.6))
     if (this.onDisconnect) this.onDisconnect(reason)
     this._retryTimer = setTimeout(() => {
       this.retryDelay = Math.min(this.retryDelay * 2, this.maxRetry * 1000)
       this._connect()
-    }, delay)
+    }, jittered)
   }
 }
 

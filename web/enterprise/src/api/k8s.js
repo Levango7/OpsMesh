@@ -15,7 +15,7 @@
 //   GET    /api/v1/k8s/clusters/{id}/configmaps?namespace={ns}   → 200 {configmaps: [{name,namespace,dataKeys}]}
 //   GET    /api/v1/k8s/clusters/{id}/secrets?namespace={ns}      → 200 {secrets: [{name,namespace,type,dataKeys}]}
 //   GET    /api/v1/k8s/clusters/{id}/nodes                       → 200 {nodes: [{name,status,roles,version,internalIP,externalIP,cpu,memory}]}
-import { getJSON, postJSON, deleteJSON } from './request'
+import { getJSON, postJSON, deleteJSON, LONG_TASK_TIMEOUT } from './request'
 
 // ---------- K8s 集群管理 ----------
 
@@ -257,7 +257,8 @@ export const getK8sClusterDeployStatus = (deployID) =>
 // 升级/回滚/证书轮换的执行链路尚未实现（A 项裁决为显式 501，C 项立项中），
 // 因此这里不提供封装：UI 已禁用入口，避免"点了就说升级完成"的假成功。
 // silent=true：调用方（K8sLifecycleView）自行经页面错误横幅展示，避免全局 toast 双提示。
-export const planK8sUpgrade = (spec) => postJSON('/k8s/lifecycle/upgrade/plan', spec, true)
+// 审计整改批次22：升级 plan 需 SSH 逐节点执行，120s 长超时
+export const planK8sUpgrade = (spec) => postJSON('/k8s/lifecycle/upgrade/plan', spec, true, { timeout: LONG_TASK_TIMEOUT })
 export const scaleK8sNodes = (spec) => postJSON('/k8s/lifecycle/node-scale', spec, true)
-export const backupK8sEtcd = (spec) => postJSON('/k8s/lifecycle/etcd-backup', spec, true)
+export const backupK8sEtcd = (spec) => postJSON('/k8s/lifecycle/etcd-backup', spec, true, { timeout: LONG_TASK_TIMEOUT })
 export const listK8sEtcdBackups = (params) => getJSON('/k8s/lifecycle/etcd-backups', params, true)

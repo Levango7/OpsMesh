@@ -9,17 +9,22 @@ export const useTaskStore = defineStore('task', {
     statusFilter: '',
     loading: false,
     error: '',
+    _seq: 0, // 审计整改批次22：筛选切换竞态守卫
     pendingApprovals: []
   }),
   actions: {
     async fetchTasks() {
+      const seq = ++this._seq
       this.loading = true; this.error = ''
       try {
-        this.list = await getTasks(this.statusFilter) || []
+        const data = await getTasks(this.statusFilter) || []
+        if (seq !== this._seq) return // 筛选已切换/已有更新请求
+        this.list = data
       } catch (e) {
+        if (seq !== this._seq) return
         this.error = e.j?.error || t('error.taskListFailed')
       } finally {
-        this.loading = false
+        if (seq === this._seq) this.loading = false
       }
     },
     async fetchPendingApprovals() {
