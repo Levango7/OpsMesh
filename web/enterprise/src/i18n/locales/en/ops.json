@@ -197,7 +197,8 @@
     "col_task_id": "TaskID",
     "pending_approval_title": "Pending Approval",
     "approve": "Approve",
-    "reject": "Reject"
+    "reject": "Reject",
+    "dispatch_success": "Task dispatched, ID: {id}"
   },
   "dead_letter": {
     "title": "Dead Letter Queue",

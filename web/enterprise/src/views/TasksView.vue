@@ -251,9 +251,14 @@ async function onSubmit() {
   submitting.value = true
   try {
     const r = await store.create({ ...form.value })
-    msg.value = `[${r.s}] ${JSON.stringify(r.j)}`
+    // 审计整改批次25：不再把后端原始报文 JSON.stringify 上屏
     msgOk.value = r.s < 400
-    if (r.s < 400) form.value.command = ''
+    if (msgOk.value) {
+      msg.value = t('tasks.dispatch_success', { id: r.j?.taskID || r.j?.taskId || '—' })
+      form.value.command = ''
+    } else {
+      msg.value = t('tasks.dispatch_failed') + (r.j?.error || '')
+    }
   } catch (e) {
     msg.value = t('tasks.dispatch_failed') + (e.j?.error || e.message)
     msgOk.value = false

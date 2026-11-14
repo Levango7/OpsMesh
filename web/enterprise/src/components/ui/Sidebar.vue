@@ -118,7 +118,9 @@ const SidebarGroup = {
       }
     }
 
-    function handleKeyDown(_event, item, itemIndex, isChild) {
+    // 审计整改批次25：形参名必须为 event —— 原实现形参 `_event` 却引用全局 `event`，
+    // Chrome 靠 window.event 侥幸可用，Firefox/Safari 抛 ReferenceError 导致键盘导航失效。
+    function handleKeyDown(event, item, itemIndex, isChild) {
       const items = isChild ? props.group.children : [props.group].flatMap(g => g.children || [])
       const maxIndex = items.length - 1
 

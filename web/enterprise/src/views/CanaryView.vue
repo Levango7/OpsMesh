@@ -4,7 +4,6 @@
     <div v-if="!detailId" class="card card--raised">
       <h3>{{ $t('canary.create_title') }}</h3>
       <form @submit.prevent="onCreate">
-<form @submit.prevent="onCreate">
         <div class="row-2">
           <div class="field field--fixed">
             <label>{{ $t('canary.field_devices') }}</label>

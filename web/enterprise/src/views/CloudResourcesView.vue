@@ -118,8 +118,8 @@ function reload() { store.fetchResources() }
 
 const deleteConfirm = ref({ show: false, row: null })
 const deleteHint = computed(() =>
-  deleteConfirm.value.row ? `确定删除云资源 ${deleteConfirm.value.row.resourceName || deleteConfirm.value.row.id}？` : '')
-
+  deleteConfirm.value.row ? t('cloudResources.confirm_delete', { name: deleteConfirm.value.row.resourceName || deleteConfirm.value.row.id }) : ''
+)
 function onDelete(row) { deleteConfirm.value = { show: true, row } }
 
 async function onDeleteConfirm() {

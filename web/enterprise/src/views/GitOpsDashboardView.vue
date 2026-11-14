@@ -116,18 +116,19 @@
     <div class="card quick-links">
       <h3>{{ $t('gitops.quick_links') }}</h3>
       <div class="link-grid">
-        <a class="link-item" :to="{ name: 'argocd' }">
+        <!-- 审计整改批次25：原生 <a :to> 不触发 RouterLink（渲染 to="[object Object]" 无跳转） -->
+        <RouterLink class="link-item" :to="{ name: 'argocd' }">
           <Icon name="deploy" :size="20" />
           <span>{{ $t('nav.argocd') }}</span>
-        </a>
-        <a class="link-item" :to="{ name: 'flux' }">
+        </RouterLink>
+        <RouterLink class="link-item" :to="{ name: 'flux' }">
           <Icon name="flow" :size="20" />
           <span>{{ $t('nav.flux') }}</span>
-        </a>
-        <a class="link-item" :to="{ name: 'k8s-clusters' }">
+        </RouterLink>
+        <RouterLink class="link-item" :to="{ name: 'k8s-clusters' }">
           <Icon name="device" :size="20" />
           <span>{{ $t('nav.k8s_clusters') }}</span>
-        </a>
+        </RouterLink>
       </div>
     </div>
   </PageShell>

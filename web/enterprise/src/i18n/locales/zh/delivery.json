@@ -36,7 +36,8 @@
     "demo_step_pull": "拉取镜像",
     "demo_step_stop": "停旧容器",
     "demo_step_start": "起新容器",
-    "demo_loaded_msg": "已载入示例作业流（尚未保存）"
+    "demo_loaded_msg": "已载入示例作业流（尚未保存）",
+    "run_success": "运行已触发"
   },
   "deploys": {
     "title": "部署中心",
@@ -65,7 +66,11 @@
     "execute": "执行",
     "rollback": "回滚",
     "confirm_execute": "确认执行该部署？将在目标设备上执行操作。",
-    "confirm_rollback": "确认回滚该部署？将尝试恢复到部署前状态。"
+    "confirm_rollback": "确认回滚该部署？将尝试恢复到部署前状态。",
+    "created_msg": "部署已登记，ID: {id}",
+    "create_failed": "创建失败",
+    "exec_failed": "执行失败",
+    "rollback_failed": "回滚失败"
   },
   "traffic": {
     "title": "流量策略",
@@ -229,7 +234,6 @@
     "col_actions": "操作",
     "confirm_delete": "确认删除该应用？仅移除注册，不影响集群内实际资源。",
     "actions": "操作",
-    "confirm_delete": "确认删除该应用？仅移除注册，不影响集群内实际资源。",
     "new_name": "应用名称",
     "new_namespace": "命名空间",
     "new_type": "类型",
@@ -264,7 +268,7 @@
     "device_ids_placeholder": "dev-1,dev-2,dev-3",
     "command_placeholder": "echo 'canary test'",
     "groups_placeholder": "group-a,group-b",
-"labels_placeholder": "env=staging,region=cn-north",
+    "labels_placeholder": "env=staging,region=cn-north",
     "strategy_percentage": "按比例",
     "strategy_group": "按分组",
     "strategy_label": "按标签",

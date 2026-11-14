@@ -36,7 +36,8 @@
     "demo_step_pull": "Pull Image",
     "demo_step_stop": "Stop Old Container",
     "demo_step_start": "Start New Container",
-    "demo_loaded_msg": "Demo workflow loaded (not saved yet)"
+    "demo_loaded_msg": "Demo workflow loaded (not saved yet)",
+    "run_success": "Run triggered"
   },
   "deploys": {
     "title": "Deploys",
@@ -65,7 +66,11 @@
     "execute": "Deploy",
     "rollback": "Rollback",
     "confirm_execute": "Execute this deployment? Operations will run on target devices.",
-    "confirm_rollback": "Rollback this deployment? Will attempt to restore pre-deployment state."
+    "confirm_rollback": "Rollback this deployment? Will attempt to restore pre-deployment state.",
+    "created_msg": "Deployment registered, ID: {id}",
+    "create_failed": "Create failed",
+    "exec_failed": "Execution failed",
+    "rollback_failed": "Rollback failed"
   },
   "traffic": {
     "title": "Traffic Policies",

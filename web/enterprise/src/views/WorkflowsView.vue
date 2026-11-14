@@ -268,7 +268,14 @@ async function onRun() {
   running.value = true
   try {
     const r = await store.run()
-    store.msg = `[${r.s}] ${JSON.stringify(r.j)}`; store.error = r.s >= 400 ? 'run' : ''
+    // 审计整改批次25：不再裸 JSON 上屏 / 'run' 英文 token 当错误文案
+    if (r.s < 400) {
+      store.msg = t('workflows.run_success')
+      store.error = ''
+    } else {
+      store.msg = r.j?.error || t('workflows.run_failed')
+      store.error = t('workflows.run_failed')
+    }
   } catch (e) { store.error = (e && e.j && e.j.error) || t('workflows.run_failed') }
   finally { running.value = false }
 }

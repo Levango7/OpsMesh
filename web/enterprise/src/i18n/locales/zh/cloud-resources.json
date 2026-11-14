@@ -16,6 +16,7 @@
     "allAccounts": "全部账号",
     "allTypes": "全部类型",
     "listFailed": "云资源加载失败",
-    "deleteFailed": "删除失败"
+    "deleteFailed": "删除失败",
+    "confirm_delete": "确定删除云资源 {name}？"
   }
 }

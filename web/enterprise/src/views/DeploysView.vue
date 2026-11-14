@@ -159,9 +159,16 @@ async function onCreate() {
   submitting.value = true
   try {
     const r = await store.create({ ...form })
-    store.msg = `[${r.s}] ${JSON.stringify(r.j)}`; store.error = r.s >= 400 ? 'create' : ''
-    if (r.s < 400) { form.name = ''; form.target_ids = ''; form.repo_url = ''; form.content = ''; form.path = '' }
-  } catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'create' }
+    // 审计整改批次25：不再裸 JSON 上屏 / 英文 token 当错误文案
+    if (r.s < 400) {
+      store.msg = t('deploys.created_msg', { id: r.j?.ID || r.j?.deployID || '—' })
+      store.error = ''
+      form.name = ''; form.target_ids = ''; form.repo_url = ''; form.content = ''; form.path = ''
+    } else {
+      store.msg = r.j?.error || t('deploys.create_failed')
+      store.error = t('deploys.create_failed')
+    }
+  } catch (e) { store.msg = e.j?.error || t('deploys.create_failed'); store.error = t('deploys.create_failed') }
   finally { submitting.value = false }
 }
 function onExec(id) {
@@ -174,7 +181,7 @@ function onExec(id) {
 async function doExec(id) {
   if (actingIds.has(id)) return          // 重入守卫：同一部署的执行请求在飞时不重复下发
   actingIds.add(id)
-  try { const r = await store.execute(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.executed_msg', { id })}`; store.error = r.s >= 400 ? 'exec' : '' }
+  try { const r = await store.execute(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.executed_msg', { id })}`; store.error = r.s >= 400 ? (r.j?.error || t('deploys.exec_failed')) : '' }
   catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'exec' }
   finally { actingIds.delete(id) }
 }
@@ -188,7 +195,7 @@ function onRollback(id) {
 async function doRollback(id) {
   if (actingIds.has(id)) return          // 重入守卫：同一部署的回滚请求在飞时不重复下发
   actingIds.add(id)
-  try { const r = await store.rollback(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.rolled_back_msg', { id })}`; store.error = r.s >= 400 ? 'rb' : '' }
+  try { const r = await store.rollback(id); store.msg = `[${r.s}] ${r.j.error || t('deploys.rolled_back_msg', { id })}`; store.error = r.s >= 400 ? (r.j?.error || t('deploys.rollback_failed')) : '' }
   catch (e) { store.msg = 'error: ' + (e.j?.error || e.message); store.error = 'rb' }
   finally { actingIds.delete(id) }
 }

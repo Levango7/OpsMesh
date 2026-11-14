@@ -15,7 +15,8 @@
     "field_type": "Resource type",
     "allAccounts": "All accounts",
     "allTypes": "All types",
-        "listFailed": "Failed to load cloud resources",
-    "deleteFailed": "Failed to delete"
+    "listFailed": "Failed to load cloud resources",
+    "deleteFailed": "Failed to delete",
+    "confirm_delete": "Delete cloud resource {name}?"
   }
 }

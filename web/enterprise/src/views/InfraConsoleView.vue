@@ -161,6 +161,14 @@
         </template>
       </section>
     </div>
+
+    <!-- 审计整改批次25：破坏性操作确认（替代原生 confirm） -->
+    <ConfirmModal
+      v-model="confirmModal.show"
+      :title="L('确认操作', 'Confirm')"
+      :message="confirmModal.message"
+      @confirm="submit(true)"
+    />
   </PageShell>
 </template>
 
@@ -170,6 +178,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useDeviceStore } from '@/stores/device'
 import { currentLang } from '@/i18n'
 import { toast } from '@/utils/toast'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 import Icon from '@/components/Icon.vue'
 import { INFRA_DOMAINS, submitInfraAction, getInfraTaskResult } from '@/api/infra-ops'
 import { useAuthStore } from '@/stores/auth'
@@ -191,6 +200,8 @@ const selectedDevice = ref('')
 const loadingDevices = ref(false)
 const errorMsg = ref('')
 const submitting = ref(false)
+// 审计整改批次25：破坏性操作确认弹窗
+const confirmModal = reactive({ show: false, message: '' })
 const polling = ref(false)
 
 const currentDomain = ref(INFRA_DOMAINS[0])
@@ -261,14 +272,16 @@ async function refreshDevices() {
   }
 }
 
-async function submit() {
+async function submit(confirmed = false) {
   errorMsg.value = ''
-  // Destructive action confirmation
+  // Destructive action confirmation（审计整改批次25：原生 confirm → ConfirmModal）
   const destructive = ['delete', 'drop', 'remove', 'purge', 'uninstall', 'umount', 'delete-queue', 'delete-topic', 'delete-collection', 'delete-user', 'delete-node', 'delete-volume', 'delete-pool', 'delete-snapshot', 'delete-backup']
   const actionId = currentAction.value?.id || ''
   const actionName = currentAction.value?.name?.zh || actionId
-  if (destructive.some(d => actionId.includes(d) || actionName.toLowerCase().includes(d))) {
-    if (!confirm(L(`确认执行破坏性操作「${actionName}」？`, `Confirm destructive action "${actionName}"?`))) return
+  if (!confirmed && destructive.some(d => actionId.includes(d) || actionName.toLowerCase().includes(d))) {
+    confirmModal.message = L(`确认执行破坏性操作「${actionName}」？`, `Confirm destructive action "${actionName}"?`)
+    confirmModal.show = true
+    return
   }
   submitting.value = true
   try {
