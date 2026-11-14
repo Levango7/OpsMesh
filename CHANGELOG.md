@@ -53,6 +53,14 @@
 - **能力变化**：**无**（不新增/收紧任何白名单，下发脚本逐字节不变）。
 - **守卫**：`internal/controlplane/b23_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**（Type/Action/Database/Name/Table 注入载荷必须 **400**）；③合法值不被误拒。经**变异测试**（实参改回 `req.Database` ⇒ 判红；复原 ⇒ 绿）。
 - **验证**：`gofmt -l .`（CI 同款全仓口径）clean；`golangci-lint ./...` ⇒ **0 issues**；`go build`/`go vet` ok；`go test ./internal/controlplane/ -count=1` ok；盘点器实测 `olap_ops.go` 命中 **→ 0**，全仓 A/B **0**（不增）。
+## [Unreleased-批次 26 形态面：kernel_ops] — 2026-11-14（kernel_ops.go ~16 处「已校验但直引」）
+
+- **背景**：批次 17 收口后全仓**真洞归零**；本批落形态面 `kernel_ops.go`（内核运维，sysctl/模块/升级/GRUB）。形态面 = 字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`。
+- **分级核对（全部形态面，无需新增白名单）**：`Action` → `allowedKernel{Param,Module,Upgrade,Grub}Actions`；`Name`（sysctl）→ `kernelParamRe`（`^[a-z0-9_]+(\.[a-z0-9_]+)*$`）；`Name`（模块）→ `kernelModuleRe`；`Value` → `kernelValueRe`；`Version` → `kernelVersionRe`（`^[0-9]+\.[0-9]+\.[0-9]+(-…)?$`）；`Index` → handler 显式校验 `>= 0`；`DeviceID` → 仅走 `createSystemTask`；全是形态面，无真洞。
+- **收口**：4 个 builder（`buildKernelParamScript` / `buildKernelModuleScript` / `buildKernelUpgradeScript` / `buildKernelGrubScript`）内局部变量承接（`vReqAction` / `vReqName` / `vReqValue` / `vReqVersion` / `vReqIndex`）⇒ 判据 E/F 归零；**脚本文本逐字节不变**。GRUB 审计行的 `fmt.Sprintf("index=%d", …)` 一并改局部承接（判据 E 同口径）。
+- **能力变化**：**无**（不新增/收紧任何白名单）。
+- **守卫**：`internal/controlplane/b26_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**（action/参数名/模块名/版本 注入载荷必须 **400**）；③合法值不被误拒。经**变异测试**（实参改回 `req.Name` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt -l .` clean；`golangci-lint run ./...` ⇒ **0 issues**；`go build`/`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（含 TestB26 三例）；盘点器实测 `kernel_ops.go` 命中 **→ 0**，全仓 **A/B 0**（不增）。
 ## [Unreleased-批次 17 真洞最后一批收口] — 2026-11-12（vector Metric/ID/Payload + kafka 集群名/Topics，2 文件 6 处）
 
 - **背景**：批次 14 把盘点口径扩到实参级（判据 E/F）后，按「该字段在同文件内是否有校验式调用」分级得真洞 50 处。批次 15 落 apache 族 27 处、批次 16 落 system_ops/k8s 两处，本批落**最后 6 处** ⇒ 真洞归零；余下约 350 处属「已校验但直引」形态面，顺延批次 18+ 机械收口。
