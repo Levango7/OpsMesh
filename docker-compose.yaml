@@ -26,9 +26,27 @@
 #   - 裸机：deploy/systemd/
 # ============================================================================
 # 服务拓扑：
-#   controlplane (HTTP 8080 / gRPC 9090 / metrics 9091) → mysql:3306 + redis:6379
-#   agent → controlplane:8080
+#   controlplane (HTTP 8080 / gRPC 9090 / metrics 9091) → mysql:3306 + redis:6379 + task-svc:50052
+#   task-svc (gRPC 50052 / HTTP 8081，memory 单副本，TD-60 任务域)
+#   agent → controlplane:9090（注册/心跳/gRPC）+ task-svc:50052（claim/report，TD-60）
 services:
+  # TD-60 任务域服务（TaskService/ResultService/LeaderElectorService，gRPC :50052）。
+  # TD-60（7c5a835）直推后 dev 栈缺它 ⇒ agent claimTask 拨不到 task-svc ⇒ 领不到真实任务；
+  # controlplane 的 task 域 HTTP 代理也无上游。单副本开发/演示形态用 memory store +
+  # LeaderMode=stub（零外部依赖，重启丢数据）；持久化部署改 TASK_SVC_STORE_TYPE=sql +
+  # TASK_SVC_DSN + TASK_SVC_LEADER_MODE=mysql。
+  # 不发布端口到宿主：仅供 compose 内网 controlplane/agent 访问。
+  task-svc:
+    build:
+      context: .
+      dockerfile: Dockerfile.task-svc
+    image: opsmesh/task-svc:dev
+    environment:
+      TASK_SVC_STORE_TYPE: memory
+      TASK_SVC_LEADER_MODE: stub
+      LOG_LEVEL: info
+    restart: unless-stopped
+
   controlplane:
     build:
       context: .
@@ -51,6 +69,11 @@ services:
     # 若当生产使用，务必注入 32 字节强随机密钥（openssl rand -hex 32）。
     environment:
       OPSMESH_JWT_SECRET: ${OPSMESH_JWT_SECRET:-}
+      # TD-60 任务域切流：指向 task-svc（compose 内网）；缺失/拨号失败 ⇒ 控制面回退存根，
+      # /api/v1/tasks 代理返回 503（fail-closed，见 Kilo 8fd679c）。
+      OPSMESH_TASK_SVC_GRPC_ADDR: task-svc:50052
+      # TD-60 任务域 HTTP 切流总闸：POST /api/v1/tasks 等请求代理到 task-svc。
+      TASK_SVC_PROXY_ENABLED: "true"
       # ── 安全相关 flag 环境变量映射（config.go 中对应 flag）──
       # 开发/演示环境默认值见各项注释；生产部署请改用 Helm chart + values-production.yaml。
       #
@@ -118,6 +141,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      task-svc:
+        # task-svc 内存启动极快（<1s），用启动顺序保证 controlplane 5s 拨号窗口内可达；
+        # 不发布端口、不做 healthcheck（debian-slim 无探活二进制，且控制面就绪检查已兜底）。
+        condition: service_started
     # distroless/static-debian12 无 curl/wget/sh，无法用 CMD-SHELL 探 /healthz，
     # 也无法用 ["CMD-SHELL","exit 0"] 跳过（无 sh）。故采用 Go 二进制内置 --health
     # 子命令做真实 /healthz 探测（不依赖 curl/shell，仅依赖二进制自身）。
@@ -183,8 +210,12 @@ services:
     depends_on:
       controlplane:
         condition: service_healthy
+      task-svc:
+        condition: service_started
     environment:
       - GOMAXPROCS=4
+      # TD-60 任务域切流：agent 侧 claimTask/reportResult 改走 task-svc gRPC（compose 内网）。
+      - OPSMESH_TASK_SVC_GRPC_ADDR=task-svc:50052
     ulimits:
       nproc: 1048576
       nofile:

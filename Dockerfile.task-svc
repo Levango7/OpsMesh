@@ -1,0 +1,50 @@
+# OpsMesh task-svc 镜像（TD-60 任务域服务）。
+# 用途：TD-60「任务域切流」后，TaskService/ResultService/LeaderElectorService
+# 由 task-svc 承载（选主、任务领取、结果回写）。开发/E2E 栈（docker-compose.yaml）
+# 需要它与 controlplane / agent 一起启动，否则：
+#   - agent claimTask 无 task-svc 可拨 ⇒ 存根返回假任务，真实任务永远领不到；
+#   - controlplane readyz 读不到选主结论（TD-60 后 SQLStore 本地租约不再续租）。
+# TD-60 之前 dev 栈不需要本容器，故 Dockerfile 此前缺失。
+# 多阶段构建：build 阶段编译静态二进制；runtime 阶段用精简镜像（非 root）。
+# syntax=docker/dockerfile:1.6
+FROM golang:1.26-bookworm AS build
+# 同 Dockerfile.agent：CI / 国内网络 goproxy.cn；GOWORK=off 单模块构建。
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOWORK=off
+WORKDIR /src
+# services/task-svc 的 go.mod 含 replace github.com/Levango7/OpsMesh => ../../，
+# 故 root 模块描述文件必须先就位，replace 才能解析。
+COPY go.mod go.sum ./
+COPY services/task-svc/go.mod services/task-svc/go.mod
+COPY services/task-svc/go.sum services/task-svc/go.sum
+# 先分别拉取 root 模块与 task-svc 模块依赖（带退避重试，CI 代理抖动可恢复）。
+RUN set -eu; \
+  for i in 1 2 3 4 5; do \
+    if (cd services/task-svc && go mod download) && go mod download; then ok=1; break; fi; \
+    echo "go mod download 第 $i 次失败（多为代理抖动），退避后重试"; \
+    sleep $((i * 5)); \
+  done; \
+  [ "${ok:-0}" = 1 ] || { echo "go mod download 连续 5 次失败：不是抖动，是真取不到模块"; exit 1; }
+COPY . .
+# services/task-svc 是独立 module（自身 go.mod + replace github.com/Levango7/OpsMesh => ../../），
+# 必须在其目录内构建——在 root module 上下文直接 go build ./services/task-svc 会报
+# 「directory not in main module」。
+ARG VERSION=dev
+ARG COMMIT=dev
+ARG BUILD_DATE=unknown
+RUN cd services/task-svc && CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags="-s -w -X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION} -X github.com/Levango7/OpsMesh/internal/version.Commit=${COMMIT} -X github.com/Levango7/OpsMesh/internal/version.Date=${BUILD_DATE}" \
+    -o /opsmesh-task-svc ./cmd/task-svc
+
+FROM debian:bookworm-slim AS runtime
+# S5 供应链：apt-get upgrade 修复基础镜像已知 CVE；非 root（UID 65532）运行。
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+COPY --chown=65532:65532 --from=build /opsmesh-task-svc /usr/local/bin/opsmesh-task-svc
+USER 65532:65532
+# gRPC :50052（TaskService/ResultService/LeaderElectorService），
+# HTTP :8081（health/ready/metrics + 可选业务网关）。
+# 单副本开发/演示形态：TASK_SVC_STORE_TYPE=memory + LeaderMode=stub（默认），重启丢数据。
+# 持久化部署改 TASK_SVC_STORE_TYPE=sql + TASK_SVC_DSN + TASK_SVC_LEADER_MODE=mysql。
+EXPOSE 50052 8081
+ENTRYPOINT ["/usr/local/bin/opsmesh-task-svc"]
+CMD []

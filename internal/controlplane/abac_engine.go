@@ -19,12 +19,12 @@ import (
 
 // abacPolicy 控制面侧策略镜像。
 type abacPolicy struct {
-	ID       string            `json:"id"`
-	TenantID string            `json:"tenantID"`
-	Subject  string            `json:"subject"`
-	Resource string            `json:"resource"`
-	Action   string            `json:"action"`
-	Effect   string            `json:"effect"` // allow / deny
+	ID        string            `json:"id"`
+	TenantID  string            `json:"tenantID"`
+	Subject   string            `json:"subject"`
+	Resource  string            `json:"resource"`
+	Action    string            `json:"action"`
+	Effect    string            `json:"effect"` // allow / deny
 	Condition map[string]string `json:"condition,omitempty"`
 }
 
