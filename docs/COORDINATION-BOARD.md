@@ -120,15 +120,19 @@ CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展�
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  internal/controlplane/apache_ops.go,internal/controlplane/apache_ext_ops.go,internal/controlplane/b15_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
-  internal/controlplane/system_ops.go,internal/controlplane/k8s_provision.go,internal/controlplane/b16_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/controlplane/ha.go,internal/controlplane/leader_elector_client.go,internal/controlplane/server.go,internal/config/config.go <- opencode  (ttl=12h by opencode)
+  internal/controlplane/ha.go,internal/controlplane/leader_elector_client.go,internal/controlplane/server.go,internal/config/config.go,services/task-svc/internal/server/server.go <- opencode  (ttl=12h by opencode)
+  internal/controlplane/vector_ops.go,internal/controlplane/kafka_advanced_ops.go,internal/controlplane/b17_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
+  internal/controlplane/virt_ops.go,internal/controlplane/b18_injection_test.go,CHANGELOG.md <- opencode  (ttl=24h by opencode)
   internal/gates/tenant_store_verdict_gate_test.go <- zcode  (ttl=72h by zcode)
+  proto/buf.yaml                                 <- opencode  (ttl=12h by opencode)
 
 TASKS:
   (无)
 
 ISSUES:
   CLAIM 过期未闭环：go.mod,.github/workflows/ci.yml,.github/workflows/release.yml（认领人 opencode，ttl 6h）
+  CLAIM 过期未闭环：internal/controlplane/server.go,internal/controlplane/k8s_lifecycle_auth_wiring_test.go（认领人 opencode，ttl 12h）
 ```
 
 ---

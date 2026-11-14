@@ -1093,10 +1093,14 @@ func (s *SQLStore) GetLifecycleJob(ctx context.Context, id string) (*LifecycleJo
 		return nil, err
 	}
 	if specJSON.Valid {
-		json.Unmarshal([]byte(specJSON.String), &job.SpecJSON)
+		if err := json.Unmarshal([]byte(specJSON.String), &job.SpecJSON); err != nil {
+			storefail.Record("store: lifecycle job %s 解析 spec_json 失败（按无规格处理）: %v", job.ID, err)
+		}
 	}
 	if resultJSON.Valid {
-		json.Unmarshal([]byte(resultJSON.String), &job.ResultJSON)
+		if err := json.Unmarshal([]byte(resultJSON.String), &job.ResultJSON); err != nil {
+			storefail.Record("store: lifecycle job %s 解析 result_json 失败（按无结果处理）: %v", job.ID, err)
+		}
 	}
 	return &job, nil
 }
@@ -1113,7 +1117,10 @@ func (s *SQLStore) UpdateLifecycleJob(ctx context.Context, job *LifecycleJob) er
 	if err != nil {
 		return err
 	}
-	rows, _ := result.RowsAffected()
+	rows, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return fmt.Errorf("lifecycle job %s: RowsAffected: %w", job.ID, rowsErr)
+	}
 	if rows == 0 {
 		return fmt.Errorf("lifecycle job %s: version conflict or not found", job.ID)
 	}
@@ -1165,10 +1172,14 @@ func (s *SQLStore) ListLifecycleJobs(ctx context.Context, clusterID, tenantID, k
 			return nil, err
 		}
 		if specJSON.Valid {
-			json.Unmarshal([]byte(specJSON.String), &job.SpecJSON)
+			if err := json.Unmarshal([]byte(specJSON.String), &job.SpecJSON); err != nil {
+				storefail.Record("store: lifecycle job %s 解析 spec_json 失败（按无规格处理）: %v", job.ID, err)
+			}
 		}
 		if resultJSON.Valid {
-			json.Unmarshal([]byte(resultJSON.String), &job.ResultJSON)
+			if err := json.Unmarshal([]byte(resultJSON.String), &job.ResultJSON); err != nil {
+				storefail.Record("store: lifecycle job %s 解析 result_json 失败（按无结果处理）: %v", job.ID, err)
+			}
 		}
 		jobs = append(jobs, &job)
 	}
@@ -1192,10 +1203,14 @@ func (s *SQLStore) GetActiveLifecycleJob(ctx context.Context, clusterID, kind st
 		return nil, err
 	}
 	if specJSON.Valid {
-		json.Unmarshal([]byte(specJSON.String), &job.SpecJSON)
+		if err := json.Unmarshal([]byte(specJSON.String), &job.SpecJSON); err != nil {
+			storefail.Record("store: lifecycle job %s 解析 spec_json 失败（按无规格处理）: %v", job.ID, err)
+		}
 	}
 	if resultJSON.Valid {
-		json.Unmarshal([]byte(resultJSON.String), &job.ResultJSON)
+		if err := json.Unmarshal([]byte(resultJSON.String), &job.ResultJSON); err != nil {
+			storefail.Record("store: lifecycle job %s 解析 result_json 失败（按无结果处理）: %v", job.ID, err)
+		}
 	}
 	return &job, nil
 }

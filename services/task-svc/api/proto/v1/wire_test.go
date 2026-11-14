@@ -12,7 +12,7 @@ import (
 )
 
 func TestAllMethodsCrossCodec(t *testing.T) {
-	if got := grpcwire.AssertUnaryMethodsCrossCodec(t, "opsmesh.task.v1"); got != 20 {
+	if got := grpcwire.AssertUnaryMethodsCrossCodec(t, "opsmesh.task.v1"); got != 22 {
 		t.Fatalf("只覆盖到 %d 条 unary 方法，与本包 .proto 的条数不符——说明有方法没真过 codec，或包名/生成物漂移", got)
 	}
 }

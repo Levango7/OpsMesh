@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
+	"github.com/Levango7/OpsMesh/services/task-svc/internal/leader"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/service"
 )
 
@@ -17,12 +19,14 @@ type Server struct {
 	taskv1.UnimplementedScheduleServiceServer
 	taskv1.UnimplementedResultServiceServer
 	taskv1.UnimplementedBatchServiceServer
-	svc *service.Service
+	taskv1.UnimplementedLeaderElectorServiceServer
+	svc     *service.Service
+	elector leader.LeaderElector
 }
 
 // NewServer creates a new gRPC server.
-func NewServer(svc *service.Service) *Server {
-	return &Server{svc: svc}
+func NewServer(svc *service.Service, elector leader.LeaderElector) *Server {
+	return &Server{svc: svc, elector: elector}
 }
 
 // TaskService methods
@@ -232,4 +236,51 @@ func (s *Server) GetBatchStatus(ctx context.Context, req *taskv1.GetBatchStatusR
 
 func (s *Server) ListBatchTasks(ctx context.Context, req *taskv1.ListBatchTasksRequest) (*taskv1.ListBatchTasksResponse, error) {
 	return s.svc.ListBatchTasks(ctx, req)
+}
+
+// ============================================================================
+// LeaderElectorService methods
+// ============================================================================
+
+// IsLeader 检查当前实例是否为 leader。
+func (s *Server) IsLeader(ctx context.Context, req *taskv1.IsLeaderRequest) (*taskv1.IsLeaderResponse, error) {
+	if s.elector == nil {
+		return &taskv1.IsLeaderResponse{
+			IsLeader:         false,
+			LeaderInstanceId: "",
+		}, nil
+	}
+	isLeader := s.elector.IsLeader()
+	leaderInstanceID := ""
+	return &taskv1.IsLeaderResponse{
+		IsLeader:         isLeader,
+		LeaderInstanceId: leaderInstanceID,
+	}, nil
+}
+
+// Renew 续租 leader 租约。
+func (s *Server) Renew(ctx context.Context, req *taskv1.RenewRequest) (*taskv1.RenewResponse, error) {
+	if s.elector == nil {
+		return &taskv1.RenewResponse{
+			Success:         false,
+			IsLeader:        false,
+			LeaseTtlSeconds: 0,
+			LeaseUntilUnix:  0,
+		}, nil
+	}
+
+	ttl := time.Duration(req.TtlSeconds) * time.Second
+	if ttl == 0 {
+		ttl = 15 * time.Second // 默认 15 秒
+	}
+
+	success := s.elector.Renew(ctx, ttl)
+	isLeader := s.elector.IsLeader()
+
+	return &taskv1.RenewResponse{
+		Success:         success,
+		IsLeader:        isLeader,
+		LeaseTtlSeconds: int64(ttl.Seconds()),
+		LeaseUntilUnix:  time.Now().Add(ttl).Unix(),
+	}, nil
 }

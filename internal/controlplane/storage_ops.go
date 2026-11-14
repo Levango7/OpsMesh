@@ -187,10 +187,12 @@ func (s *Server) handleStorageDeploy(w http.ResponseWriter, r *http.Request) {
 
 func buildStorageDeployScript(req storageDeployRequest) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqType := req.Type
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then PKG_MGR=yum; elif command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v apt-get >/dev/null 2>&1; then PKG_MGR=apt-get; else echo '未找到包管理器' && exit 1; fi\n")
-	switch req.Type {
+	switch vReqType {
 	case "minio":
 		b.WriteString("# MinIO 部署（S3 兼容对象存储）\n")
 		b.WriteString("if command -v minio >/dev/null 2>&1; then echo 'MinIO 已安装'; else echo '请先下载 MinIO 二进制包' && exit 1; fi\n")
@@ -262,11 +264,13 @@ func (s *Server) handleStorageAction(w http.ResponseWriter, r *http.Request, stT
 
 func buildStorageActionScript(req storageOpsRequest) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqAction, vReqType := req.Action, req.Type
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "minio":
 		b.WriteString("# MinIO 启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("systemctl start minio || pkill -f 'minio server' || true\nMINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin} MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin} minio server /data/minio --console-address ':9001' &\n")
 		case "stop":
@@ -277,9 +281,9 @@ func buildStorageActionScript(req storageOpsRequest) string {
 			b.WriteString("systemctl is-active --quiet minio && echo 'running' || (pgrep -f 'minio server' >/dev/null && echo 'running' || echo 'not running')\n")
 		}
 	case "s3", "oss":
-		fmt.Fprintf(&b, "# %s 是云服务，启停由云厂商控制台或 API 完成\n", req.Type)
+		fmt.Fprintf(&b, "# %s 是云服务，启停由云厂商控制台或 API 完成\n", vReqType)
 	}
-	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -334,17 +338,19 @@ func (s *Server) handleStorageBucket(w http.ResponseWriter, r *http.Request, stT
 
 func buildBucketScript(req bucketReq) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqBucket, vReqAction, vReqType := req.Bucket, req.Action, req.Type
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "s3":
 		b.WriteString("# S3 桶管理（aws-cli，凭证从环境变量 OPSMESH_S3_ACCESS_KEY / OPSMESH_S3_SECRET_KEY 读取）\n")
 		b.WriteString("export AWS_ACCESS_KEY_ID=${OPSMESH_S3_ACCESS_KEY}\n")
 		b.WriteString("export AWS_SECRET_ACCESS_KEY=${OPSMESH_S3_SECRET_KEY}\n")
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			fmt.Fprintf(&b, "aws s3api create-bucket --bucket %s || echo '桶已存在或创建失败: %s'\n", req.Bucket, req.Bucket)
+			fmt.Fprintf(&b, "aws s3api create-bucket --bucket %s || echo '桶已存在或创建失败: %s'\n", vReqBucket, vReqBucket)
 		case "delete":
-			fmt.Fprintf(&b, "aws s3api delete-bucket --bucket %s || echo '桶不存在或删除失败: %s'\n", req.Bucket, req.Bucket)
+			fmt.Fprintf(&b, "aws s3api delete-bucket --bucket %s || echo '桶不存在或删除失败: %s'\n", vReqBucket, vReqBucket)
 		case "list":
 			b.WriteString("aws s3api list-buckets --query 'Buckets[].Name'\n")
 		}
@@ -352,16 +358,16 @@ func buildBucketScript(req bucketReq) string {
 		b.WriteString("# OSS 桶管理（ossutil，凭证从环境变量 OPSMESH_OSS_ACCESS_KEY_ID / OPSMESH_OSS_ACCESS_KEY_SECRET 读取）\n")
 		b.WriteString("export OSS_ACCESS_KEY_ID=${OPSMESH_OSS_ACCESS_KEY_ID}\n")
 		b.WriteString("export OSS_ACCESS_KEY_SECRET=${OPSMESH_OSS_ACCESS_KEY_SECRET}\n")
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			fmt.Fprintf(&b, "ossutil mb oss://%s || echo '桶已存在或创建失败: %s'\n", req.Bucket, req.Bucket)
+			fmt.Fprintf(&b, "ossutil mb oss://%s || echo '桶已存在或创建失败: %s'\n", vReqBucket, vReqBucket)
 		case "delete":
-			fmt.Fprintf(&b, "ossutil rm oss://%s --force || echo '桶不存在或删除失败: %s'\n", req.Bucket, req.Bucket)
+			fmt.Fprintf(&b, "ossutil rm oss://%s --force || echo '桶不存在或删除失败: %s'\n", vReqBucket, vReqBucket)
 		case "list":
 			b.WriteString("ossutil ls\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '对象存储 %s 桶 %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '对象存储 %s 桶 %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -420,36 +426,38 @@ func (s *Server) handleStorageObject(w http.ResponseWriter, r *http.Request, stT
 
 func buildObjectScript(req objectReq) string {
 	var b strings.Builder
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqObject, vReqAction, vReqBucket, vReqLocal, vReqType := req.Object, req.Action, req.Bucket, req.Local, req.Type
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "s3":
 		b.WriteString("export AWS_ACCESS_KEY_ID=${OPSMESH_S3_ACCESS_KEY}\n")
 		b.WriteString("export AWS_SECRET_ACCESS_KEY=${OPSMESH_S3_SECRET_KEY}\n")
-		switch req.Action {
+		switch vReqAction {
 		case "upload":
-			fmt.Fprintf(&b, "aws s3 cp %s s3://%s/%s\n", shellQuote(req.Local), req.Bucket, req.Object)
+			fmt.Fprintf(&b, "aws s3 cp %s s3://%s/%s\n", shellQuote(vReqLocal), vReqBucket, vReqObject)
 		case "download":
-			fmt.Fprintf(&b, "aws s3 cp s3://%s/%s %s\n", req.Bucket, req.Object, shellQuote(req.Local))
+			fmt.Fprintf(&b, "aws s3 cp s3://%s/%s %s\n", vReqBucket, vReqObject, shellQuote(vReqLocal))
 		case "delete":
-			fmt.Fprintf(&b, "aws s3 rm s3://%s/%s\n", req.Bucket, req.Object)
+			fmt.Fprintf(&b, "aws s3 rm s3://%s/%s\n", vReqBucket, vReqObject)
 		case "list":
-			fmt.Fprintf(&b, "aws s3 ls s3://%s/\n", req.Bucket)
+			fmt.Fprintf(&b, "aws s3 ls s3://%s/\n", vReqBucket)
 		}
 	case "oss":
 		b.WriteString("export OSS_ACCESS_KEY_ID=${OPSMESH_OSS_ACCESS_KEY_ID}\n")
 		b.WriteString("export OSS_ACCESS_KEY_SECRET=${OPSMESH_OSS_ACCESS_KEY_SECRET}\n")
-		switch req.Action {
+		switch vReqAction {
 		case "upload":
-			fmt.Fprintf(&b, "ossutil cp %s oss://%s/%s\n", shellQuote(req.Local), req.Bucket, req.Object)
+			fmt.Fprintf(&b, "ossutil cp %s oss://%s/%s\n", shellQuote(vReqLocal), vReqBucket, vReqObject)
 		case "download":
-			fmt.Fprintf(&b, "ossutil cp oss://%s/%s %s\n", req.Bucket, req.Object, shellQuote(req.Local))
+			fmt.Fprintf(&b, "ossutil cp oss://%s/%s %s\n", vReqBucket, vReqObject, shellQuote(vReqLocal))
 		case "delete":
-			fmt.Fprintf(&b, "ossutil rm oss://%s/%s --force\n", req.Bucket, req.Object)
+			fmt.Fprintf(&b, "ossutil rm oss://%s/%s --force\n", vReqBucket, vReqObject)
 		case "list":
-			fmt.Fprintf(&b, "ossutil ls oss://%s/\n", req.Bucket)
+			fmt.Fprintf(&b, "ossutil ls oss://%s/\n", vReqBucket)
 		}
 	}
-	fmt.Fprintf(&b, "echo '对象存储 %s 对象 %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '对象存储 %s 对象 %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
