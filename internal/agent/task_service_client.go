@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -34,12 +36,24 @@ func NewGRPCTaskServiceClient(ctx context.Context, target string) (*GRPCTaskServ
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
+	}
+	conn.Connect()
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			break
+		}
+		if state == connectivity.Shutdown {
+			_ = conn.Close()
+			return nil, fmt.Errorf("grpc client to %s closed while connecting", target)
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			_ = conn.Close()
+			return nil, fmt.Errorf("grpc connect to %s: %w", target, ctx.Err())
+		}
 	}
 
 	client := taskv1.NewTaskServiceClient(conn)
@@ -144,19 +158,19 @@ func (s *StubTaskServiceClient) ClaimTask(ctx context.Context, req *taskv1.Claim
 	// 返回一个测试用的任务
 	return &taskv1.Task{
 		TaskId:     "test-task-id",
-		AgentId:     "test-agent",
-		TenantId:    "test-tenant",
-		Type:        "shell",
-		Command:     "echo test",
-		Content:     "",
-		Path:        "",
-		Status:      "pending",
-		ClaimedBy:   "test-agent",
-		ClaimedAt:   timestamppb.New(time.Now()),
-		CreatedAt:   timestamppb.New(time.Now()),
-		RetryCount:  0,
-		DeadLetter:  false,
-		ClaimEpoch:  1,
+		AgentId:    "test-agent",
+		TenantId:   "test-tenant",
+		Type:       "shell",
+		Command:    "echo test",
+		Content:    "",
+		Path:       "",
+		Status:     "pending",
+		ClaimedBy:  "test-agent",
+		ClaimedAt:  timestamppb.New(time.Now()),
+		CreatedAt:  timestamppb.New(time.Now()),
+		RetryCount: 0,
+		DeadLetter: false,
+		ClaimEpoch: 1,
 	}, nil
 }
 
