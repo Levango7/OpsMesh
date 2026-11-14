@@ -38,6 +38,10 @@ type Incident struct {
 	DeviceIDs   []string          `json:"device_ids"`
 	Assignee    string            `json:"assignee"`
 	Tags        map[string]string `json:"tags"`
+	// TenantID 是行级租户隔离键（D4）。语义与单体侧 alerts/tickets 一致：
+	// 写入时必须钉住（空值拒绝），读取/列/改/删一律按它过滤——事件是"客户的故障单"，
+	// 权限目录里 incident:read/write 也是租户级授权点（internal/store/model/perm.go）。
+	TenantID string `json:"tenant_id,omitempty"`
 	// OccurredAt 最早已知故障发生时刻（来自触发告警的触发时间或人工回填）。
 	// 此前模型只有 DetectedAt 且创建时 DetectedAt==CreatedAt，导致 MTTD 结构恒 0
 	//（TD-60 §5.10 取证）——MTTD = DetectedAt - OccurredAt，缺省时不计入统计。
@@ -61,7 +65,10 @@ type TimelineEvent struct {
 
 // Alert represents an ingested alert that can be aggregated into incidents.
 type Alert struct {
-	ID        string            `json:"id"`
+	ID string `json:"id"`
+	// TenantID：告警所属租户（issue #27 裁决②）。ingest 契约要求推送方携带；
+	// 缺失时 handler 会回退到网关注入的 X-Tenant-ID，两者都没有则 400——不落无主数据。
+	TenantID  string            `json:"tenant_id"`
 	Source    string            `json:"source"`
 	DeviceID  string            `json:"device_id"`
 	Severity  Severity          `json:"severity"`
@@ -97,15 +104,18 @@ type ResponseMetrics struct {
 }
 
 // IncidentStore is the interface for incident persistence.
+// IncidentStore 的每个读/改方法都**显式带租户参数**（D4 租户隔离）。
+// 为什么不像单体那样只靠对象上的 TenantID：接口签名强制所有调用点传租户——漏传即编译不过，
+// 比"忘了过滤"这类运行期缺陷便宜得多；写入侧再由 CreateIncident 拒绝空租户兜底。
 type IncidentStore interface {
 	CreateIncident(*Incident) *Incident
-	GetIncident(id string) *Incident
-	UpdateIncident(*Incident) *Incident
-	DeleteIncident(id string) bool
-	ListIncidents(status string, severity Severity) []*Incident
-	AddTimelineEvent(*TimelineEvent) *TimelineEvent
-	GetTimeline(incidentID string) []TimelineEvent
-	Incidents() []*Incident
+	GetIncident(id, tenantID string) *Incident
+	UpdateIncident(inc *Incident, tenantID string) *Incident
+	DeleteIncident(id, tenantID string) bool
+	ListIncidents(status string, severity Severity, tenantID string) []*Incident
+	AddTimelineEvent(ev *TimelineEvent, tenantID string) *TimelineEvent
+	GetTimeline(incidentID, tenantID string) []TimelineEvent
+	Incidents(tenantID string) []*Incident
 }
 
 // MemoryStore is an in-memory implementation of IncidentStore.
@@ -123,13 +133,17 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
-// CreateIncident stores a new incident.
+// CreateIncident stores a new incident. 空租户拒绝写入（D4：无主数据不许落库）。
 func (m *MemoryStore) CreateIncident(inc *Incident) *Incident {
-	if inc == nil {
+	if inc == nil || inc.TenantID == "" {
 		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// ID 冲突时若归属不同租户，视为不可见（不覆盖别人的数据，也不泄露"该 ID 已存在"）。
+	if existing, ok := m.incidents[inc.ID]; ok && existing.TenantID != inc.TenantID {
+		return nil
+	}
 	if inc.CreatedAt.IsZero() {
 		inc.CreatedAt = time.Now()
 	}
@@ -140,37 +154,41 @@ func (m *MemoryStore) CreateIncident(inc *Incident) *Incident {
 	return inc
 }
 
-// GetIncident retrieves an incident by ID.
-func (m *MemoryStore) GetIncident(id string) *Incident {
+// GetIncident retrieves an incident by ID. 跨租户一律当作不存在（不区分"没有"与"不是你的"）。
+func (m *MemoryStore) GetIncident(id, tenantID string) *Incident {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	inc, ok := m.incidents[id]
-	if !ok {
+	if !ok || inc.TenantID != tenantID {
 		return nil
 	}
 	return inc
 }
 
-// UpdateIncident updates an existing incident.
-func (m *MemoryStore) UpdateIncident(inc *Incident) *Incident {
+// UpdateIncident updates an existing incident. 跨租户不可改；且**不允许改租户**（归属变更=越权改挂）。
+func (m *MemoryStore) UpdateIncident(inc *Incident, tenantID string) *Incident {
 	if inc == nil {
 		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.incidents[inc.ID]; !ok {
+	existing, ok := m.incidents[inc.ID]
+	if !ok || existing.TenantID != tenantID {
 		return nil
 	}
+	inc.TenantID = existing.TenantID
+	inc.CreatedAt = existing.CreatedAt
 	inc.UpdatedAt = time.Now()
 	m.incidents[inc.ID] = inc
 	return inc
 }
 
-// DeleteIncident removes an incident.
-func (m *MemoryStore) DeleteIncident(id string) bool {
+// DeleteIncident removes an incident. 跨租户一律 false。
+func (m *MemoryStore) DeleteIncident(id, tenantID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.incidents[id]; !ok {
+	existing, ok := m.incidents[id]
+	if !ok || existing.TenantID != tenantID {
 		return false
 	}
 	delete(m.incidents, id)
@@ -178,12 +196,15 @@ func (m *MemoryStore) DeleteIncident(id string) bool {
 	return true
 }
 
-// ListIncidents returns incidents filtered by status and severity.
-func (m *MemoryStore) ListIncidents(status string, severity Severity) []*Incident {
+// ListIncidents returns incidents filtered by status and severity（先按租户收窄）。
+func (m *MemoryStore) ListIncidents(status string, severity Severity, tenantID string) []*Incident {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]*Incident, 0, len(m.incidents))
 	for _, inc := range m.incidents {
+		if inc.TenantID != tenantID {
+			continue
+		}
 		if status != "" && string(inc.Status) != status {
 			continue
 		}
@@ -196,12 +217,17 @@ func (m *MemoryStore) ListIncidents(status string, severity Severity) []*Inciden
 }
 
 // AddTimelineEvent adds an event to an incident's timeline.
-func (m *MemoryStore) AddTimelineEvent(ev *TimelineEvent) *TimelineEvent {
+// 归属由**事件的父事件单**决定：父单不属于该租户 ⇒ 拒收（调用方拿不到"别人的单"的写入权）。
+func (m *MemoryStore) AddTimelineEvent(ev *TimelineEvent, tenantID string) *TimelineEvent {
 	if ev == nil {
 		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	parent, ok := m.incidents[ev.IncidentID]
+	if !ok || parent.TenantID != tenantID {
+		return nil
+	}
 	if ev.Timestamp.IsZero() {
 		ev.Timestamp = time.Now()
 	}
@@ -209,22 +235,29 @@ func (m *MemoryStore) AddTimelineEvent(ev *TimelineEvent) *TimelineEvent {
 	return ev
 }
 
-// GetTimeline returns the timeline for an incident.
-func (m *MemoryStore) GetTimeline(incidentID string) []TimelineEvent {
+// GetTimeline returns the timeline for an incident. 父单不属于该租户 ⇒ 返回空（不泄露"该单存在"）。
+func (m *MemoryStore) GetTimeline(incidentID, tenantID string) []TimelineEvent {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	parent, ok := m.incidents[incidentID]
+	if !ok || parent.TenantID != tenantID {
+		return nil
+	}
 	events := m.timeline[incidentID]
 	out := make([]TimelineEvent, len(events))
 	copy(out, events)
 	return out
 }
 
-// Incidents returns all incidents.
-func (m *MemoryStore) Incidents() []*Incident {
+// Incidents returns all incidents of the tenant.
+func (m *MemoryStore) Incidents(tenantID string) []*Incident {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]*Incident, 0, len(m.incidents))
 	for _, inc := range m.incidents {
+		if inc.TenantID != tenantID {
+			continue
+		}
 		out = append(out, inc)
 	}
 	return out

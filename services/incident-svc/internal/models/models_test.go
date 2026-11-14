@@ -44,7 +44,7 @@ func TestMemoryStoreCreateAndGet(t *testing.T) {
 	}
 
 	before := time.Now()
-	inc := &Incident{ID: "inc-1", Title: "db down", Status: StatusDetected, Severity: SeverityCritical}
+	inc := &Incident{TenantID: "t1", ID: "inc-1", Title: "db down", Status: StatusDetected, Severity: SeverityCritical}
 	created := store.CreateIncident(inc)
 	if created == nil {
 		t.Fatal("CreateIncident 返回 nil")
@@ -59,16 +59,16 @@ func TestMemoryStoreCreateAndGet(t *testing.T) {
 		t.Fatalf("CreatedAt 明显偏离当前时间: %v", created.CreatedAt)
 	}
 
-	got := store.GetIncident("inc-1")
+	got := store.GetIncident("inc-1", "t1")
 	if got == nil || got.ID != "inc-1" || got.Title != "db down" {
 		t.Fatalf("GetIncident = %+v", got)
 	}
-	if store.GetIncident("missing") != nil {
+	if store.GetIncident("missing", "t1") != nil {
 		t.Fatal("缺失 ID 应返回 nil")
 	}
 
 	fixed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	kept := store.CreateIncident(&Incident{ID: "inc-2", CreatedAt: fixed, UpdatedAt: fixed})
+	kept := store.CreateIncident(&Incident{TenantID: "t1", ID: "inc-2", CreatedAt: fixed, UpdatedAt: fixed})
 	if !kept.CreatedAt.Equal(fixed) || !kept.UpdatedAt.Equal(fixed) {
 		t.Fatalf("已有时间戳被覆盖: %v/%v", kept.CreatedAt, kept.UpdatedAt)
 	}
@@ -76,42 +76,42 @@ func TestMemoryStoreCreateAndGet(t *testing.T) {
 
 func TestMemoryStoreUpdate(t *testing.T) {
 	store := NewMemoryStore()
-	if got := store.UpdateIncident(nil); got != nil {
+	if got := store.UpdateIncident(nil, "t1"); got != nil {
 		t.Fatalf("UpdateIncident(nil) = %v", got)
 	}
-	if got := store.UpdateIncident(&Incident{ID: "missing"}); got != nil {
+	if got := store.UpdateIncident(&Incident{TenantID: "t1", ID: "missing"}, "t1"); got != nil {
 		t.Fatalf("更新不存在的 ID 应返回 nil, got %v", got)
 	}
 
 	oldUpdated := time.Unix(0, 0)
-	store.CreateIncident(&Incident{ID: "inc-1", Title: "old", UpdatedAt: oldUpdated})
-	updated := store.UpdateIncident(&Incident{ID: "inc-1", Title: "new", Status: StatusResolved})
+	store.CreateIncident(&Incident{TenantID: "t1", ID: "inc-1", Title: "old", UpdatedAt: oldUpdated})
+	updated := store.UpdateIncident(&Incident{TenantID: "t1", ID: "inc-1", Title: "new", Status: StatusResolved}, "t1")
 	if updated == nil || updated.Title != "new" || updated.Status != StatusResolved {
 		t.Fatalf("UpdateIncident = %+v", updated)
 	}
 	if !updated.UpdatedAt.After(oldUpdated) {
 		t.Fatalf("UpdatedAt 未刷新: %v", updated.UpdatedAt)
 	}
-	if got := store.GetIncident("inc-1"); got == nil || got.Title != "new" {
+	if got := store.GetIncident("inc-1", "t1"); got == nil || got.Title != "new" {
 		t.Fatalf("更新未落库: %+v", got)
 	}
 }
 
 func TestMemoryStoreDeleteAlsoDropsTimeline(t *testing.T) {
 	store := NewMemoryStore()
-	store.CreateIncident(&Incident{ID: "inc-1"})
-	store.AddTimelineEvent(&TimelineEvent{ID: "ev-1", IncidentID: "inc-1"})
+	store.CreateIncident(&Incident{TenantID: "t1", ID: "inc-1"})
+	store.AddTimelineEvent(&TimelineEvent{ID: "ev-1", IncidentID: "inc-1"}, "t1")
 
-	if !store.DeleteIncident("inc-1") {
+	if !store.DeleteIncident("inc-1", "t1") {
 		t.Fatal("删除已存在事件应返回 true")
 	}
-	if store.DeleteIncident("inc-1") {
+	if store.DeleteIncident("inc-1", "t1") {
 		t.Fatal("重复删除应返回 false")
 	}
-	if got := store.GetIncident("inc-1"); got != nil {
+	if got := store.GetIncident("inc-1", "t1"); got != nil {
 		t.Fatalf("删除后仍可取到: %+v", got)
 	}
-	if got := store.GetTimeline("inc-1"); len(got) != 0 {
+	if got := store.GetTimeline("inc-1", "t1"); len(got) != 0 {
 		t.Fatalf("删除事件后时间线未清理: %v", got)
 	}
 }
@@ -119,10 +119,10 @@ func TestMemoryStoreDeleteAlsoDropsTimeline(t *testing.T) {
 func TestMemoryStoreListFilters(t *testing.T) {
 	store := NewMemoryStore()
 	for _, inc := range []*Incident{
-		{ID: "i1", Status: StatusDetected, Severity: SeverityCritical},
-		{ID: "i2", Status: StatusDetected, Severity: SeverityHigh},
-		{ID: "i3", Status: StatusResolved, Severity: SeverityCritical},
-		{ID: "i4", Status: StatusClosed, Severity: SeverityInfo},
+		{TenantID: "t1", ID: "i1", Status: StatusDetected, Severity: SeverityCritical},
+		{TenantID: "t1", ID: "i2", Status: StatusDetected, Severity: SeverityHigh},
+		{TenantID: "t1", ID: "i3", Status: StatusResolved, Severity: SeverityCritical},
+		{TenantID: "t1", ID: "i4", Status: StatusClosed, Severity: SeverityInfo},
 	} {
 		store.CreateIncident(inc)
 	}
@@ -141,7 +141,7 @@ func TestMemoryStoreListFilters(t *testing.T) {
 		{"unknown", "", 0},
 	}
 	for _, tc := range cases {
-		got := store.ListIncidents(tc.status, tc.severity)
+		got := store.ListIncidents(tc.status, tc.severity, "t1")
 		if len(got) != tc.want {
 			t.Fatalf("ListIncidents(%q,%q) = %d 条, want %d", tc.status, tc.severity, len(got), tc.want)
 		}
@@ -154,26 +154,28 @@ func TestMemoryStoreListFilters(t *testing.T) {
 			}
 		}
 	}
-	if got := store.Incidents(); len(got) != 4 {
+	if got := store.Incidents("t1"); len(got) != 4 {
 		t.Fatalf("Incidents() = %d 条, want 4", len(got))
 	}
 }
 
 func TestMemoryStoreTimeline(t *testing.T) {
 	store := NewMemoryStore()
-	if got := store.AddTimelineEvent(nil); got != nil {
+	if got := store.AddTimelineEvent(nil, "t1"); got != nil {
 		t.Fatalf("AddTimelineEvent(nil) = %v", got)
 	}
+	// 时间线归属由父单决定（D4）：先把父事件单建出来，AddTimelineEvent 才会收。
+	store.CreateIncident(&Incident{TenantID: "t1", ID: "inc-1"})
 
 	ev := &TimelineEvent{ID: "ev-1", IncidentID: "inc-1", Type: "note", Description: "first"}
-	added := store.AddTimelineEvent(ev)
+	added := store.AddTimelineEvent(ev, "t1")
 	if added == nil || added.Timestamp.IsZero() {
 		t.Fatalf("事件时间戳未补: %+v", added)
 	}
 	fixed := time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
-	store.AddTimelineEvent(&TimelineEvent{ID: "ev-2", IncidentID: "inc-1", Timestamp: fixed, Type: "status"})
+	store.AddTimelineEvent(&TimelineEvent{ID: "ev-2", IncidentID: "inc-1", Timestamp: fixed, Type: "status"}, "t1")
 
-	timeline := store.GetTimeline("inc-1")
+	timeline := store.GetTimeline("inc-1", "t1")
 	if len(timeline) != 2 || timeline[0].ID != "ev-1" || timeline[1].ID != "ev-2" {
 		t.Fatalf("时间线顺序/内容 = %+v", timeline)
 	}
@@ -183,10 +185,10 @@ func TestMemoryStoreTimeline(t *testing.T) {
 
 	// GetTimeline 返回副本：调用方修改不应影响存储。
 	timeline[0].Type = "mutated"
-	if got := store.GetTimeline("inc-1"); got[0].Type != "note" {
+	if got := store.GetTimeline("inc-1", "t1"); got[0].Type != "note" {
 		t.Fatalf("返回切片与存储共享底层数组: %v", got)
 	}
-	if got := store.GetTimeline("missing"); len(got) != 0 {
+	if got := store.GetTimeline("missing", "t1"); len(got) != 0 {
 		t.Fatalf("缺失事件的时间线应为空, got %v", got)
 	}
 }
@@ -201,17 +203,17 @@ func TestMemoryStoreConcurrentAccess(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := fmt.Sprintf("inc-%d", i)
-			store.CreateIncident(&Incident{ID: id, Status: StatusDetected})
-			_ = store.GetIncident(id)
-			_ = store.ListIncidents(string(StatusDetected), "")
-			_ = store.Incidents()
-			store.AddTimelineEvent(&TimelineEvent{ID: fmt.Sprintf("ev-%d", i), IncidentID: id})
-			_ = store.GetTimeline(id)
+			store.CreateIncident(&Incident{TenantID: "t1", ID: id, Status: StatusDetected})
+			_ = store.GetIncident(id, "t1")
+			_ = store.ListIncidents(string(StatusDetected), "", "t1")
+			_ = store.Incidents("t1")
+			store.AddTimelineEvent(&TimelineEvent{ID: fmt.Sprintf("ev-%d", i), IncidentID: id}, "t1")
+			_ = store.GetTimeline(id, "t1")
 		}(i)
 	}
 	wg.Wait()
 
-	if got := store.Incidents(); len(got) != workers {
+	if got := store.Incidents("t1"); len(got) != workers {
 		t.Fatalf("并发创建后事件数 = %d, want %d", len(got), workers)
 	}
 }

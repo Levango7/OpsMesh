@@ -8,14 +8,15 @@ import (
 )
 
 // RunbookStore is the interface for runbook persistence.
+// RunbookStore 的每个读/改方法显式带租户（D4）：漏传即编译不过。
 type RunbookStore interface {
 	CreateRunbook(*models.Runbook) *models.Runbook
-	GetRunbook(id string) *models.Runbook
-	ListRunbooks() []*models.Runbook
-	UpdateRunbook(*models.Runbook) bool
-	DeleteRunbook(id string) bool
+	GetRunbook(id, tenantID string) *models.Runbook
+	ListRunbooks(tenantID string) []*models.Runbook
+	UpdateRunbook(r *models.Runbook, tenantID string) bool
+	DeleteRunbook(id, tenantID string) bool
 	AddExecution(*models.ExecutionRecord)
-	GetExecutions(runbookID string) []*models.ExecutionRecord
+	GetExecutions(runbookID, tenantID string) []*models.ExecutionRecord
 }
 
 // MemoryStore is an in-memory implementation of RunbookStore.
@@ -33,9 +34,9 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
-// CreateRunbook stores a new runbook.
+// CreateRunbook stores a new runbook. 空租户拒绝写入（无主数据不落库）。
 func (m *MemoryStore) CreateRunbook(r *models.Runbook) *models.Runbook {
-	if r == nil {
+	if r == nil || r.TenantID == "" {
 		return nil
 	}
 	m.mu.Lock()
@@ -55,60 +56,69 @@ func (m *MemoryStore) CreateRunbook(r *models.Runbook) *models.Runbook {
 	return r
 }
 
-// GetRunbook retrieves a runbook by ID.
-func (m *MemoryStore) GetRunbook(id string) *models.Runbook {
+// GetRunbook 按 id + 租户取；跨租户与不存在同样返回 nil。
+func (m *MemoryStore) GetRunbook(id, tenantID string) *models.Runbook {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	r, ok := m.runbooks[id]
-	if !ok {
+	if !ok || r.TenantID != tenantID {
 		return nil
 	}
 	cp := *r
 	return &cp
 }
 
-// ListRunbooks returns all runbooks.
-func (m *MemoryStore) ListRunbooks() []*models.Runbook {
+// ListRunbooks 只返回该租户的 runbook。
+func (m *MemoryStore) ListRunbooks(tenantID string) []*models.Runbook {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]*models.Runbook, 0, len(m.runbooks))
 	for _, r := range m.runbooks {
+		if r.TenantID != tenantID {
+			continue
+		}
 		cp := *r
 		out = append(out, &cp)
 	}
 	return out
 }
 
-// UpdateRunbook updates an existing runbook.
-func (m *MemoryStore) UpdateRunbook(r *models.Runbook) bool {
+// UpdateRunbook 跨租户不可改；且**不允许改租户**（归属变更=越权改挂）。
+func (m *MemoryStore) UpdateRunbook(r *models.Runbook, tenantID string) bool {
 	if r == nil {
 		return false
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.runbooks[r.ID]; !ok {
+	existing, ok := m.runbooks[r.ID]
+	if !ok || existing.TenantID != tenantID {
 		return false
 	}
+	r.TenantID = existing.TenantID
 	r.UpdatedAt = time.Now()
 	cp := *r
 	m.runbooks[r.ID] = &cp
 	return true
 }
 
-// DeleteRunbook removes a runbook by ID.
-func (m *MemoryStore) DeleteRunbook(id string) bool {
+// DeleteRunbook 跨租户删不掉。
+func (m *MemoryStore) DeleteRunbook(id, tenantID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.runbooks[id]; !ok {
+	existing, ok := m.runbooks[id]
+	if !ok || existing.TenantID != tenantID {
 		return false
 	}
 	delete(m.runbooks, id)
 	return true
 }
 
-// AddExecution records a runbook execution.
+// AddExecution records a runbook execution. 归属由**父 runbook** 决定：不属于该租户 ⇒ 拒收。
 func (m *MemoryStore) AddExecution(e *models.ExecutionRecord) {
 	if e == nil {
+		return
+	}
+	if rb, ok := m.runbooks[e.RunbookID]; !ok || rb.TenantID != e.TenantID {
 		return
 	}
 	m.mu.Lock()
@@ -119,13 +129,17 @@ func (m *MemoryStore) AddExecution(e *models.ExecutionRecord) {
 	m.executions = append(m.executions, e)
 }
 
-// GetExecutions returns execution history for a runbook.
-func (m *MemoryStore) GetExecutions(runbookID string) []*models.ExecutionRecord {
+// GetExecutions 归属由父 runbook 决定（跨租户 ⇒ 空）。
+func (m *MemoryStore) GetExecutions(runbookID, tenantID string) []*models.ExecutionRecord {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	rb, ok := m.runbooks[runbookID]
+	if !ok || rb.TenantID != tenantID {
+		return nil
+	}
 	out := make([]*models.ExecutionRecord, 0)
 	for _, e := range m.executions {
-		if e.RunbookID == runbookID {
+		if e.RunbookID == runbookID && e.TenantID == tenantID {
 			cp := *e
 			out = append(out, &cp)
 		}

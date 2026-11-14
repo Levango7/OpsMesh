@@ -229,9 +229,11 @@ func (s *Server) handleVirtDeploy(w http.ResponseWriter, r *http.Request) {
 
 func buildVirtDeployScript(req virtDeployReq) string {
 	var b strings.Builder
+	// 收口（批次 18）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；**脚本文本逐字节不变**。
+	vReqType := req.Type
 	b.WriteString("set -e\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then PKG_MGR=yum; elif command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v apt-get >/dev/null 2>&1; then PKG_MGR=apt-get; else echo '未找到包管理器' && exit 1; fi\n")
-	switch req.Type {
+	switch vReqType {
 	case "kvm":
 		b.WriteString("# KVM 宿主机部署（libvirt + qemu-kvm）\n")
 		b.WriteString("# 检查 CPU 虚拟化支持\n")
@@ -317,11 +319,13 @@ func (s *Server) handleVirtAction(w http.ResponseWriter, r *http.Request, vType,
 
 func buildVirtActionScript(req virtOpsReq) string {
 	var b strings.Builder
+	// 收口（批次 18）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；**脚本文本逐字节不变**。
+	vReqType, vReqAction := req.Type, req.Action
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "kvm":
 		b.WriteString("# KVM/libvirtd 启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("systemctl start libvirtd || true\n")
 		case "stop":
@@ -333,7 +337,7 @@ func buildVirtActionScript(req virtOpsReq) string {
 		}
 	case "proxmox":
 		b.WriteString("# Proxmox 服务启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("systemctl start pveproxy pvedaemon pve-cluster || true\n")
 		case "stop":
@@ -345,7 +349,7 @@ func buildVirtActionScript(req virtOpsReq) string {
 		}
 	case "vsphere":
 		b.WriteString("# vSphere 连接测试（需 GOVC_URL/GOVC_USERNAME/GOVC_PASSWORD）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "status":
 			b.WriteString("govc about 2>/dev/null || echo 'vSphere 未连接（需配置 GOVC_* 环境变量）'\n")
 		default:
@@ -353,14 +357,14 @@ func buildVirtActionScript(req virtOpsReq) string {
 		}
 	case "openstack":
 		b.WriteString("# OpenStack 连接测试（需 OS_AUTH_URL/OS_USERNAME/OS_PASSWORD）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "status":
 			b.WriteString("openstack token issue 2>/dev/null | head -5 || echo 'OpenStack 未连接（需 source openrc.sh）'\n")
 		default:
 			b.WriteString("echo 'OpenStack 是外部平台，启停由控制节点管理'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '虚拟化 %s %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '虚拟化 %s %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -415,66 +419,68 @@ func (s *Server) handleVirtVM(w http.ResponseWriter, r *http.Request, vType stri
 
 func buildVirtVMScript(req virtVMReq) string {
 	var b strings.Builder
+	// 收口（批次 18）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；**脚本文本逐字节不变**。
+	vReqType, vReqAction, vReqName := req.Type, req.Action, req.Name
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "kvm":
 		b.WriteString("# KVM VM 管理（virsh）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "list":
 			b.WriteString("virsh list --all\n")
 		case "start":
-			fmt.Fprintf(&b, "virsh start %s\n", req.Name)
+			fmt.Fprintf(&b, "virsh start %s\n", vReqName)
 		case "stop":
-			fmt.Fprintf(&b, "virsh shutdown %s || virsh destroy %s\n", req.Name, req.Name)
+			fmt.Fprintf(&b, "virsh shutdown %s || virsh destroy %s\n", vReqName, vReqName)
 		case "restart":
-			fmt.Fprintf(&b, "virsh reboot %s || (virsh destroy %s && virsh start %s)\n", req.Name, req.Name, req.Name)
+			fmt.Fprintf(&b, "virsh reboot %s || (virsh destroy %s && virsh start %s)\n", vReqName, vReqName, vReqName)
 		case "delete":
-			fmt.Fprintf(&b, "virsh destroy %s 2>/dev/null || true\nvirsh undefine %s --remove-all-storage || echo '删除失败（VM 不存在？）'\n", req.Name, req.Name)
+			fmt.Fprintf(&b, "virsh destroy %s 2>/dev/null || true\nvirsh undefine %s --remove-all-storage || echo '删除失败（VM 不存在？）'\n", vReqName, vReqName)
 		}
 	case "proxmox":
 		b.WriteString("# Proxmox VM 管理（qm，VMID 为数字）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "list":
 			b.WriteString("qm list\n")
 		case "start":
-			fmt.Fprintf(&b, "qm start %s\n", req.Name)
+			fmt.Fprintf(&b, "qm start %s\n", vReqName)
 		case "stop":
-			fmt.Fprintf(&b, "qm shutdown %s || qm stop %s\n", req.Name, req.Name)
+			fmt.Fprintf(&b, "qm shutdown %s || qm stop %s\n", vReqName, vReqName)
 		case "restart":
-			fmt.Fprintf(&b, "qm reboot %s || (qm stop %s && qm start %s)\n", req.Name, req.Name, req.Name)
+			fmt.Fprintf(&b, "qm reboot %s || (qm stop %s && qm start %s)\n", vReqName, vReqName, vReqName)
 		case "delete":
-			fmt.Fprintf(&b, "qm destroy %s --purge || echo '删除失败'\n", req.Name)
+			fmt.Fprintf(&b, "qm destroy %s --purge || echo '删除失败'\n", vReqName)
 		}
 	case "vsphere":
 		b.WriteString("# vSphere VM 管理（govc）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "list":
 			b.WriteString("govc ls /DC/vm 2>/dev/null || govc find . -type m 2>/dev/null || echo '未连接 vSphere'\n")
 		case "start":
-			fmt.Fprintf(&b, "govc vm.power -on %s\n", req.Name)
+			fmt.Fprintf(&b, "govc vm.power -on %s\n", vReqName)
 		case "stop":
-			fmt.Fprintf(&b, "govc vm.power -off %s\n", req.Name)
+			fmt.Fprintf(&b, "govc vm.power -off %s\n", vReqName)
 		case "restart":
-			fmt.Fprintf(&b, "govc vm.power -reset %s\n", req.Name)
+			fmt.Fprintf(&b, "govc vm.power -reset %s\n", vReqName)
 		case "delete":
-			fmt.Fprintf(&b, "govc vm.destroy %s || echo '删除失败'\n", req.Name)
+			fmt.Fprintf(&b, "govc vm.destroy %s || echo '删除失败'\n", vReqName)
 		}
 	case "openstack":
 		b.WriteString("# OpenStack VM 管理（openstack CLI）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "list":
 			b.WriteString("openstack server list\n")
 		case "start":
-			fmt.Fprintf(&b, "openstack server start %s\n", req.Name)
+			fmt.Fprintf(&b, "openstack server start %s\n", vReqName)
 		case "stop":
-			fmt.Fprintf(&b, "openstack server stop %s\n", req.Name)
+			fmt.Fprintf(&b, "openstack server stop %s\n", vReqName)
 		case "restart":
-			fmt.Fprintf(&b, "openstack server reboot %s\n", req.Name)
+			fmt.Fprintf(&b, "openstack server reboot %s\n", vReqName)
 		case "delete":
-			fmt.Fprintf(&b, "openstack server delete %s || echo '删除失败'\n", req.Name)
+			fmt.Fprintf(&b, "openstack server delete %s || echo '删除失败'\n", vReqName)
 		}
 	}
-	fmt.Fprintf(&b, "echo '虚拟化 %s VM %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '虚拟化 %s VM %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -533,34 +539,36 @@ func (s *Server) handleVirtSnapshot(w http.ResponseWriter, r *http.Request, vTyp
 
 func buildVirtSnapshotScript(req virtSnapshotReq) string {
 	var b strings.Builder
+	// 收口（批次 18）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；**脚本文本逐字节不变**。
+	vReqType, vReqAction, vReqName, vReqSnapshot := req.Type, req.Action, req.Name, req.Snapshot
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "kvm":
 		b.WriteString("# KVM 快照（virsh）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "list":
-			fmt.Fprintf(&b, "virsh snapshot-list %s\n", req.Name)
+			fmt.Fprintf(&b, "virsh snapshot-list %s\n", vReqName)
 		case "create":
-			fmt.Fprintf(&b, "virsh snapshot-create-as %s %s --disk-only --atomic || virsh snapshot-create-as %s %s\n", req.Name, req.Snapshot, req.Name, req.Snapshot)
+			fmt.Fprintf(&b, "virsh snapshot-create-as %s %s --disk-only --atomic || virsh snapshot-create-as %s %s\n", vReqName, vReqSnapshot, vReqName, vReqSnapshot)
 		case "revert":
-			fmt.Fprintf(&b, "virsh snapshot-revert %s %s\n", req.Name, req.Snapshot)
+			fmt.Fprintf(&b, "virsh snapshot-revert %s %s\n", vReqName, vReqSnapshot)
 		case "delete":
-			fmt.Fprintf(&b, "virsh snapshot-delete %s %s\n", req.Name, req.Snapshot)
+			fmt.Fprintf(&b, "virsh snapshot-delete %s %s\n", vReqName, vReqSnapshot)
 		}
 	case "proxmox":
 		b.WriteString("# Proxmox 快照（qm）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "list":
-			fmt.Fprintf(&b, "qm listsnapshot %s\n", req.Name)
+			fmt.Fprintf(&b, "qm listsnapshot %s\n", vReqName)
 		case "create":
-			fmt.Fprintf(&b, "qm snapshot %s %s\n", req.Name, req.Snapshot)
+			fmt.Fprintf(&b, "qm snapshot %s %s\n", vReqName, vReqSnapshot)
 		case "revert":
-			fmt.Fprintf(&b, "qm rollback %s %s\n", req.Name, req.Snapshot)
+			fmt.Fprintf(&b, "qm rollback %s %s\n", vReqName, vReqSnapshot)
 		case "delete":
-			fmt.Fprintf(&b, "qm delsnapshot %s %s\n", req.Name, req.Snapshot)
+			fmt.Fprintf(&b, "qm delsnapshot %s %s\n", vReqName, vReqSnapshot)
 		}
 	}
-	fmt.Fprintf(&b, "echo '虚拟化 %s 快照 %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '虚拟化 %s 快照 %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 

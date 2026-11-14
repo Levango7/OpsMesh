@@ -27,6 +27,8 @@ func newTestServer() *http.ServeMux {
 func serveJSON(mux *http.ServeMux, method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	// 租户上下文（D4）：网关注入的 X-Tenant-ID；缺失会被 handler 以 401 拒掉。
+	req.Header.Set("X-Tenant-ID", "t1")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec

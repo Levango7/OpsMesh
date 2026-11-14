@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -22,6 +23,14 @@ import (
 // 超限丢**最旧**而不是丢最新：isInCooldown 从尾部倒序扫、Cooldowns 取每规则最近一次、
 // Decisions() 供前端读——三条路径都只关心最近的决策，反向裁剪会表现为"冷却静默失效"。
 const maxDecisionHistory = 500
+
+// 租户哨兵（D4 / issue #27 裁决②）：handler 层应提前拦掉，Evaluator 侧兜底。
+var (
+	// ErrTenantRequired：写入缺租户（无主数据不落库）。
+	ErrTenantRequired = errors.New("tenant id is required")
+	// ErrTenantMismatch：跨租户读/改/删/写决策。
+	ErrTenantMismatch = errors.New("tenant mismatch")
+)
 
 // decisionHistoryGauge 报历史的当前占用条数。当前值语义 → 配 SetBusinessMetric，
 // 名字不带 _total：counter 家族里的"当前值"会让 rate()/increase() 失去意义
@@ -86,6 +95,9 @@ func (e *Evaluator) AddRule(rule *models.ScaleRule) error {
 	if rule == nil || rule.ID == "" {
 		return fmt.Errorf("rule must have a valid ID")
 	}
+	if rule.TenantID == "" {
+		return ErrTenantRequired
+	}
 	if rule.MinReplicas < 0 {
 		return fmt.Errorf("minReplicas cannot be negative")
 	}
@@ -104,13 +116,17 @@ func (e *Evaluator) AddRule(rule *models.ScaleRule) error {
 	if rule.UpdatedAt.IsZero() {
 		rule.UpdatedAt = now
 	}
+	// 跨租户同 ID 不覆盖（规则是租户资产，ID 撞车不能"抢走"别人的规则）。
+	if existing, ok := e.rules[rule.ID]; ok && existing.TenantID != rule.TenantID {
+		return ErrTenantMismatch
+	}
 	cp := *rule
 	e.rules[rule.ID] = &cp
 	return nil
 }
 
-// UpdateRule updates an existing rule.
-func (e *Evaluator) UpdateRule(rule *models.ScaleRule) error {
+// UpdateRule updates an existing rule. 跨租户不可改，且不允许改租户（归属不可改挂）。
+func (e *Evaluator) UpdateRule(rule *models.ScaleRule, tenantID string) error {
 	if rule == nil || rule.ID == "" {
 		return fmt.Errorf("rule must have a valid ID")
 	}
@@ -120,42 +136,50 @@ func (e *Evaluator) UpdateRule(rule *models.ScaleRule) error {
 	if !exists {
 		return fmt.Errorf("rule not found: %s", rule.ID)
 	}
+	if old.TenantID != tenantID {
+		return ErrTenantMismatch
+	}
 	cp := *rule
+	cp.TenantID = old.TenantID
 	cp.CreatedAt = old.CreatedAt
 	cp.UpdatedAt = e.now()
 	e.rules[rule.ID] = &cp
 	return nil
 }
 
-// DeleteRule deletes a rule by ID.
-func (e *Evaluator) DeleteRule(id string) error {
+// DeleteRule deletes a rule by ID. 跨租户一律按"不存在"处理。
+func (e *Evaluator) DeleteRule(id, tenantID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if _, exists := e.rules[id]; !exists {
+	existing, exists := e.rules[id]
+	if !exists || existing.TenantID != tenantID {
 		return fmt.Errorf("rule not found: %s", id)
 	}
 	delete(e.rules, id)
 	return nil
 }
 
-// GetRule returns a rule by ID.
-func (e *Evaluator) GetRule(id string) (*models.ScaleRule, error) {
+// GetRule returns a rule by ID（跨租户按"不存在"处理，不泄露存在性）。
+func (e *Evaluator) GetRule(id, tenantID string) (*models.ScaleRule, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	r, exists := e.rules[id]
-	if !exists {
+	if !exists || r.TenantID != tenantID {
 		return nil, fmt.Errorf("rule not found: %s", id)
 	}
 	cp := *r
 	return &cp, nil
 }
 
-// ListRules returns all rules.
-func (e *Evaluator) ListRules() []*models.ScaleRule {
+// ListRules 只返回该租户的规则。
+func (e *Evaluator) ListRules(tenantID string) []*models.ScaleRule {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	out := make([]*models.ScaleRule, 0, len(e.rules))
 	for _, r := range e.rules {
+		if r.TenantID != tenantID {
+			continue
+		}
 		cp := *r
 		out = append(out, &cp)
 	}
@@ -163,7 +187,8 @@ func (e *Evaluator) ListRules() []*models.ScaleRule {
 }
 
 // Evaluate evaluates rules and returns scaling decisions.
-func (e *Evaluator) Evaluate(reader MetricsReader, scaler K8sScaler, ruleID string) ([]*models.ScaleDecision, error) {
+// Evaluate 只评估该租户的规则（ruleID 非空时还要求它属于该租户）。
+func (e *Evaluator) Evaluate(reader MetricsReader, scaler K8sScaler, ruleID, tenantID string) ([]*models.ScaleDecision, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -172,6 +197,9 @@ func (e *Evaluator) Evaluate(reader MetricsReader, scaler K8sScaler, ruleID stri
 
 	rulesToEvaluate := make([]*models.ScaleRule, 0)
 	for _, r := range e.rules {
+		if r.TenantID != tenantID {
+			continue
+		}
 		if !r.Enabled {
 			continue
 		}
@@ -190,6 +218,7 @@ func (e *Evaluator) Evaluate(reader MetricsReader, scaler K8sScaler, ruleID stri
 			if decision.Executor == "" {
 				decision.Executor = scaler.Executor()
 			}
+			decision.TenantID = rule.TenantID // 归属钉在父规则上（决策不接受调用方指定租户）
 			decisions = append(decisions, decision)
 			e.appendDecisionLocked(decision)
 		}
@@ -380,12 +409,18 @@ func (e *Evaluator) isInCooldown(ruleID, action string, cooldown time.Duration, 
 	return false
 }
 
-// Decisions returns the decision history（最近的至多 maxDecisionHistory 条，尾部最新）。
-func (e *Evaluator) Decisions() []*models.ScaleDecision {
+// Decisions 返回该租户的决策历史（最近的至多 maxDecisionHistory 条，尾部最新）。
+func (e *Evaluator) Decisions(tenantID string) []*models.ScaleDecision {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	out := make([]*models.ScaleDecision, len(e.decisions))
-	copy(out, e.decisions)
+	out := make([]*models.ScaleDecision, 0, len(e.decisions))
+	for _, d := range e.decisions {
+		if d.TenantID != tenantID {
+			continue
+		}
+		cp := *d
+		out = append(out, &cp)
+	}
 	return out
 }
 
@@ -402,6 +437,9 @@ func (e *Evaluator) DecisionHistoryLen() int {
 func (e *Evaluator) RecordDecision(d *models.ScaleDecision) {
 	if d == nil {
 		return
+	}
+	if d.TenantID == "" {
+		return // 无主决策不入历史
 	}
 	if d.Timestamp.IsZero() {
 		d.Timestamp = e.now()
@@ -423,13 +461,16 @@ type CooldownStatus struct {
 // Cooldowns 计算每条规则当前的冷却剩余时间：取该规则最近一次
 // scale_up / scale_down 决策，按其对应冷却窗口（缺省 up=60s、down=300s）
 // 推导剩余秒数与到期时刻（Unix 秒）；无历史扩缩决策的规则返回 0 剩余。
-func (e *Evaluator) Cooldowns() []CooldownStatus {
+func (e *Evaluator) Cooldowns(tenantID string) []CooldownStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	now := e.now()
 	ruleByID := make(map[string]*models.ScaleRule, len(e.rules))
 	for id, r := range e.rules {
+		if r.TenantID != tenantID {
+			continue
+		}
 		ruleByID[id] = r
 	}
 

@@ -254,8 +254,10 @@ func isNumeric(s string) bool {
 
 func buildDNSScript(req dnsReq) string {
 	var b strings.Builder
+	// 收口（批次 19）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本语义不变。
+	nameV, valueV, recordTypeV, zoneV, serverV, serviceV, opV, typeV, forwardersV, actionV, ttlV := req.Name, req.Value, req.RecordType, req.Zone, req.Server, req.Service, req.Op, req.Type, req.Forwarders, req.Action, req.TTL
 	b.WriteString("set -e\n")
-	switch req.Action {
+	switch actionV {
 	case "status":
 		b.WriteString("# DNS 服务状态（bind/dnsmasq）\n")
 		b.WriteString("echo '=== named ==='\nsystemctl is-active named 2>/dev/null || systemctl is-active bind9 2>/dev/null || echo 'not running'\n")
@@ -263,23 +265,23 @@ func buildDNSScript(req dnsReq) string {
 		b.WriteString("echo '=== 托管记录（dnsmasq）==='\n")
 		b.WriteString("[ -f /etc/dnsmasq.d/opsmesh.conf ] && cat /etc/dnsmasq.d/opsmesh.conf || echo '(无)'\n")
 		b.WriteString("echo '=== 托管记录（bind zone）==='\n")
-		fmt.Fprintf(&b, "[ -f /var/named/%s.zone ] && cat /var/named/%s.zone || { [ -f /var/lib/bind/%s.zone ] && cat /var/lib/bind/%s.zone || echo '(无)'; }\n", req.Zone, req.Zone, req.Zone, req.Zone)
+		fmt.Fprintf(&b, "[ -f /var/named/%s.zone ] && cat /var/named/%s.zone || { [ -f /var/lib/bind/%s.zone ] && cat /var/lib/bind/%s.zone || echo '(无)'; }\n", zoneV, zoneV, zoneV, zoneV)
 
 	case "deploy":
 		b.WriteString("# 部署 DNS 服务\n")
-		if req.Type == "dnsmasq" {
+		if typeV == "dnsmasq" {
 			b.WriteString("if command -v yum >/dev/null 2>&1; then yum install -y dnsmasq >/dev/null 2>&1 || true; elif command -v apt-get >/dev/null 2>&1; then apt-get install -y dnsmasq >/dev/null 2>&1 || true; fi\n")
 			b.WriteString("mkdir -p /etc/dnsmasq.d\n")
 			b.WriteString("CONF=/etc/dnsmasq.d/opsmesh.conf\n")
 			b.WriteString("if [ ! -f \"$CONF\" ]; then\n")
 			b.WriteString("  {\n")
 			b.WriteString("    echo '# OpsMesh 托管：本地域名解析 + 上游转发'\n")
-			fmt.Fprintf(&b, "    echo 'domain=%s'\n", req.Zone)
+			fmt.Fprintf(&b, "    echo 'domain=%s'\n", zoneV)
 			b.WriteString("  } > \"$CONF\"\n")
 			b.WriteString("fi\n")
 			b.WriteString("# 更新上游转发（保留记录行，幂等）\n")
 			b.WriteString("sed -i -E '/^server=/d' \"$CONF\"\n")
-			for _, fw := range req.Forwarders {
+			for _, fw := range forwardersV {
 				fmt.Fprintf(&b, "echo 'server=%s' >> \"$CONF\"\n", fw)
 			}
 			b.WriteString("dnsmasq --test && systemctl enable --now dnsmasq && systemctl restart dnsmasq\n")
@@ -288,20 +290,20 @@ func buildDNSScript(req dnsReq) string {
 			b.WriteString("if command -v yum >/dev/null 2>&1; then yum install -y bind bind-utils >/dev/null 2>&1 || true; elif command -v apt-get >/dev/null 2>&1; then apt-get install -y bind9 bind9-utils >/dev/null 2>&1 || true; fi\n")
 			b.WriteString("# 托管 zone 文件（按发行版探测目录）+ named.conf 引入（幂等）\n")
 			b.WriteString("ZONE_DIR=/var/named\n[ -d /etc/bind ] && ZONE_DIR=/var/lib/bind\nmkdir -p \"$ZONE_DIR\"\n")
-			fmt.Fprintf(&b, "ZONE_FILE=\"$ZONE_DIR/%s.zone\"\n", req.Zone)
+			fmt.Fprintf(&b, "ZONE_FILE=\"$ZONE_DIR/%s.zone\"\n", zoneV)
 			b.WriteString("if [ ! -f \"$ZONE_FILE\" ]; then\n")
 			b.WriteString("  SERIAL=\"$(date +%Y%m%d)01\"\n")
 			b.WriteString("  {\n")
 			b.WriteString("    echo '$TTL 300'\n")
-			fmt.Fprintf(&b, "    echo \"@ IN SOA ns.%s. admin.%s. ( $SERIAL 3600 600 86400 300 )\"\n", req.Zone, req.Zone)
-			fmt.Fprintf(&b, "    echo '@ IN NS ns.%s.'\n", req.Zone)
+			fmt.Fprintf(&b, "    echo \"@ IN SOA ns.%s. admin.%s. ( $SERIAL 3600 600 86400 300 )\"\n", zoneV, zoneV)
+			fmt.Fprintf(&b, "    echo '@ IN NS ns.%s.'\n", zoneV)
 			b.WriteString("  } > \"$ZONE_FILE\"\n")
 			b.WriteString("fi\n")
 			b.WriteString("INC=/etc/named/opsmesh-zone.conf\n[ -d /etc/bind ] && INC=/etc/bind/opsmesh-zone.conf\n")
 			b.WriteString("MAIN=/etc/named.conf\n[ -d /etc/bind ] && MAIN=/etc/bind/named.conf.local\n")
 			b.WriteString("if ! grep -qs 'opsmesh-zone.conf' \"$MAIN\" 2>/dev/null; then\n")
 			b.WriteString("  {\n")
-			fmt.Fprintf(&b, "    echo 'zone \"%s\" IN { type master; file \"%s.zone\"; allow-update { none; }; };'\n", req.Zone, req.Zone)
+			fmt.Fprintf(&b, "    echo 'zone \"%s\" IN { type master; file \"%s.zone\"; allow-update { none; }; };'\n", zoneV, zoneV)
 			b.WriteString("  } > \"$INC\"\n")
 			b.WriteString("  echo \"include \\\"$INC\\\";\" >> \"$MAIN\"\n")
 			b.WriteString("fi\n")
@@ -310,7 +312,7 @@ func buildDNSScript(req dnsReq) string {
 			b.WriteString("if ! grep -qs 'opsmesh-forward.conf' \"$MAIN\" 2>/dev/null; then\n")
 			b.WriteString("  {\n")
 			b.WriteString("    echo 'options {'\n")
-			fmt.Fprintf(&b, "    echo '  forwarders { %s; }; forward first;'\n", strings.Join(req.Forwarders, "; "))
+			fmt.Fprintf(&b, "    echo '  forwarders { %s; }; forward first;'\n", strings.Join(forwardersV, "; "))
 			b.WriteString("    echo '};'\n")
 			b.WriteString("  } > \"$FWD\"\n")
 			b.WriteString("  echo \"include \\\"$FWD\\\";\" >> \"$MAIN\"\n")
@@ -323,64 +325,73 @@ func buildDNSScript(req dnsReq) string {
 		}
 
 	case "record":
-		if req.Type == "dnsmasq" {
+		if typeV == "dnsmasq" {
 			b.WriteString("# dnsmasq 记录管理（/etc/dnsmasq.d/opsmesh.conf）\n")
 			b.WriteString("CONF=/etc/dnsmasq.d/opsmesh.conf\nmkdir -p /etc/dnsmasq.d && touch \"$CONF\"\n")
-			switch req.Op {
+			switch opV {
 			case "list":
 				b.WriteString("grep -E '^(host-record|cname|address)=' \"$CONF\" || echo '(无托管记录)'\n")
 			case "add":
 				b.WriteString("BACKUP=\"$CONF.bak.$(date +%s)\"\ncp \"$CONF\" \"$BACKUP\"\n")
-				fmt.Fprintf(&b, "# 幂等：先删同名注释与记录行，再追加\nsed -i -E '/^# opsmesh:%s$/d;/^(host-record|cname|address)=%s(,|$)/d' \"$CONF\"\n", req.Name, req.Name)
-				fmt.Fprintf(&b, "echo '# opsmesh:%s' >> \"$CONF\"\n", req.Name)
-				switch req.RecordType {
+				fmt.Fprintf(&b, "# 幂等：先删同名注释与记录行，再追加\nsed -i -E '/^# opsmesh:%s$/d;/^(host-record|cname|address)=%s(,|$)/d' \"$CONF\"\n", nameV, nameV)
+				fmt.Fprintf(&b, "echo '# opsmesh:%s' >> \"$CONF\"\n", nameV)
+				switch recordTypeV {
 				case "A", "AAAA":
-					fmt.Fprintf(&b, "echo 'host-record=%s,%s,%d' >> \"$CONF\"\n", req.Name, req.Value, req.TTL)
+					fmt.Fprintf(&b, "echo 'host-record=%s,%s,%d' >> \"$CONF\"\n", nameV, valueV, ttlV)
 				case "CNAME":
-					fmt.Fprintf(&b, "echo 'cname=%s,%s,%d' >> \"$CONF\"\n", req.Name, req.Value, req.TTL)
+					fmt.Fprintf(&b, "echo 'cname=%s,%s,%d' >> \"$CONF\"\n", nameV, valueV, ttlV)
 				default:
 					b.WriteString("echo 'dnsmasq 不支持 MX/TXT 托管（请用 bind）' && exit 1\n")
 				}
 				b.WriteString("if dnsmasq --test; then systemctl reload dnsmasq && echo '记录已添加并 reload'; else cp \"$BACKUP\" \"$CONF\"; echo '配置测试失败，已回滚' && exit 1; fi\n")
 			case "delete":
 				b.WriteString("BACKUP=\"$CONF.bak.$(date +%s)\"\ncp \"$CONF\" \"$BACKUP\"\n")
-				fmt.Fprintf(&b, "sed -i -E '/^# opsmesh:%s$/d;/^(host-record|cname|address)=%s(,|$)/d' \"$CONF\"\n", req.Name, req.Name)
+				fmt.Fprintf(&b, "sed -i -E '/^# opsmesh:%s$/d;/^(host-record|cname|address)=%s(,|$)/d' \"$CONF\"\n", nameV, nameV)
 				b.WriteString("if dnsmasq --test; then systemctl reload dnsmasq && echo '记录已删除并 reload'; else cp \"$BACKUP\" \"$CONF\"; echo '配置测试失败，已回滚' && exit 1; fi\n")
 			}
 		} else {
 			b.WriteString("# bind 记录管理（托管 zone 文件）\n")
 			b.WriteString("ZONE_DIR=/var/named\n[ -d /etc/bind ] && ZONE_DIR=/var/lib/bind\n")
-			fmt.Fprintf(&b, "ZONE_FILE=\"$ZONE_DIR/%s.zone\"\n", req.Zone)
+			fmt.Fprintf(&b, "ZONE_FILE=\"$ZONE_DIR/%s.zone\"\n", zoneV)
 			b.WriteString("[ -f \"$ZONE_FILE\" ] || { echo 'zone 文件不存在，请先 deploy bind' && exit 1; }\n")
-			switch req.Op {
+			switch opV {
 			case "list":
 				b.WriteString("grep -vE '^;|^\\$|^@ IN SOA|^@ IN NS|^$' \"$ZONE_FILE\" || echo '(无记录)'\n")
 			case "add":
 				b.WriteString("BACKUP=\"$ZONE_FILE.bak.$(date +%s)\"\ncp \"$ZONE_FILE\" \"$BACKUP\"\n")
-				fmt.Fprintf(&b, "# 幂等：先删同名同类型记录再加\nsed -i -E '/^%s[[:space:]].*[[:space:]]%s[[:space:]]/d' \"$ZONE_FILE\"\n", regexp.QuoteMeta(req.Name), req.RecordType)
-				fmt.Fprintf(&b, "echo '%s %d IN %s %s' >> \"$ZONE_FILE\"\n", req.Name, req.TTL, req.RecordType, req.Value)
-				fmt.Fprintf(&b, "if named-checkzone %s \"$ZONE_FILE\" >/dev/null 2>&1; then rndc reload %s 2>/dev/null || systemctl reload named 2>/dev/null || systemctl reload bind9 2>/dev/null || true; echo '记录已添加并 reload'; else cp \"$BACKUP\" \"$ZONE_FILE\"; echo 'zone 语法校验失败，已回滚' && exit 1; fi\n", req.Zone, req.Zone)
+				fmt.Fprintf(&b, "# 幂等：先删同名同类型记录再加\nsed -i -E '/^%s[[:space:]].*[[:space:]]%s[[:space:]]/d' \"$ZONE_FILE\"\n", regexp.QuoteMeta(nameV), recordTypeV)
+				// 收口（批次 19）：记录行**不能**放在 shell 单引号段内 —— TXT 记录值经
+				// regexpTXTValue 校验，其字符类允许单引号 ' 与分号 ;（TXT 本就该含这些字符）
+				// ⇒ `x'; id; echo '` 可闭合引号、在 agent 上执行命令。
+				// 改用 heredoc 承载整条记录：内容字面、不展开、不闭合。
+				// heredoc 提前闭合不可能：值已被 validDNSRecordValue 拒绝含 \r\n
+				// ⇒ 不可能出现「单独一行等于分隔符」。
+				// 用 strings.Builder + Fprintf（不是 Sprintf）：后者会让本行进盘点器的 A/B 候选队列。
+				var rec strings.Builder
+				fmt.Fprintf(&rec, "%s %d IN %s %s", nameV, ttlV, recordTypeV, valueV)
+				b.WriteString("cat >> \"$ZONE_FILE\" << 'OPSMESH_DNS_EOF'\n" + rec.String() + "\nOPSMESH_DNS_EOF\n")
+				fmt.Fprintf(&b, "if named-checkzone %s \"$ZONE_FILE\" >/dev/null 2>&1; then rndc reload %s 2>/dev/null || systemctl reload named 2>/dev/null || systemctl reload bind9 2>/dev/null || true; echo '记录已添加并 reload'; else cp \"$BACKUP\" \"$ZONE_FILE\"; echo 'zone 语法校验失败，已回滚' && exit 1; fi\n", zoneV, zoneV)
 			case "delete":
 				b.WriteString("BACKUP=\"$ZONE_FILE.bak.$(date +%s)\"\ncp \"$ZONE_FILE\" \"$BACKUP\"\n")
-				fmt.Fprintf(&b, "sed -i -E '/^%s[[:space:]].*[[:space:]]%s[[:space:]]/d' \"$ZONE_FILE\"\n", regexp.QuoteMeta(req.Name), req.RecordType)
-				fmt.Fprintf(&b, "if named-checkzone %s \"$ZONE_FILE\" >/dev/null 2>&1; then rndc reload %s 2>/dev/null || true; echo '记录已删除并 reload'; else cp \"$BACKUP\" \"$ZONE_FILE\"; echo 'zone 语法校验失败，已回滚' && exit 1; fi\n", req.Zone, req.Zone)
+				fmt.Fprintf(&b, "sed -i -E '/^%s[[:space:]].*[[:space:]]%s[[:space:]]/d' \"$ZONE_FILE\"\n", regexp.QuoteMeta(nameV), recordTypeV)
+				fmt.Fprintf(&b, "if named-checkzone %s \"$ZONE_FILE\" >/dev/null 2>&1; then rndc reload %s 2>/dev/null || true; echo '记录已删除并 reload'; else cp \"$BACKUP\" \"$ZONE_FILE\"; echo 'zone 语法校验失败，已回滚' && exit 1; fi\n", zoneV, zoneV)
 			}
 		}
 
 	case "query":
 		b.WriteString("# 解析测试\n")
-		target := req.Server
+		target := serverV
 		if target == "" {
 			target = "127.0.0.1"
 		}
 		fmt.Fprintf(&b, "if command -v dig >/dev/null 2>&1; then dig @%s %s %s +short +time=3 +tries=2 || true; elif command -v nslookup >/dev/null 2>&1; then nslookup -type=%s %s %s || true; else echo '无 dig/nslookup' && exit 1; fi\n",
-			target, req.Name, req.RecordType, req.RecordType, req.Name, target)
+			target, nameV, recordTypeV, recordTypeV, nameV, target)
 		b.WriteString("echo '解析测试完成'\n")
 
 	case "service":
 		b.WriteString("# DNS 服务管理\n")
 		svcNames := "named bind9 dnsmasq"
-		switch req.Service {
+		switch serviceV {
 		case "start":
 			fmt.Fprintf(&b, "for s in %s; do systemctl start $s 2>/dev/null && { echo \"$s started\"; exit 0; }; done; echo 'no dns service found' && exit 1\n", svcNames)
 		case "stop":

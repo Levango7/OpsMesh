@@ -46,7 +46,7 @@ func TestCreateRule(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	rule, err := svc.CreateRule(ctx, &models.ScaleRule{
+	rule, err := svc.CreateRule(ctx, &models.ScaleRule{TenantID: "t1",
 		Name:               "High CPU",
 		Deployment:         "web-app",
 		Namespace:          "default",
@@ -84,7 +84,7 @@ func TestGetRule(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	created, err := svc.CreateRule(ctx, &models.ScaleRule{
+	created, err := svc.CreateRule(ctx, &models.ScaleRule{TenantID: "t1",
 		Name:               "Test",
 		Deployment:         "web-app",
 		Metric:             "cpu_usage",
@@ -98,7 +98,7 @@ func TestGetRule(t *testing.T) {
 		t.Fatalf("CreateRule failed: %v", err)
 	}
 
-	got, err := svc.GetRule(ctx, created.ID)
+	got, err := svc.GetRule(ctx, created.ID, "t1")
 	if err != nil {
 		t.Fatalf("GetRule failed: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestGetRule(t *testing.T) {
 
 func TestGetRuleNotFound(t *testing.T) {
 	svc := newTestService()
-	_, err := svc.GetRule(context.Background(), "nonexistent")
+	_, err := svc.GetRule(context.Background(), "nonexistent", "t1")
 	if err != ErrRuleNotFound {
 		t.Fatalf("expected ErrRuleNotFound, got: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestListRules(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
-		_, err := svc.CreateRule(ctx, &models.ScaleRule{
+		_, err := svc.CreateRule(ctx, &models.ScaleRule{TenantID: "t1",
 			Name:               "Rule",
 			Deployment:         "web-app",
 			Metric:             "cpu_usage",
@@ -139,7 +139,7 @@ func TestListRules(t *testing.T) {
 		}
 	}
 
-	rules, err := svc.ListRules(ctx)
+	rules, err := svc.ListRules(ctx, "t1")
 	if err != nil {
 		t.Fatalf("ListRules failed: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestUpdateRule(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	created, err := svc.CreateRule(ctx, &models.ScaleRule{
+	created, err := svc.CreateRule(ctx, &models.ScaleRule{TenantID: "t1",
 		Name:               "Original",
 		Deployment:         "web-app",
 		Metric:             "cpu_usage",
@@ -170,7 +170,7 @@ func TestUpdateRule(t *testing.T) {
 	created.Name = "Updated"
 	created.ScaleUpThreshold = 85.0
 
-	updated, err := svc.UpdateRule(ctx, created)
+	updated, err := svc.UpdateRule(ctx, created, "t1")
 	if err != nil {
 		t.Fatalf("UpdateRule failed: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestUpdateRule(t *testing.T) {
 
 func TestUpdateRuleNotFound(t *testing.T) {
 	svc := newTestService()
-	_, err := svc.UpdateRule(context.Background(), &models.ScaleRule{
+	_, err := svc.UpdateRule(context.Background(), &models.ScaleRule{TenantID: "t1",
 		ID:                 "nonexistent",
 		Name:               "Ghost",
 		Deployment:         "web-app",
@@ -194,7 +194,7 @@ func TestUpdateRuleNotFound(t *testing.T) {
 		ScaleDownThreshold: 20.0,
 		MinReplicas:        1,
 		MaxReplicas:        10,
-	})
+	}, "t1")
 	if err != ErrRuleNotFound {
 		t.Fatalf("expected ErrRuleNotFound, got: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestDeleteRule(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	created, err := svc.CreateRule(ctx, &models.ScaleRule{
+	created, err := svc.CreateRule(ctx, &models.ScaleRule{TenantID: "t1",
 		Name:               "ToDelete",
 		Deployment:         "web-app",
 		Metric:             "cpu_usage",
@@ -218,12 +218,12 @@ func TestDeleteRule(t *testing.T) {
 		t.Fatalf("CreateRule failed: %v", err)
 	}
 
-	err = svc.DeleteRule(ctx, created.ID)
+	err = svc.DeleteRule(ctx, created.ID, "t1")
 	if err != nil {
 		t.Fatalf("DeleteRule failed: %v", err)
 	}
 
-	_, err = svc.GetRule(ctx, created.ID)
+	_, err = svc.GetRule(ctx, created.ID, "t1")
 	if err != ErrRuleNotFound {
 		t.Fatalf("expected ErrRuleNotFound after delete, got: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestDeleteRule(t *testing.T) {
 
 func TestDeleteRuleNotFound(t *testing.T) {
 	svc := newTestService()
-	err := svc.DeleteRule(context.Background(), "nonexistent")
+	err := svc.DeleteRule(context.Background(), "nonexistent", "t1")
 	if err != ErrRuleNotFound {
 		t.Fatalf("expected ErrRuleNotFound, got: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestEvaluate(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	_, err := svc.CreateRule(ctx, &models.ScaleRule{
+	_, err := svc.CreateRule(ctx, &models.ScaleRule{TenantID: "t1",
 		Name:               "High CPU",
 		Deployment:         "web-app",
 		Namespace:          "default",
@@ -262,7 +262,7 @@ func TestEvaluate(t *testing.T) {
 		t.Fatalf("seed replicas: %v", err)
 	}
 
-	resp, err := svc.Evaluate(ctx, "")
+	resp, err := svc.Evaluate(ctx, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestGetDecisions(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	_, err := svc.CreateRule(ctx, &models.ScaleRule{
+	_, err := svc.CreateRule(ctx, &models.ScaleRule{TenantID: "t1",
 		Name:               "Test",
 		Deployment:         "web-app",
 		Namespace:          "default",
@@ -297,12 +297,12 @@ func TestGetDecisions(t *testing.T) {
 		t.Fatalf("seed replicas: %v", err)
 	}
 
-	_, err = svc.Evaluate(ctx, "")
+	_, err = svc.Evaluate(ctx, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate failed: %v", err)
 	}
 
-	decisions := svc.GetDecisions(ctx)
+	decisions := svc.GetDecisions(ctx, "t1")
 	if len(decisions) != 1 {
 		t.Errorf("expected 1 decision, got %d", len(decisions))
 	}
@@ -341,7 +341,7 @@ func TestScale_SimulatedExecutorIsLabeledInFullChain(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	resp, err := svc.Scale(ctx, &ScaleRequest{Target: "web-app", Replicas: 4, Reason: "test"})
+	resp, err := svc.Scale(ctx, &ScaleRequest{Target: "web-app", Replicas: 4, Reason: "test"}, "t1")
 	if err != nil {
 		t.Fatalf("Scale: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestScale_SimulatedExecutorIsLabeledInFullChain(t *testing.T) {
 		t.Fatalf("响应 message = %q，期望明说未改动集群", resp.Message)
 	}
 
-	ds := svc.GetDecisions(ctx)
+	ds := svc.GetDecisions(ctx, "t1")
 	if len(ds) != 1 {
 		t.Fatalf("决策历史 %d 条，want 1", len(ds))
 	}
@@ -371,7 +371,7 @@ func TestScale_RealExecutorNotMarkedSimulated(t *testing.T) {
 	svc := newServiceWithScaler(stub)
 	ctx := context.Background()
 
-	resp, err := svc.Scale(ctx, &ScaleRequest{Target: "web-app", Replicas: 3, Reason: "manual"})
+	resp, err := svc.Scale(ctx, &ScaleRequest{Target: "web-app", Replicas: 3, Reason: "manual"}, "t1")
 	if err != nil {
 		t.Fatalf("Scale: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestScale_RealExecutorNotMarkedSimulated(t *testing.T) {
 	if stub.writes != 1 {
 		t.Fatalf("真实执行器被调用 %d 次, want 1", stub.writes)
 	}
-	if ds := svc.GetDecisions(ctx); len(ds) != 1 || ds[0].Executor != k8s.ExecutorInCluster {
+	if ds := svc.GetDecisions(ctx, "t1"); len(ds) != 1 || ds[0].Executor != k8s.ExecutorInCluster {
 		t.Fatalf("决策历史标注缺失：%+v", ds)
 	}
 }
@@ -398,13 +398,13 @@ func TestEvaluate_DecisionsCarryExecutor(t *testing.T) {
 	svc := newServiceWithScaler(stub)
 	ctx := context.Background()
 
-	if _, err := svc.CreateRule(ctx, &models.ScaleRule{
+	if _, err := svc.CreateRule(ctx, &models.ScaleRule{TenantID: "t1",
 		Name: "r1", Deployment: "web-app", Namespace: "default", Metric: "cpu_usage",
 		ScaleUpThreshold: 40, ScaleDownThreshold: 20, MinReplicas: 1, MaxReplicas: 10, Enabled: true,
 	}); err != nil {
 		t.Fatalf("CreateRule: %v", err)
 	}
-	resp, err := svc.Evaluate(ctx, "")
+	resp, err := svc.Evaluate(ctx, "", "t1")
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}

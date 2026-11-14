@@ -39,6 +39,8 @@ func doJSON(t *testing.T, ts *httptest.Server, method, path string, body interfa
 		t.Fatalf("new request %s %s: %v", method, path, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// 租户上下文（D4）：网关注入的 X-Tenant-ID；缺失会被 handler 以 401 拒掉。
+	req.Header.Set("X-Tenant-ID", "t1")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("do %s %s: %v", method, path, err)
@@ -186,6 +188,7 @@ func TestIncidentsMetricsNotSwallowedByIDRoute(t *testing.T) {
 
 	// "metrics" 不能被 /{id} 路由吃掉变成 404。
 	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/incidents/metrics", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}

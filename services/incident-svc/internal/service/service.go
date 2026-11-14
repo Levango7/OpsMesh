@@ -17,6 +17,8 @@ var (
 	ErrIncidentNotFound = errors.New("incident not found")
 	ErrInvalidStatus    = errors.New("invalid status transition")
 	ErrIncidentResolved = errors.New("incident already resolved")
+	// ErrTenantRequired：租户缺失时拒绝写入（D4——无主数据不许落库；handler 层应提前以 401 拦掉）。
+	ErrTenantRequired = errors.New("tenant id is required")
 )
 
 // Service implements the incident management business logic.
@@ -46,14 +48,18 @@ type CreateIncidentInput struct {
 }
 
 // CreateIncident creates a new incident.
-func (s *Service) CreateIncident(in CreateIncidentInput) (*models.Incident, error) {
+func (s *Service) CreateIncident(in CreateIncidentInput, tenantID string) (*models.Incident, error) {
 	if in.Title == "" {
 		return nil, errors.New("incident title is required")
 	}
 
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
 	now := time.Now()
 	inc := &models.Incident{
 		ID:          uuid.New().String(),
+		TenantID:    tenantID,
 		Title:       in.Title,
 		Description: in.Description,
 		Severity:    in.Severity,
@@ -75,14 +81,14 @@ func (s *Service) CreateIncident(in CreateIncidentInput) (*models.Incident, erro
 		Type:        "created",
 		Description: "Incident created: " + in.Title,
 		Author:      "system",
-	})
+	}, tenantID)
 
 	return inc, nil
 }
 
 // GetIncident retrieves an incident by ID.
-func (s *Service) GetIncident(id string) (*models.Incident, error) {
-	inc := s.store.GetIncident(id)
+func (s *Service) GetIncident(id, tenantID string) (*models.Incident, error) {
+	inc := s.store.GetIncident(id, tenantID)
 	if inc == nil {
 		return nil, ErrIncidentNotFound
 	}
@@ -90,13 +96,13 @@ func (s *Service) GetIncident(id string) (*models.Incident, error) {
 }
 
 // ListIncidents lists incidents filtered by status and severity.
-func (s *Service) ListIncidents(status string, severity models.Severity) []*models.Incident {
-	return s.store.ListIncidents(status, severity)
+func (s *Service) ListIncidents(status string, severity models.Severity, tenantID string) []*models.Incident {
+	return s.store.ListIncidents(status, severity, tenantID)
 }
 
 // UpdateIncident updates an existing incident.
-func (s *Service) UpdateIncident(id, title, description, assignee string, severity models.Severity) (*models.Incident, error) {
-	inc, err := s.GetIncident(id)
+func (s *Service) UpdateIncident(id, title, description, assignee string, severity models.Severity, tenantID string) (*models.Incident, error) {
+	inc, err := s.GetIncident(id, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +124,7 @@ func (s *Service) UpdateIncident(id, title, description, assignee string, severi
 		inc.Severity = severity
 	}
 
-	s.store.UpdateIncident(inc)
+	s.store.UpdateIncident(inc, tenantID)
 	return inc, nil
 }
 
@@ -126,8 +132,8 @@ func (s *Service) UpdateIncident(id, title, description, assignee string, severi
 // 状态机约束：只允许沿 detected→investigating→mitigating→resolved→closed
 // 向前迁移；任何回退（含 resolved→detected）与同状态重入（resolved/closed
 // 再次 resolve）都拒绝为 ErrInvalidStatus。
-func (s *Service) UpdateStatus(id string, status models.IncidentStatus) (*models.Incident, error) {
-	inc, err := s.GetIncident(id)
+func (s *Service) UpdateStatus(id string, status models.IncidentStatus, tenantID string) (*models.Incident, error) {
+	inc, err := s.GetIncident(id, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +156,7 @@ func (s *Service) UpdateStatus(id string, status models.IncidentStatus) (*models
 			inc.ClosedAt = &t
 		}
 	}
-	s.store.UpdateIncident(inc)
+	s.store.UpdateIncident(inc, tenantID)
 
 	_ = s.store.AddTimelineEvent(&models.TimelineEvent{
 		ID:          uuid.New().String(),
@@ -159,7 +165,7 @@ func (s *Service) UpdateStatus(id string, status models.IncidentStatus) (*models
 		Type:        "status_changed",
 		Description: "Status changed to " + string(status),
 		Author:      "system",
-	})
+	}, tenantID)
 
 	return inc, nil
 }
@@ -188,16 +194,16 @@ func validForwardTransition(from, to models.IncidentStatus) bool {
 }
 
 // DeleteIncident deletes an incident.
-func (s *Service) DeleteIncident(id string) error {
-	if !s.store.DeleteIncident(id) {
+func (s *Service) DeleteIncident(id, tenantID string) error {
+	if !s.store.DeleteIncident(id, tenantID) {
 		return ErrIncidentNotFound
 	}
 	return nil
 }
 
 // AddTimelineEvent adds an event to an incident's timeline.
-func (s *Service) AddTimelineEvent(incidentID, eventType, description, author string) (*models.TimelineEvent, error) {
-	inc, err := s.GetIncident(incidentID)
+func (s *Service) AddTimelineEvent(incidentID, eventType, description, author, tenantID string) (*models.TimelineEvent, error) {
+	inc, err := s.GetIncident(incidentID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -211,24 +217,24 @@ func (s *Service) AddTimelineEvent(incidentID, eventType, description, author st
 		Author:      author,
 	}
 
-	s.store.AddTimelineEvent(ev)
+	s.store.AddTimelineEvent(ev, tenantID)
 	return ev, nil
 }
 
 // GetTimeline returns the full timeline for an incident.
-func (s *Service) GetTimeline(incidentID string) ([]models.TimelineEvent, error) {
-	_, err := s.GetIncident(incidentID)
+func (s *Service) GetTimeline(incidentID, tenantID string) ([]models.TimelineEvent, error) {
+	_, err := s.GetIncident(incidentID, tenantID)
 	if err != nil {
 		return nil, err
 	}
 
-	events := s.store.GetTimeline(incidentID)
+	events := s.store.GetTimeline(incidentID, tenantID)
 	return s.timeline.Build(events), nil
 }
 
 // ResolveIncident transitions an incident to resolved.
-func (s *Service) ResolveIncident(id, author string) (*models.Incident, error) {
-	inc, err := s.GetIncident(id)
+func (s *Service) ResolveIncident(id, author, tenantID string) (*models.Incident, error) {
+	inc, err := s.GetIncident(id, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +246,7 @@ func (s *Service) ResolveIncident(id, author string) (*models.Incident, error) {
 	now := time.Now()
 	inc.Status = models.StatusResolved
 	inc.ResolvedAt = &now
-	s.store.UpdateIncident(inc)
+	s.store.UpdateIncident(inc, tenantID)
 
 	_ = s.store.AddTimelineEvent(&models.TimelineEvent{
 		ID:          uuid.New().String(),
@@ -249,14 +255,14 @@ func (s *Service) ResolveIncident(id, author string) (*models.Incident, error) {
 		Type:        "resolved",
 		Description: "Incident resolved",
 		Author:      author,
-	})
+	}, tenantID)
 
 	return inc, nil
 }
 
 // CloseIncident transitions an incident to closed.
-func (s *Service) CloseIncident(id, author string) (*models.Incident, error) {
-	inc, err := s.GetIncident(id)
+func (s *Service) CloseIncident(id, author, tenantID string) (*models.Incident, error) {
+	inc, err := s.GetIncident(id, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +274,7 @@ func (s *Service) CloseIncident(id, author string) (*models.Incident, error) {
 	now := time.Now()
 	inc.Status = models.StatusClosed
 	inc.ClosedAt = &now
-	s.store.UpdateIncident(inc)
+	s.store.UpdateIncident(inc, tenantID)
 
 	_ = s.store.AddTimelineEvent(&models.TimelineEvent{
 		ID:          uuid.New().String(),
@@ -277,19 +283,19 @@ func (s *Service) CloseIncident(id, author string) (*models.Incident, error) {
 		Type:        "closed",
 		Description: "Incident closed",
 		Author:      author,
-	})
+	}, tenantID)
 
 	return inc, nil
 }
 
 // GeneratePostmortem generates a postmortem document for a resolved incident.
-func (s *Service) GeneratePostmortem(incidentID string) (*models.Postmortem, error) {
-	inc, err := s.GetIncident(incidentID)
+func (s *Service) GeneratePostmortem(incidentID, tenantID string) (*models.Postmortem, error) {
+	inc, err := s.GetIncident(incidentID, tenantID)
 	if err != nil {
 		return nil, err
 	}
 
-	events := s.store.GetTimeline(incidentID)
+	events := s.store.GetTimeline(incidentID, tenantID)
 	sortedEvents := s.timeline.Build(events)
 
 	var mttd, mttr time.Duration
@@ -332,8 +338,8 @@ const aggregationKeyTag = "opsmesh.aggregation_key"
 //
 // resolved / closed 不参与归并：已结案的事故不该把复发的告警吞进去——那会让新一轮故障
 // 看起来"早就在处理了"。
-func (s *Service) findOpenIncidentByGroup(key string) *models.Incident {
-	for _, inc := range s.store.Incidents() {
+func (s *Service) findOpenIncidentByGroup(key, tenantID string) *models.Incident {
+	for _, inc := range s.store.Incidents(tenantID) {
 		if inc == nil {
 			continue
 		}
@@ -347,7 +353,7 @@ func (s *Service) findOpenIncidentByGroup(key string) *models.Incident {
 	return nil
 }
 
-func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
+func (s *Service) IngestAlert(alert *models.Alert, tenantID string) (*models.Incident, error) {
 	if alert == nil {
 		return nil, errors.New("alert is nil")
 	}
@@ -369,7 +375,7 @@ func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
 	// **每条告警都新建一个事故**，"聚合"这件事从来没成立过（10 条同类告警 = 10 个事故），
 	// 顺带让按告警数升级级别的条件永远只看得到 1 条。
 	groupingKey := result.IncidentID
-	inc := s.findOpenIncidentByGroup(groupingKey)
+	inc := s.findOpenIncidentByGroup(groupingKey, tenantID)
 	if inc == nil {
 		title := fmt.Sprintf("Incident for %s", alert.DeviceID)
 		firedAt := alert.Timestamp
@@ -379,7 +385,7 @@ func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
 			Severity:    alert.Severity,
 			DeviceIDs:   []string{alert.DeviceID},
 			OccurredAt:  &firedAt, // 告警触发时刻即最早已知故障时刻，MTTD 由此起算
-		})
+		}, tenantID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create incident: %w", err)
 		}
@@ -408,7 +414,7 @@ func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
 		inc.Severity = target
 	}
 
-	s.store.UpdateIncident(inc)
+	s.store.UpdateIncident(inc, tenantID)
 
 	_ = s.store.AddTimelineEvent(&models.TimelineEvent{
 		ID:          uuid.New().String(),
@@ -417,7 +423,7 @@ func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
 		Type:        "alert_ingested",
 		Description: "Alert ingested: " + alert.Message,
 		Author:      "system",
-	})
+	}, tenantID)
 	if escalated {
 		// 时间线单独记一条：升级是值班与复盘要看得到的事件，不是悄悄改字段。
 		_ = s.store.AddTimelineEvent(&models.TimelineEvent{
@@ -428,15 +434,15 @@ func (s *Service) IngestAlert(alert *models.Alert) (*models.Incident, error) {
 			Description: fmt.Sprintf("Severity escalated %s → %s（累计 %d 条告警，最高 %s）",
 				from, target, len(inc.AlertIDs), maxSeverity),
 			Author: "system",
-		})
+		}, tenantID)
 	}
 
 	return inc, nil
 }
 
 // GetResponseMetrics calculates response metrics across all incidents.
-func (s *Service) GetResponseMetrics() *models.ResponseMetrics {
-	incidents := s.store.Incidents()
+func (s *Service) GetResponseMetrics(tenantID string) *models.ResponseMetrics {
+	incidents := s.store.Incidents(tenantID)
 
 	metrics := &models.ResponseMetrics{
 		TotalIncidents: len(incidents),

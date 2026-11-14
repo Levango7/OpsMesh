@@ -3,6 +3,9 @@
 
 CREATE TABLE IF NOT EXISTS incidents (
     id VARCHAR(64) PRIMARY KEY,
+    -- tenant_id：行级租户隔离键（D4/issue #27 裁决②）。写入必钉（空租户拒绝），
+    -- 读取/列表/更新/删除一律按它过滤；timeline_events 不加列（归属由父单派生）。
+    tenant_id VARCHAR(64) NOT NULL DEFAULT '',
     title VARCHAR(255) NOT NULL,
     description TEXT,
     severity VARCHAR(16),
@@ -19,7 +22,8 @@ CREATE TABLE IF NOT EXISTS incidents (
     created_at DATETIME,
     updated_at DATETIME,
     INDEX idx_status (status),
-    INDEX idx_severity (severity)
+    INDEX idx_severity (severity),
+    INDEX idx_tenant (tenant_id)
 );
 
 CREATE TABLE IF NOT EXISTS timeline_events (

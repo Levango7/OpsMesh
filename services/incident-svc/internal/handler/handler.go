@@ -189,7 +189,11 @@ func (h *Handler) createIncident(w http.ResponseWriter, r *http.Request) {
 		in.OccurredAt = &t
 	}
 
-	inc, err := h.svc.CreateIncident(in)
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	inc, err := h.svc.CreateIncident(in, tid)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -198,7 +202,7 @@ func (h *Handler) createIncident(w http.ResponseWriter, r *http.Request) {
 	// 不变，经 UpdateIncident 持久化到同一模型）。
 	if req.Assignee != "" {
 		inc.Assignee = req.Assignee
-		if updated, err := h.svc.UpdateIncident(inc.ID, "", "", req.Assignee, ""); err == nil {
+		if updated, err := h.svc.UpdateIncident(inc.ID, "", "", req.Assignee, "", tid); err == nil {
 			inc = updated
 		}
 	}
@@ -210,7 +214,11 @@ func (h *Handler) listIncidents(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	severity := r.URL.Query().Get("severity")
 
-	incidents := h.svc.ListIncidents(status, models.Severity(severity))
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	incidents := h.svc.ListIncidents(status, models.Severity(severity), tid)
 	// 空列表必须序列化为 [] 而非 null：nil 切片直出 JSON 是 null，前端列表
 	// v-for/.map() 会炸。转正运行时验收（2026-10-03）实测发现——其余域
 	// （gpu/runbook/autoscaler）空列表都是 []，仅本域返回 null。
@@ -221,7 +229,11 @@ func (h *Handler) listIncidents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getIncident(w http.ResponseWriter, r *http.Request, id string) {
-	inc, err := h.svc.GetIncident(id)
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	inc, err := h.svc.GetIncident(id, tid)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -230,6 +242,10 @@ func (h *Handler) getIncident(w http.ResponseWriter, r *http.Request, id string)
 }
 
 func (h *Handler) updateIncident(w http.ResponseWriter, r *http.Request, id string) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Title       string `json:"title"`
 		Description string `json:"description"`
@@ -243,7 +259,7 @@ func (h *Handler) updateIncident(w http.ResponseWriter, r *http.Request, id stri
 	}
 
 	if req.Status != "" {
-		if _, err := h.svc.UpdateStatus(id, models.IncidentStatus(req.Status)); err != nil {
+		if _, err := h.svc.UpdateStatus(id, models.IncidentStatus(req.Status), tid); err != nil {
 			if err == service.ErrIncidentNotFound {
 				writeError(w, http.StatusNotFound, err.Error())
 				return
@@ -254,7 +270,7 @@ func (h *Handler) updateIncident(w http.ResponseWriter, r *http.Request, id stri
 		}
 	}
 
-	inc, err := h.svc.UpdateIncident(id, req.Title, req.Description, req.Assignee, models.Severity(req.Severity))
+	inc, err := h.svc.UpdateIncident(id, req.Title, req.Description, req.Assignee, models.Severity(req.Severity), tid)
 	if err != nil {
 		if err == service.ErrIncidentNotFound {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -264,7 +280,7 @@ func (h *Handler) updateIncident(w http.ResponseWriter, r *http.Request, id stri
 		// 事件的字段冻结守卫会拒绝空字段更新——此时返回迁移后的最新事件，
 		// 而非 409；不带 status 的纯字段更新撞冻结守卫仍按 409。
 		if err == service.ErrIncidentResolved && req.Status != "" {
-			if cur, gerr := h.svc.GetIncident(id); gerr == nil {
+			if cur, gerr := h.svc.GetIncident(id, tid); gerr == nil {
 				writeJSON(w, http.StatusOK, cur)
 				return
 			}
@@ -283,7 +299,11 @@ func (h *Handler) updateIncident(w http.ResponseWriter, r *http.Request, id stri
 }
 
 func (h *Handler) deleteIncident(w http.ResponseWriter, r *http.Request, id string) {
-	if err := h.svc.DeleteIncident(id); err != nil {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteIncident(id, tid); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -291,6 +311,10 @@ func (h *Handler) deleteIncident(w http.ResponseWriter, r *http.Request, id stri
 }
 
 func (h *Handler) addTimelineEvent(w http.ResponseWriter, r *http.Request, id string) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Type        string `json:"type"`
 		Description string `json:"description"`
@@ -309,7 +333,7 @@ func (h *Handler) addTimelineEvent(w http.ResponseWriter, r *http.Request, id st
 		description = req.Content
 	}
 
-	ev, err := h.svc.AddTimelineEvent(id, req.Type, description, req.Author)
+	ev, err := h.svc.AddTimelineEvent(id, req.Type, description, req.Author, tid)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -319,7 +343,11 @@ func (h *Handler) addTimelineEvent(w http.ResponseWriter, r *http.Request, id st
 }
 
 func (h *Handler) getTimeline(w http.ResponseWriter, r *http.Request, id string) {
-	events, err := h.svc.GetTimeline(id)
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	events, err := h.svc.GetTimeline(id, tid)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -328,6 +356,10 @@ func (h *Handler) getTimeline(w http.ResponseWriter, r *http.Request, id string)
 }
 
 func (h *Handler) resolveIncident(w http.ResponseWriter, r *http.Request, id string) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Author string `json:"author"`
 	}
@@ -336,7 +368,7 @@ func (h *Handler) resolveIncident(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
-	inc, err := h.svc.ResolveIncident(id, req.Author)
+	inc, err := h.svc.ResolveIncident(id, req.Author, tid)
 	if err != nil {
 		if err == service.ErrIncidentNotFound {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -350,6 +382,10 @@ func (h *Handler) resolveIncident(w http.ResponseWriter, r *http.Request, id str
 }
 
 func (h *Handler) closeIncident(w http.ResponseWriter, r *http.Request, id string) {
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Author string `json:"author"`
 	}
@@ -358,7 +394,7 @@ func (h *Handler) closeIncident(w http.ResponseWriter, r *http.Request, id strin
 		return
 	}
 
-	inc, err := h.svc.CloseIncident(id, req.Author)
+	inc, err := h.svc.CloseIncident(id, req.Author, tid)
 	if err != nil {
 		if err == service.ErrIncidentNotFound {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -372,7 +408,11 @@ func (h *Handler) closeIncident(w http.ResponseWriter, r *http.Request, id strin
 }
 
 func (h *Handler) getPostmortem(w http.ResponseWriter, r *http.Request, id string) {
-	pm, err := h.svc.GeneratePostmortem(id)
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	pm, err := h.svc.GeneratePostmortem(id, tid)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -392,7 +432,18 @@ func (h *Handler) handleAlertIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inc, err := h.svc.IngestAlert(&alert)
+	// 租户口径（issue #27 裁决②）：ingest 的租户由**上游客体**携带（推送方知道这条告警属于谁）；
+	// 若上游暂未带，则回退到网关注入的 X-Tenant-ID；两者都没有 ⇒ 400（不落无主数据）。
+	tid := strings.TrimSpace(alert.TenantID)
+	if tid == "" {
+		if hdr, ok := tenantFromRequest(w, r); ok {
+			tid = hdr
+		} else {
+			writeError(w, http.StatusBadRequest, "missing tenant_id in alert payload")
+			return
+		}
+	}
+	inc, err := h.svc.IngestAlert(&alert, tid)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -407,7 +458,11 @@ func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metrics := h.svc.GetResponseMetrics()
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	metrics := h.svc.GetResponseMetrics(tid)
 	writeJSON(w, http.StatusOK, metrics)
 }
 
@@ -420,7 +475,11 @@ func (h *Handler) handleIncidentsMetrics(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	m := h.svc.GetResponseMetrics()
+	tid, ok := tenantFromRequest(w, r)
+	if !ok {
+		return
+	}
+	m := h.svc.GetResponseMetrics(tid)
 	open := m.ActiveIncidents
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"mttd":     m.AvgMTTD.String(),
@@ -429,6 +488,17 @@ func (h *Handler) handleIncidentsMetrics(w http.ResponseWriter, r *http.Request)
 		"open":     open,
 		"resolved": m.ResolvedIncidents,
 	})
+}
+
+// tenantFromRequest 取租户：网关注入的 X-Tenant-ID（require-auth 模式下由网关剥离客户端自带值后重注入）。
+// 缺失即 401——**不兜底 default**：事件单是租户级数据（issue #27 裁决②），无主请求一律拒绝。
+func tenantFromRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+	tid := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
+	if tid == "" {
+		writeError(w, http.StatusUnauthorized, "missing X-Tenant-ID (tenant context required)")
+		return "", false
+	}
+	return tid, true
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

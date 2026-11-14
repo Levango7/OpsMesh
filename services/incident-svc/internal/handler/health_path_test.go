@@ -56,6 +56,7 @@ func TestHealthRejectsNonGet(t *testing.T) {
 
 	for _, path := range []string{"/health", "/api/v1/health"} {
 		req, err := http.NewRequest(http.MethodPost, ts.URL+path, nil)
+		req.Header.Set("X-Tenant-ID", "t1")
 		if err != nil {
 			t.Fatalf("new request %s: %v", path, err)
 		}

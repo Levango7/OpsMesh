@@ -37,13 +37,14 @@ func TestIncidentStoreMySQLRoundTrip(t *testing.T) {
 	detected := time.Now().UTC().Truncate(time.Second)
 	defer func() {
 		// DeleteIncident 自带级联（incidents + timeline_events），失败时再兜底清一次时间线。
-		if !w.DeleteIncident(id) {
+		if !w.DeleteIncident(id, "itest-tenant") {
 			t.Logf("cleanup: DeleteIncident(%s) 返回 false（可能本就没写成功）", id)
 		}
 	}()
 
 	created := w.CreateIncident(&models.Incident{
 		ID:          id,
+		TenantID:    "itest-tenant",
 		Title:       "itest roundtrip",
 		Description: "真库往返校验",
 		Severity:    models.SeverityHigh,
@@ -58,7 +59,7 @@ func TestIncidentStoreMySQLRoundTrip(t *testing.T) {
 		t.Fatal("CreateIncident 返回 nil")
 	}
 
-	got := r.GetIncident(id)
+	got := r.GetIncident(id, "itest-tenant")
 	if got == nil {
 		t.Fatal("新实例 GetIncident 未命中——事件没有真的落库")
 	}
@@ -86,11 +87,11 @@ func TestIncidentStoreMySQLRoundTrip(t *testing.T) {
 		Type:        "itest",
 		Description: "timeline roundtrip",
 		Author:      "itest",
-	})
+	}, "itest-tenant")
 	if ev == nil {
 		t.Fatal("AddTimelineEvent 返回 nil")
 	}
-	tl := r.GetTimeline(id)
+	tl := r.GetTimeline(id, "itest-tenant")
 	if len(tl) == 0 {
 		t.Fatal("新实例 GetTimeline 为空——时间线没有落库")
 	}
@@ -102,10 +103,10 @@ func TestIncidentStoreMySQLRoundTrip(t *testing.T) {
 	got.Status = models.StatusResolved
 	resolvedAt := time.Now().UTC().Truncate(time.Second)
 	got.ResolvedAt = &resolvedAt
-	if upd := w.UpdateIncident(got); upd == nil {
+	if upd := w.UpdateIncident(got, "itest-tenant"); upd == nil {
 		t.Fatal("UpdateIncident 返回 nil")
 	}
-	again := r.GetIncident(id)
+	again := r.GetIncident(id, "itest-tenant")
 	if again == nil {
 		t.Fatal("更新后新实例 GetIncident 未命中")
 	}
@@ -117,13 +118,13 @@ func TestIncidentStoreMySQLRoundTrip(t *testing.T) {
 	}
 
 	// 删除语义：删掉后新实例必须查不到。
-	if !w.DeleteIncident(id) {
+	if !w.DeleteIncident(id, "itest-tenant") {
 		t.Fatal("DeleteIncident 返回 false")
 	}
-	if r.GetIncident(id) != nil {
+	if r.GetIncident(id, "itest-tenant") != nil {
 		t.Fatal("删除后仍能查到事件——DELETE 没有落到库")
 	}
-	if len(r.GetTimeline(id)) != 0 {
+	if len(r.GetTimeline(id, "itest-tenant")) != 0 {
 		t.Fatal("删除后仍能查到时间线——级联删除没有生效")
 	}
 
