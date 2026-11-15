@@ -26,6 +26,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -54,6 +55,145 @@ var allowedVectorActions = map[string]bool{
 	"status":   true,
 	"scale":    true, // 扩缩容（cluster 模式）
 	"undeploy": true,
+}
+
+// validatedVectorDeploy / validatedVectorAction / validatedVectorCollection /
+// validatedVectorWrite / validatedVectorSearch 是白名单校验后的形态。
+// builder 只接受这几种类型 —— raw vectorDeployRequest / vectorOpsRequest /
+// vectorCollectionReq / vectorWriteReq / vectorSearchReq 无法被传入 builder。
+// 这样 builder 层上不可能自行传递未校验值，校验责任不留模糊地带。
+type validatedVectorDeploy struct {
+	Type, Version string
+}
+
+type validatedVectorAction struct {
+	Type     string
+	Action   string
+	Replicas int
+}
+
+type validatedVectorCollection struct {
+	Type       string
+	Action     string
+	Collection string
+	Dimension  int
+	Metric     string
+}
+
+type validatedVectorWrite struct {
+	Type       string
+	Collection string
+	ID         string
+	Vector     []float64
+	Payload    string
+}
+
+type validatedVectorSearch struct {
+	Type       string
+	Collection string
+	Vector     []float64
+	TopK       int
+}
+
+var allowedVectorCollectionActions = map[string]bool{"create": true, "delete": true, "list": true}
+var allowedVectorIndexActions = map[string]bool{"create": true, "delete": true, "list": true}
+var allowedVectorMigrateActions = map[string]bool{"export": true, "import": true}
+
+func validateVectorDeploy(req vectorDeployRequest) (validatedVectorDeploy, error) {
+	if !allowedVectorTypes[req.Type] {
+		return validatedVectorDeploy{}, errors.New("unsupported vector db type")
+	}
+	if req.Version != "" && !middlewareVersionRe.MatchString(req.Version) {
+		return validatedVectorDeploy{}, errors.New("invalid version")
+	}
+	return validatedVectorDeploy{Type: req.Type, Version: req.Version}, nil
+}
+
+func validateVectorAction(vecType, action string, req vectorOpsRequest) (validatedVectorAction, error) {
+	if !allowedVectorTypes[vecType] {
+		return validatedVectorAction{}, errors.New("unsupported vector db type")
+	}
+	if !allowedVectorActions[action] {
+		return validatedVectorAction{}, errors.New("unsupported action")
+	}
+	return validatedVectorAction{Type: vecType, Action: action, Replicas: req.Replicas}, nil
+}
+
+// validateVectorCollectionAction 同时服务于 Collection（create/delete/list）+ Index（create/delete/list）。
+// handler 调用前各自验证 action 白名单；validators 复用此函数。Migrate 不走此路径。
+func validateVectorCollectionAction(vecType string, req vectorCollectionReq, allowed map[string]bool) (validatedVectorCollection, error) {
+	if !allowedVectorTypes[vecType] {
+		return validatedVectorCollection{}, errors.New("unsupported vector db type")
+	}
+	if !allowed[req.Action] {
+		return validatedVectorCollection{}, errors.New("unsupported action")
+	}
+	if req.Action != "list" && !vectorCollectionRe.MatchString(req.Collection) {
+		return validatedVectorCollection{}, errors.New("invalid collection name")
+	}
+	if req.Action == "create" && req.Dimension <= 0 {
+		return validatedVectorCollection{}, errors.New("dimension must be positive")
+	}
+	if req.Action == "create" && req.Metric != "" {
+		if err := shellquote.ValidateName(req.Metric, 32); err != nil {
+			return validatedVectorCollection{}, fmt.Errorf("invalid metric: %w", err)
+		}
+	}
+	return validatedVectorCollection{Type: vecType, Action: req.Action, Collection: req.Collection, Dimension: req.Dimension, Metric: req.Metric}, nil
+}
+
+func validateVectorWrite(vecType string, req vectorWriteReq) (validatedVectorWrite, error) {
+	if !allowedVectorTypes[vecType] {
+		return validatedVectorWrite{}, errors.New("unsupported vector db type")
+	}
+	if !vectorCollectionRe.MatchString(req.Collection) {
+		return validatedVectorWrite{}, errors.New("invalid collection name")
+	}
+	if len(req.Vector) == 0 {
+		return validatedVectorWrite{}, errors.New("vector is required")
+	}
+	if _, err := opsIdentifier("vector id", req.ID); err != nil {
+		return validatedVectorWrite{}, err
+	}
+	if strings.TrimSpace(req.Payload) != "" {
+		if !json.Valid([]byte(req.Payload)) {
+			return validatedVectorWrite{}, errors.New("payload must be valid JSON")
+		}
+		if strings.Contains(req.Payload, "'") {
+			return validatedVectorWrite{}, errors.New("payload must not contain single quotes")
+		}
+	}
+	return validatedVectorWrite{Type: vecType, Collection: req.Collection, ID: req.ID, Vector: req.Vector, Payload: req.Payload}, nil
+}
+
+func validateVectorSearch(vecType string, req vectorSearchReq) (validatedVectorSearch, error) {
+	if !allowedVectorTypes[vecType] {
+		return validatedVectorSearch{}, errors.New("unsupported vector db type")
+	}
+	if !vectorCollectionRe.MatchString(req.Collection) {
+		return validatedVectorSearch{}, errors.New("invalid collection name")
+	}
+	if len(req.Vector) == 0 {
+		return validatedVectorSearch{}, errors.New("vector is required")
+	}
+	topK := req.TopK
+	if topK <= 0 {
+		topK = 10
+	}
+	return validatedVectorSearch{Type: vecType, Collection: req.Collection, Vector: req.Vector, TopK: topK}, nil
+}
+
+func validateVectorMigrate(vecType string, req vectorCollectionReq) (validatedVectorCollection, error) {
+	if !allowedVectorTypes[vecType] {
+		return validatedVectorCollection{}, errors.New("unsupported vector db type")
+	}
+	if !allowedVectorMigrateActions[req.Action] {
+		return validatedVectorCollection{}, errors.New("unsupported action (export/import)")
+	}
+	if !vectorCollectionRe.MatchString(req.Collection) {
+		return validatedVectorCollection{}, errors.New("invalid collection name")
+	}
+	return validatedVectorCollection{Type: vecType, Action: req.Action, Collection: req.Collection}, nil
 }
 
 // 向量集合名/库名正则。
@@ -172,21 +312,18 @@ func (s *Server) handleVectorDeploy(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if !allowedVectorTypes[req.Type] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported vector db type"})
-		return
-	}
-	if req.Version != "" && !middlewareVersionRe.MatchString(req.Version) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version"})
-		return
-	}
 	if req.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
+	vreq, verr := validateVectorDeploy(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
 
-	script := buildVectorDeployScript(req)
-	action := "vector_deploy_" + req.Type
+	script := buildVectorDeployScript(vreq)
+	action := "vector_deploy_" + vreq.Type
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, action)
 	if err != nil {
@@ -194,18 +331,16 @@ func (s *Server) handleVectorDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: vreq.Type,
 		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " mode=" + opsSQLString(req.Mode) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildVectorDeployScript(req vectorDeployRequest) string {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqType := req.Type
+func buildVectorDeployScript(vreq validatedVectorDeploy) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch vReqType {
+	switch vreq.Type {
 	case "milvus":
 		b.WriteString("# Milvus 部署（依赖 etcd + MinIO，stand-alone 用 docker-compose）\n")
 		b.WriteString("MILVUS_VERSION=${MILVUS_VERSION:-v2.4.0}\n")
@@ -238,14 +373,6 @@ func (s *Server) handleVectorAction(w http.ResponseWriter, r *http.Request, vecT
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedVectorTypes[vecType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported vector db type"})
-		return
-	}
-	if !allowedVectorActions[action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action"})
-		return
-	}
 	var req vectorOpsRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -255,10 +382,13 @@ func (s *Server) handleVectorAction(w http.ResponseWriter, r *http.Request, vecT
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	req.Type = vecType
-	req.Action = action
+	vreq, verr := validateVectorAction(vecType, action, req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
 
-	script := buildVectorActionScript(req)
+	script := buildVectorActionScript(vreq)
 	actionV, err := opsIdentifier("action", action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "vector.action."+vecType, err)
@@ -278,15 +408,13 @@ func (s *Server) handleVectorAction(w http.ResponseWriter, r *http.Request, vecT
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildVectorActionScript(req vectorOpsRequest) string {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqType, vReqAction, vReqReplicas := req.Type, req.Action, req.Replicas
+func buildVectorActionScript(vreq validatedVectorAction) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch vReqType {
+	switch vreq.Type {
 	case "milvus":
 		b.WriteString("# Milvus 启停/扩缩容\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("cd /opt && docker compose up -d || true\n")
 		case "stop":
@@ -296,14 +424,15 @@ func buildVectorActionScript(req vectorOpsRequest) string {
 		case "status":
 			b.WriteString("docker ps --filter name=milvus --format '{{.Names}}: {{.Status}}' || echo 'not running'\n")
 		case "scale":
-			if vReqReplicas <= 0 {
-				vReqReplicas = 1
+			replicas := vreq.Replicas
+			if replicas <= 0 {
+				replicas = 1
 			}
-			fmt.Fprintf(&b, "cd /opt && docker compose up -d --scale milvus-standalone=%d || true\n", vReqReplicas)
+			fmt.Fprintf(&b, "cd /opt && docker compose up -d --scale milvus-standalone=%d || true\n", replicas)
 		}
 	case "qdrant":
 		b.WriteString("# Qdrant 启停/扩缩容\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("docker start qdrant || true\n")
 		case "stop":
@@ -317,7 +446,7 @@ func buildVectorActionScript(req vectorOpsRequest) string {
 		}
 	case "pgvector":
 		b.WriteString("# pgvector 状态（基于 PostgreSQL）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("systemctl start postgresql || true\n")
 		case "stop":
@@ -330,7 +459,7 @@ func buildVectorActionScript(req vectorOpsRequest) string {
 			b.WriteString("echo 'pgvector 扩缩容：随 PostgreSQL 扩缩容（主从/citus）'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '向量库 %s %s 操作完成\n", vReqType, vReqAction)
+	fmt.Fprintf(&b, "echo '向量库 %s %s 操作完成\n", vreq.Type, vreq.Action)
 	return b.String()
 }
 
@@ -347,10 +476,6 @@ func (s *Server) handleVectorCollection(w http.ResponseWriter, r *http.Request, 
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedVectorTypes[vecType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported vector db type"})
-		return
-	}
 	var req vectorCollectionReq
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -360,59 +485,39 @@ func (s *Server) handleVectorCollection(w http.ResponseWriter, r *http.Request, 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	allowed := map[string]bool{"create": true, "delete": true, "list": true}
-	if !allowed[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (create/delete/list)"})
+	vreq, verr := validateVectorCollectionAction(vecType, req, allowedVectorCollectionActions)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	if req.Action != "list" && !vectorCollectionRe.MatchString(req.Collection) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid collection name"})
-		return
-	}
-	if req.Action == "create" && req.Dimension <= 0 {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "dimension must be positive"})
-		return
-	}
-	// 白名单（批次 17）：metric 直接进 curl 的 JSON 体（落点在 shell 单引号段内），
-	// 此前**无任何校验** ⇒ `COSINE'; id; echo '` 可闭合引号并执行。
-	// 空值保留原有语义（builder 里空则默认 COSINE/Cosine），故只校验非空。
-	if req.Action == "create" && req.Metric != "" {
-		if err := shellquote.ValidateName(req.Metric, 32); err != nil {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid metric: " + err.Error()})
-			return
-		}
-	}
-	req.Type = vecType
 
-	script := buildVectorCollectionScript(req)
+	script := buildVectorCollectionScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "vector_collection_"+req.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "vector.collection."+vecType, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_collection_" + req.Action, Target: req.Collection,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_collection_" + vreq.Action, Target: vreq.Collection,
 		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " type=" + opsSQLString(vecType) + " dim=" + opsSQLString(strconv.Itoa(req.Dimension))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildVectorCollectionScript(req vectorCollectionReq) string {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqType, vReqAction, vReqCollection, vReqDimension, vReqMetric := req.Type, req.Action, req.Collection, req.Dimension, req.Metric
+func buildVectorCollectionScript(vreq validatedVectorCollection) string {
+
 	var b strings.Builder
-	// 收口（批次 17）：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
-	collectionV, metricV := vReqCollection, vReqMetric
+	collectionV, metricV := vreq.Collection, vreq.Metric
 	b.WriteString("set -e\n")
-	switch vReqType {
+	switch vreq.Type {
 	case "milvus":
 		b.WriteString("# Milvus 集合管理（REST API，v2）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
 			if metricV == "" {
 				metricV = "COSINE"
 			}
-			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/create' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"dimension\":%d,\"metricType\":\"%s\"}'\n", collectionV, vReqDimension, metricV)
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/create' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"dimension\":%d,\"metricType\":\"%s\"}'\n", collectionV, vreq.Dimension, metricV)
 		case "delete":
 			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/collections/drop' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\"}'\n", collectionV)
 		case "list":
@@ -420,12 +525,12 @@ func buildVectorCollectionScript(req vectorCollectionReq) string {
 		}
 	case "qdrant":
 		b.WriteString("# Qdrant 集合管理（REST API）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
 			if metricV == "" {
 				metricV = "Cosine"
 			}
-			fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s' -H 'Content-Type: application/json' -d '{\"vectors\":{\"size\":%d,\"distance\":\"%s\"}}'\n", collectionV, vReqDimension, metricV)
+			fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s' -H 'Content-Type: application/json' -d '{\"vectors\":{\"size\":%d,\"distance\":\"%s\"}}'\n", collectionV, vreq.Dimension, metricV)
 		case "delete":
 			fmt.Fprintf(&b, "curl -s -X DELETE 'http://localhost:6333/collections/%s'\n", collectionV)
 		case "list":
@@ -433,16 +538,16 @@ func buildVectorCollectionScript(req vectorCollectionReq) string {
 		}
 	case "pgvector":
 		b.WriteString("# pgvector 表管理（SQL）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
-			fmt.Fprintf(&b, "psql -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS %s (id text PRIMARY KEY, embedding vector(%d), payload jsonb)' || echo '创建失败'\n", collectionV, vReqDimension)
+			fmt.Fprintf(&b, "psql -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS %s (id text PRIMARY KEY, embedding vector(%d), payload jsonb)' || echo '创建失败'\n", collectionV, vreq.Dimension)
 		case "delete":
 			fmt.Fprintf(&b, "psql -c 'DROP TABLE IF EXISTS %s' || echo '删除失败'\n", collectionV)
 		case "list":
 			b.WriteString("psql -c '\\dt'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '向量集合 %s 操作完成\n", vReqAction)
+	fmt.Fprintf(&b, "echo '向量集合 %s 操作完成\n", vreq.Action)
 	return b.String()
 }
 
@@ -459,10 +564,6 @@ func (s *Server) handleVectorWrite(w http.ResponseWriter, r *http.Request, vecTy
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedVectorTypes[vecType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported vector db type"})
-		return
-	}
 	var req vectorWriteReq
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -472,57 +573,32 @@ func (s *Server) handleVectorWrite(w http.ResponseWriter, r *http.Request, vecTy
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if !vectorCollectionRe.MatchString(req.Collection) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid collection name"})
+	vreq, verr := validateVectorWrite(vecType, req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	if len(req.Vector) == 0 {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "vector is required"})
-		return
-	}
-	// 白名单（批次 17）：id 进 milvus 的 JSON 与 pgvector 的 VALUES ('%s')，
-	// 此前**无任何校验** ⇒ 单引号可闭合 shell 串。opsIdentifier 允许
-	// [A-Za-z0-9][A-Za-z0-9._/:-]{0,255}（覆盖 uuid / int64 / 文本主键），不含 shell 元字符。
-	if _, err := opsIdentifier("vector id", req.ID); err != nil {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	// 白名单（批次 17）：payload 原样进 curl 的 -d 单引号段（nonEmptyPayload 不转义）
-	// ⇒ 必须是合法 JSON，且不含单引号（否则闭合 shell 串）。
-	if strings.TrimSpace(req.Payload) != "" {
-		if !json.Valid([]byte(req.Payload)) {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "payload must be valid JSON"})
-			return
-		}
-		if strings.Contains(req.Payload, "'") {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "payload must not contain single quotes"})
-			return
-		}
-	}
-	req.Type = vecType
 
-	script := buildVectorWriteScript(req)
+	script := buildVectorWriteScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "vector_write")
 	if err != nil {
 		writeInternalError(r.Context(), w, "vector.write."+vecType, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_write", Target: req.Collection,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_write", Target: vreq.Collection,
 		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " id=" + opsSQLString(req.ID) + " dim=" + opsSQLString(strconv.Itoa(len(req.Vector)))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildVectorWriteScript(req vectorWriteReq) string {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqType, vReqCollection, vReqID, vReqVector, vReqPayload := req.Type, req.Collection, req.ID, req.Vector, req.Payload
+func buildVectorWriteScript(vreq validatedVectorWrite) string {
+
 	var b strings.Builder
-	// 收口（批次 17）：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
-	collectionV, idV, payloadV := vReqCollection, vReqID, vReqPayload
+	collectionV, idV, payloadV := vreq.Collection, vreq.ID, vreq.Payload
 	b.WriteString("set -e\n")
-	vecJSON := floatSliceToJSON(vReqVector)
-	switch vReqType {
+	vecJSON := floatSliceToJSON(vreq.Vector)
+	switch vreq.Type {
 	case "milvus":
 		b.WriteString("# Milvus 向量写入\n")
 		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/entities/insert' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"data\":[{\"id\":\"%s\",\"vector\":%s}]}'\n", collectionV, idV, vecJSON)
@@ -550,10 +626,6 @@ func (s *Server) handleVectorSearch(w http.ResponseWriter, r *http.Request, vecT
 	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
-	if !allowedVectorTypes[vecType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported vector db type"})
-		return
-	}
 	var req vectorSearchReq
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -563,48 +635,40 @@ func (s *Server) handleVectorSearch(w http.ResponseWriter, r *http.Request, vecT
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if !vectorCollectionRe.MatchString(req.Collection) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid collection name"})
+	vreq, verr := validateVectorSearch(vecType, req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	if len(req.Vector) == 0 {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "vector is required"})
-		return
-	}
-	if req.TopK <= 0 {
-		req.TopK = 10
-	}
-	req.Type = vecType
 
-	script := buildVectorSearchScript(req)
+	script := buildVectorSearchScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "vector_search")
 	if err != nil {
 		writeInternalError(r.Context(), w, "vector.search."+vecType, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_search", Target: req.Collection,
-		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " topK=" + opsSQLString(strconv.Itoa(req.TopK))),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_search", Target: vreq.Collection,
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " topK=" + opsSQLString(strconv.Itoa(vreq.TopK))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildVectorSearchScript(req vectorSearchReq) string {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqType, vReqCollection, vReqTopK, vReqVector := req.Type, req.Collection, req.TopK, req.Vector
+func buildVectorSearchScript(vreq validatedVectorSearch) string {
+
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	vecJSON := floatSliceToJSON(vReqVector)
-	switch vReqType {
+	vecJSON := floatSliceToJSON(vreq.Vector)
+	switch vreq.Type {
 	case "milvus":
 		b.WriteString("# Milvus 相似检索\n")
-		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/entities/search' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"data\":[%s],\"limit\":%d}'\n", vReqCollection, vecJSON, vReqTopK)
+		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/entities/search' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"data\":[%s],\"limit\":%d}'\n", vreq.Collection, vecJSON, vreq.TopK)
 	case "qdrant":
 		b.WriteString("# Qdrant 相似检索\n")
-		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:6333/collections/%s/points/search' -H 'Content-Type: application/json' -d '{\"vector\":%s,\"limit\":%d}'\n", vReqCollection, vecJSON, vReqTopK)
+		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:6333/collections/%s/points/search' -H 'Content-Type: application/json' -d '{\"vector\":%s,\"limit\":%d}'\n", vreq.Collection, vecJSON, vreq.TopK)
 	case "pgvector":
 		b.WriteString("# pgvector 相似检索（L2 距离 <->）\n")
-		fmt.Fprintf(&b, "psql -c 'SELECT id, embedding <-> ''%s'' AS distance FROM %s ORDER BY distance LIMIT %d' || echo '检索失败'\n", vecJSON, vReqCollection, vReqTopK)
+		fmt.Fprintf(&b, "psql -c 'SELECT id, embedding <-> ''%s'' AS distance FROM %s ORDER BY distance LIMIT %d' || echo '检索失败'\n", vecJSON, vreq.Collection, vreq.TopK)
 	}
 	b.WriteString("echo '向量检索完成'\n")
 	return b.String()
@@ -623,10 +687,6 @@ func (s *Server) handleVectorIndex(w http.ResponseWriter, r *http.Request, vecTy
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedVectorTypes[vecType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported vector db type"})
-		return
-	}
 	var req vectorCollectionReq
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -636,68 +696,62 @@ func (s *Server) handleVectorIndex(w http.ResponseWriter, r *http.Request, vecTy
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	allowed := map[string]bool{"create": true, "delete": true, "list": true}
-	if !allowed[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (create/delete/list)"})
+	vreq, verr := validateVectorCollectionAction(vecType, req, allowedVectorIndexActions)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	if !vectorCollectionRe.MatchString(req.Collection) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid collection name"})
-		return
-	}
-	req.Type = vecType
 
-	script := buildVectorIndexScript(req)
+	script := buildVectorIndexScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "vector_index_"+req.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "vector.index."+vecType, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_index_" + req.Action, Target: req.Collection,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_index_" + vreq.Action, Target: vreq.Collection,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildVectorIndexScript(req vectorCollectionReq) string {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqType, vReqAction, vReqCollection := req.Type, req.Action, req.Collection
+func buildVectorIndexScript(vreq validatedVectorCollection) string {
+
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch vReqType {
+	switch vreq.Type {
 	case "milvus":
 		b.WriteString("# Milvus 索引管理（IVF_FLAT / HNSW）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
-			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/create' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"indexParams\":[{\"fieldName\":\"vector\",\"indexType\":\"HNSW\",\"metricType\":\"COSINE\"}]}'\n", vReqCollection)
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/create' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"indexParams\":[{\"fieldName\":\"vector\",\"indexType\":\"HNSW\",\"metricType\":\"COSINE\"}]}'\n", vreq.Collection)
 		case "delete":
-			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/drop' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"indexName\":\"vector\"}'\n", vReqCollection)
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/drop' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\",\"indexName\":\"vector\"}'\n", vreq.Collection)
 		case "list":
-			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/list' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\"}'\n", vReqCollection)
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:19530/v2/vectordb/indexes/list' -H 'Content-Type: application/json' -d '{\"collectionName\":\"%s\"}'\n", vreq.Collection)
 		}
 	case "qdrant":
 		b.WriteString("# Qdrant 索引管理（payload 字段索引）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
-			fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s/index' -H 'Content-Type: application/json' -d '{\"field_name\":\"payload\",\"field_schema\":\"keyword\"}'\n", vReqCollection)
+			fmt.Fprintf(&b, "curl -s -X PUT 'http://localhost:6333/collections/%s/index' -H 'Content-Type: application/json' -d '{\"field_name\":\"payload\",\"field_schema\":\"keyword\"}'\n", vreq.Collection)
 		case "delete":
-			fmt.Fprintf(&b, "curl -s -X DELETE 'http://localhost:6333/collections/%s/index/payload'\n", vReqCollection)
+			fmt.Fprintf(&b, "curl -s -X DELETE 'http://localhost:6333/collections/%s/index/payload'\n", vreq.Collection)
 		case "list":
-			fmt.Fprintf(&b, "curl -s 'http://localhost:6333/collections/%s'\n", vReqCollection)
+			fmt.Fprintf(&b, "curl -s 'http://localhost:6333/collections/%s'\n", vreq.Collection)
 		}
 	case "pgvector":
 		b.WriteString("# pgvector 索引管理（IVFFlat / HNSW）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
-			fmt.Fprintf(&b, "psql -c 'CREATE INDEX ON %s USING hnsw (embedding vector_cosine_ops)' || echo '创建索引失败'\n", vReqCollection)
+			fmt.Fprintf(&b, "psql -c 'CREATE INDEX ON %s USING hnsw (embedding vector_cosine_ops)' || echo '创建索引失败'\n", vreq.Collection)
 		case "delete":
-			fmt.Fprintf(&b, "psql -c 'DROP INDEX IF EXISTS %s_embedding_idx'\n", vReqCollection)
+			fmt.Fprintf(&b, "psql -c 'DROP INDEX IF EXISTS %s_embedding_idx'\n", vreq.Collection)
 		case "list":
 			fmt.Fprintf(&b, "psql -c '\\di'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '向量索引 %s 操作完成\n", vReqAction)
+	fmt.Fprintf(&b, "echo '向量索引 %s 操作完成\n", vreq.Action)
 	return b.String()
 }
 
@@ -714,10 +768,6 @@ func (s *Server) handleVectorMigrate(w http.ResponseWriter, r *http.Request, vec
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedVectorTypes[vecType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported vector db type"})
-		return
-	}
 	var req vectorCollectionReq
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -727,62 +777,56 @@ func (s *Server) handleVectorMigrate(w http.ResponseWriter, r *http.Request, vec
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	allowed := map[string]bool{"export": true, "import": true}
-	if !allowed[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (export/import)"})
+	vreq, verr := validateVectorMigrate(vecType, req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	if !vectorCollectionRe.MatchString(req.Collection) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid collection name"})
-		return
-	}
-	req.Type = vecType
 
-	script := buildVectorMigrateScript(req)
+	script := buildVectorMigrateScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "vector_migrate_"+req.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "vector.migrate."+vecType, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_migrate_" + req.Action, Target: req.Collection,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "vector_migrate_" + vreq.Action, Target: vreq.Collection,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildVectorMigrateScript(req vectorCollectionReq) string {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqType, vReqAction, vReqCollection := req.Type, req.Action, req.Collection
+func buildVectorMigrateScript(vreq validatedVectorCollection) string {
+
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch vReqType {
+	switch vreq.Type {
 	case "milvus":
 		b.WriteString("# Milvus 迁移（milvus-backup 工具）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "export":
-			fmt.Fprintf(&b, "milvus-backup create -n backup_%s -c %s || echo '导出失败，需配置 milvus-backup'\n", vReqCollection, vReqCollection)
+			fmt.Fprintf(&b, "milvus-backup create -n backup_%s -c %s || echo '导出失败，需配置 milvus-backup'\n", vreq.Collection, vreq.Collection)
 		case "import":
-			fmt.Fprintf(&b, "milvus-backup restore -n backup_%s -c %s || echo '导入失败，需配置 milvus-backup'\n", vReqCollection, vReqCollection)
+			fmt.Fprintf(&b, "milvus-backup restore -n backup_%s -c %s || echo '导入失败，需配置 milvus-backup'\n", vreq.Collection, vreq.Collection)
 		}
 	case "qdrant":
 		b.WriteString("# Qdrant 迁移（快照 snapshot）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "export":
-			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:6333/collections/%s/snapshots'\n", vReqCollection)
+			fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:6333/collections/%s/snapshots'\n", vreq.Collection)
 		case "import":
-			fmt.Fprintf(&b, "echo 'Qdrant 导入：PUT /collections/%s/snapshots/upload（需上传快照文件）'\n", vReqCollection)
+			fmt.Fprintf(&b, "echo 'Qdrant 导入：PUT /collections/%s/snapshots/upload（需上传快照文件）'\n", vreq.Collection)
 		}
 	case "pgvector":
 		b.WriteString("# pgvector 迁移（pg_dump/restore）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "export":
-			fmt.Fprintf(&b, "pg_dump -t %s > /tmp/%s_dump.sql || echo '导出失败'\n", vReqCollection, vReqCollection)
+			fmt.Fprintf(&b, "pg_dump -t %s > /tmp/%s_dump.sql || echo '导出失败'\n", vreq.Collection, vreq.Collection)
 		case "import":
-			fmt.Fprintf(&b, "psql < /tmp/%s_dump.sql || echo '导入失败'\n", vReqCollection)
+			fmt.Fprintf(&b, "psql < /tmp/%s_dump.sql || echo '导入失败'\n", vreq.Collection)
 		}
 	}
-	fmt.Fprintf(&b, "echo '向量库迁移 %s 操作完成\n", vReqAction)
+	fmt.Fprintf(&b, "echo '向量库迁移 %s 操作完成\n", vreq.Action)
 	return b.String()
 }
 

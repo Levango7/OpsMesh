@@ -126,6 +126,13 @@
 - **能力变化**：**无**（不新增/收紧任何白名单）。
 - **守卫**：`internal/controlplane/b30_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**（zk cmd 注入载荷必须 **400**）；③合法值不被误拒。经**变异测试**（实参改回 `req.Action` ⇒ 判红；复原 ⇒ 绿）。
 - **验证**：`gofmt -l .` clean；`golangci-lint run ./...` ⇒ **0 issues**；`go build`/`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（含 TestB30 三例）；盘点器实测中间件族命中 **→ 0**，全仓 **A/B 0**（不增）。
+## [Arch-vector_ops 型式收口（架构级迁移，第二个样板）] — 2026-11-15（vector_ops.go 7 builder 全部改为 validated*）
+
+- **背景**：db_ops.go 作为架构级样板落地后，本批迁移 vector_ops.go：所有 `build*Script` 入参改为 `validated*`，原始 `vectorDeployRequest / vectorOpsRequest / vectorCollectionReq / vectorWriteReq / vectorSearchReq` 彻底不再能到达 builder——编译期阻断，而非字符串/白名单匹配。
+- **模板**：`validateVectorDeploy / validateVectorAction / validateVectorCollectionAction / validateVectorWrite / validateVectorSearch / validateVectorMigrate` 构造函数在 handler 内调用；builder 内零 raw refs（实测 0 个 `req.`/`vReq` 残留）。
+- **范围**：7 个 builder（Deploy/Action/Collection/Write/Search/Index/Migrate）+ 9 个 handler 更新为调用 validator；`b31_injection_test.go` 重写为 db_ops 同型守卫（入参类型必须 validated*，原始 req 类型不得出现）。
+- **不变项**：白名单语义、错误响应形状（400 `{"error":...}`）、脚本逐字节不变、`DeviceID` 保留 raw（仅 handler 层使用）。
+- **验证**：`gofmt -l .` clean；`golangci-lint run ./...` ⇒ **0 issues**；`go build`/`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（controlplane 68.5s 全绿）。
 ## [Unreleased-批次 31 形态面：vector_ops] — 2026-11-15（vector_ops.go ~60 处「已校验但直引」）
 
 - **背景**：批次 17 收口后全仓**真洞归零**；本批落形态面 `vector_ops.go`（向量数据库：Milvus / Qdrant / pgvector / Chroma / Weaviate / Elasticsearch）。形态面 = 字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`。
