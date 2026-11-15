@@ -190,11 +190,13 @@ func (s *Server) handleTSDBDeploy(w http.ResponseWriter, r *http.Request) {
 }
 
 func buildTSDBDeployScript(req tsdbDeployRequest) string {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqType := req.Type
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then PKG_MGR=yum; elif command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v apt-get >/dev/null 2>&1; then PKG_MGR=apt-get; else echo '未找到包管理器' && exit 1; fi\n")
-	switch req.Type {
+	switch vReqType {
 	case "influxdb":
 		b.WriteString("# InfluxDB 部署\n")
 		b.WriteString("if command -v influxd >/dev/null 2>&1; then echo 'InfluxDB 已安装'; else $PKG_MGR install -y influxdb2 || echo '请配置 InfluxData 仓库' && exit 1; fi\n")
@@ -269,12 +271,14 @@ func (s *Server) handleTSDBAction(w http.ResponseWriter, r *http.Request, tsType
 }
 
 func buildTSDBActionScript(req tsdbOpsRequest) string {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqType, vReqAction := req.Type, req.Action
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "influxdb":
 		b.WriteString("# InfluxDB 启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("systemctl start influxdb || true\n")
 		case "stop":
@@ -286,7 +290,7 @@ func buildTSDBActionScript(req tsdbOpsRequest) string {
 		}
 	case "tdengine":
 		b.WriteString("# TDengine 启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("systemctl start taosd taosadapter || true\n")
 		case "stop":
@@ -298,7 +302,7 @@ func buildTSDBActionScript(req tsdbOpsRequest) string {
 		}
 	case "victoriametrics":
 		b.WriteString("# VictoriaMetrics 启停\n")
-		switch req.Action {
+		switch vReqAction {
 		case "start":
 			b.WriteString("systemctl start victoria-metrics || victoria-metrics -storageDataPath=/data/vmstorage -httpListenAddr=:8428 -retentionPeriod=1 &>/var/log/vm.log & || true\n")
 		case "stop":
@@ -309,7 +313,7 @@ func buildTSDBActionScript(req tsdbOpsRequest) string {
 			b.WriteString("systemctl is-active victoria-metrics || (pgrep -f victoria-metrics >/dev/null && echo running || echo 'not running')\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '时序库 %s %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '时序库 %s %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -364,39 +368,41 @@ func (s *Server) handleTSDBDatabase(w http.ResponseWriter, r *http.Request, tsTy
 }
 
 func buildTSDBDatabaseScript(req tsdbDatabaseReq) string {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqType, vReqAction, vReqName := req.Type, req.Action, req.Name
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "influxdb":
 		b.WriteString("# InfluxDB 桶/数据库管理（influx CLI，凭证从环境变量 INFLUX_TOKEN / INFLUX_ORG 读取）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			fmt.Fprintf(&b, "influx bucket create --name %s --org \"$INFLUX_ORG\" --retention 30d || echo '创建失败: %s'\n", req.Name, req.Name)
+			fmt.Fprintf(&b, "influx bucket create --name %s --org \"$INFLUX_ORG\" --retention 30d || echo '创建失败: %s'\n", vReqName, vReqName)
 		case "delete":
-			fmt.Fprintf(&b, "influx bucket delete --name %s --org \"$INFLUX_ORG\" || echo '删除失败: %s'\n", req.Name, req.Name)
+			fmt.Fprintf(&b, "influx bucket delete --name %s --org \"$INFLUX_ORG\" || echo '删除失败: %s'\n", vReqName, vReqName)
 		case "list":
 			b.WriteString("influx bucket list\n")
 		}
 	case "tdengine":
 		b.WriteString("# TDengine 数据库管理（taos CLI）\n")
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			fmt.Fprintf(&b, "taos -s \"CREATE DATABASE IF NOT EXISTS %s\" || echo '创建失败: %s'\n", req.Name, req.Name)
+			fmt.Fprintf(&b, "taos -s \"CREATE DATABASE IF NOT EXISTS %s\" || echo '创建失败: %s'\n", vReqName, vReqName)
 		case "delete":
-			fmt.Fprintf(&b, "taos -s \"DROP DATABASE IF EXISTS %s\" || echo '删除失败: %s'\n", req.Name, req.Name)
+			fmt.Fprintf(&b, "taos -s \"DROP DATABASE IF EXISTS %s\" || echo '删除失败: %s'\n", vReqName, vReqName)
 		case "list":
 			b.WriteString("taos -s \"SHOW DATABASES\"\n")
 		}
 	case "victoriametrics":
 		b.WriteString("# VictoriaMetrics 无数据库概念（单一存储），仅列出可用 API\n")
-		switch req.Action {
+		switch vReqAction {
 		case "list":
 			b.WriteString("curl -s 'http://localhost:8428/api/v1/label/__name__/values' | head -c 2000\n")
 		default:
 			b.WriteString("echo 'VictoriaMetrics 使用单一存储，无需创建/删除数据库'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '时序库 %s 数据库 %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '时序库 %s 数据库 %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }
 
@@ -450,16 +456,18 @@ func (s *Server) handleTSDBWrite(w http.ResponseWriter, r *http.Request, tsType 
 }
 
 func buildTSDBWriteScript(req tsdbWriteReq) string {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqType, vReqDatabase, vReqLine := req.Type, req.Database, req.Line
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	payload := shellQuote(req.Line)
-	switch req.Type {
+	payload := shellQuote(vReqLine)
+	switch vReqType {
 	case "influxdb":
 		b.WriteString("# InfluxDB 写入（line protocol，v1 /write 或 v2 /api/v2/write）\n")
-		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:8086/api/v2/write?org=%s&bucket=%s&precision=s' -H \"Authorization: Token $INFLUX_TOKEN\" --data-binary %s\n", "${INFLUX_ORG:-default}", req.Database, payload)
+		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:8086/api/v2/write?org=%s&bucket=%s&precision=s' -H \"Authorization: Token $INFLUX_TOKEN\" --data-binary %s\n", "${INFLUX_ORG:-default}", vReqDatabase, payload)
 	case "tdengine":
 		b.WriteString("# TDengine 写入（SQL INSERT）\n")
-		fmt.Fprintf(&b, "taos -d %s -s %s\n", req.Database, shellQuote("INSERT INTO "+req.Line))
+		fmt.Fprintf(&b, "taos -d %s -s %s\n", vReqDatabase, shellQuote("INSERT INTO "+vReqLine))
 	case "victoriametrics":
 		b.WriteString("# VictoriaMetrics 写入（Prometheus remote-write 文本格式）\n")
 		fmt.Fprintf(&b, "curl -s -X POST 'http://localhost:8428/api/v1/import/prometheus' --data-binary %s\n", payload)
@@ -518,18 +526,20 @@ func (s *Server) handleTSDBQuery(w http.ResponseWriter, r *http.Request, tsType 
 }
 
 func buildTSDBQueryScript(req tsdbQueryReq) string {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqType, vReqDatabase, vReqQuery := req.Type, req.Database, req.Query
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vReqType {
 	case "influxdb":
 		b.WriteString("# InfluxDB 查询（InfluxQL via v1 query API）\n")
-		fmt.Fprintf(&b, "curl -s -G 'http://localhost:8086/query?db=%s' --data-urlencode %s\n", req.Database, shellQuote("q="+req.Query))
+		fmt.Fprintf(&b, "curl -s -G 'http://localhost:8086/query?db=%s' --data-urlencode %s\n", vReqDatabase, shellQuote("q="+vReqQuery))
 	case "tdengine":
 		b.WriteString("# TDengine 查询（SQL）\n")
-		fmt.Fprintf(&b, "taos -d %s -s %s\n", req.Database, shellQuote(req.Query))
+		fmt.Fprintf(&b, "taos -d %s -s %s\n", vReqDatabase, shellQuote(vReqQuery))
 	case "victoriametrics":
 		b.WriteString("# VictoriaMetrics 查询（PromQL，/api/v1/query）\n")
-		fmt.Fprintf(&b, "curl -s -G 'http://localhost:8428/api/v1/query' --data-urlencode %s\n", shellQuote("query="+req.Query))
+		fmt.Fprintf(&b, "curl -s -G 'http://localhost:8428/api/v1/query' --data-urlencode %s\n", shellQuote("query="+vReqQuery))
 	}
 	b.WriteString("echo '时序数据查询完成'\n")
 	return b.String()

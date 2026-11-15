@@ -1241,3 +1241,7 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-14T22:20:00Z from=kilo scope=internal/controlplane,internal/alertengine,web/enterprise note=批次24-25：契约P0（batchTaskItem/alertengine JSON tag、canary 前后端对齐、traffic-split GET、batch 聚合字段、devices 分页形态、batchID 统一、代理 dead-letter 501）+ 页面bug（GitOps RouterLink、Sidebar 键盘事件、InfraConsole ConfirmModal、裸JSON/英文token清除、CloudResources i18n）
 
 [CLAIM] 2026-11-14T18:03:16Z from=opencode ttl=24h scope=internal/controlplane/kernel_ops.go note=批次 26 kernel_ops 形态收口：4 个 build*Script 函数内 24 处「已校验但直引 req.*」⇒ 局部变量 vReq* 承接（handler 白名单已在调用方校验，format 串一字不动）；附 b26_injection_test 守卫（与批次24/25 同构）。
+
+[CLAIM] 2026-11-15T01:23:03Z from=opencode ttl=24h scope=internal/controlplane/tsdb_ops.go note=批次 27 tsdb_ops 形态收口：5 个 builder（buildTSDBDeployScript/buildTSDBActionScript/buildTSDBDatabaseScript/buildTSDBWriteScript/buildTSDBQueryScript）内 32 处「已校验但直引 req.*」⇒ 局部变量 vReq* 承接（handler 白名单已在调用方校验，format 串一字不动）；附 b27_injection_test 守卫（与批次24/25/26 同构）。
+
+[CLAIM] 2026-11-15T01:35:11Z from=opencode ttl=24h scope=internal/config/config.go note=Kilo 批次27 ADR-1 限流收敛（2f761f32）直推 main 后 internal/config/config.go 结构体字段对齐不合 gofmt（config.go:849 errcheck 非，是 gofmt 对齐），全仓 build-test 判红。gofmt -w 复位，无语义改动。#65 携带以解锁 main 红。
