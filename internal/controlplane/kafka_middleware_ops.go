@@ -73,19 +73,17 @@ func (s *Server) handleKafkaConsumerGroup(w http.ResponseWriter, r *http.Request
 
 func buildKafkaConsumerGroupScript(req kafkaConsumerGroupReq) string {
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	groupV := req.Group
-	actionV := req.Action
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqAction, vReqGroup := req.Action, req.Group
 	b.WriteString("set -e\n")
 	b.WriteString("if [ -z \"$KAFKA_OPTS\" ]; then KAFKA_OPTS=\"--bootstrap-server localhost:9092\"; fi\n")
-	switch req.Action {
+	switch vReqAction {
 	case "list":
 		b.WriteString("kafka-consumer-groups.sh $KAFKA_OPTS --list\n")
 	case "describe":
-		fmt.Fprintf(&b, "kafka-consumer-groups.sh $KAFKA_OPTS --describe --group %s\n", groupV)
+		fmt.Fprintf(&b, "kafka-consumer-groups.sh $KAFKA_OPTS --describe --group %s\n", vReqGroup)
 	}
-	fmt.Fprintf(&b, "echo 'Kafka Consumer Group %s 操作完成\n", actionV)
+	fmt.Fprintf(&b, "echo 'Kafka Consumer Group %s 操作完成\n", vReqAction)
 	return b.String()
 }
 
@@ -148,27 +146,25 @@ func (s *Server) handleKafkaTopic(w http.ResponseWriter, r *http.Request) {
 
 func buildKafkaTopicScript(req kafkaTopicReq) string {
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	topicV := req.Topic
-	actionV := req.Action
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqAction, vReqTopic, vReqPartitions, vReqReplicas := req.Action, req.Topic, req.Partitions, req.Replicas
 	b.WriteString("set -e\n")
 	b.WriteString("BOOTSTRAP=localhost:9092\n")
-	switch req.Action {
+	switch vReqAction {
 	case "create":
-		if req.Partitions <= 0 {
-			req.Partitions = 1
+		if vReqPartitions <= 0 {
+			vReqPartitions = 1
 		}
-		if req.Replicas <= 0 {
-			req.Replicas = 1
+		if vReqReplicas <= 0 {
+			vReqReplicas = 1
 		}
-		fmt.Fprintf(&b, "kafka-topics.sh --create --topic %s --partitions %d --replication-factor %d --bootstrap-server $BOOTSTRAP\n", topicV, req.Partitions, req.Replicas)
+		fmt.Fprintf(&b, "kafka-topics.sh --create --topic %s --partitions %d --replication-factor %d --bootstrap-server $BOOTSTRAP\n", vReqTopic, vReqPartitions, vReqReplicas)
 	case "delete":
-		fmt.Fprintf(&b, "kafka-topics.sh --delete --topic %s --bootstrap-server $BOOTSTRAP\n", topicV)
+		fmt.Fprintf(&b, "kafka-topics.sh --delete --topic %s --bootstrap-server $BOOTSTRAP\n", vReqTopic)
 	case "list":
 		b.WriteString("kafka-topics.sh --list --bootstrap-server $BOOTSTRAP\n")
 	}
-	fmt.Fprintf(&b, "echo 'Kafka Topic %s 操作完成\n", actionV)
+	fmt.Fprintf(&b, "echo 'Kafka Topic %s 操作完成\n", vReqAction)
 	return b.String()
 }
 

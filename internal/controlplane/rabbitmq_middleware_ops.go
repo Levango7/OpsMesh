@@ -70,69 +70,67 @@ func (s *Server) handleRabbitMQResource(w http.ResponseWriter, r *http.Request, 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (create/delete/list)"})
 		return
 	}
-	actionV, err := opsIdentifier("action", req.Action)
+	vReqAction, err := opsIdentifier("action", req.Action)
 	if err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	script := buildRabbitMQScript(req, resource)
-	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, fmt.Sprintf("rabbitmq_%s_%s", resource, actionV))
+	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, fmt.Sprintf("rabbitmq_%s_%s", resource, vReqAction))
 	if err != nil {
 		writeInternalError(r.Context(), w, "middleware.rabbitmq."+resource, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: fmt.Sprintf("rabbitmq_%s_%s", resource, actionV), Target: req.Name,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: fmt.Sprintf("rabbitmq_%s_%s", resource, vReqAction), Target: req.Name,
 		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " vhost=" + opsSQLString(req.Vhost)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
 func buildRabbitMQScript(req rabbitMQReq, resource string) string {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqAction, vReqName, vReqVhost := req.Action, req.Name, req.Vhost
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	vhostV := req.Vhost
-	actionV := req.Action
 	b.WriteString("set -e\n")
-	fmt.Fprintf(&b, "VHOST=%q\n", vhostV)
+	fmt.Fprintf(&b, "VHOST=%q\n", vReqVhost)
 	switch resource {
 	case "vhost":
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			fmt.Fprintf(&b, "rabbitmqctl add_vhost %s\n", shellQuote(req.Name))
+			fmt.Fprintf(&b, "rabbitmqctl add_vhost %s\n", shellQuote(vReqName))
 		case "delete":
-			fmt.Fprintf(&b, "rabbitmqctl delete_vhost %s\n", shellQuote(req.Name))
+			fmt.Fprintf(&b, "rabbitmqctl delete_vhost %s\n", shellQuote(vReqName))
 		case "list":
 			b.WriteString("rabbitmqctl list_vhosts\n")
 		}
 	case "queue":
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			if req.Name == "" {
+			if vReqName == "" {
 				b.WriteString("echo 'queue create 需指定 queue 名称' && exit 1\n")
 			} else {
-				fmt.Fprintf(&b, "rabbitmqctl declare_queue name=%s vhost=%s\n", shellQuote(req.Name), vhostV)
+				fmt.Fprintf(&b, "rabbitmqctl declare_queue name=%s vhost=%s\n", shellQuote(vReqName), vReqVhost)
 			}
 		case "delete":
-			fmt.Fprintf(&b, "rabbitmqctl delete_queue name=%s vhost=%s\n", shellQuote(req.Name), vhostV)
+			fmt.Fprintf(&b, "rabbitmqctl delete_queue name=%s vhost=%s\n", shellQuote(vReqName), vReqVhost)
 		case "list":
-			fmt.Fprintf(&b, "rabbitmqctl list_queues -p %s\n", vhostV)
+			fmt.Fprintf(&b, "rabbitmqctl list_queues -p %s\n", vReqVhost)
 		}
 	case "exchange":
-		switch req.Action {
+		switch vReqAction {
 		case "create":
-			if req.Name == "" {
+			if vReqName == "" {
 				b.WriteString("echo 'exchange create 需指定 exchange 名称' && exit 1\n")
 			} else {
-				fmt.Fprintf(&b, "rabbitmqctl declare_exchange name=%s type=direct vhost=%s\n", shellQuote(req.Name), vhostV)
+				fmt.Fprintf(&b, "rabbitmqctl declare_exchange name=%s type=direct vhost=%s\n", shellQuote(vReqName), vReqVhost)
 			}
 		case "delete":
-			fmt.Fprintf(&b, "rabbitmqctl delete_exchange name=%s vhost=%s\n", shellQuote(req.Name), vhostV)
+			fmt.Fprintf(&b, "rabbitmqctl delete_exchange name=%s vhost=%s\n", shellQuote(vReqName), vReqVhost)
 		case "list":
-			fmt.Fprintf(&b, "rabbitmqctl list_exchanges -p %s\n", vhostV)
+			fmt.Fprintf(&b, "rabbitmqctl list_exchanges -p %s\n", vReqVhost)
 		}
 	}
-	fmt.Fprintf(&b, "echo 'RabbitMQ %s %s 操作完成\n", resource, actionV)
+	fmt.Fprintf(&b, "echo 'RabbitMQ %s %s 操作完成\n", resource, vReqAction)
 	return b.String()
 }

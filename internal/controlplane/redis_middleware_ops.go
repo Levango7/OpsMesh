@@ -76,27 +76,25 @@ func (s *Server) handleMiddlewareRedisSentinel(w http.ResponseWriter, r *http.Re
 }
 
 func buildRedisSentinelScript(req redisSentinelReq) string {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqAction, vReqHost, vReqMaster := req.Action, req.Host, req.Master
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	hostV := req.Host
-	masterV := req.Master
 	b.WriteString("set -e\n")
-	fmt.Fprintf(&b, "SENTINEL_HOST=%q\n", hostV)
-	switch req.Action {
+	fmt.Fprintf(&b, "SENTINEL_HOST=%q\n", vReqHost)
+	switch vReqAction {
 	case "monitor":
-		if req.Master == "" {
+		if vReqMaster == "" {
 			b.WriteString("echo 'sentinel monitor 需指定 master 名称' && exit 1\n")
 		} else {
-			fmt.Fprintf(&b, "redis-cli -h %s SENTINEL monitor %s 127.0.0.1 6379 2\n", hostV, masterV)
-			fmt.Fprintf(&b, "echo 'Sentinel 已监控 master: %s'\n", masterV)
+			fmt.Fprintf(&b, "redis-cli -h %s SENTINEL monitor %s 127.0.0.1 6379 2\n", vReqHost, vReqMaster)
+			fmt.Fprintf(&b, "echo 'Sentinel 已监控 master: %s'\n", vReqMaster)
 		}
 	case "failover":
-		if req.Master == "" {
+		if vReqMaster == "" {
 			b.WriteString("echo 'sentinel failover 需指定 master 名称' && exit 1\n")
 		} else {
-			fmt.Fprintf(&b, "redis-cli -h %s SENTINEL failover %s\n", hostV, masterV)
-			fmt.Fprintf(&b, "echo 'Sentinel 已触发 master %s 故障转移'\n", masterV)
+			fmt.Fprintf(&b, "redis-cli -h %s SENTINEL failover %s\n", vReqHost, vReqMaster)
+			fmt.Fprintf(&b, "echo 'Sentinel 已触发 master %s 故障转移'\n", vReqMaster)
 		}
 	}
 	return b.String()
@@ -157,21 +155,19 @@ func (s *Server) handleMiddlewareRedisCluster(w http.ResponseWriter, r *http.Req
 }
 
 func buildRedisClusterScript(req redisClusterReq) string {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqAction, vReqHost := req.Action, req.Host
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	hostV := req.Host
-	actionV := req.Action
 	b.WriteString("set -e\n")
-	fmt.Fprintf(&b, "CLUSTER_HOST=%q\n", hostV)
-	switch req.Action {
+	fmt.Fprintf(&b, "CLUSTER_HOST=%q\n", vReqHost)
+	switch vReqAction {
 	case "nodes":
-		fmt.Fprintf(&b, "redis-cli -h %s CLUSTER NODES\n", hostV)
+		fmt.Fprintf(&b, "redis-cli -h %s CLUSTER NODES\n", vReqHost)
 	case "slots":
-		fmt.Fprintf(&b, "redis-cli -h %s CLUSTER SLOTS\n", hostV)
+		fmt.Fprintf(&b, "redis-cli -h %s CLUSTER SLOTS\n", vReqHost)
 	case "rebalance":
-		fmt.Fprintf(&b, "echo 'rebalance 需在 redis-cli --cluster rebalance 中手动执行，host=%s'\n", hostV)
+		fmt.Fprintf(&b, "echo 'rebalance 需在 redis-cli --cluster rebalance 中手动执行，host=%s'\n", vReqHost)
 	}
-	fmt.Fprintf(&b, "echo 'Redis Cluster %s 操作完成 (host=%s)\n", actionV, hostV)
+	fmt.Fprintf(&b, "echo 'Redis Cluster %s 操作完成 (host=%s)\n", vReqAction, vReqHost)
 	return b.String()
 }

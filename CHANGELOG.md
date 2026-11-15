@@ -101,6 +101,14 @@
 - **能力变化**：**无**（不新增/收紧任何白名单）。
 - **守卫**：`internal/controlplane/b29_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**（type/action/实例名 注入载荷必须 **400**）；③合法值不被误拒。经**变异测试**（实参改回 `req.Name` ⇒ 判红；复原 ⇒ 绿）。
 - **验证**：`gofmt -l .` clean；`golangci-lint run ./...` ⇒ **0 issues**；`go build`/`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（含 TestB29 三例）；盘点器实测 `db_ops.go` 命中 **→ 0**，全仓 **A/B 0**（不增）。
+## [Unreleased-批次 30 形态面：中间件族 *_middleware_ops] — 2026-11-15（7 builder，5 文件，~40 处「已校验但直引」）
+
+- **背景**：批次 17 收口后全仓**真洞归零**；本批落形态面中间件族 `activemq_middleware_ops.go` / `kafka_middleware_ops.go` / `rabbitmq_middleware_ops.go` / `redis_middleware_ops.go` / `zookeeper_middleware_ops.go`（7 builder、~40 处）。形态面 = 字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`。
+- **分级核对（全部形态面，无需新增白名单）**：`Action` → allowed map（create/delete/list/monitor/failover/stat/ruok/...）；`Type`（activemq）→ `allowed` 列表；`Name`/`Vhost`/`Topic` → resource name 正则；`Partitions`/`Replicas` → handler 整数范围校验；`Host` → 地址校验；`DeviceID` → 仅走 `createSystemTask`；全是形态面，无真洞。
+- **收口**：7 个 builder（`buildActiveMQScript` / `buildKafkaConsumerGroupScript` / `buildKafkaTopicScript` / `buildRabbitMQScript` / `buildRedisSentinelScript` / `buildRedisClusterScript` / `buildZookeeperCmdScript`）内局部变量承接（`vReq*`）⇒ 判据 E/F 归零；**脚本文本逐字节不变**。清除批次 14 留下的 `topicV/actionV/groupV/hostV/masterV/vhostV/cmdV` 双层局部变量（同名语义合并到单层 vReq*）。
+- **能力变化**：**无**（不新增/收紧任何白名单）。
+- **守卫**：`internal/controlplane/b30_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**（zk cmd 注入载荷必须 **400**）；③合法值不被误拒。经**变异测试**（实参改回 `req.Action` ⇒ 判红；复原 ⇒ 绿）。
+- **验证**：`gofmt -l .` clean；`golangci-lint run ./...` ⇒ **0 issues**；`go build`/`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（含 TestB30 三例）；盘点器实测中间件族命中 **→ 0**，全仓 **A/B 0**（不增）。
 ## [Unreleased-批次 17 真洞最后一批收口] — 2026-11-12（vector Metric/ID/Payload + kafka 集群名/Topics，2 文件 6 处）
 
 - **背景**：批次 14 把盘点口径扩到实参级（判据 E/F）后，按「该字段在同文件内是否有校验式调用」分级得真洞 50 处。批次 15 落 apache 族 27 处、批次 16 落 system_ops/k8s 两处，本批落**最后 6 处** ⇒ 真洞归零；余下约 350 处属「已校验但直引」形态面，顺延批次 18+ 机械收口。
