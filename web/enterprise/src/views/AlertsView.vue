@@ -101,6 +101,16 @@
       :message="confirmState.message"
       info
     />
+    <!-- ADR-2026-11-15 §ADR-3：服务端分页 -->
+    <Pagination
+      v-if="store.total > store.pageSize"
+      :page="store.page"
+      :page-size="store.list.length"
+      :limit="store.pageSize"
+      :total="store.total"
+      @prev="store.fetchAlerts(store.page - 1)"
+      @next="store.fetchAlerts(store.page + 1)"
+    />
   </PageShell>
 </template>
 
@@ -115,6 +125,7 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 import Button from "@/components/ui/Button.vue"
+import Pagination from '@/components/Pagination.vue'
 // PromptModal 仅少数页面使用，改为异步加载减小首屏 components chunk
 const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.vue'))
 

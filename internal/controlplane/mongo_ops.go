@@ -369,7 +369,7 @@ func (s *Server) handleMongoQuery(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	var req mongoQueryReq

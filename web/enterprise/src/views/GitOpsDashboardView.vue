@@ -92,22 +92,22 @@
       <div v-if="recentSyncs.length === 0" class="muted">{{ $t('gitops.no_syncs') }}</div>
       <div v-else class="table-scroll">
         <table class="data-table">
-        <thead>
-          <tr>
-            <th>{{ $t('gitops.col_app') }}</th>
-            <th>{{ $t('gitops.col_type') }}</th>
-            <th>{{ $t('gitops.col_status') }}</th>
-            <th>{{ $t('gitops.col_time') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(s, i) in recentSyncs" :key="i">
-            <td>{{ s.name }}</td>
-            <td>{{ $t('flux.type_' + s.type) }}</td>
-            <td><span class="tag" :class="'st-' + s.status">{{ $t('flux.status_' + s.status) }}</span></td>
-            <td>{{ fmtTime(s.updatedAt) }}</td>
-          </tr>
-        </tbody>
+          <thead>
+            <tr>
+              <th>{{ $t('gitops.col_app') }}</th>
+              <th>{{ $t('gitops.col_type') }}</th>
+              <th>{{ $t('gitops.col_status') }}</th>
+              <th>{{ $t('gitops.col_time') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(s, i) in recentSyncs" :key="i">
+              <td>{{ s.name }}</td>
+              <td>{{ $t('flux.type_' + s.type) }}</td>
+              <td><span class="tag" :class="'st-' + s.status">{{ $t('flux.status_' + s.status) }}</span></td>
+              <td>{{ fmtTime(s.updatedAt) }}</td>
+            </tr>
+          </tbody>
         </table>
       </div>
     </div>

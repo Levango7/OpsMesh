@@ -66,7 +66,8 @@
       </div>
 
       <div v-if="store.loading && !store.discovered.length" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable :loading="store.loading"
+      <DataTable
+        :loading="store.loading"
         v-else-if="store.discovered.length"
         :columns="discoveredColumns"
         :rows="store.discovered"
@@ -156,7 +157,8 @@
     <!-- 设备指标抽屉 -->
     <DetailDrawer :open="metricsOpen" :title="$t('network.metrics_title')" @close="metricsOpen = false">
       <div v-if="store.loading" class="muted">{{ $t('common.loading') }}</div>
-      <DataTable :loading="store.loading"
+      <DataTable
+        :loading="store.loading"
         v-else
         :columns="metricsColumns"
         :rows="store.deviceMetrics"

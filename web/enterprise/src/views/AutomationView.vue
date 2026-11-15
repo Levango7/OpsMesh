@@ -33,7 +33,8 @@
             <Button
               variant="ghost" size="sm" :title="canWrite ? (row.enabled ? $t('automation.disable') : $t('automation.enable')) : $t('common.write_denied')"
               @click="onToggle(row)"
-             data-testid="automation-ontoggle-btn" :disabled="!canWrite"><Icon :name="row.enabled ? 'mute' : 'success'" :size="13" /></Button>
+              data-testid="automation-ontoggle-btn" :disabled="!canWrite"
+            ><Icon :name="row.enabled ? 'mute' : 'success'" :size="13" /></Button>
             <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="automation-openedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
             <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="automation-ondelete-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>

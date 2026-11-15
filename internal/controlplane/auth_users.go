@@ -58,7 +58,25 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		users = scoped
 	}
-	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"users": users})
+	// ADR-2026-11-15 §ADR-3：page 存在时按 {users,total,page,pageSize,hasMore} 返回；
+	// 缺省保持原 {users:[…]} 形态（向后兼容）。
+	page, pageSize := paginate.ParsePagination(r.URL.Query())
+	if page == 0 {
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"users": users})
+		return
+	}
+	total := len(users)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"users": users[start:end], "total": total, "page": page, "pageSize": pageSize, "hasMore": end < total,
+	})
 }
 
 // resolveUserTenant 解析创建/更新用户的目标租户（P0-6）。
@@ -188,6 +206,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUserRouting 分派 /api/v1/users/{id} 子路径：
+//   - GET /api/v1/users/{id}：用户详情（需 user:read 权限；租户隔离，跨租户 404）
 //   - PUT /api/v1/users/{id}：更新用户（需 user:write 权限）
 //   - DELETE /api/v1/users/{id}：删除用户（需 user:delete 权限）
 //   - POST /api/v1/users/{id}/approve：审批用户（需 user:approve 权限，注册安全）
@@ -209,14 +228,20 @@ func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user id required"})
 		return
 	}
-	// 子路径分发（approve/reject）。
+	// 子路径分发（approve/reject）。已知动作 + 不支持的方法 → 405 + Allow；
+	// 真正未知的子路径仍 404（两者语义不同，不能混为一谈）。
 	if subAction != "" {
 		switch subAction {
-		case "approve":
-			s.handleApproveUser(w, r, id)
-			return
-		case "reject":
-			s.handleRejectUser(w, r, id)
+		case "approve", "reject":
+			if r.Method != http.MethodPost {
+				writeMethodNotAllowed(w, http.MethodPost)
+				return
+			}
+			if subAction == "approve" {
+				s.handleApproveUser(w, r, id)
+			} else {
+				s.handleRejectUser(w, r, id)
+			}
 			return
 		default:
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub-path: " + subAction})
@@ -232,11 +257,15 @@ func (s *Server) handleUserRouting(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		s.handleDeleteUser(w, r, id)
 	default:
-		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeMethodNotAllowed(w, "GET, PUT, DELETE")
 	}
 }
 
-// getUser 获取单个用户详情。
+// getUser 处理 GET /api/v1/users/{id}：返回单个用户（与列表用户项同字段形态，
+// PasswordHash 打码；需 user:read 权限）。
+//
+// 租户隔离：与 handleListUsers 同口径——非平台租户只能读本租户用户；用户不存在
+// 或属于他租户一律 404（不泄露他租户账号是否存在）。
 func (s *Server) getUser(w http.ResponseWriter, r *http.Request, id string) {
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {

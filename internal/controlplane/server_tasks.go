@@ -590,6 +590,37 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// writeMethodNotAllowed 写 405 并声明该子资源支持的方法集合（Allow 头）。
+//
+// 各路径分派器（tasks/devices/alerts/users）共用：「路径存在但动词用错」必须是
+// 405 Method Not Allowed（可据此发现调用方拼错方法），不能与「路径不存在」的
+// 404 混为一谈——前端/脚本据 404 判"资源没了"会做出错误处置。
+func writeMethodNotAllowed(w http.ResponseWriter, allow string) {
+	w.Header().Set("Allow", allow)
+	paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+}
+
+// taskSubResourceAllow 返回 /api/v1/tasks/{id}[/action] 已识别子资源支持的动词
+// （Allow 头用）；返回空串表示子路径不是已识别动作（调用方应回 404）。
+// 与 handleTaskRouting 的分支一一对应，改分支须同步改这里。
+func taskSubResourceAllow(parts []string) string {
+	if len(parts) == 1 {
+		return http.MethodGet // GET /api/v1/tasks/{id}：任务详情
+	}
+	if len(parts) != 2 {
+		return ""
+	}
+	switch parts[1] {
+	case "cancel", "approve", "reject", "retry":
+		return http.MethodPost
+	case "result":
+		return http.MethodGet
+	case "dead-letter":
+		return http.MethodDelete
+	}
+	return ""
+}
+
 // handleTaskRouting 统一分派 /api/v1/tasks/{id}/... 子路径：
 //   - GET  /api/v1/tasks/{id}：任务详情（含执行输出，2026-10-21 修复）
 //   - POST /api/v1/tasks/{id}/cancel：取消任务（F3）
@@ -622,6 +653,11 @@ func (s *Server) handleTaskRouting(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 2 && parts[1] == "dead-letter" && r.Method == http.MethodDelete:
 		s.handlePurgeDeadLetterTask(w, r, id)
 	default:
+		// 已知子资源 + 不支持的方法 → 405 + Allow；真正未知的子路径仍 404。
+		if allow := taskSubResourceAllow(parts); allow != "" {
+			writeMethodNotAllowed(w, allow)
+			return
+		}
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
 }

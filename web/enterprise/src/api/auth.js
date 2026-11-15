@@ -18,7 +18,7 @@ export const authApi = {
     }),
 
   // —— 用户管理 ——
-  listUsers: () => getJSON('/users'),
+  listUsers: (params) => getJSON('/users', params),
   createUser: (data) => postJSON('/users', data),
   updateUser: (id, data) => putJSON(`/users/${encodeURIComponent(id)}`, data),
   deleteUser: (id) => deleteJSON(`/users/${encodeURIComponent(id)}`),

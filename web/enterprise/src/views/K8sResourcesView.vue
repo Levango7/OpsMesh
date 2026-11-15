@@ -216,7 +216,8 @@
             size="sm"
             :data-testid="'k8s-ns-delete-' + ns"
             @click="confirmDeleteNamespace(ns)"
-           :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8s.delete') }}</Button>
+            :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"
+          >{{ $t('k8s.delete') }}</Button>
         </div>
       </div>
     </Drawer>

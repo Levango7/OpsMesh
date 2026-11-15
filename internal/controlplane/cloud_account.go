@@ -112,6 +112,21 @@ func (s *Server) handleCloudAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// cloudAccountSubResourceAllow 返回 /api/v1/cloud-accounts/{id}[/action] 已识别
+// 子资源支持的动词（Allow 头用）；返回空串表示子路径不是已识别动作（调用方应回 404）。
+// 与 handleCloudAccountRouting 的分支一一对应，改分支须同步改这里。
+func cloudAccountSubResourceAllow(action string) string {
+	switch action {
+	case "":
+		return "GET, PUT, DELETE"
+	case "sync", "test":
+		return http.MethodPost
+	case "regions":
+		return http.MethodGet
+	}
+	return ""
+}
+
 // handleCloudAccountRouting 分派 /api/v1/cloud-accounts/{id} 子路径：
 //   - GET    /{id}             → handleGetCloudAccount
 //   - PUT    /{id}             → handleUpdateCloudAccount
@@ -119,6 +134,8 @@ func (s *Server) handleCloudAccounts(w http.ResponseWriter, r *http.Request) {
 //   - POST   /{id}/sync        → handleSyncCloudAccount
 //   - POST   /{id}/test        → handleTestCloudAccount
 //   - GET    /{id}/regions     → handleListCloudAccountRegions
+//
+// 已识别子资源 + 错误动词 → 405 + Allow；未知子路径 → 404。
 func (s *Server) handleCloudAccountRouting(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/cloud-accounts/")
 	if rest == "" {
@@ -135,39 +152,26 @@ func (s *Server) handleCloudAccountRouting(w http.ResponseWriter, r *http.Reques
 	if len(parts) == 2 {
 		action = parts[1]
 	}
-	switch r.Method {
-	case http.MethodGet:
-		switch action {
-		case "":
-			s.handleGetCloudAccount(w, r, id)
-		case "regions":
-			s.handleListCloudAccountRegions(w, r, id)
-		default:
-			paginate.JSONError(w, http.StatusNotFound, "not found")
-		}
-	case http.MethodPut:
-		if action == "" {
-			s.handleUpdateCloudAccount(w, r, id)
-		} else {
-			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		}
-	case http.MethodDelete:
-		if action == "" {
-			s.handleDeleteCloudAccount(w, r, id)
-		} else {
-			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		}
-	case http.MethodPost:
-		switch action {
-		case "sync":
-			s.handleSyncCloudAccount(w, r, id)
-		case "test":
-			s.handleTestCloudAccount(w, r, id)
-		default:
-			paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		}
+	switch {
+	case action == "" && r.Method == http.MethodGet:
+		s.handleGetCloudAccount(w, r, id)
+	case action == "" && r.Method == http.MethodPut:
+		s.handleUpdateCloudAccount(w, r, id)
+	case action == "" && r.Method == http.MethodDelete:
+		s.handleDeleteCloudAccount(w, r, id)
+	case action == "sync" && r.Method == http.MethodPost:
+		s.handleSyncCloudAccount(w, r, id)
+	case action == "test" && r.Method == http.MethodPost:
+		s.handleTestCloudAccount(w, r, id)
+	case action == "regions" && r.Method == http.MethodGet:
+		s.handleListCloudAccountRegions(w, r, id)
 	default:
-		paginate.JSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		// 已知子资源 + 不支持的方法 → 405 + Allow；真正未知的子路径仍 404。
+		if allow := cloudAccountSubResourceAllow(action); allow != "" {
+			writeMethodNotAllowed(w, allow)
+			return
+		}
+		paginate.JSONError(w, http.StatusNotFound, "not found")
 	}
 }
 
@@ -390,6 +394,8 @@ func (s *Server) handleSyncCloudAccount(w http.ResponseWriter, r *http.Request, 
 		paginate.JSONError(w, http.StatusNotFound, "cloud account not found")
 		return
 	}
+	// 请求体仅做兼容性解析：syncStatus/discoveredCount 由调用方提供，不采信、不落库。
+	// 同步状态与资源计数只能来自真实厂商调用结果，否则等于把调用方的数字伪装成发现结果。
 	var body struct {
 		SyncStatus      string `json:"syncStatus"`
 		DiscoveredCount int    `json:"discoveredCount"`
@@ -398,77 +404,76 @@ func (s *Server) handleSyncCloudAccount(w http.ResponseWriter, r *http.Request, 
 		paginate.JSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if body.SyncStatus == "" {
-		body.SyncStatus = "syncing"
-	}
 
-	// 尝试调用 CloudProvider 进行真实资源发现
+	// 尝试调用 CloudProvider 进行真实资源发现。凭据解析或厂商查找失败时按 failed + 0 落库。
+	discoveredCount := 0
+	syncStatus := "failed"
 	creds := s.resolveCloudCredentials(existing)
-	discoveredCount := body.DiscoveredCount
-	if creds != nil {
-		provider, ok := s.cloudProviderFactory.Get(cloudprovider.ProviderType(existing.Provider))
-		if ok {
-			region := existing.Region
-			if region == "" {
-				region = creds.Region
-			}
-			if region == "" {
-				region = "cn-hangzhou"
-			}
-			// 发现实例（各资源类型独立尽力发现：单项失败记 Warn 留痕，按 0 计入总数，不阻断同步）
-			// 审计整改批次2：统计失败项数，全部失败时不得标 synced（原实现恒标 synced 假成功）。
-			failed := 0
-			total := 4
-			instances, err := provider.DiscoverInstances(r.Context(), *creds, region)
-			if err != nil {
-				failed++
-				logx.Warn(r.Context(), "发现云实例失败", "provider", existing.Provider, "region", region, "error", err)
-			}
-			vpcs, err := provider.DiscoverVPCs(r.Context(), *creds, region)
-			if err != nil {
-				failed++
-				logx.Warn(r.Context(), "发现 VPC 失败", "provider", existing.Provider, "region", region, "error", err)
-			}
-			subnets, err := provider.DiscoverSubnets(r.Context(), *creds, region, "")
-			if err != nil {
-				failed++
-				logx.Warn(r.Context(), "发现子网失败", "provider", existing.Provider, "region", region, "error", err)
-			}
-			clusters, err := provider.DiscoverClusters(r.Context(), *creds, region)
-			if err != nil {
-				failed++
-				logx.Warn(r.Context(), "发现集群失败", "provider", existing.Provider, "region", region, "error", err)
-			}
-			discoveredCount = len(instances) + len(vpcs) + len(subnets) + len(clusters)
-			switch {
-			case failed == 0:
-				body.SyncStatus = "synced"
-			case failed < total:
-				body.SyncStatus = "partial"
-			default:
-				body.SyncStatus = "failed"
-			}
+	if creds == nil {
+		logx.Warn(r.Context(), "云账号同步失败：凭据不可解析", "accountID", id, "provider", existing.Provider)
+	} else if s.cloudProviderFactory == nil {
+		logx.Warn(r.Context(), "云账号同步失败：云厂商工厂未初始化", "accountID", id, "provider", existing.Provider)
+	} else if provider, ok := s.cloudProviderFactory.Get(cloudprovider.ProviderType(existing.Provider)); !ok {
+		logx.Warn(r.Context(), "云账号同步失败：厂商未注册", "accountID", id, "provider", existing.Provider)
+	} else {
+		region := existing.Region
+		if region == "" {
+			region = creds.Region
+		}
+		if region == "" {
+			region = "cn-hangzhou"
+		}
+		// 发现实例（各资源类型独立尽力发现：单项失败记 Warn 留痕，按 0 计入总数，不阻断同步）
+		// 审计整改批次2：统计失败项数，全部失败时不得标 synced（原实现恒标 synced 假成功）。
+		failed := 0
+		total := 4
+		instances, err := provider.DiscoverInstances(r.Context(), *creds, region)
+		if err != nil {
+			failed++
+			logx.Warn(r.Context(), "发现云实例失败", "provider", existing.Provider, "region", region, "error", err)
+		}
+		vpcs, err := provider.DiscoverVPCs(r.Context(), *creds, region)
+		if err != nil {
+			failed++
+			logx.Warn(r.Context(), "发现 VPC 失败", "provider", existing.Provider, "region", region, "error", err)
+		}
+		subnets, err := provider.DiscoverSubnets(r.Context(), *creds, region, "")
+		if err != nil {
+			failed++
+			logx.Warn(r.Context(), "发现子网失败", "provider", existing.Provider, "region", region, "error", err)
+		}
+		clusters, err := provider.DiscoverClusters(r.Context(), *creds, region)
+		if err != nil {
+			failed++
+			logx.Warn(r.Context(), "发现集群失败", "provider", existing.Provider, "region", region, "error", err)
+		}
+		discoveredCount = len(instances) + len(vpcs) + len(subnets) + len(clusters)
+		switch {
+		case failed == 0:
+			syncStatus = "synced"
+		case failed < total:
+			syncStatus = "partial"
+		default:
+			syncStatus = "failed"
 		}
 	}
 
-	if err := s.store.SyncCloudAccount(r.Context(), id, body.SyncStatus, discoveredCount); err != nil {
+	if err := s.store.SyncCloudAccount(r.Context(), id, syncStatus, discoveredCount); err != nil {
 		paginate.JSONError(w, http.StatusInternalServerError, "sync cloud account failed")
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "cloud_account_sync",
-		Target: id, Detail: "sync_status=" + body.SyncStatus + " discovered=" + strconv.Itoa(discoveredCount),
+		Target: id, Detail: "sync_status=" + syncStatus + " discovered=" + strconv.Itoa(discoveredCount),
 	})
-	// 响应 status 与真实结果一致：全部发现失败时 502，部分失败仍 200 但 syncStatus=partial。
+	// 响应 status 与真实结果一致：全部发现失败时 502，部分失败仍 200 但 status=partial。
 	httpStatus := http.StatusOK
-	respStatus := body.SyncStatus
-	if body.SyncStatus == "failed" {
+	if syncStatus == "failed" {
 		httpStatus = http.StatusBadGateway
-		respStatus = "failed"
 	}
 	paginate.WriteJSON(w, httpStatus, map[string]string{
-		"status":          "synced",
-		"syncStatus":      respStatus,
+		"status":          syncStatus,
+		"syncStatus":      syncStatus,
 		"discoveredCount": strconv.Itoa(discoveredCount),
 	})
 }

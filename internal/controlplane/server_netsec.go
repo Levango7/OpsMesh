@@ -2,19 +2,13 @@
 package controlplane
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -289,57 +283,6 @@ func (s *Server) buildMetrics() (*http.Server, net.Listener, error) {
 		IdleTimeout:    60 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}, lis, nil
-}
-
-// handleDevices 处理 GET /api/v1/devices，按网关注入租户返回 segment -> 设备 列表。
-// verifyFederationRequest 校验入站请求的联邦签名。
-// 仅当请求携带 X-Federation-Forwarded 标记（由本集群转发管理器设置）时才验签；
-// 未携带则视为普通网关注入请求，返回 nil（不改变既有网关鉴权路径）。
-// 签名覆盖 method + path + 时间戳 + 身份头 + sha256(body)，防任务体被中间人篡改；
-// 验签读取 body 后以 NopCloser 复原，下游 handler（decodeJSONBody）可继续读取。
-// 验签失败（密钥缺失/签名不符/时间戳超窗/body 超限）返回 error，调用方应拒绝（401）。
-func (s *Server) verifyFederationRequest(r *http.Request) error {
-	if r.Header.Get("X-Federation-Forwarded") != "1" {
-		return nil // 非联邦转发请求，跳过（走网关注入逻辑）
-	}
-	if s.cfg.FederationSecret == "" {
-		return fmt.Errorf("federation request received but --federation-secret not configured")
-	}
-	tsStr := r.Header.Get("X-Federation-Ts")
-	sig := r.Header.Get("X-Federation-Sig")
-	if tsStr == "" || sig == "" {
-		return fmt.Errorf("missing federation signature headers")
-	}
-	ts, err := strconv.ParseInt(tsStr, 10, 64)
-	if err != nil {
-		return fmt.Errorf("invalid federation timestamp")
-	}
-	skew := time.Now().Unix() - ts
-	if skew > federationSigMaxSkew || skew < -federationSigMaxSkew {
-		return fmt.Errorf("federation timestamp skew out of window")
-	}
-	tenant := r.Header.Get("X-Tenant-ID")
-	user := r.Header.Get("X-User-Id")
-	roles := r.Header.Get("X-User-Roles")
-	// 请求体纳入签名覆盖（sha256(body) 摘要），防中间人篡改转发任务体。
-	// 读取 body 参与验签后以 NopCloser 复原，保证下游 decodeJSONBody 仍能读取；
-	// 限读 maxBodyBytes+1 防超大请求体内存攻击（超限即拒绝，不复原）。
-	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
-	if err != nil {
-		return fmt.Errorf("read federation request body: %w", err)
-	}
-	if int64(len(bodyBytes)) > maxBodyBytes {
-		return fmt.Errorf("federation request body exceeds %d bytes", maxBodyBytes)
-	}
-	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-	bodyDigest := sha256.Sum256(bodyBytes)
-	mac := hmac.New(sha256.New, []byte(s.cfg.FederationSecret))
-	mac.Write([]byte(strings.Join([]string{r.Method, r.URL.Path, tsStr, tenant, user, roles, hex.EncodeToString(bodyDigest[:])}, "|")))
-	expected := hex.EncodeToString(mac.Sum(nil))
-	if !hmac.Equal([]byte(expected), []byte(sig)) {
-		return fmt.Errorf("federation signature mismatch")
-	}
-	return nil
 }
 
 // handleHealthz 深度健康检查（K8s liveness 探针，增强）。

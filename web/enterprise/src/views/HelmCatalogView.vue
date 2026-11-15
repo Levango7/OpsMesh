@@ -50,7 +50,8 @@
       <div v-else>
         <div v-for="cat in store.catalog" :key="cat.name" class="catalog-cat">
           <h3>{{ cat.name }} <small class="muted">· {{ cat.description }}</small></h3>
-          <DataTable :loading="store.loading"
+          <DataTable
+            :loading="store.loading"
             :columns="chartColumns"
             :rows="cat.charts || []"
             row-key="name"

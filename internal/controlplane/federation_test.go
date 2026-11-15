@@ -3,22 +3,40 @@ package controlplane
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
+
+	authpkg "github.com/Levango7/OpsMesh/pkg/auth"
 
 	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/proto"
 	"github.com/Levango7/OpsMesh/internal/store"
 )
+
+// federationTestHeaders 构造一份完整联邦签名头（新 canonical，带 nonce）。
+// canonical/签名逻辑统一由 pkg/auth 提供，测试不再内联拼接规则。
+func federationTestHeaders(t *testing.T, secret, method, path, ts, nonce, tenant, user, roles string, body []byte) http.Header {
+	t.Helper()
+	h := http.Header{}
+	h.Set(authpkg.FederationHeaderForwarded, "1")
+	h.Set(authpkg.FederationHeaderTS, ts)
+	h.Set(authpkg.FederationHeaderNonce, nonce)
+	h.Set("X-Tenant-ID", tenant)
+	if user != "" {
+		h.Set("X-User-Id", user)
+	}
+	if roles != "" {
+		h.Set("X-User-Roles", roles)
+	}
+	canonical := authpkg.FederationCanonicalString(method, path, ts, nonce, tenant, user, roles, authpkg.FederationBodySHA256(body))
+	h.Set(authpkg.FederationHeaderSignature, authpkg.SignFederation(secret, canonical))
+	return h
+}
 
 // newPeerTestServer 构造一个模拟 peer 控制面的 httptest.Server，复用真实 Server 的 handler。
 // 这样 peer 侧的任务创建/设备列表/健康检查走真实代码路径，测试更接近生产。
@@ -324,10 +342,11 @@ func TestFederationDisabled_NotRegistered(t *testing.T) {
 		fed:   nil,              // 显式 nil
 	}
 	mux := http.NewServeMux()
-	// 模拟 server.go Start 中的路由注册逻辑：仅当 fed != nil 时注册。
+	// 模拟 server_lifecycle.go 中的路由注册逻辑：仅当 fed != nil 时注册。
 	if s.fed != nil {
 		mux.HandleFunc("/api/v1/federation/peers", s.handleFederationPeers)
 		mux.HandleFunc("/api/v1/federation/forward/task", s.handleFederationForwardTask)
+		mux.HandleFunc("/api/v1/federation/forward/device-op", s.handleFederationForwardDeviceOp)
 		mux.HandleFunc("/api/v1/federation/devices", s.handleFederationDevices)
 	}
 
@@ -338,6 +357,13 @@ func TestFederationDisabled_NotRegistered(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("%s status = %d, want 404 (federation disabled)", path, rec.Code)
 		}
+	}
+	// 设备操作转发端点同样必须未注册（POST）。
+	devReq := httptest.NewRequest(http.MethodPost, "/api/v1/federation/forward/device-op", bytes.NewReader([]byte(`{"op":"metrics"}`)))
+	devRec := httptest.NewRecorder()
+	mux.ServeHTTP(devRec, devReq)
+	if devRec.Code != http.StatusNotFound {
+		t.Fatalf("device-op status = %d, want 404 (federation disabled)", devRec.Code)
 	}
 }
 
@@ -360,30 +386,17 @@ func TestNewFederationManager_NilForEmptyPeers(t *testing.T) {
 func TestVerifyFederationRequest_BodyTampering(t *testing.T) {
 	secret := "fed-test-secret"
 	s := &Server{store: store.NewMemoryStore(), cfg: &config.Config{FederationSecret: secret}}
-
-	// 与 signFederationRequest/verifyFederationRequest 同规则：method|path|ts|tenant|user|roles|sha256(body)。
-	sign := func(ts string, body []byte) string {
-		sum := sha256.Sum256(body)
-		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write([]byte(strings.Join([]string{http.MethodPost, "/api/v1/tasks", ts, "t1", "u1", "role-admin", hex.EncodeToString(sum[:])}, "|")))
-		return hex.EncodeToString(mac.Sum(nil))
-	}
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	body, _ := json.Marshal(map[string]string{"agentID": "a1", "command": "echo hi"})
 
-	newReq := func(b []byte, sig string) *http.Request {
+	newReq := func(b []byte, nonce string) *http.Request {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewReader(b))
-		req.Header.Set("X-Federation-Forwarded", "1")
-		req.Header.Set("X-Tenant-ID", "t1")
-		req.Header.Set("X-User-Id", "u1")
-		req.Header.Set("X-User-Roles", "role-admin")
-		req.Header.Set("X-Federation-Ts", ts)
-		req.Header.Set("X-Federation-Sig", sig)
+		req.Header = federationTestHeaders(t, secret, http.MethodPost, "/api/v1/tasks", ts, nonce, "t1", "u1", "role-admin", b)
 		return req
 	}
 
 	// 1) 合法签名：通过，且 body 被复原可供下游读取。
-	req := newReq(body, sign(ts, body))
+	req := newReq(body, "body-tamper-nonce-1")
 	if err := s.verifyFederationRequest(req); err != nil {
 		t.Fatalf("valid federation signature rejected: %v", err)
 	}
@@ -394,21 +407,60 @@ func TestVerifyFederationRequest_BodyTampering(t *testing.T) {
 
 	// 2) body 被篡改（沿用对原 body 的合法签名）：必须拒绝。
 	tampered, _ := json.Marshal(map[string]string{"agentID": "a1", "command": "rm -rf /"})
-	req2 := newReq(tampered, sign(ts, body))
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewReader(tampered))
+	// 对原 body 签名，再篡改 body：signature mismatch。
+	req2.Header = federationTestHeaders(t, secret, http.MethodPost, "/api/v1/tasks", ts, "body-tamper-nonce-2", "t1", "u1", "role-admin", body)
 	if err := s.verifyFederationRequest(req2); err == nil {
 		t.Fatal("tampered body accepted, want signature mismatch error")
 	}
 
 	// 3) GET 请求（空 body）签名同样覆盖空体摘要：通过。
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
-	getReq.Header.Set("X-Federation-Forwarded", "1")
-	getReq.Header.Set("X-Tenant-ID", "t1")
-	getReq.Header.Set("X-Federation-Ts", ts)
-	mac := hmac.New(sha256.New, []byte(secret))
-	emptyDigest := sha256.Sum256(nil)
-	mac.Write([]byte(strings.Join([]string{http.MethodGet, "/api/v1/devices", ts, "t1", "", "", hex.EncodeToString(emptyDigest[:])}, "|")))
-	getReq.Header.Set("X-Federation-Sig", hex.EncodeToString(mac.Sum(nil)))
+	getReq.Header = federationTestHeaders(t, secret, http.MethodGet, "/api/v1/devices", ts, "body-tamper-nonce-3", "t1", "", "", nil)
 	if err := s.verifyFederationRequest(getReq); err != nil {
 		t.Fatalf("empty-body GET signature rejected: %v", err)
+	}
+}
+
+// TestFederationInbound_TenantContext 证明 requireAuth=true 时，仅携带 X-Tenant-ID
+// 的 HMAC 签名 peer 请求能通过 requireTenantContext 并以其租户范围进入设备 handler；
+// 未签名（无 X-Federation-* 头）的同形态请求仍按 requireAuth 拒绝（不降低原有防御）。
+func TestFederationInbound_TenantContext(t *testing.T) {
+	const secret = "fed-tenant-context-secret"
+	st := store.NewMemoryStore()
+	st.Register(&proto.AgentInfo{Segment: "seg-t1", TenantID: "t1", Hostname: "t1-host"})
+	st.Register(&proto.AgentInfo{Segment: "seg-t2", TenantID: "t2", Hostname: "t2-host"})
+	s := &Server{
+		store:       st,
+		cfg:         &config.Config{FederationSecret: secret},
+		requireAuth: true,
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
+	req.Header = federationTestHeaders(t, secret, http.MethodGet, "/api/v1/devices", ts, "tenant-context-nonce-1", "t1", "peer-user", "role-operator", nil)
+	rec := httptest.NewRecorder()
+	s.handleDevices(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("signed federation request status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var snap map[string][]proto.DeviceInfo
+	if err := json.NewDecoder(rec.Body).Decode(&snap); err != nil {
+		t.Fatalf("decode devices: %v", err)
+	}
+	if _, ok := snap["seg-t1"]; !ok || len(snap["seg-t1"]) == 0 {
+		t.Fatal("tenant t1 devices missing from federation response")
+	}
+	if len(snap["seg-t2"]) != 0 {
+		t.Fatal("tenant t2 devices leaked into t1 federation response")
+	}
+
+	// 对照：只带 X-Tenant-ID、无联邦签名的请求在 requireAuth=true 下仍必须 401。
+	plain := httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
+	plain.Header.Set("X-Tenant-ID", "t1")
+	plainRec := httptest.NewRecorder()
+	s.handleDevices(plainRec, plain)
+	if plainRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unsigned header-only request status = %d, want 401", plainRec.Code)
 	}
 }

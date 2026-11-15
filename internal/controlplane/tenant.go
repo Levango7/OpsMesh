@@ -46,7 +46,24 @@ func (s *Server) handleListTenants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenants := s.store.ListTenants()
-	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"tenants": tenants})
+	// ADR-2026-11-15 §ADR-3：同 users 的分页契约（page 存在时带 total/page/hasMore）。
+	page, pageSize := paginate.ParsePagination(r.URL.Query())
+	if page == 0 {
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"tenants": tenants})
+		return
+	}
+	total := len(tenants)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"tenants": tenants[start:end], "total": total, "page": page, "pageSize": pageSize, "hasMore": end < total,
+	})
 }
 
 // handleCreateTenant 处理 POST /api/v1/tenants：创建租户。

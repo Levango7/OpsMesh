@@ -35,7 +35,8 @@
               variant="ghost" size="sm" v-if="row.status !== 'closed' && row.status !== 'resolved'"
               :title="canWrite ? ($t('tickets.close')) : $t('common.write_denied')"
               @click="onClose(row)"
-             data-testid="tickets-onclose-btn" :disabled="!canWrite"><Icon name="close" :size="13" /></Button>
+              data-testid="tickets-onclose-btn" :disabled="!canWrite"
+            ><Icon name="close" :size="13" /></Button>
             <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="tickets-openedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
           </div>
         </template>

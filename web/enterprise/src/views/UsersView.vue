@@ -37,6 +37,17 @@
       </DataTable>
     </div>
 
+    <!-- ADR-2026-11-15 §ADR-3：服务端分页 -->
+    <Pagination
+      v-if="total > pageSize"
+      :page="page"
+      :page-size="users.length"
+      :limit="pageSize"
+      :total="total"
+      @prev="fetchUsers(page - 1)"
+      @next="fetchUsers(page + 1)"
+    />
+
     <!-- 新增/编辑抽屉 -->
     <DetailDrawer :open="!!form" :title="form && form.id ? $t('users.edit') : $t('users.add')" data-testid="users-form-drawer" @close="form = null">
       <form v-if="form" class="user-form" data-testid="users-form" @submit.prevent="onSave">
@@ -118,9 +129,14 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 import Button from "@/components/ui/Button.vue"
+import Pagination from '@/components/Pagination.vue'
 
 const users = ref([])
 const roles = ref([])
+// ADR-2026-11-15 §ADR-3：服务端分页状态
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 const loading = ref(false)
 const saving = ref(false)
 const form = ref(null)
@@ -160,12 +176,21 @@ const columns = [
   { key: 'actions', title: t('users.actions'), slot: 'cell-actions', width: '200px' }
 ]
 
-async function fetchUsers() {
+async function fetchUsers(target) {
+  // 兼容 @click="fetchUsers"（会把事件对象传入）与 fetchUsers(n) 两种调用
+  const p = typeof target === 'number' ? target : page.value
   loading.value = true
   loadErr.value = ''
   try {
-    const r = await authApi.listUsers()
-    users.value = (r && r.users) || r || []
+    const r = await authApi.listUsers({ page: p, pageSize: pageSize.value })
+    users.value = (r && r.users) || (Array.isArray(r) ? r : [])
+    total.value = (r && typeof r.total === 'number') ? r.total : users.value.length
+    page.value = (r && typeof r.page === 'number') ? r.page : p
+    // 删除/审批导致当前页为空时回退一页，避免停在空页
+    if (!users.value.length && page.value > 1) {
+      await fetchUsers(page.value - 1)
+      return
+    }
   } catch (e) {
     // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
     users.value = []

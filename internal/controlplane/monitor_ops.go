@@ -427,7 +427,7 @@ func (s *Server) handleZabbixItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	var req zabbixItemReq
@@ -480,7 +480,7 @@ func (s *Server) handleNightingaleQuery(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	var req nightingaleQueryReq
@@ -545,7 +545,7 @@ func (s *Server) handleSkyWalkingTrace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	var req skywalkingTraceReq

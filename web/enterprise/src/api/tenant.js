@@ -12,7 +12,9 @@
 //   quota/usage/createdAt/updatedAt
 import { getJSON, postJSON, putJSON, deleteJSON } from './request'
 
-export const listTenants = () => getJSON('/tenants')
+// 分页（ADR-2026-11-15 §ADR-3）：传 {page,pageSize} 时后端返回
+// {tenants,total,page,pageSize,hasMore}；不传时保持原 {tenants:[…]} 形态。
+export const listTenants = (params) => getJSON('/tenants', params)
 export const createTenant = (body) => postJSON('/tenants', body)
 export const getTenant = (id) => getJSON(`/tenants/${encodeURIComponent(id)}`)
 export const updateTenant = (id, body) => putJSON(`/tenants/${encodeURIComponent(id)}`, body)

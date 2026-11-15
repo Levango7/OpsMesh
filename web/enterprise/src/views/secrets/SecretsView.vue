@@ -72,7 +72,7 @@
             <Button variant="primary" size="md" @click="fetchKeys()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
-      <DataTable
+          <DataTable
             :columns="keyCols"
             :rows="keys"
             row-key="key"

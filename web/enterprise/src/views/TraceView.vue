@@ -75,34 +75,34 @@
       </div>
       <div class="table-scroll">
         <table class="data-table">
-        <thead>
-          <tr>
-            <th>{{ $t('trace.trace_id') }}</th>
-            <th>{{ $t('trace.service') }}</th>
-            <th>{{ $t('trace.operation') }}</th>
-            <th>{{ $t('trace.duration') }}</th>
-            <th>{{ $t('trace.spans') }}</th>
-            <th>{{ $t('trace.start_time') }}</th>
-            <th>{{ $t('trace.action') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="trace in traces" :key="trace.traceID">
-            <td>
-              <code class="trace-id">{{ trace.traceID }}</code>
-            </td>
-            <td>{{ trace.service || '-' }}</td>
-            <td>{{ trace.operation || '-' }}</td>
-            <td>{{ trace.totalDurationMs }} ms</td>
-            <td>{{ trace.spanCount }}</td>
-            <td>{{ fmtTime(trace.startTimeMs) }}</td>
-            <td>
-              <Button variant="primary" size="sm" @click="selectTrace(trace)" data-testid="trace-detail-btn">
-                {{ $t('trace.detail') }}
-              </Button>
-            </td>
-          </tr>
-        </tbody>
+          <thead>
+            <tr>
+              <th>{{ $t('trace.trace_id') }}</th>
+              <th>{{ $t('trace.service') }}</th>
+              <th>{{ $t('trace.operation') }}</th>
+              <th>{{ $t('trace.duration') }}</th>
+              <th>{{ $t('trace.spans') }}</th>
+              <th>{{ $t('trace.start_time') }}</th>
+              <th>{{ $t('trace.action') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="trace in traces" :key="trace.traceID">
+              <td>
+                <code class="trace-id">{{ trace.traceID }}</code>
+              </td>
+              <td>{{ trace.service || '-' }}</td>
+              <td>{{ trace.operation || '-' }}</td>
+              <td>{{ trace.totalDurationMs }} ms</td>
+              <td>{{ trace.spanCount }}</td>
+              <td>{{ fmtTime(trace.startTimeMs) }}</td>
+              <td>
+                <Button variant="primary" size="sm" @click="selectTrace(trace)" data-testid="trace-detail-btn">
+                  {{ $t('trace.detail') }}
+                </Button>
+              </td>
+            </tr>
+          </tbody>
         </table>
       </div>
     </div>

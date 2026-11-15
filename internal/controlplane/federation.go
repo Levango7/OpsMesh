@@ -16,8 +16,7 @@ package controlplane
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -26,7 +25,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	authpkg "github.com/Levango7/OpsMesh/pkg/auth"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
@@ -40,8 +42,14 @@ import (
 // 单 peer 5s 足够覆盖正常 LAN/WAN RTT + 控制面处理时延。
 const peerRequestTimeout = 5 * time.Second
 
-// federationSigMaxSkew 联邦签名时间戳允许的最大时钟偏差（±5min），防重放。
-const federationSigMaxSkew = 5 * 60
+// 进程级联邦防重放 nonce 缓存。nonce 语义是"整个进程见过即拒绝"，
+// 因此不按 Server 实例隔离；TTL 取配置 FederationNonceTTLSeconds（默认 600s = 2×maxSkew）。
+// 配置在进程生命周期内固定，故正常只有首次调用会创建；测试可用不同 TTL 重建。
+var (
+	federationNonceMu   sync.Mutex
+	federationNoncesVal *authpkg.NonceCache
+	federationNonceTTL  time.Duration
+)
 
 // PeerStatus 描述一个联邦 peer 的地址与当前在线状态。
 type PeerStatus struct {
@@ -139,8 +147,10 @@ func (f *FederationManager) ForwardTask(ctx context.Context, peerURL string, tas
 			req.Header.Set(h, v)
 		}
 	}
-	// / 对身份头 + 请求体做 HMAC 签名 + 时间戳，peer 侧验签防伪造、重放与任务体篡改。
-	f.signFederationRequest(req, body)
+	// 对身份头 + 请求体做 HMAC 签名 + 时间戳 + nonce，peer 侧验签防伪造、重放与任务体篡改。
+	if err := f.signFederationRequest(req, body); err != nil {
+		return nil, err
+	}
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("peer %s unreachable: %w", peerURL, err)
@@ -160,26 +170,118 @@ func (f *FederationManager) ForwardTask(ctx context.Context, peerURL string, tas
 	return &created, nil
 }
 
-// signFederationRequest 对出站联邦请求的身份头与请求体做 HMAC 签名 + 时间戳。
-// 计算覆盖 method + path + 时间戳 + 三个身份头 + sha256(body) 摘要，peer 侧按同一规则验签；
-// body 摘要防止中间人在签名合法的情况下篡改转发的任务体（GET 请求 body 传 nil，即空体摘要）。
+// signFederationRequest 对出站联邦请求的身份头与请求体做 HMAC 签名 + 时间戳 + nonce。
+// canonical 与签名/验签实现统一收敛到 pkg/auth（同一份代码，controlplane 与 device-svc 共享），
+// 本方法只负责取头、生成 nonce、写入 X-Federation-* 头。
 // 仅在管理器配置了共享密钥时签名；未配置则跳过（向后兼容明文联邦，但启动已告警）。
-func (f *FederationManager) signFederationRequest(req *http.Request, body []byte) {
+func (f *FederationManager) signFederationRequest(req *http.Request, body []byte) error {
 	if f.secret == "" {
-		return
+		return nil
+	}
+	nonce, err := newFederationNonce()
+	if err != nil {
+		return fmt.Errorf("generate federation nonce: %w", err)
 	}
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	tenant := req.Header.Get("X-Tenant-ID")
-	user := req.Header.Get("X-User-Id")
-	roles := req.Header.Get("X-User-Roles")
-	// ：body 摘要纳入签名，防中间人篡改转发任务体（body 为 nil 时即空体摘要）。
-	bodyDigest := sha256.Sum256(body)
-	mac := hmac.New(sha256.New, []byte(f.secret))
-	mac.Write([]byte(strings.Join([]string{req.Method, req.URL.Path, ts, tenant, user, roles, hex.EncodeToString(bodyDigest[:])}, "|")))
-	sig := hex.EncodeToString(mac.Sum(nil))
-	req.Header.Set("X-Federation-Forwarded", "1")
-	req.Header.Set("X-Federation-Ts", ts)
-	req.Header.Set("X-Federation-Sig", sig)
+	canonical := authpkg.FederationCanonicalString(
+		req.Method,
+		req.URL.Path,
+		ts,
+		nonce,
+		req.Header.Get("X-Tenant-ID"),
+		req.Header.Get("X-User-Id"),
+		req.Header.Get("X-User-Roles"),
+		authpkg.FederationBodySHA256(body),
+	)
+	req.Header.Set(authpkg.FederationHeaderForwarded, "1")
+	req.Header.Set(authpkg.FederationHeaderTS, ts)
+	req.Header.Set(authpkg.FederationHeaderNonce, nonce)
+	req.Header.Set(authpkg.FederationHeaderSignature, authpkg.SignFederation(f.secret, canonical))
+	return nil
+}
+
+// newFederationNonce 生成 16 字节随机 nonce（hex 编码，32 字符）。
+// 每个签名请求必须使用独立 nonce，peer 侧 NonceCache 据此拒绝重放。
+func newFederationNonce() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf[:]), nil
+}
+
+// federationVerifiedKey 标记当前请求已通过联邦验签。
+// 同一请求可能被 handler 与 requireProd/requireTenantContext 多次调用验签，
+// 而 NonceCache 的 nonce 只能消费一次；用 request context 标记确保每个请求只验一次。
+type federationVerifiedKey struct{}
+
+// verifyFederationRequest 校验入站请求的联邦签名（实现在 pkg/auth，controlplane 不再内联 canonical）。
+// 仅当请求携带 X-Federation-Forwarded=1 时才验签；未携带则返回 nil（普通网关注入路径）。
+// 验签覆盖 method/path/ts/nonce/身份头/sha256(body)，并强制执行时间窗与 nonce 防重放；
+// 验签读取 body 后以 NopCloser 复原，下游 handler（decodeJSONBody）可继续读取。
+// 失败原因（密钥缺失/签名不符/时间戳超窗/nonce 重放）可用 errors.Is 判断，
+// ErrFederationReplay 由调用方映射为 403。
+func (s *Server) verifyFederationRequest(r *http.Request) error {
+	if r.Header.Get(authpkg.FederationHeaderForwarded) != "1" {
+		return nil // 非联邦转发请求，跳过（走网关注入逻辑）
+	}
+	if r.Context().Value(federationVerifiedKey{}) != nil {
+		return nil // 本请求已验签，避免重复消费 nonce
+	}
+	if s.cfg == nil || s.cfg.FederationSecret == "" {
+		return fmt.Errorf("federation request received but --federation-secret not configured")
+	}
+	var bodyBytes []byte
+	if r.Body != nil {
+		b, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+		if err != nil {
+			return fmt.Errorf("read federation request body: %w", err)
+		}
+		if int64(len(b)) > maxBodyBytes {
+			return fmt.Errorf("federation request body exceeds %d bytes", maxBodyBytes)
+		}
+		bodyBytes = b
+		r.Body = io.NopCloser(bytes.NewReader(b))
+	}
+	if err := authpkg.VerifyFederationSignature(
+		[]byte(s.cfg.FederationSecret),
+		s.federationMaxSkew(),
+		r.Method,
+		r.URL.Path,
+		r.Header,
+		bodyBytes,
+		s.federationNonces(),
+		time.Now(),
+	); err != nil {
+		return err
+	}
+	// 标记已验签（*r 与原请求同一对象，下游调用可见）。
+	*r = *r.WithContext(context.WithValue(r.Context(), federationVerifiedKey{}, true))
+	return nil
+}
+
+// federationMaxSkew 返回配置的签名时间窗（默认 ±300s）。
+func (s *Server) federationMaxSkew() time.Duration {
+	if s.cfg != nil && s.cfg.FederationMaxSkewSeconds > 0 {
+		return time.Duration(s.cfg.FederationMaxSkewSeconds) * time.Second
+	}
+	return authpkg.DefaultFederationMaxSkew
+}
+
+// federationNonces 返回进程级 NonceCache；TTL 默认 2×maxSkew（10m），
+// 可由 FederationNonceTTLSeconds 覆盖。保证 nonce 在签名仍有效的整个窗口内不被清理。
+func (s *Server) federationNonces() *authpkg.NonceCache {
+	ttl := 2 * s.federationMaxSkew()
+	if s.cfg != nil && s.cfg.FederationNonceTTLSeconds > 0 {
+		ttl = time.Duration(s.cfg.FederationNonceTTLSeconds) * time.Second
+	}
+	federationNonceMu.Lock()
+	defer federationNonceMu.Unlock()
+	if federationNoncesVal == nil || federationNonceTTL != ttl {
+		federationNoncesVal = authpkg.NewNonceCache(ttl)
+		federationNonceTTL = ttl
+	}
+	return federationNoncesVal
 }
 
 // FederatedDevice 聚合后的单台设备视图（本地 + peer 统一格式）。
@@ -321,8 +423,10 @@ func (f *FederationManager) fetchPeerDevices(ctx context.Context, peerURL, tenan
 	if tenantID != "" {
 		req.Header.Set("X-Tenant-ID", tenantID)
 	}
-	// / 对身份头做 HMAC 签名（GET 无 body，传 nil），peer 侧验签防伪造与重放。
-	f.signFederationRequest(req, nil)
+	// 对身份头做 HMAC 签名（GET 无 body，传 nil），peer 侧验签防伪造与重放。
+	if err := f.signFederationRequest(req, nil); err != nil {
+		return nil, err
+	}
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("peer %s unreachable: %w", peerURL, err)
@@ -516,7 +620,10 @@ func (s *Server) handleFederationTaskRouting(w http.ResponseWriter, r *http.Requ
 	if actx.TenantID != "" {
 		req.Header.Set("X-Tenant-ID", actx.TenantID)
 	}
-	s.fed.signFederationRequest(req, nil)
+	if err := s.fed.signFederationRequest(req, nil); err != nil {
+		writeInternalError(r.Context(), w, "federation.forwardTaskResult.sign", err)
+		return
+	}
 	resp, err := s.fed.httpClient.Do(req)
 	if err != nil {
 		logx.Error(r.Context(), "联邦任务状态查询失败", err, "peer", peerURL, "taskID", taskID)

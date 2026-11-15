@@ -547,7 +547,7 @@ func (s *Server) handleVectorSearch(w http.ResponseWriter, r *http.Request, vecT
 	if !ok {
 		return
 	}
-	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	if !allowedVectorTypes[vecType] {

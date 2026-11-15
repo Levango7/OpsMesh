@@ -22,7 +22,8 @@
     <div class="card">
       <h3 class="card__title">{{ $t('osopt.title') }}</h3>
       <div v-if="store.loading && !store.templates.length" class="muted">{{ $t('osopt.loading') }}</div>
-      <DataTable :loading="store.loading"
+      <DataTable
+        :loading="store.loading"
         v-else
         :columns="columns"
         :rows="store.templates"

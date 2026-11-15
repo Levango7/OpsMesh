@@ -31,7 +31,8 @@
       <div v-if="store.loading" class="muted">{{ $t('common.loading') }}</div>
       <template v-else-if="store.searched">
         <div v-if="!store.results.length" class="muted">{{ $t('rag.noResults') }}</div>
-        <DataTable :loading="store.loading"
+        <DataTable
+          :loading="store.loading"
           v-else
           :columns="columns"
           :rows="store.results"

@@ -3,8 +3,10 @@ package controlplane
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/presets"
 	"github.com/Levango7/OpsMesh/internal/proto"
@@ -29,24 +31,122 @@ type middlewareInstance struct {
 	UpdatedAt    string `json:"updatedAt"`
 }
 
-// parseAuditDetail 将审计 Detail 字符串解析为 key/value 映射。
-// Detail 格式："template=foo deployType=docker agent=ag1 version=8.0 instance=foo@ag1:docker:8.0"
-// 解析失败的键值对被静默跳过（保持健壮性）。
-func parseAuditDetail(detail string) map[string]string {
-	out := make(map[string]string)
-	for _, token := range strings.Fields(detail) {
-		idx := strings.IndexByte(token, '=')
-		if idx <= 0 {
+// middlewareAuditDetailKeys 是中间件实例审计 Detail 允许的键集合。
+// 解析时未知键一律忽略（防值里夹带 k=v 伪造字段）。
+var middlewareAuditDetailKeys = map[string]struct{}{
+	"template":   {},
+	"deployType": {},
+	"agent":      {},
+	"version":    {},
+	"instance":   {},
+}
+
+// formatMiddlewareAuditDetail 将键值对编码为中间件审计 Detail。
+// 格式："key=value;key=value;"，值经 strconv.Quote 转义，因此可以安全包含空格、';'、'='；
+// parseAuditDetail 是它的逆操作，未知键与畸形片段在解析时忽略。
+func formatMiddlewareAuditDetail(kv ...string) string {
+	var b strings.Builder
+	for i := 0; i+1 < len(kv); i += 2 {
+		key := kv[i]
+		if _, ok := middlewareAuditDetailKeys[key]; !ok {
 			continue
 		}
-		key := strings.TrimSpace(token[:idx])
-		val := strings.TrimSpace(token[idx+1:])
-		if key == "" || val == "" {
+		b.WriteString(key)
+		b.WriteByte('=')
+		b.WriteString(strconv.Quote(kv[i+1]))
+		b.WriteByte(';')
+	}
+	return b.String()
+}
+
+// splitQuotedSegments 按**未加引号**的 ';' 切分 Detail 片段。
+// 引号内的 ';'（如 agent="a;b"）属于值的一部分，不能作为片段边界。
+func splitQuotedSegments(s string) []string {
+	var segs []string
+	start := 0
+	inQuote := false
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inQuote && c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inQuote = !inQuote
+			continue
+		}
+		if c == ';' && !inQuote {
+			segs = append(segs, s[start:i])
+			start = i + 1
+		}
+	}
+	return append(segs, s[start:])
+}
+
+// parseAuditDetail 将审计 Detail 字符串解析为 key/value 映射。
+// 新格式由 formatMiddlewareAuditDetail 生成："key=value;key=value;"（值带引号、可含空格/';'/'='）。
+// 兼容旧格式："template=foo deployType=docker agent=ag1 ..."（空格分隔，值不能含空格）。
+func parseAuditDetail(detail string) map[string]string {
+	out := make(map[string]string)
+	if detail == "" {
+		return out
+	}
+	// 新格式带引号值（key="...";），按引号感知的 ';' 切分；未知键与畸形片段忽略。
+	if strings.Contains(detail, `="`) {
+		for _, seg := range splitQuotedSegments(detail) {
+			seg = strings.TrimSpace(seg)
+			key, raw, ok := strings.Cut(seg, "=")
+			if !ok {
+				continue
+			}
+			key = strings.TrimSpace(key)
+			if _, known := middlewareAuditDetailKeys[key]; !known {
+				continue
+			}
+			val := strings.TrimSpace(raw)
+			if unq, err := strconv.Unquote(val); err == nil {
+				val = unq
+			}
+			if val != "" {
+				out[key] = val
+			}
+		}
+		return out
+	}
+	// 旧格式：空格分隔 key=value，仅识别已知键。
+	for _, token := range strings.Fields(detail) {
+		key, val, ok := strings.Cut(token, "=")
+		if !ok || key == "" || val == "" {
+			continue
+		}
+		if _, known := middlewareAuditDetailKeys[key]; !known {
 			continue
 		}
 		out[key] = val
 	}
 	return out
+}
+
+// validMiddlewareInstanceID 校验 URL 路径中的实例键：不得包含空白或 k=v/条目分隔符
+// （'='、';'），防止审计 Detail 注入与键混淆。空串表示调用方未提供，由请求体推导。
+func validMiddlewareInstanceID(id string) bool {
+	if id == "" {
+		return true
+	}
+	if strings.ContainsAny(id, "=;") {
+		return false
+	}
+	for _, r := range id {
+		if unicode.IsSpace(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // instanceKey 构建中间件实例的复合键。
@@ -180,30 +280,15 @@ func (s *Server) deriveMiddlewareInstances(tenantID string, filterAgentID, filte
 	return result
 }
 
-// resolveMiddlewareVersion resolves the version string from a requested version.
-// Delegates to the version resolution in middleware_version.go.
-func resolveMiddlewareVersionStr(tpl *MiddlewareTemplate, requestedVersion string) string {
-	v := resolveMiddlewareVersion(tpl, requestedVersion)
-	if v == nil {
-		if requestedVersion != "" {
-			return requestedVersion
-		}
-		return tpl.Version
+// resolveMiddlewareVersionAndKey 解析请求版本并计算实例复合键。
+// deploy 与 uninstall 共用本函数，保证两侧的版本解析与 instanceKey 推导完全一致
+// （否则卸载审计写入的键与部署键不等，实例会永久停留在 deployed）。
+func resolveMiddlewareVersionAndKey(tpl *MiddlewareTemplate, templateID, agentID, deployType, requestedVersion string, params map[string]string) (version, key string) {
+	version = selectedMiddlewareVersion(requestedVersion, params)
+	if v := resolveMiddlewareVersion(tpl, version); v != nil {
+		version = v.Version
 	}
-	return v.Version
-}
-
-// selectedMiddlewareVersionImage returns the DockerImage for the selected version.
-func selectedMiddlewareVersionImage(tpl *MiddlewareTemplate, version string) string {
-	v := resolveMiddlewareVersion(tpl, version)
-	if v != nil && v.DockerImage != "" {
-		return v.DockerImage
-	}
-	// Fallback: resolve default version and use its image.
-	if defaultV := resolveMiddlewareVersion(tpl, ""); defaultV != nil && defaultV.DockerImage != "" {
-		return defaultV.DockerImage
-	}
-	return ""
+	return version, instanceKey(templateID, agentID, deployType, version)
 }
 
 var _ = presets.MiddlewareTemplates

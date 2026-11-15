@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -137,6 +138,81 @@ func TestDeriveMiddlewareInstances_Uninstall(t *testing.T) {
 	}
 }
 
+// TestHandleUninstallMiddlewareInstance_InvalidInstanceID 验证 URL 路径实例键
+// 含空白或 k=v/条目分隔符时返回 400，不得进入任务下发/审计写入。
+func TestHandleUninstallMiddlewareInstance_InvalidInstanceID(t *testing.T) {
+	s := newMWTestServer()
+	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "default"})
+	body := `{"agentID":"` + a.AgentID + `","templateID":"mysql","deployType":"docker","params":{"password":"pw"}}`
+	for _, id := range []string{"bad id", "a=b", "a;b"} {
+		t.Run(id, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/middleware-instances/"+url.PathEscape(id)+"/uninstall", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			s.handleMiddlewareInstanceRouting(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestMiddlewareInstanceKey_DeployUninstallConsistent 验证 deploy 与 uninstall
+// 在未提供 URL 实例键时用同一推导逻辑（含版本解析），写出相同的 instance 键。
+func TestMiddlewareInstanceKey_DeployUninstallConsistent(t *testing.T) {
+	s := newMWTestServer()
+	a := s.store.Register(&proto.AgentInfo{Segment: "seg-a", TenantID: "default"})
+	const body = `{"agentID":"AGENT","templateID":"mysql","version":"8.4","params":{"password":"pw"}}`
+	agentBody := strings.Replace(body, "AGENT", a.AgentID, 1)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/middleware-templates/mysql/deploy", strings.NewReader(agentBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleMiddlewareTemplateDetail(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("deploy status=%d, body=%s", rec.Code, rec.Body.String())
+	}
+	var deployResp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &deployResp); err != nil {
+		t.Fatalf("decode deploy: %v", err)
+	}
+	deployKey, _ := deployResp["instanceID"].(string)
+	if deployKey == "" {
+		t.Fatal("deploy response missing instanceID")
+	}
+
+	// 直接调用 handler 且不传 URL 实例键，模拟请求体推导路径。
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/middleware-instances//uninstall", strings.NewReader(agentBody))
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	s.handleUninstallMiddlewareInstance(rec2, req2, "")
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("uninstall status=%d, body=%s", rec2.Code, rec2.Body.String())
+	}
+	var uninstallResp map[string]interface{}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &uninstallResp); err != nil {
+		t.Fatalf("decode uninstall: %v", err)
+	}
+	uninstallKey, _ := uninstallResp["instanceID"].(string)
+	if uninstallKey != deployKey {
+		t.Fatalf("instance key diverged: deploy=%q uninstall=%q", deployKey, uninstallKey)
+	}
+
+	// 审计 Detail 同样必须携带相同的 instance 键。
+	var auditDeployKey, auditUninstallKey string
+	for _, ev := range s.store.Audits() {
+		switch ev.Action {
+		case "deploy_middleware":
+			auditDeployKey = parseAuditDetail(ev.Detail)["instance"]
+		case "uninstall_middleware":
+			auditUninstallKey = parseAuditDetail(ev.Detail)["instance"]
+		}
+	}
+	if auditDeployKey != deployKey || auditUninstallKey != deployKey {
+		t.Fatalf("audit instance key mismatch: deploy=%q uninstall=%q want=%q", auditDeployKey, auditUninstallKey, deployKey)
+	}
+}
+
 // TestDeriveMiddlewareInstances_TenantIsolation 验证租户隔离。
 func TestDeriveMiddlewareInstances_TenantIsolation(t *testing.T) {
 	s := newMWTestServer()
@@ -191,20 +267,41 @@ func TestResolveMiddlewareVersion(t *testing.T) {
 	}
 }
 
-// TestSelectedMiddlewareVersionImage 验证镜像解析。
-func TestSelectedMiddlewareVersionImage(t *testing.T) {
-	s := newMWTestServer()
-	tpl := s.getMiddlewareTemplateByID("mysql")
-	if tpl == nil {
-		t.Fatal("mysql template not found")
+// TestParseAuditDetail_RoundTripWithSpaces 验证引号格式能无损承载空格与 k=v/';' 分隔符。
+func TestParseAuditDetail_RoundTripWithSpaces(t *testing.T) {
+	detail := formatMiddlewareAuditDetail(
+		"template", "my sql",
+		"deployType", "docker",
+		"agent", "agent a=1;b",
+		"version", "8.0 rc",
+		"instance", "my sql@agent a=1;b:docker:8.0 rc",
+	)
+	got := parseAuditDetail(detail)
+	want := map[string]string{
+		"template":   "my sql",
+		"deployType": "docker",
+		"agent":      "agent a=1;b",
+		"version":    "8.0 rc",
+		"instance":   "my sql@agent a=1;b:docker:8.0 rc",
 	}
-	img := selectedMiddlewareVersionImage(tpl, "8.4")
-	if img != "mysql:8.4" {
-		t.Errorf("image = %q, want mysql:8.4", img)
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("key %q: got %q, want %q (detail=%q)", k, got[k], v, detail)
+		}
 	}
-	img2 := selectedMiddlewareVersionImage(tpl, "")
-	if img2 != "mysql:8.0" {
-		t.Errorf("default image = %q, want mysql:8.0", img2)
+	if len(got) != len(want) {
+		t.Errorf("len mismatch: got %d, want %d (got=%v)", len(got), len(want), got)
+	}
+}
+
+// TestParseAuditDetail_IgnoresUnknownKeys 验证解析时未知键被忽略，值内 k=v 不能伪造字段。
+func TestParseAuditDetail_IgnoresUnknownKeys(t *testing.T) {
+	got := parseAuditDetail(`template="mysql";evil="x";agent="a=b";`)
+	if len(got) != 2 {
+		t.Fatalf("want 2 known keys, got %d (%v)", len(got), got)
+	}
+	if got["template"] != "mysql" || got["agent"] != "a=b" {
+		t.Fatalf("unexpected parse result: %v", got)
 	}
 }
 

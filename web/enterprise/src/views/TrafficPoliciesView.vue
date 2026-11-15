@@ -24,7 +24,8 @@
             <Button
               variant="ghost" size="sm" :title="canWrite ? (row.status === 'active' ? $t('traffic.disable') : $t('traffic.enable')) : $t('common.write_denied')"
               @click="onToggle(row)"
-             data-testid="trafficpolicies-ontoggle-btn" :disabled="!canWrite"><Icon :name="row.status === 'active' ? 'mute' : 'success'" :size="13" /></Button>
+              data-testid="trafficpolicies-ontoggle-btn" :disabled="!canWrite"
+            ><Icon :name="row.status === 'active' ? 'mute' : 'success'" :size="13" /></Button>
             <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="trafficpolicies-openedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
             <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="trafficpolicies-ondelete-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>

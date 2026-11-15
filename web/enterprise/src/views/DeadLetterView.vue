@@ -30,12 +30,16 @@
         <template #cell-failureReason="{ row }">{{ failureReason(row) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <Button variant="ghost" size="sm" data-testid="dead-letter-retry-btn" :disabled="!canOperate"
-                    :title="canOperate ? '' : $t('common.write_denied')" @click.stop="onRetry(row.taskID)">
+            <Button
+              variant="ghost" size="sm" data-testid="dead-letter-retry-btn" :disabled="!canOperate"
+              :title="canOperate ? '' : $t('common.write_denied')" @click.stop="onRetry(row.taskID)"
+            >
               {{ $t('dead_letter.retry') }}
             </Button>
-            <Button variant="danger" size="sm" data-testid="dead-letter-purge-btn" :disabled="!canOperate"
-                    :title="canOperate ? '' : $t('common.write_denied')" @click.stop="askPurge(row.taskID)">
+            <Button
+              variant="danger" size="sm" data-testid="dead-letter-purge-btn" :disabled="!canOperate"
+              :title="canOperate ? '' : $t('common.write_denied')" @click.stop="askPurge(row.taskID)"
+            >
               {{ $t('dead_letter.purge') }}
             </Button>
           </div>

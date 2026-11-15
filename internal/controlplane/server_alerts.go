@@ -202,6 +202,21 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// alertSubResourceAllow 返回 /api/v1/alerts/{id}[/action] 已识别子资源支持的
+// 动词（Allow 头用）；返回空串表示子路径不是已识别动作（调用方应回 404）。
+// 注意：本域只有 ack/silence 两个动作，裸 {id} 没有详情端点（列表走 /alerts），
+// 故裸 {id} 仍是未知子路径（404）而不是「方法用错」。
+func alertSubResourceAllow(parts []string) string {
+	if len(parts) != 2 {
+		return ""
+	}
+	switch parts[1] {
+	case "ack", "silence":
+		return http.MethodPost
+	}
+	return ""
+}
+
 // handleAlertRouting 统一分派 /api/v1/alerts/{id}/... 子路径：
 //   - POST /api/v1/alerts/{id}/ack：确认告警（M7）
 //   - POST /api/v1/alerts/{id}/silence：静默告警（M7）
@@ -219,6 +234,11 @@ func (s *Server) handleAlertRouting(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 2 && parts[1] == "silence" && r.Method == http.MethodPost:
 		s.handleSilenceAlert(w, r, id)
 	default:
+		// 已知子资源 + 不支持的方法 → 405 + Allow；真正未知的子路径仍 404。
+		if allow := alertSubResourceAllow(parts); allow != "" {
+			writeMethodNotAllowed(w, allow)
+			return
+		}
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
 }

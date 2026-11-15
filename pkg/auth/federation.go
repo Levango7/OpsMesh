@@ -1,0 +1,252 @@
+// 联邦请求签名：控制面与 device-svc 共享的 HMAC 签名/验签与 nonce 防重放核心。
+//
+// canonical 形式（字段顺序固定，| 分隔）：
+//
+//	新：method|path|ts|nonce|tenant|user|roles|sha256(body)
+//	旧：method|path|ts|tenant|user|roles|sha256(body)
+//
+// 兼容规则：未启用 NonceCache（nil）时允许旧格式（无 nonce）验签，供滚动升级；
+// 启用 NonceCache 时强制要求 nonce + 新格式，旧格式一律拒绝，避免绕过重放保护。
+package auth
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// DefaultFederationMaxSkew 联邦签名时间戳允许的最大时钟偏差（±5min），防重放。
+const DefaultFederationMaxSkew = 5 * time.Minute
+
+// 联邦签名 HTTP 头名称（与 controlplane 现有实现逐字一致）。
+const (
+	FederationHeaderForwarded = "X-Federation-Forwarded"
+	FederationHeaderTS        = "X-Federation-Ts"
+	FederationHeaderNonce     = "X-Federation-Nonce"
+	FederationHeaderSignature = "X-Federation-Sig"
+)
+
+// DefaultNonceCacheMaxEntries NonceCache 默认容量上限（超出后先清理过期项，仍满则拒绝）。
+const DefaultNonceCacheMaxEntries = 100000
+
+// nonceCachePruneEvery 每 N 次 CheckAndAdd 触发一次机会式清理（无后台 goroutine）。
+const nonceCachePruneEvery = 256
+
+// defaultNonceCacheTTL NonceCache 未指定/非法 TTL 时的默认值。
+// 取 2 倍签名时间窗：保证在签名仍有效的整个窗口内 nonce 都不会被清理。
+const defaultNonceCacheTTL = 2 * DefaultFederationMaxSkew
+
+var (
+	// ErrFederationMalformed 联邦签名头缺失或格式非法。
+	ErrFederationMalformed = errors.New("auth: 联邦签名头缺失或格式非法")
+	// ErrFederationSecretMissing 联邦共享密钥为空。
+	ErrFederationSecretMissing = errors.New("auth: 联邦共享密钥为空")
+	// ErrFederationSkew 时间戳超出允许偏差。
+	ErrFederationSkew = errors.New("auth: 联邦签名时间戳超出允许偏差")
+	// ErrFederationNonceRequired 启用防重放时请求未携带 nonce。
+	ErrFederationNonceRequired = errors.New("auth: 联邦请求缺少 nonce（启用防重放时必填）")
+	// ErrFederationReplay nonce 已使用过（重放）。
+	ErrFederationReplay = errors.New("auth: 联邦请求 nonce 重放")
+	// ErrFederationSignature 签名不匹配。
+	ErrFederationSignature = errors.New("auth: 联邦签名不匹配")
+)
+
+// FederationCanonicalString 构造带 nonce 的签名原文（新格式）。
+// 字段顺序：method|path|ts|nonce|tenant|user|roles|sha256(body)。
+func FederationCanonicalString(method, path, ts, nonce, tenantID, userID, roles, bodySHA256 string) string {
+	return strings.Join([]string{method, path, ts, nonce, tenantID, userID, roles, bodySHA256}, "|")
+}
+
+// FederationCanonicalStringLegacy 构造不含 nonce 的旧签名原文，仅用于滚动升级期验签。
+// 字段顺序：method|path|ts|tenant|user|roles|sha256(body)。
+func FederationCanonicalStringLegacy(method, path, ts, tenantID, userID, roles, bodySHA256 string) string {
+	return strings.Join([]string{method, path, ts, tenantID, userID, roles, bodySHA256}, "|")
+}
+
+// FederationBodySHA256 返回 body 的 SHA-256 十六进制摘要；nil body 即空体摘要。
+func FederationBodySHA256(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+// SignFederation 对 canonical 原文做 HMAC-SHA256，返回十六进制签名。
+func SignFederation(secret, canonical string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(canonical))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// NonceCache 记录最近见过的 nonce 以拒绝重放。
+//
+// 无线程池、无后台 goroutine：过期项在 CheckAndAdd 内机会式清理；
+// 容量达到上限时先清理再判断，仍满则拒绝新 nonce（返回 false），保证内存有界。
+// 并发安全；零值可用（TTL 与容量取默认值）。
+type NonceCache struct {
+	mu         sync.Mutex
+	ttl        time.Duration
+	maxEntries int
+	entries    map[string]time.Time // nonce -> 过期时刻
+	ops        uint64
+}
+
+// NewNonceCache 构造指定 TTL 的 NonceCache；ttl <= 0 时使用 2 倍默认签名时间窗。
+func NewNonceCache(ttl time.Duration) *NonceCache {
+	return &NonceCache{
+		ttl:        ttl,
+		maxEntries: DefaultNonceCacheMaxEntries,
+		entries:    make(map[string]time.Time),
+	}
+}
+
+// CheckAndAdd 原子检查并登记 nonce：首次出现返回 true，重放返回 false。
+//
+// 语义：
+//   - nil receiver：返回 true（测试或未启用防重放时可传 nil）；
+//   - 空 nonce：返回 false（启用防重放后空 nonce 不可用）；
+//   - 已登记且未过期：返回 false（重放）；
+//   - 已登记但已过期：视为未出现，覆盖登记后返回 true；
+//   - 缓存已满：先清理过期项，仍满则返回 false（与重放同语义，保护内存）。
+func (c *NonceCache) CheckAndAdd(nonce string, now time.Time) bool {
+	if c == nil {
+		return true
+	}
+	if nonce == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if c.entries == nil {
+		c.entries = make(map[string]time.Time)
+	}
+	if exp, ok := c.entries[nonce]; ok {
+		if exp.After(now) {
+			return false
+		}
+		delete(c.entries, nonce)
+	}
+	c.ops++
+	if len(c.entries) >= c.maxEntriesValue() || c.ops%nonceCachePruneEvery == 0 {
+		c.pruneLocked(now)
+	}
+	if len(c.entries) >= c.maxEntriesValue() {
+		return false
+	}
+	c.entries[nonce] = now.Add(c.ttlValue())
+	return true
+}
+
+// ttlValue 返回生效 TTL（调用方需持有锁或仅构造期调用）。
+func (c *NonceCache) ttlValue() time.Duration {
+	if c.ttl <= 0 {
+		return defaultNonceCacheTTL
+	}
+	return c.ttl
+}
+
+// maxEntriesValue 返回生效容量上限。
+func (c *NonceCache) maxEntriesValue() int {
+	if c.maxEntries <= 0 {
+		return DefaultNonceCacheMaxEntries
+	}
+	return c.maxEntries
+}
+
+// pruneLocked 删除已过期 nonce；调用方必须持有 c.mu。
+func (c *NonceCache) pruneLocked(now time.Time) {
+	for nonce, exp := range c.entries {
+		if !exp.After(now) {
+			delete(c.entries, nonce)
+		}
+	}
+}
+
+// VerifyFederationSignature 校验入站联邦请求的 HMAC 签名、时间窗与 nonce 重放。
+//
+// 参数：
+//   - secret：联邦共享密钥（空则拒绝）；
+//   - maxSkew：允许的 |now-ts| 偏差，<=0 时使用 DefaultFederationMaxSkew；
+//   - method/path：参与签名的请求方法与路径；
+//   - headers：请求头（X-Federation-* / 身份头）；
+//   - body：完整请求体（GET 传 nil）；
+//   - nonces：防重放缓存；nil 表示未启用（允许旧格式，无重放保护）；
+//   - now：校验基准时间，零值取 time.Now()。
+//
+// 时间戳接受 unix 秒或 RFC3339；canonical 使用头部原始字符串，签名方须与其一致。
+//
+// 兼容规则（滚动升级安全边界）：
+//   - nonces == nil：无 nonce 头时按 legacy canonical 验签；有 nonce 头时按新 canonical 验签；
+//   - nonces != nil：必须携带非空 nonce 且只接受新 canonical；legacy 请求直接拒绝
+//     （返回 ErrFederationNonceRequired），否则重放保护可被无 nonce 请求绕过。
+//
+// 签名不匹配返回 ErrFederationSignature，重放返回 ErrFederationReplay；
+// 错误均可用 errors.Is 判断。
+func VerifyFederationSignature(secret []byte, maxSkew time.Duration, method, path string, headers http.Header, body []byte, nonces *NonceCache, now time.Time) error {
+	if len(secret) == 0 {
+		return ErrFederationSecretMissing
+	}
+	if headers.Get(FederationHeaderForwarded) != "1" {
+		return fmt.Errorf("%w: %s 必须为 1", ErrFederationMalformed, FederationHeaderForwarded)
+	}
+	if maxSkew <= 0 {
+		maxSkew = DefaultFederationMaxSkew
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	tsRaw := headers.Get(FederationHeaderTS)
+	sig := headers.Get(FederationHeaderSignature)
+	if tsRaw == "" || sig == "" {
+		return fmt.Errorf("%w: 缺少 %s 或 %s", ErrFederationMalformed, FederationHeaderTS, FederationHeaderSignature)
+	}
+	ts, err := parseFederationTimestamp(tsRaw)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrFederationMalformed, err)
+	}
+	if skew := now.Sub(ts); skew > maxSkew || skew < -maxSkew {
+		return fmt.Errorf("%w: |now-ts|=%s 超过 %s", ErrFederationSkew, skew.Abs(), maxSkew)
+	}
+	nonce := headers.Get(FederationHeaderNonce)
+	if nonces != nil && nonce == "" {
+		return ErrFederationNonceRequired
+	}
+	tenant := headers.Get("X-Tenant-ID")
+	user := headers.Get("X-User-Id")
+	roles := headers.Get("X-User-Roles")
+	bodySHA := FederationBodySHA256(body)
+	var canonical string
+	if nonce != "" {
+		canonical = FederationCanonicalString(method, path, tsRaw, nonce, tenant, user, roles, bodySHA)
+	} else {
+		canonical = FederationCanonicalStringLegacy(method, path, tsRaw, tenant, user, roles, bodySHA)
+	}
+	expected := SignFederation(string(secret), canonical)
+	if !hmac.Equal([]byte(expected), []byte(sig)) {
+		return ErrFederationSignature
+	}
+	if nonces != nil && !nonces.CheckAndAdd(nonce, now) {
+		return fmt.Errorf("%w: nonce=%q", ErrFederationReplay, nonce)
+	}
+	return nil
+}
+
+// parseFederationTimestamp 解析 unix 秒或 RFC3339 时间戳。
+func parseFederationTimestamp(raw string) (time.Time, error) {
+	if sec, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		return time.Unix(sec, 0), nil
+	}
+	ts, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("时间戳 %q 既非 unix 秒也非 RFC3339", raw)
+	}
+	return ts, nil
+}

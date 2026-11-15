@@ -53,7 +53,8 @@
       <div class="flowbar">
         <h3 class="card__title">{{ $t('cost.alerts_title') }}</h3>
       </div>
-      <DataTable :loading="loading"
+      <DataTable
+        :loading="loading"
         :columns="alertColumns"
         :rows="store.alerts"
         row-key="timestamp"
@@ -107,7 +108,8 @@
         <h3 class="card__title">{{ $t('cost.routes_title') }}</h3>
         <Button variant="ghost" size="sm" :disabled="routesLoading" @click="refreshRoutes">{{ $t('common.refresh') }}</Button>
       </div>
-      <DataTable :loading="loading"
+      <DataTable
+        :loading="loading"
         v-if="store.routes.length"
         :columns="routeColumns"
         :rows="store.routes"

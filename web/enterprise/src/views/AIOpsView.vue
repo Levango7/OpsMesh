@@ -247,7 +247,7 @@
         </div>
       </div>
     </div>
-      <ConfirmModal
+    <ConfirmModal
       v-model="executeConfirm.show"
       data-testid="aiops-execute-confirm-modal"
       :title="$t('aiops.execute_plan')"

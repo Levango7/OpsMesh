@@ -65,19 +65,15 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported deployType: " + body.DeployType})
 		return
 	}
-	// 版本选择：请求体 version（或 params.version）决定实际使用的镜像与脚本；
-	// 未指定时回落到模板默认版本（Versions[0]/Default）。
-	selectedVersion := selectedMiddlewareVersion(body.Version, body.Params)
-	if v := resolveMiddlewareVersion(tpl, selectedVersion); v != nil {
-		selectedVersion = v.Version
-	}
-	script, ok := resolveMiddlewareScript(tpl, body.DeployType, selectedVersion)
+	// 版本选择与实例键：与 uninstall 共用同一推导函数（请求体 version 或 params.version，
+	// 未指定时回落到模板默认版本），确保部署与卸载写入的 instance 键不会分叉。
+	resolvedVersion, instKey := resolveMiddlewareVersionAndKey(tpl, id, body.AgentID, body.DeployType, body.Version, body.Params)
+	script, ok := resolveMiddlewareScript(tpl, body.DeployType, resolvedVersion)
 	if !ok {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "script not found for deployType: " + body.DeployType})
 		return
 	}
-	tplParams := resolveMiddlewareParams(tpl, selectedVersion)
-	resolvedVersion := selectedVersion
+	tplParams := resolveMiddlewareParams(tpl, resolvedVersion)
 	// 校验必填参数。
 	for _, p := range tplParams {
 		if p.Required {
@@ -135,8 +131,6 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 	}
 	rendered := renderMiddlewareScript(script.Deploy, body.Params)
 	scriptBody, command := presets.SplitScriptCommand(rendered)
-	// instance key：复合键 <templateID>@<agentID>:<deployType>:<version>
-	instKey := instanceKey(id, body.AgentID, body.DeployType, resolvedVersion)
 	task, err := s.store.CreateTask(&proto.Task{
 		AgentID:    body.AgentID,
 		TenantID:   targetTenant,
@@ -151,18 +145,20 @@ func (s *Server) handleDeployMiddlewareTemplate(w http.ResponseWriter, r *http.R
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	// Detail 使用引号转义的键值格式（值可含空格/';'/'='），与实例解析器互逆。
+	deployDetail := formatMiddlewareAuditDetail("template", id, "deployType", body.DeployType, "agent", body.AgentID, "version", resolvedVersion, "instance", instKey)
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
 		UserID:   actx.UserID,
 		Action:   "deploy_middleware",
 		Target:   task.TaskID,
-		Detail:   sanitizeAuditDetail("template=" + opsSQLString(id) + " deployType=" + opsSQLString(body.DeployType) + " agent=" + opsSQLString(body.AgentID) + " version=" + opsSQLString(resolvedVersion) + " instance=" + opsSQLString(instKey)),
+		Detail:   deployDetail,
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
 			Action: "deploy_middleware", Target: task.TaskID,
-			Detail: sanitizeAuditDetail("template=" + opsSQLString(id) + " deployType=" + opsSQLString(body.DeployType) + " agent=" + opsSQLString(body.AgentID) + " version=" + opsSQLString(resolvedVersion) + " instance=" + opsSQLString(instKey)), Level: events.LevelInfo,
+			Detail: deployDetail, Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {
@@ -223,6 +219,12 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// URL 路径中的实例键不得含空白或 k=v/条目分隔符：既防审计 Detail 注入，
+	// 也防与请求体推导出的复合键混淆。
+	if !validMiddlewareInstanceID(instanceID) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid instance id"})
+		return
+	}
 	if err := s.verifyFederationRequest(r); err != nil {
 		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
@@ -262,18 +264,14 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "template not found: " + body.TemplateID})
 		return
 	}
-	// 实例复合键：优先使用 URL 路径中的 instance id，缺失时按复合键推导。
+	// 实例复合键：优先使用 URL 路径中的 instance id；缺失时用与 deploy 完全相同的
+	// 版本解析与 instanceKey 推导（共享 resolveMiddlewareVersionAndKey），避免键分叉。
+	resolvedVersion, derivedKey := resolveMiddlewareVersionAndKey(tpl, body.TemplateID, body.AgentID, body.DeployType, body.Version, body.Params)
 	instKey := instanceID
 	if instKey == "" {
-		instKey = instanceKey(body.TemplateID, body.AgentID, body.DeployType, resolveMiddlewareVersionStr(tpl, body.Version))
+		instKey = derivedKey
 	}
-	// 版本选择：请求体 version（或 params.version）决定实际使用的镜像与脚本。
-	selectedVersion := selectedMiddlewareVersion(body.Version, body.Params)
-	if v := resolveMiddlewareVersion(tpl, selectedVersion); v != nil {
-		selectedVersion = v.Version
-	}
-	resolvedVersion := selectedVersion
-	script, ok := resolveMiddlewareScript(tpl, body.DeployType, selectedVersion)
+	script, ok := resolveMiddlewareScript(tpl, body.DeployType, resolvedVersion)
 	if !ok {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "script not found for deployType: " + body.DeployType})
 		return
@@ -282,7 +280,7 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "uninstall script not defined for template: " + body.TemplateID})
 		return
 	}
-	tplParams := resolveMiddlewareParams(tpl, selectedVersion)
+	tplParams := resolveMiddlewareParams(tpl, resolvedVersion)
 	// 填充默认参数（与 deploy 一致，确保占位符能被替换）。
 	if body.Params == nil {
 		body.Params = map[string]string{}
@@ -332,18 +330,19 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 		return
 	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
+	uninstallDetail := formatMiddlewareAuditDetail("instance", instKey, "template", body.TemplateID, "deployType", body.DeployType, "agent", body.AgentID, "version", resolvedVersion)
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: targetTenant,
 		UserID:   actx.UserID,
 		Action:   "uninstall_middleware",
 		Target:   task.TaskID,
-		Detail:   sanitizeAuditDetail("instance=" + opsSQLString(instKey) + " template=" + opsSQLString(body.TemplateID) + " deployType=" + opsSQLString(body.DeployType) + " agent=" + opsSQLString(body.AgentID) + " version=" + opsSQLString(resolvedVersion)),
+		Detail:   uninstallDetail,
 	})
 	if s.bus != nil {
 		s.bus.Publish(r.Context(), events.Event{
 			TenantID: targetTenant, UserID: actx.UserID,
 			Action: "uninstall_middleware", Target: task.TaskID,
-			Detail: sanitizeAuditDetail("instance=" + opsSQLString(instKey) + " template=" + opsSQLString(body.TemplateID) + " deployType=" + opsSQLString(body.DeployType) + " agent=" + opsSQLString(body.AgentID) + " version=" + opsSQLString(resolvedVersion)), Level: events.LevelInfo,
+			Detail: uninstallDetail, Level: events.LevelInfo,
 		})
 	}
 	if s.metrics != nil {

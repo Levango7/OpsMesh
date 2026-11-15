@@ -52,7 +52,8 @@
               size="sm"
               :data-testid="'del-user-' + row.name"
               @click="confirmDelete('user', row.name, t('system_ops.confirm_delete_user', { name: row.name }))"
-             :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
+              :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"
+            >{{ $t('common.delete') }}</Button>
           </template>
         </Table>
       </div>
@@ -77,7 +78,8 @@
               size="sm"
               :data-testid="'del-group-' + row.name"
               @click="confirmDelete('group', row.name, t('system_ops.confirm_delete_group', { name: row.name }))"
-             :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
+              :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"
+            >{{ $t('common.delete') }}</Button>
           </template>
         </Table>
       </div>
@@ -104,7 +106,8 @@
               size="sm"
               :data-testid="'del-rule-' + (row.port || 'any')"
               @click="confirmDelete('rule', ruleLabel(row), t('system_ops.confirm_delete_rule', { name: ruleLabel(row) }), row)"
-             :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
+              :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"
+            >{{ $t('common.delete') }}</Button>
           </template>
         </Table>
         <div v-if="firewallRules" class="firewall-rules-result">

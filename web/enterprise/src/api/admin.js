@@ -35,7 +35,7 @@ export const adminApi = {
 // `GET /api/v1/admin/diagnostics`（application/zip）⇒ 管理台点击必然 404/405。
 // 现在：GET + 同源 Cookie；401 先 refresh 再重放一次（与主链路会话续期一致）；
 // 失败时尽量读取 JSON error 文案。
-export const downloadDiagnostics = async () => {
+export async function downloadDiagnostics() {
   const url = getDiagnosticsUrl()
   let res = await fetch(url, { method: 'GET', credentials: 'same-origin' })
   if (res.status === 401) {

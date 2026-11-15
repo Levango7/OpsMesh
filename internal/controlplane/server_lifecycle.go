@@ -185,6 +185,7 @@ func (s *Server) Start() error {
 	if s.fed != nil {
 		mux.HandleFunc("/api/v1/federation/peers", s.handleFederationPeers)
 		mux.HandleFunc("/api/v1/federation/forward/task", s.handleFederationForwardTask)
+		mux.HandleFunc("/api/v1/federation/forward/device-op", s.handleFederationForwardDeviceOp) // 设备域操作转发（退役/纳管/指标/系统/netsec/cmdb-discover）
 		mux.HandleFunc("/api/v1/federation/devices", s.handleFederationDevices)
 		mux.HandleFunc("/api/v1/federation/tasks/", s.handleFederationTaskRouting) // 子路径：{taskID} GET 查询任务状态
 	}

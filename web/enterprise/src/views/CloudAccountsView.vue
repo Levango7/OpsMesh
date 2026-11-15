@@ -75,7 +75,7 @@
               {{ t('cloud_accounts.resources') }}
             </Button>
             <Button
-              size="small"
+              size="sm"
               variant="danger"
               icon="delete"
               @click="onDelete(row)"

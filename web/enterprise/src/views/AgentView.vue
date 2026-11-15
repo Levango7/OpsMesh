@@ -28,7 +28,8 @@
       <div class="flowbar">
         <h3 class="card__title">{{ $t('agent.decompose_title') }}</h3>
       </div>
-      <DataTable :loading="store.loading"
+      <DataTable
+        :loading="store.loading"
         :columns="taskColumns"
         :rows="store.decomposedTasks"
         row-key="id"

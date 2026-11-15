@@ -49,7 +49,8 @@
       <!-- 模板目录表 -->
       <template v-if="view === 'templates'">
         <div v-if="store.loading && !store.templates.length" class="muted">{{ $t('mwdep.loading') }}</div>
-        <DataTable :loading="store.loading"
+        <DataTable
+          :loading="store.loading"
           v-else
           :columns="tplColumns"
           :rows="store.templates"
@@ -91,7 +92,8 @@
       <template v-else>
         <p class="hint">{{ $t('mwdep.instancesHint') }}</p>
         <div v-if="store.instancesLoading && !store.instances.length" class="muted">{{ $t('mwdep.loading') }}</div>
-        <DataTable :loading="store.loading"
+        <DataTable
+          :loading="store.loading"
           v-else
           :columns="insColumns"
           :rows="store.instances"

@@ -128,6 +128,29 @@ const sessionExpiredHint = "session may have expired; please log in again"
 // 调用方应在 ok=false 时直接 return（响应已写入）。
 func (s *Server) requireTenantContext(w http.ResponseWriter, r *http.Request) (authctx.Context, bool) {
 	actx := authctx.FromHTTPHeader(r.Header)
+	// 联邦入站（X-Federation-Forwarded=1）：peer 请求由 HMAC 签名认证，不携带本地 JWT。
+	// 验签通过即视为可信身份来源（用户级 RBAC 已在来源控制面执行），仅以 X-Tenant-ID 作为租户边界；
+	// 验签失败 / nonce 重放 → 403。verifyFederationRequest 对同一请求幂等（context 标记），
+	// 不会因 handler 已提前验签而二次消费 nonce 触发误判重放。
+	if r.Header.Get("X-Federation-Forwarded") == "1" {
+		if err := s.verifyFederationRequest(r); err != nil {
+			logx.Warn(r.Context(), "controlplane: 联邦入站验签失败", err)
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "federation signature verification failed"})
+			return actx, false
+		}
+		if actx.TenantID == "" {
+			if s.cfg != nil && s.cfg.Demo {
+				actx.TenantID = "default"
+				if actx.UserID == "" {
+					actx.UserID = "demo"
+				}
+			} else {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing X-Tenant-ID header (federation tenant scope required)"})
+				return actx, false
+			}
+		}
+		return actx, true
+	}
 	// 修复 1+2：从 Bearer token/Cookie 提取 tenant_id 作为回退/交叉校验。
 	tokenTenant, tokenUser, tokenRoles := s.tenantFromBearer(r)
 	trustGateway := s.cfg != nil && s.cfg.TrustGatewayHeaders

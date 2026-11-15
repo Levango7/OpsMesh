@@ -51,7 +51,8 @@
     </form>
 
     <div v-if="loading" class="muted">{{ $t('common.loading') }}</div>
-    <DataTable :loading="loading"
+    <DataTable
+      :loading="loading"
       v-else
       :columns="columns"
       :rows="pagedEvents"

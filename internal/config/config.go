@@ -271,11 +271,15 @@ type Config struct {
 	//   - FederationSecret：联邦 peer 间共享 HMAC 密钥，对转发的身份头签名/验签，防跨不可信网段伪造租户身份。
 	//   - FederationTLSCert/Key/CA：联邦专用 mTLS 凭证（区别于 gRPC 的 --tls-cert/key/client-ca）。
 	//   - FederationPort：联邦独立 mTLS 监听端口（>0 时启用，强制对端持证）；0=不启用独立监听（复用主 HTTP）。
-	FederationSecret  string
-	FederationTLSCert string
-	FederationTLSKey  string
-	FederationCA      string
-	FederationPort    int
+	//   - FederationMaxSkewSeconds：签名时间戳允许的时钟偏差（秒，默认 300 = ±5min）。
+	//   - FederationNonceTTLSeconds：防重放 nonce 缓存 TTL（秒，默认 600 = 2×maxSkew）。
+	FederationSecret          string
+	FederationTLSCert         string
+	FederationTLSKey          string
+	FederationCA              string
+	FederationPort            int
+	FederationMaxSkewSeconds  int
+	FederationNonceTTLSeconds int
 
 	// 安全加固：agent 侧纵深防御，避免控制面被绕过/被攻陷时直接 RCE 目标机。
 	//   - AgentShellWhitelist：逗号分隔的允许命令前缀列表（如 ls,cat,echo,ping,systemctl,docker,kubectl）。
@@ -595,6 +599,8 @@ func Load() *Config {
 	federationTLSKey := flag.String("federation-tls-key", "", "联邦 mTLS 私钥；或 env OPSMESH_FEDERATION_TLS_KEY")
 	federationCA := flag.String("federation-ca", "", "联邦 mTLS 对端 CA（校验证书链/要求客户端持证）；或 env OPSMESH_FEDERATION_CA")
 	federationPort := flag.Int("federation-port", 0, "联邦独立 mTLS 监听端口（>0 启用，强制对端持证）；0=不启用独立监听（复用主 HTTP）；或 env OPSMESH_FEDERATION_PORT")
+	federationMaxSkewSeconds := flag.Int("federation-max-skew-seconds", 300, "联邦签名时间戳允许的最大时钟偏差（秒，默认 300=±5min）；配合 nonce 防重放；或 env OPSMESH_FEDERATION_MAX_SKEW_SECONDS")
+	federationNonceTTLSeconds := flag.Int("federation-nonce-ttl-seconds", 600, "联邦防重放 nonce 缓存 TTL（秒，默认 600=2×max-skew）；保证签名有效窗口内 nonce 不被清理；或 env OPSMESH_FEDERATION_NONCE_TTL_SECONDS")
 	// 安全加固：agent 侧命令白名单与文件任务根目录白名单。
 	agentShellWhitelist := flag.String("agent-shell-whitelist", "", "安全加固：agent shell 任务允许的命令前缀列表（逗号分隔，如 ls,cat,echo,ping,systemctl,docker,kubectl）；空=不限制（向后兼容，demo/受信内网）；非空=仅当命令第一个词匹配某前缀时放行；或 env OPSMESH_AGENT_SHELL_WHITELIST")
 	agentFileRootWhitelist := flag.String("agent-file-root-whitelist", "", "安全加固：agent 文件任务允许的根目录白名单（逗号分隔，如 /var/opsmesh/files,/etc/opsmesh）；空=不限制根目录（仍拒绝 ../ 路径遍历与符号链接）；非空=目标路径必须落在某个根目录之下；或 env OPSMESH_AGENT_FILE_ROOT_WHITELIST")
@@ -826,6 +832,8 @@ func Load() *Config {
 		FederationTLSKey:           val("federation-tls-key", *federationTLSKey, "OPSMESH_FEDERATION_TLS_KEY"),
 		FederationCA:               val("federation-ca", *federationCA, "OPSMESH_FEDERATION_CA"),
 		FederationPort:             valInt("federation-port", *federationPort, "OPSMESH_FEDERATION_PORT"),
+		FederationMaxSkewSeconds:   valInt("federation-max-skew-seconds", *federationMaxSkewSeconds, "OPSMESH_FEDERATION_MAX_SKEW_SECONDS"),
+		FederationNonceTTLSeconds:  valInt("federation-nonce-ttl-seconds", *federationNonceTTLSeconds, "OPSMESH_FEDERATION_NONCE_TTL_SECONDS"),
 		AgentShellWhitelist:        val("agent-shell-whitelist", *agentShellWhitelist, "OPSMESH_AGENT_SHELL_WHITELIST"),
 		AgentFileRootWhitelist:     val("agent-file-root-whitelist", *agentFileRootWhitelist, "OPSMESH_AGENT_FILE_ROOT_WHITELIST"),
 		AgentShellWhitelistDefault: valBool("agent-shell-whitelist-default", *agentShellWhitelistDefault, "OPSMESH_AGENT_SHELL_WHITELIST_DEFAULT"),

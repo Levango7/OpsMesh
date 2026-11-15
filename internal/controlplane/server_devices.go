@@ -205,6 +205,24 @@ func (s *Server) lookupAgent(id string) *proto.AgentInfo {
 	return s.store.Agent(id)
 }
 
+// deviceSubResourceAllow 返回 /api/v1/devices/{id}[/action] 已识别子资源支持的
+// 动词（Allow 头用）；返回空串表示子路径不是已识别动作（调用方应回 404）。
+func deviceSubResourceAllow(parts []string) string {
+	if len(parts) == 1 {
+		return "GET, DELETE" // 设备详情 / 退役
+	}
+	if len(parts) != 2 {
+		return ""
+	}
+	switch parts[1] {
+	case "provision":
+		return http.MethodPost
+	case "metrics", "system":
+		return http.MethodGet
+	}
+	return ""
+}
+
 // handleDeviceRouting 统一分派 /api/v1/devices/{id}... 子路径：
 //   - GET    /api/v1/devices/{id}：设备详情（设备+任务+结果）
 //   - DELETE /api/v1/devices/{id}：退役/下线设备（F5）
@@ -230,6 +248,11 @@ func (s *Server) handleDeviceRouting(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 2 && parts[1] == "system" && r.Method == http.MethodGet:
 		s.handleDeviceSystemInfo(w, r, id)
 	default:
+		// 已知子资源 + 不支持的方法 → 405 + Allow；真正未知的子路径仍 404。
+		if allow := deviceSubResourceAllow(parts); allow != "" {
+			writeMethodNotAllowed(w, allow)
+			return
+		}
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "path": r.URL.Path})
 	}
 }

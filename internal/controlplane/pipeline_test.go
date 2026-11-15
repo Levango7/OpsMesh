@@ -17,6 +17,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -643,4 +644,139 @@ func TestHandlePipelineTemplate_UnknownSubPath(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status=%d, want 404", w.Code)
 	}
+}
+
+// =============================================================================
+// extractPipelineCommand（多行 YAML 脚本提取）
+// =============================================================================
+
+// TestExtractPipelineCommand_LiteralBlock 验证 "|" 块按公共缩进去缩进后以换行连接。
+func TestExtractPipelineCommand_LiteralBlock(t *testing.T) {
+	tpl := &store.PipelineTemplate{
+		Name: "literal",
+		YAML: "steps:\n  - name: build\n    script: |\n      set -eu\n      go build ./...\n      echo done\n",
+	}
+	want := "set -eu\ngo build ./...\necho done"
+	if got := extractPipelineCommand(tpl); got != want {
+		t.Fatalf("extractPipelineCommand()=%q, want %q", got, want)
+	}
+}
+
+// TestExtractPipelineCommand_FoldedBlock 验证 ">" 块将相邻非空行折成空格。
+func TestExtractPipelineCommand_FoldedBlock(t *testing.T) {
+	tpl := &store.PipelineTemplate{
+		Name: "folded",
+		YAML: "script: >\n  echo one\n  echo two\n  echo three\n",
+	}
+	want := "echo one echo two echo three"
+	if got := extractPipelineCommand(tpl); got != want {
+		t.Fatalf("extractPipelineCommand()=%q, want %q", got, want)
+	}
+}
+
+// TestExtractPipelineCommand_ChompedVariants 验证 chomping 指示符按基样式处理。
+func TestExtractPipelineCommand_ChompedVariants(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"literal_strip", "script: |-\n  echo one\n  echo two\n", "echo one\necho two"},
+		{"literal_keep", "script: |+\n  echo one\n  echo two\n", "echo one\necho two"},
+		{"folded_strip", "script: >-\n  echo one\n  echo two\n", "echo one echo two"},
+		{"folded_keep", "script: >+\n  echo one\n  echo two\n", "echo one echo two"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tpl := &store.PipelineTemplate{Name: tc.name, YAML: tc.yaml}
+			if got := extractPipelineCommand(tpl); got != tc.want {
+				t.Fatalf("extractPipelineCommand()=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExtractPipelineCommand_ListForm 验证 "script:" 列表项以换行连接。
+func TestExtractPipelineCommand_ListForm(t *testing.T) {
+	tpl := &store.PipelineTemplate{
+		Name: "list",
+		YAML: "script:\n  - echo one\n  - go test ./...\n",
+	}
+	want := "echo one\ngo test ./..."
+	if got := extractPipelineCommand(tpl); got != want {
+		t.Fatalf("extractPipelineCommand()=%q, want %q", got, want)
+	}
+}
+
+// TestExtractPipelineCommand_SingleLineUnchanged 验证单行 script/sh/command/run 行为不变。
+func TestExtractPipelineCommand_SingleLineUnchanged(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"script", "script: echo hello", "echo hello"},
+		{"sh", "steps:\n  - sh: echo hi", "echo hi"},
+		{"command", "command: echo hi", "echo hi"},
+		{"run", "run: echo hi", "echo hi"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tpl := &store.PipelineTemplate{Name: tc.name, YAML: tc.yaml}
+			if got := extractPipelineCommand(tpl); got != tc.want {
+				t.Fatalf("extractPipelineCommand()=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExtractPipelineCommand_EmptyFallback 验证空/无脚本 YAML 保持原有 echo 回退。
+func TestExtractPipelineCommand_EmptyFallback(t *testing.T) {
+	want := "echo " + opsEcho("pipeline %s started", "empty")
+	cases := []struct {
+		name string
+		yaml string
+	}{
+		{"empty yaml", ""},
+		{"comments only", "# just a comment\n\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tpl := &store.PipelineTemplate{Name: "empty", YAML: tc.yaml}
+			if got := extractPipelineCommand(tpl); got != want {
+				t.Fatalf("extractPipelineCommand()=%q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestExtractPipelineCommand_OversizedTruncated 验证 1000 行 / 64 KiB 上限。
+func TestExtractPipelineCommand_OversizedTruncated(t *testing.T) {
+	t.Run("line cap", func(t *testing.T) {
+		var b strings.Builder
+		b.WriteString("script: |\n")
+		for i := 0; i < maxPipelineScriptLines+200; i++ {
+			b.WriteString(fmt.Sprintf("  echo %d\n", i))
+		}
+		tpl := &store.PipelineTemplate{Name: "line-cap", YAML: b.String()}
+		got := extractPipelineCommand(tpl)
+		lines := strings.Split(got, "\n")
+		if len(lines) != maxPipelineScriptLines {
+			t.Fatalf("line count=%d, want %d", len(lines), maxPipelineScriptLines)
+		}
+		if lines[0] != "echo 0" {
+			t.Fatalf("first line=%q, want %q", lines[0], "echo 0")
+		}
+		if wantLast := fmt.Sprintf("echo %d", maxPipelineScriptLines-1); lines[len(lines)-1] != wantLast {
+			t.Fatalf("last line=%q, want %q", lines[len(lines)-1], wantLast)
+		}
+	})
+	t.Run("byte cap", func(t *testing.T) {
+		body := strings.Repeat("x", maxPipelineScriptBytes+1024)
+		tpl := &store.PipelineTemplate{Name: "byte-cap", YAML: "script: |\n  " + body + "\n"}
+		got := extractPipelineCommand(tpl)
+		if len(got) != maxPipelineScriptBytes {
+			t.Fatalf("len=%d, want %d", len(got), maxPipelineScriptBytes)
+		}
+	})
 }

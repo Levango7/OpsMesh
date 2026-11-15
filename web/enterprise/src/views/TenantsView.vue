@@ -50,6 +50,17 @@
       </DataTable>
     </div>
 
+    <!-- ADR-2026-11-15 §ADR-3：服务端分页 -->
+    <Pagination
+      v-if="total > pageSize"
+      :page="page"
+      :page-size="tenants.length"
+      :limit="pageSize"
+      :total="total"
+      @prev="fetchTenants(page - 1)"
+      @next="fetchTenants(page + 1)"
+    />
+
     <!-- 新增/编辑租户抽屉 -->
     <DetailDrawer :open="!!form" :title="form && form.id ? $t('tenants.edit') : $t('tenants.add')" @close="form = null">
       <form v-if="form" class="tenant-form" @submit.prevent="onSave">
@@ -110,8 +121,13 @@ import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 import Button from "@/components/ui/Button.vue"
+import Pagination from '@/components/Pagination.vue'
 
 const tenants = ref([])
+// ADR-2026-11-15 §ADR-3：服务端分页状态
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 const loading = ref(false)
 const saving = ref(false)
 const form = ref(null)
@@ -143,12 +159,21 @@ function usageText(row) {
   return parts.length ? parts.join(' · ') : '—'
 }
 
-async function fetchTenants() {
+async function fetchTenants(target) {
+  // 兼容 @click="fetchTenants"（会把事件对象传入）与 fetchTenants(n) 两种调用
+  const p = typeof target === 'number' ? target : page.value
   loading.value = true
   loadErr.value = ''
   try {
-    const r = await tenantApi.listTenants()
-    tenants.value = (r && r.tenants) || []
+    const r = await tenantApi.listTenants({ page: p, pageSize: pageSize.value })
+    tenants.value = (r && r.tenants) || (Array.isArray(r) ? r : [])
+    total.value = (r && typeof r.total === 'number') ? r.total : tenants.value.length
+    page.value = (r && typeof r.page === 'number') ? r.page : p
+    // 删除租户导致当前页为空时回退一页，避免停在空页
+    if (!tenants.value.length && page.value > 1) {
+      await fetchTenants(page.value - 1)
+      return
+    }
   } catch (e) {
     tenants.value = []
     // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误

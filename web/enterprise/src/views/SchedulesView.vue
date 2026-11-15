@@ -32,13 +32,15 @@
               variant="ghost" size="sm" v-if="row.status === 'active'"
               :title="canWrite ? ($t('schedules.pause')) : $t('common.write_denied')"
               @click="onToggle(row, 'pause')"
-             data-testid="schedules-pause-btn" :disabled="!canWrite"><Icon name="mute" :size="13" /></Button>
+              data-testid="schedules-pause-btn" :disabled="!canWrite"
+            ><Icon name="mute" :size="13" /></Button>
             <Button
               variant="ghost" size="sm" v-else
 
               :title="canWrite ? ($t('schedules.resume')) : $t('common.write_denied')"
               @click="onToggle(row, 'resume')"
-             data-testid="schedules-resume-btn" :disabled="!canWrite"><Icon name="success" :size="13" /></Button>
+              data-testid="schedules-resume-btn" :disabled="!canWrite"
+            ><Icon name="success" :size="13" /></Button>
             <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="schedules-openedit-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
             <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="schedules-ondelete-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>

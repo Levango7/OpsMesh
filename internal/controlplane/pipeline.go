@@ -24,8 +24,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
@@ -433,35 +435,198 @@ func (s *Server) reconcileRunStatus(runID string) string {
 	return "succeeded"
 }
 
+const (
+	// maxPipelineScriptBytes / maxPipelineScriptLines 限制从模板提取出的脚本体积，
+	// 防止超长 YAML 把 shell 任务的 Command 撑爆（下发/存储/日志均按此上限假设）。
+	maxPipelineScriptBytes = 64 * 1024
+	maxPipelineScriptLines = 1000
+)
+
+// pipelineScriptKeyRe 匹配可承载脚本的 YAML 键：script/sh/command/run。
+// 允许出现在块序列项中（如 "- script: |"）。
+var pipelineScriptKeyRe = regexp.MustCompile(`^\s*(?:-\s+)?(?:script|sh|command|run)\s*:\s*(.*)$`)
+
+// pipelineListItemRe 匹配块序列项 "- value"。
+var pipelineListItemRe = regexp.MustCompile(`^\s*-\s*(.*)$`)
+
 // extractPipelineCommand 从 PipelineTemplate 中提取执行命令。
-// 支持 Tekton/Jenkins YAML 格式，提取 script/sh/command 字段；
+// 支持 Tekton/Jenkins YAML 格式，提取 script/sh/command/run 字段：
+//   - 单行值（script: echo hi）原样返回；
+//   - 块标量（| / >，含 |- / |+ / >- / >+ 等 chomping 变体）按缩进收集后续行，
+//     去掉公共缩进后用换行（|）或空格（>）连接；
+//   - 列表形式（script:\n  - line1\n  - line2）用换行连接。
+//
 // 若无法解析，回退到第一行非注释内容。
 func extractPipelineCommand(tpl *store.PipelineTemplate) string {
 	if tpl.YAML == "" {
 		return fmt.Sprintf(`echo %s`, opsEcho("pipeline %s started", tpl.Name))
 	}
-	// 尝试从 YAML 中提取 script/sh/command 字段
-	for _, line := range strings.Split(tpl.YAML, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "script:") || strings.HasPrefix(trimmed, "sh:") || strings.HasPrefix(trimmed, "command:") {
-			// 提取值（冒号后的内容）
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				val := strings.TrimSpace(parts[1])
-				if val != "" && val != "|" && val != ">" {
-					return val
-				}
-			}
-		}
+	lines := strings.Split(tpl.YAML, "\n")
+	if cmd, ok := extractYAMLScript(lines); ok {
+		return truncatePipelineScript(cmd)
 	}
 	// 回退：第一行非空非注释内容
-	for _, line := range strings.Split(tpl.YAML, "\n") {
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
 			return trimmed
 		}
 	}
 	return fmt.Sprintf(`echo %s`, opsEcho("pipeline %s started", tpl.Name))
+}
+
+// extractYAMLScript 按行扫描 YAML，返回首个可识别的脚本内容。
+// 识别顺序与旧实现一致：靠前的 script/sh/command/run 键优先。
+func extractYAMLScript(lines []string) (string, bool) {
+	for i, line := range lines {
+		m := pipelineScriptKeyRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		value := strings.TrimSpace(m[1])
+		keyIndent := pipelineIndent(line)
+		if value == "" {
+			// 列表形式：script:\n  - line one\n  - line two
+			if items := collectPipelineListItems(lines, i+1, keyIndent); len(items) > 0 {
+				return strings.Join(items, "\n"), true
+			}
+			continue
+		}
+		if value[0] != '|' && value[0] != '>' {
+			return value, true
+		}
+		// 块标量：|（literal）或 >（folded）。chomping 指示符（+/-）按基样式处理，
+		// 统一裁掉块末尾的空行（等价于 clip 语义）。
+		block := deindentPipelineBlock(collectPipelineBlockLines(lines, i+1, keyIndent))
+		if len(block) == 0 {
+			continue
+		}
+		if value[0] == '>' {
+			return foldPipelineBlock(block), true
+		}
+		return strings.Join(block, "\n"), true
+	}
+	return "", false
+}
+
+// collectPipelineBlockLines 收集 keyIndent 之后所有缩进更深的行（含块内空行）。
+// 遇到非空且缩进不深于键的行即视为块结束；块末尾空行被裁掉。
+func collectPipelineBlockLines(lines []string, start, keyIndent int) []string {
+	var block []string
+	for _, line := range lines[start:] {
+		if strings.TrimSpace(line) == "" {
+			block = append(block, "")
+			continue
+		}
+		if pipelineIndent(line) <= keyIndent {
+			break
+		}
+		block = append(block, line)
+	}
+	for len(block) > 0 && block[len(block)-1] == "" {
+		block = block[:len(block)-1]
+	}
+	return block
+}
+
+// deindentPipelineBlock 按非空行的最小公共缩进整体左移。
+func deindentPipelineBlock(lines []string) []string {
+	minIndent := -1
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		n := pipelineIndent(line)
+		if minIndent < 0 || n < minIndent {
+			minIndent = n
+		}
+	}
+	if minIndent < 0 {
+		return nil
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			out = append(out, "")
+			continue
+		}
+		if len(line) >= minIndent {
+			out = append(out, line[minIndent:])
+			continue
+		}
+		out = append(out, strings.TrimSpace(line))
+	}
+	return out
+}
+
+// foldPipelineBlock 按 folded 语义连接块内行：相邻非空行之间折成单个空格；
+// 空行保留为换行。这是典型 CI 对 ">" 的简化语义（不做段落级换行折叠）。
+func foldPipelineBlock(lines []string) string {
+	var b strings.Builder
+	prevText := false
+	for i, line := range lines {
+		if line == "" {
+			if i > 0 && prevText {
+				b.WriteByte('\n')
+			}
+			prevText = false
+			continue
+		}
+		if prevText {
+			b.WriteByte(' ')
+		}
+		b.WriteString(line)
+		prevText = true
+	}
+	return b.String()
+}
+
+// collectPipelineListItems 收集 keyIndent 之后更深缩进的 "- item" 行。
+func collectPipelineListItems(lines []string, start, keyIndent int) []string {
+	var items []string
+	for _, line := range lines[start:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if pipelineIndent(line) <= keyIndent {
+			break
+		}
+		m := pipelineListItemRe.FindStringSubmatch(line)
+		if m == nil {
+			break
+		}
+		if item := strings.TrimSpace(m[1]); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+// pipelineIndent 返回行首空白宽度（空格/制表符各计 1）。
+func pipelineIndent(line string) int {
+	n := 0
+	for _, r := range line {
+		if r != ' ' && r != '\t' {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// truncatePipelineScript 按 64 KiB / 1000 行上限截断脚本；字节截断点回退到
+// 合法 UTF-8 边界，避免下发半个字符。
+func truncatePipelineScript(s string) string {
+	if lines := strings.Split(s, "\n"); len(lines) > maxPipelineScriptLines {
+		s = strings.Join(lines[:maxPipelineScriptLines], "\n")
+	}
+	if len(s) > maxPipelineScriptBytes {
+		s = s[:maxPipelineScriptBytes]
+		for len(s) > 0 && !utf8.ValidString(s) {
+			s = s[:len(s)-1]
+		}
+	}
+	return s
 }
 
 // handlePipelineRuns 统一处理 /api/v1/pipeline/runs：
