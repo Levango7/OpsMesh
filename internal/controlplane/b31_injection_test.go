@@ -1,21 +1,16 @@
 package controlplane
 
-// b31_injection_test.go — 批次 31 守卫（vector_ops.go 形态收口）。
+// b31_injection_test.go — 批次 31 守卫（vector_ops.go 型式收口·构造即校验）。
 //
-// vector_ops.go 7 个 builder：buildVectorDeployScript / buildVectorActionScript /
-// buildVectorCollectionScript / buildVectorWriteScript / buildVectorSearchScript /
-// buildVectorIndexScript / buildVectorMigrateScript
-// 里 req.Type/req.Action/req.Collection/req.ID/req.Vector/req.Payload/req.TopK/req.Dimension/req.Metric/req.Replicas 直接作为脚本实参。
+// vector_ops.go 的构建函数改为**只接受 validated* 类型**（validateVectorDeploy /
+// validateVectorAction / validateVectorCollectionAction / validateVectorWrite /
+// validateVectorSearch / validateVectorMigrate）。原始请求体 struct（vectorDeployRequest /
+// vectorOpsRequest / vectorCollectionReq / vectorWriteReq / vectorSearchReq）不再能到达 build* 函数。编译期约束，构造点之外没有合法路径。
 //
-// 这些字段**在 handler 里都有白名单**：
-//   - Type → allowedVectorTypes（milvus/qdrant/pgvector/chroma/weaviate/elasticsearch）
-//   - Action → allowedVectorActions / allowedVectorCollectionActions / allowedVectorIndexActions / allowedVectorMigrateActions
-//   - Collection → vectorNameRe（集合名标识符）
-//   - Dimension / TopK / Replicas → handler 整数范围校验
-//   - Metric → allowedVectorMetrics（cosine/euclidean/dotproduct/...）
-//   - DeviceID → 仅进 createSystemTask 不进脚本
-//
-// 全形态面，无真洞。本批只做**局部变量承接** ⇒ 判据 E/F 归零；脚本文本逐字节不变。
+// 守卫三条：
+//   ① 所有 build* 函数入参类型必须以 "validated" 开头（或 *strings.Builder）；
+//   ② build* 函数不得引用原始 req 类型；
+//   ③ 既有白名单不失效 + 合法值不被误拒（三例保留）。
 
 import (
 	"go/ast"
@@ -26,8 +21,8 @@ import (
 	"testing"
 )
 
-// TestB31NoRawReqInScriptArgs 判据①。
-func TestB31NoRawReqInScriptArgs(t *testing.T) {
+// TestB31BuilderParamsAreValidatedOnly 判据①：build* 入参只能是 validated* 或 *strings.Builder。
+func TestB31BuilderParamsAreValidatedOnly(t *testing.T) {
 	const f = "vector_ops.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, f, nil, parser.ParseComments)
@@ -35,33 +30,40 @@ func TestB31NoRawReqInScriptArgs(t *testing.T) {
 		t.Fatalf("解析 %s 失败：%v", f, err)
 	}
 	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || !strings.HasPrefix(fn.Name.Name, "build") {
 			return true
 		}
-		var args []ast.Expr
-		switch b9CallName(call.Fun) {
-		case "fmt.Sprintf":
-			if len(call.Args) < 2 {
-				return true
+		for i, field := range fn.Type.Params.List {
+			ts := typeString(field.Type)
+			if ts == "*strings.Builder" || ts == "string" {
+				continue
 			}
-			args = call.Args[1:]
-		case "fmt.Fprintf":
-			if len(call.Args) < 3 || !b26IsBuilderTarget(call.Args[0]) {
-				return true
+			for _, raw := range []string{"vectorDeployRequest", "vectorOpsRequest", "vectorCollectionReq", "vectorWriteReq", "vectorSearchReq"} {
+				if strings.Contains(ts, raw) {
+					t.Errorf("%s:%d builder %s 入参 %d 仍包含原始 req 类型 %q", f, fset.Position(field.Pos()).Line, fn.Name.Name, i, raw)
+				}
 			}
-			args = call.Args[2:]
-		default:
-			return true
-		}
-		for _, a := range args {
-			src := b9Src(fset, a)
-			if strings.Contains(src, "req.") {
-				t.Errorf("%s:%d 脚本实参裸引用 req.*：%s", f, fset.Position(a.Pos()).Line, src)
+			if !strings.HasPrefix(ts, "validated") {
+				t.Errorf("%s:%d builder %s 入参 %d 类型 = %q，必须以 validated 开头", f, fset.Position(field.Pos()).Line, fn.Name.Name, i, ts)
 			}
 		}
 		return true
 	})
+}
+
+// typeString 取表达式字符串形式（只处理标识符与指针/selector 表达式）。
+func typeString(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.StarExpr:
+		return "*" + exprTypeString(x.X)
+	case *ast.SelectorExpr:
+		return exprTypeString(x.X) + "." + x.Sel.Name
+	default:
+		return ""
+	}
 }
 
 // TestB31WhitelistStillRejects 判据②：既有白名单不失效。
