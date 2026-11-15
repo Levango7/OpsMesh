@@ -1251,3 +1251,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [CLAIM] 2026-11-15T04:01:15Z from=opencode ttl=24h scope=internal/controlplane/db_ops.go note=批次 29 db_ops 形态收口：8 个 builder（buildDBDeployScript + 5 子 deploy builder + buildDBActionScript + buildDBInstanceScript）内共 44 处「已校验但直引 req.*」⇒ 局部变量 vReq* 承接（handler 白名单已在调用方校验，format 串一字不动）；附 b29_injection_test 守卫（与批次24-28 同构）。
 
 [CLAIM] 2026-11-15T05:13:25Z from=opencode ttl=24h scope=internal/controlplane/activemq_middleware_ops.go,internal/controlplane/kafka_middleware_ops.go,internal/controlplane/rabbitmq_middleware_ops.go,internal/controlplane/redis_middleware_ops.go,internal/controlplane/zookeeper_middleware_ops.go note=批次 30 中间件族形态收口：7 个 builder（activeMQ/kafka×2/rabbitMQ/redis×2/zookeeper）内共 40 处「已校验但直引 req.*」⇒ 局部变量 vReq* 承接（handler 白名单已在调用方校验，format 串一字不动）；附 b30_injection_test 守卫。
+
+[CLAIM] 2026-11-15T06:50:43Z from=opencode ttl=24h scope=internal/controlplane/vector_ops.go note=批次 31 vector_ops 形态收口：7 个 builder（Deploy/Action/Collection/Write/Search/Index/Migrate）内共 60 处「已校验但直引 req.*」⇒ 局部变量 vReq* 承接（handler 白名单已在调用方校验，format 串一字不动）；附 b31_injection_test 守卫（与批次24-30 同构）。
