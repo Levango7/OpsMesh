@@ -1262,3 +1262,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [CLAIM] 2026-11-15T09:58:52Z from=opencode ttl=48h scope=internal/controlplane/vector_ops.go,internal/controlplane/b31_injection_test.go note=ARCH 模板迁移第二例：vector_ops.go 7 builder 入参全改 validated*（validate* 构造函数承载白名单），builder 内 0 raw req 残留；守卫 b31 同型重写。第二个架构样板证明方案可复制。
 [CLAIM] 2026-11-15T10:49:31Z from=opencode ttl=24h scope=services/task-svc/internal/leader/mysql.go,mysql_test.go note=TestMySQLLeaseOps_AcquireRenewRelease CI flaky：Renew 同毫秒内 RowsAffected=0 误判胜；改用 heldBy 终裁（与 Acquire 同法）。测试租约名去固定，加 UnixNano；services job 稳定性提升。
+[CLAIM] 2026-11-15T10:55:49Z from=opencode ttl=24h scope=internal/controlplane/pipeline_test.go note=Kilo 批次30-32 直推 1bd034ab 引入 WriteString(fmt.Sprintf(...)) staticcheck QF1012 红；改为 fmt.Fprintf。

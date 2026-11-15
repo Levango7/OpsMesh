@@ -756,7 +756,7 @@ func TestExtractPipelineCommand_OversizedTruncated(t *testing.T) {
 		var b strings.Builder
 		b.WriteString("script: |\n")
 		for i := 0; i < maxPipelineScriptLines+200; i++ {
-			b.WriteString(fmt.Sprintf("  echo %d\n", i))
+			fmt.Fprintf(&b, "  echo %d\n", i)
 		}
 		tpl := &store.PipelineTemplate{Name: "line-cap", YAML: b.String()}
 		got := extractPipelineCommand(tpl)
