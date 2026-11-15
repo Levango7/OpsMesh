@@ -1262,3 +1262,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [CLAIM] 2026-11-15T09:05:00Z from=kilo ttl=8h scope=internal/controlplane/federation.go,internal/controlplane/federation_test.go,internal/controlplane/federation_device.go,internal/config/config.go,internal/controlplane/auth.go,internal/controlplane/http_infra.go,pkg/auth/federation.go,pkg/auth/federation_test.go,web/enterprise/src/api/federation.js note=批次32 device 域 HMAC 联邦：共享签名核心 + nonce 防重放 + 设备操作转发
 
 [NOTE] 2026-11-15T09:40:00Z from=kilo 批次32 施工中因「消除重复验签实现」需要，一并改动了 internal/controlplane/server_netsec.go（删除该文件内的 verifyFederationRequest 重复实现，统一到 federation.go）与 internal/controlplane/server_lifecycle.go（注册 /federation/forward/device-op，仅联邦启用时）。server_netsec.go 仍在 opencode 的 dev-stack CLAIM 内，本条为如实披露；本线只做验签去重，不触碰 compose/启动拓扑语义。
+
+[DONE] 2026-11-15T10:00:00Z from=kilo scope=web/enterprise/src/,internal/controlplane/,internal/config/config.go,pkg/auth/,docs/CLAIMS.md,CHANGELOG.md commit=1bd034ab8f451efbeeb82f51f5bfd09096e1364a note=批次30-32 收口（前端阻断缺陷/后端正确性/device HMAC 联邦）
