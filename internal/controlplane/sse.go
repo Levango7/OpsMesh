@@ -61,6 +61,9 @@ type SSEEvent struct {
 	// TraceID 关联 OTel 链路追踪的 trace_id（32 字符 hex），空串表示无关联（向后兼容）。
 	// 由 publishEvent 从 ctx 自动提取注入，调用方无需手动设置。
 	TraceID string `json:"traceID,omitempty"`
+	// Origin 发布实例 ID（ADR-2026-11-15 §ADR-2）：Redis 订阅端据此跳过自己发布的事件，
+	// 避免本副本重复投递。不下发给浏览器（SSE 帧只取 type/tenantID/data/traceID）。
+	Origin string `json:"origin,omitempty"`
 }
 
 // sseSubscriberBuf 每个订阅者的缓冲通道容量。
@@ -204,17 +207,23 @@ func (s *Server) PublishEvent(ctx context.Context, typ string, tenantID string, 
 }
 
 func (s *Server) publishEvent(ctx context.Context, typ string, tenantID string, data interface{}) {
-	s.eventMu.RLock()
-	defer s.eventMu.RUnlock()
-	if len(s.eventSubs) == 0 {
-		return // 无订阅者，快速返回（避免构造事件开销）
-	}
 	ev := SSEEvent{
 		Type:     typ,
 		TenantID: tenantID,
 		Data:     data,
 		TraceID:  otelx.TraceIDFromContext(ctx),
+		Origin:   s.haInstanceID(),
 	}
+	// 先本地广播（单实例路径零变化），再跨副本发布（ADR-2026-11-15 §ADR-2）。
+	// 注意：不能因"本地无订阅者"提前返回——其他副本可能持有订阅者。
+	s.broadcastLocal(ev)
+	s.sseRedisPublish(tenantID, ev)
+}
+
+// broadcastLocal 把事件投递给本实例所有订阅者（慢消费者丢弃）。
+func (s *Server) broadcastLocal(ev SSEEvent) {
+	s.eventMu.RLock()
+	defer s.eventMu.RUnlock()
 	for ch := range s.eventSubs {
 		select {
 		case ch <- ev:

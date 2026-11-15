@@ -52,6 +52,8 @@ import (
 	"github.com/Levango7/OpsMesh/internal/store/sqlstore"
 	"github.com/Levango7/OpsMesh/internal/tlsutil"
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // Server 控制面服务（HTTP + gRPC + metrics）。
@@ -183,6 +185,9 @@ type Server struct {
 	trustedProxyNets []*net.IPNet
 	// tenantRateLimiter 租户级限流（ADR-2026-11-15 §ADR-1；nil=禁用）。
 	tenantRateLimiter *rateLimiter
+	// ssePub SSE 跨副本发布的 Redis 客户端（ADR-2026-11-15 §ADR-2；nil=单实例本地广播）。
+	ssePub         *redis.Client
+	lastSSEPubWarn time.Time
 
 	// M2 集成：告警规则引擎 + 静默器 + 聚合器 + 通知管理器。
 	// alertEngine 持有 alertengine.AlertRule 集合，周期评估设备指标触发告警事件；
@@ -866,6 +871,23 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	if cfg.TenantRateLimit > 0 {
 		s.tenantRateLimiter = newRateLimiter(cfg.TenantRateLimit, 10*time.Minute)
 		logx.Info(context.Background(), "租户级限流已启用", "ratePerSec", cfg.TenantRateLimit)
+	}
+	// ADR-2026-11-15 §ADR-2：SSE 跨副本扇出（Redis Pub/Sub）。
+	// 未配置 Redis ⇒ 单实例本地广播（启动 WARN 一次）；Ping 失败同样降级，不阻断启动。
+	if cfg.RedisAddr != "" {
+		c := newSSERedisClient(cfg.RedisAddr, cfg.RedisPassword)
+		pingCtx, pcancel := context.WithTimeout(context.Background(), 2*time.Second)
+		pingErr := c.Ping(pingCtx).Err()
+		pcancel()
+		if pingErr != nil {
+			logx.Warn(context.Background(), "SSE Redis 不可用，跨副本扇出降级为单实例", "err", pingErr)
+			_ = c.Close()
+		} else {
+			s.ssePub = c
+			logx.Info(context.Background(), "SSE 跨副本扇出已启用（Redis Pub/Sub）")
+		}
+	} else {
+		logx.Warn(context.Background(), "SSE 仅单实例（未配置 --redis-addr），多副本下事件不跨实例")
 	}
 	// M3 集成：Helm 应用商店（RepoManager + ReleaseManager）。
 	// kubeconfig 留空，helm CLI 使用 KUBECONFIG 环境变量或 ~/.kube/config 默认路径；
