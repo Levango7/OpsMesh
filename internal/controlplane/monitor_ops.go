@@ -21,6 +21,7 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -58,6 +59,108 @@ var allowedMonitorResourceActions = map[string]bool{
 
 // 主机名正则（Zabbix host/夜莺 target）。
 var monitorHostRe = regexp.MustCompile(`^[a-zA-Z0-9_.:\-]{1,128}$`)
+
+// validatedMonitorDeploy / validatedMonitorAction / validatedZabbixHost /
+// validatedZabbixItem / validatedNightingaleQuery / validatedSkywalkingTrace
+// 是白名单校验后的形态。builder 只接受这几种类型 —— 原始 monitorDeployRequest /
+// monitorOpsRequest / zabbixHostReq / zabbixItemReq / nightingaleQueryReq /
+// skywalkingTraceReq 无法被传入 builder。
+type validatedMonitorDeploy struct {
+	Type string
+}
+
+type validatedMonitorAction struct {
+	Type, Action string
+}
+
+type validatedZabbixHost struct {
+	Action, Host, HostIP string
+}
+
+type validatedZabbixItem struct {
+	Host, Search string
+}
+
+type validatedNightingaleQuery struct {
+	Query      string
+	Start, End int64
+	Step       int
+}
+
+type validatedSkywalkingTrace struct {
+	TraceID, ServiceID string
+}
+
+func validateMonitorDeploy(req monitorDeployRequest) (validatedMonitorDeploy, error) {
+	if !allowedMonitorTypes[req.Type] {
+		return validatedMonitorDeploy{}, errors.New("unsupported monitor type")
+	}
+	if req.Version != "" && !middlewareVersionRe.MatchString(req.Version) {
+		return validatedMonitorDeploy{}, errors.New("invalid version")
+	}
+	return validatedMonitorDeploy{Type: req.Type}, nil
+}
+
+func validateMonitorAction(monType, action string, req monitorOpsRequest) (validatedMonitorAction, error) {
+	_ = req
+	if !allowedMonitorTypes[monType] {
+		return validatedMonitorAction{}, errors.New("unsupported monitor type")
+	}
+	if !allowedMonitorActions[action] {
+		return validatedMonitorAction{}, errors.New("unsupported action")
+	}
+	return validatedMonitorAction{Type: monType, Action: action}, nil
+}
+
+func validateZabbixHost(req zabbixHostReq) (validatedZabbixHost, error) {
+	if !allowedMonitorResourceActions[req.Action] {
+		return validatedZabbixHost{}, errors.New("unsupported action (create/delete/list)")
+	}
+	if req.Action != "list" && !monitorHostRe.MatchString(req.Host) {
+		return validatedZabbixHost{}, errors.New("invalid host name")
+	}
+	if req.Action != "list" {
+		if _, err := opsHost("hostIP", req.HostIP); err != nil {
+			return validatedZabbixHost{}, err
+		}
+	}
+	return validatedZabbixHost{Action: req.Action, Host: req.Host, HostIP: req.HostIP}, nil
+}
+
+func validateZabbixItem(req zabbixItemReq) (validatedZabbixItem, error) {
+	if req.Host != "" && !monitorHostRe.MatchString(req.Host) {
+		return validatedZabbixItem{}, errors.New("invalid host name")
+	}
+	return validatedZabbixItem{Host: req.Host, Search: req.Search}, nil
+}
+
+func validateNightingaleQuery(req nightingaleQueryReq) (validatedNightingaleQuery, error) {
+	if req.Query == "" {
+		return validatedNightingaleQuery{}, errors.New("query is required")
+	}
+	step := req.Step
+	if step <= 0 {
+		step = 60
+	}
+	return validatedNightingaleQuery{Query: req.Query, Start: req.Start, End: req.End, Step: step}, nil
+}
+
+func validateSkyWalkingTrace(req skywalkingTraceReq) (validatedSkywalkingTrace, error) {
+	if req.TraceID == "" && req.ServiceID == "" {
+		return validatedSkywalkingTrace{}, errors.New("traceID or serviceID is required")
+	}
+	if req.TraceID != "" {
+		if _, err := opsIdentifier("traceId", req.TraceID); err != nil {
+			return validatedSkywalkingTrace{}, err
+		}
+	}
+	if req.ServiceID != "" {
+		if _, err := opsIdentifier("serviceId", req.ServiceID); err != nil {
+			return validatedSkywalkingTrace{}, err
+		}
+	}
+	return validatedSkywalkingTrace{TraceID: req.TraceID, ServiceID: req.ServiceID}, nil
+}
 
 // 监控部署请求体。
 type monitorDeployRequest struct {
@@ -174,40 +277,37 @@ func (s *Server) handleMonitorDeploy(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if !allowedMonitorTypes[req.Type] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported monitor type"})
-		return
-	}
-	if req.Version != "" && !middlewareVersionRe.MatchString(req.Version) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version"})
-		return
-	}
 	if req.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
+	vreq, verr := validateMonitorDeploy(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
 
-	script := buildMonitorDeployScript(req)
-	action := "monitor_deploy_" + req.Type
+	script := buildMonitorDeployScript(vreq)
+	action := "monitor_deploy_" + vreq.Type
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, action)
 	if err != nil {
-		writeInternalError(r.Context(), w, "monitor.deploy."+req.Type, err)
+		writeInternalError(r.Context(), w, "monitor.deploy."+vreq.Type, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: vreq.Type,
 		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildMonitorDeployScript(req monitorDeployRequest) string {
+func buildMonitorDeployScript(vreq validatedMonitorDeploy) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then PKG_MGR=yum; elif command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v apt-get >/dev/null 2>&1; then PKG_MGR=apt-get; else echo '未找到包管理器' && exit 1; fi\n")
-	switch req.Type {
+	switch vreq.Type {
 	case "zabbix":
 		b.WriteString("# Zabbix 部署（zabbix-server + zabbix-agent + MySQL）\n")
 		b.WriteString("if command -v zabbix_server >/dev/null 2>&1; then echo 'Zabbix 已安装'; else $PKG_MGR install -y zabbix-server-mysql zabbix-agent || echo '请配置 Zabbix 仓库后安装' && exit 1; fi\n")
@@ -240,14 +340,6 @@ func (s *Server) handleMonitorAction(w http.ResponseWriter, r *http.Request, mon
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedMonitorTypes[monType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported monitor type"})
-		return
-	}
-	if !allowedMonitorActions[action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action"})
-		return
-	}
 	var req monitorOpsRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -257,10 +349,13 @@ func (s *Server) handleMonitorAction(w http.ResponseWriter, r *http.Request, mon
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	req.Type = monType
-	req.Action = action
+	vreq, verr := validateMonitorAction(monType, action, req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
 
-	script := buildMonitorActionScript(req)
+	script := buildMonitorActionScript(vreq)
 	actionV, err := opsIdentifier("action", action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "monitor.action."+monType, err)
@@ -280,17 +375,13 @@ func (s *Server) handleMonitorAction(w http.ResponseWriter, r *http.Request, mon
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildMonitorActionScript(req monitorOpsRequest) string {
+func buildMonitorActionScript(vreq validatedMonitorAction) string {
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	typeV := req.Type
-	actionV := req.Action
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vreq.Type {
 	case "zabbix":
 		b.WriteString("# Zabbix 启停\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("systemctl start zabbix-server zabbix-agent || true\n")
 		case "stop":
@@ -302,7 +393,7 @@ func buildMonitorActionScript(req monitorOpsRequest) string {
 		}
 	case "nightingale":
 		b.WriteString("# 夜莺启停\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("systemctl start n9e || n9e server &>/var/log/n9e.log & || true\n")
 		case "stop":
@@ -314,7 +405,7 @@ func buildMonitorActionScript(req monitorOpsRequest) string {
 		}
 	case "skywalking":
 		b.WriteString("# SkyWalking 启停\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("cd /opt/skywalking/bin && ./oapService.sh && ./webappService.sh || true\n")
 		case "stop":
@@ -325,7 +416,7 @@ func buildMonitorActionScript(req monitorOpsRequest) string {
 			b.WriteString("pgrep -f oap-server >/dev/null && echo 'running' || echo 'not running'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '监控系统 %s %s 操作完成\n", typeV, actionV)
+	fmt.Fprintf(&b, "echo '监控系统 %s %s 操作完成\n", vreq.Type, vreq.Action)
 	return b.String()
 }
 
@@ -367,53 +458,39 @@ func (s *Server) handleZabbixHost(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if !allowedMonitorResourceActions[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (create/delete/list)"})
+	vreq, verr := validateZabbixHost(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
-	}
-	if req.Action != "list" && !monitorHostRe.MatchString(req.Host) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid host name"})
-		return
-	}
-	if req.Action != "list" {
-		if _, err := opsHost("hostIP", req.HostIP); err != nil {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
 	}
 
-	script := buildZabbixHostScript(req)
-	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "zabbix_host_"+req.Action)
+	script := buildZabbixHostScript(vreq)
+	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "zabbix_host_"+vreq.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "monitor.zabbix.host", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "zabbix_host_" + req.Action, Target: req.Host,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "zabbix_host_" + vreq.Action, Target: vreq.Host,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildZabbixHostScript(req zabbixHostReq) string {
+func buildZabbixHostScript(vreq validatedZabbixHost) string {
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	hostV := req.Host
-	hostIPV := req.HostIP
-	actionV := req.Action
 	b.WriteString("set -e\n")
 	b.WriteString("# Zabbix 主机管理（Zabbix JSON-RPC API，凭证从环境变量 ZABBIX_URL / ZABBIX_USER / ZABBIX_PASSWORD 读取）\n")
 	b.WriteString("ZABBIX_URL=${ZABBIX_URL:-http://localhost/zabbix/api_jsonrpc.php}\n")
-	switch req.Action {
+	switch vreq.Action {
 	case "list":
 		b.WriteString("curl -s -X POST \"$ZABBIX_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"host\",\"status\"]},\"id\":1}'\n")
 	case "create":
-		fmt.Fprintf(&b, "echo 'Zabbix host.create: %s (%s) — 需先 auth 获取 token 后调用 host.create'\n", hostV, hostIPV)
+		fmt.Fprintf(&b, "echo 'Zabbix host.create: %s (%s) — 需先 auth 获取 token 后调用 host.create'\n", vreq.Host, vreq.HostIP)
 	case "delete":
-		fmt.Fprintf(&b, "echo 'Zabbix host.delete: %s'\n", hostV)
+		fmt.Fprintf(&b, "echo 'Zabbix host.delete: %s'\n", vreq.Host)
 	}
-	fmt.Fprintf(&b, "echo 'Zabbix 主机 %s 操作完成\n", actionV)
+	fmt.Fprintf(&b, "echo 'Zabbix 主机 %s 操作完成\n", vreq.Action)
 	return b.String()
 }
 
@@ -439,31 +516,32 @@ func (s *Server) handleZabbixItem(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if req.Host != "" && !monitorHostRe.MatchString(req.Host) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid host name"})
+	vreq, verr := validateZabbixItem(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildZabbixItemScript(req)
+	script := buildZabbixItemScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "zabbix_item_query")
 	if err != nil {
 		writeInternalError(r.Context(), w, "monitor.zabbix.item", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "zabbix_item_query", Target: req.Host,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "zabbix_item_query", Target: vreq.Host,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildZabbixItemScript(req zabbixItemReq) string {
+func buildZabbixItemScript(vreq validatedZabbixItem) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	b.WriteString("ZABBIX_URL=${ZABBIX_URL:-http://localhost/zabbix/api_jsonrpc.php}\n")
-	search := req.Search
+	search := vreq.Search
 	if search == "" {
-		search = req.Host
+		search = vreq.Host
 	}
 	fmt.Fprintf(&b, "curl -s -X POST \"$ZABBIX_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"item.get\",\"params\":{\"output\":[\"itemid\",\"name\",\"key_\",\"lastvalue\",\"lastclock\"],\"search\":{\"name\":\"%s\"}},\"id\":1}'\n", search)
 	b.WriteString("echo 'Zabbix 监控项查询完成'\n")
@@ -492,15 +570,13 @@ func (s *Server) handleNightingaleQuery(w http.ResponseWriter, r *http.Request) 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if req.Query == "" {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "query is required"})
+	vreq, verr := validateNightingaleQuery(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	if req.Step <= 0 {
-		req.Step = 60
-	}
 
-	script := buildNightingaleQueryScript(req)
+	script := buildNightingaleQueryScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "nightingale_query")
 	if err != nil {
 		writeInternalError(r.Context(), w, "monitor.nightingale.query", err)
@@ -513,16 +589,14 @@ func (s *Server) handleNightingaleQuery(w http.ResponseWriter, r *http.Request) 
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildNightingaleQueryScript(req nightingaleQueryReq) string {
+func buildNightingaleQueryScript(vreq validatedNightingaleQuery) string {
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	queryV := urlQueryEscape(req.Query)
-	stepV := req.Step
+	queryV := urlQueryEscape(vreq.Query)
+	stepV := vreq.Step
 	b.WriteString("set -e\n")
 	b.WriteString("# 夜莺查询（Prometheus 兼容 API，凭证从环境变量 N9E_URL / N9E_TOKEN 读取）\n")
 	b.WriteString("N9E_URL=${N9E_URL:-http://localhost:17000}\n")
-	start, end := req.Start, req.End
+	start, end := vreq.Start, vreq.End
 	if start == 0 {
 		start = 0
 	}
@@ -557,43 +631,32 @@ func (s *Server) handleSkyWalkingTrace(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if req.TraceID == "" && req.ServiceID == "" {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "traceID or serviceID is required"})
+	vreq, verr := validateSkyWalkingTrace(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	if req.TraceID != "" {
-		if _, err := opsIdentifier("traceId", req.TraceID); err != nil {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-	}
-	if req.ServiceID != "" {
-		if _, err := opsIdentifier("serviceId", req.ServiceID); err != nil {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-	}
 
-	script := buildSkyWalkingTraceScript(req)
+	script := buildSkyWalkingTraceScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "skywalking_trace_query")
 	if err != nil {
 		writeInternalError(r.Context(), w, "monitor.skywalking.trace", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "skywalking_trace_query", Target: req.TraceID,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "skywalking_trace_query", Target: vreq.TraceID,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildSkyWalkingTraceScript(req skywalkingTraceReq) string {
+func buildSkyWalkingTraceScript(vreq validatedSkywalkingTrace) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	b.WriteString("# SkyWalking 链路查询（GraphQL API，默认 UI:8080/graphql）\n")
 	b.WriteString("SW_URL=${SW_URL:-http://localhost:8080/graphql}\n")
-	traceID := skywalkingID(req.TraceID)
-	serviceID := skywalkingID(req.ServiceID)
+	traceID := skywalkingID(vreq.TraceID)
+	serviceID := skywalkingID(vreq.ServiceID)
 	if traceID != "" {
 		fmt.Fprintf(&b, "curl -s -X POST \"$SW_URL\" -H 'Content-Type: application/json' -d '{\"query\":\"query trace($traceId: ID!) { trace(traceId: $traceId) { spans { traceId segmentId spanId parentSpanId serviceCode startTime endTime endpointName type peer } } }\",\"variables\":{\"traceId\":\"%s\"}}'\n", traceID)
 	} else {
