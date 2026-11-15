@@ -56,7 +56,7 @@ describe('useTaskStore', () => {
       const store = useTaskStore()
       await store.fetchTasks()
 
-      expect(getTasks).toHaveBeenCalledWith('')
+      expect(getTasks).toHaveBeenCalledWith({ page: 1, pageSize: 20 })
       expect(store.list).toEqual(mockTasks)
       expect(store.loading).toBe(false)
       expect(store.error).toBe('')
@@ -69,7 +69,7 @@ describe('useTaskStore', () => {
 
       await store.fetchTasks()
 
-      expect(getTasks).toHaveBeenCalledWith('running')
+      expect(getTasks).toHaveBeenCalledWith({ page: 1, pageSize: 20, status: 'running' })
     })
 
     it('API 返回 null 时 list 为空数组', async () => {

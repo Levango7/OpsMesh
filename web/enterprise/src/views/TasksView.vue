@@ -87,14 +87,14 @@
           <span v-else class="muted">—</span>
         </template>
       </DataTable>
-      <!-- 审计整改批次18：客户端分页（后端列表返回全量时的长列表导航） -->
+      <!-- 审计整改批次29：服务端分页（页码由 store 维护） -->
       <Pagination
-        v-if="store.list.length > pageSize"
-        :page="page"
-        :page-size="pagedList.length"
-        :limit="pageSize"
-        @prev="page = Math.max(1, page - 1)"
-        @next="page = page + 1"
+        v-if="store.total > store.pageSize"
+        :page="store.page"
+        :page-size="store.list.length"
+        :limit="store.pageSize"
+        @prev="store.fetchTasks(store.page - 1)"
+        @next="store.fetchTasks(store.page + 1)"
       />
     </div>
 
@@ -143,7 +143,7 @@
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useTaskStore } from '@/stores/task'
 import { useAuthStore } from '@/stores/auth'
 import { getAgents } from '@/api/device'
@@ -161,18 +161,8 @@ const agents = ref([])
 const form = ref({ agentID: '', type: 'shell', command: '', path: '', content: '' })
 const msg = ref('')
 
-// 审计整改批次18：客户端分页状态（后端返回全量列表时长列表可导航）
-const page = ref(1)
-const pageSize = 20
-const maxPage = computed(() => Math.max(1, Math.ceil(store.list.length / pageSize)))
-// 列表收缩（筛选/刷新）时把页码夹回合法范围（watch 中做副作用，computed 保持纯函数）
-watch(maxPage, (m) => {
-  if (page.value > m) page.value = m
-})
-const pagedList = computed(() => {
-  const start = (page.value - 1) * pageSize
-  return store.list.slice(start, start + pageSize)
-})
+// 审计整改批次29（ADR-3）：服务端分页——页码/总数由 store 维护，视图只读。
+const pagedList = computed(() => store.list)
 const msgOk = ref(false)
 const submitting = ref(false)
 
