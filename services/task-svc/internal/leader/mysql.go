@@ -85,8 +85,13 @@ func (m *MySQLLeaseOps) Renew(ctx context.Context, leaseName, holderID string, t
 	if err != nil {
 		return false
 	}
-	n, err := res.RowsAffected()
-	return err == nil && n > 0
+	// MySQL 在所有字段值完全相同（含 NOW(3) 的同一毫秒内）时报 RowsAffected=0。
+	// 此时仍由本调用方持有且 lease_until > NOW(3) ⇒ 合法续期（与 Acquire 同型语义）。
+	// 单赢家语义不变：no longer present/held 时 heldBy 返回 false。
+	if _, err := res.RowsAffected(); err != nil {
+		return false
+	}
+	return m.heldBy(ctx, leaseName, holderID)
 }
 
 // Release 释放租约（仅当由我持有时清空持有者）。优雅退出时调用，

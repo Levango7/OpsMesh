@@ -39,7 +39,7 @@ func TestMySQLLeaseOps_AcquireRenewRelease(t *testing.T) {
 	ops, cleanup := newTestMySQLLeaseOps(t)
 	defer cleanup()
 	ctx := context.Background()
-	lease := "lease-test-full"
+	lease := fmt.Sprintf("lease-test-full-%d", time.Now().UnixNano())
 	holder := "pod-a-" + time.Now().Format("150405.000")
 
 	if !ops.Acquire(ctx, lease, holder, 10*time.Second) {
@@ -65,7 +65,7 @@ func TestMySQLLeaseOps_ContendedAcquire(t *testing.T) {
 	ops, cleanup := newTestMySQLLeaseOps(t)
 	defer cleanup()
 	ctx := context.Background()
-	lease := "lease-test-contend"
+	lease := fmt.Sprintf("lease-test-contend-%d", time.Now().UnixNano())
 	a := "pod-a-" + time.Now().Format("150405.000")
 	b := "pod-b-" + time.Now().Format("150405.000")
 
@@ -87,7 +87,7 @@ func TestMySQLLeaseOps_StateMachineMultiReplica(t *testing.T) {
 	ops, cleanup := newTestMySQLLeaseOps(t)
 	defer cleanup()
 	ctx := context.Background()
-	lease := "lease-test-failover"
+	lease := fmt.Sprintf("lease-test-failover-%d", time.Now().UnixNano())
 	ttl := 1200 * time.Millisecond
 
 	a := NewK8sLease(ops, lease, "pod-a")
@@ -143,7 +143,7 @@ func TestMySQLLeaseOps_ImmediateTakeoverAfterRelease(t *testing.T) {
 	const ttl = 5 * time.Second
 
 	for i := 0; i < 20; i++ {
-		lease := fmt.Sprintf("lease-test-immediate-%d", i)
+		lease := fmt.Sprintf("lease-test-immediate-%d-%d", i, time.Now().UnixNano())
 		if !ops.Acquire(ctx, lease, "holder-a", ttl) {
 			t.Fatalf("第 %d 轮 A 首次 Acquire 应成功", i)
 		}
@@ -162,7 +162,7 @@ func TestMySQLLeaseOps_ConcurrentAcquire(t *testing.T) {
 	ops, cleanup := newTestMySQLLeaseOps(t)
 	defer cleanup()
 	ctx := context.Background()
-	lease := "lease-test-concurrent"
+	lease := fmt.Sprintf("lease-test-concurrent-%d", time.Now().UnixNano())
 
 	const n = 8
 	winners := make([]bool, n)
@@ -201,7 +201,7 @@ func TestMySQLLeaseOps_IdempotentReAcquireSameMillisecond(t *testing.T) {
 	ops, cleanup := newTestMySQLLeaseOps(t)
 	defer cleanup()
 	ctx := context.Background()
-	lease := "lease-test-idempotent-re"
+	lease := fmt.Sprintf("lease-test-idempotent-re-%d", time.Now().UnixNano())
 	holder := "pod-a-idem-" + time.Now().Format("150405.000")
 
 	if !ops.Acquire(ctx, lease, holder, 10*time.Second) {
