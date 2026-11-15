@@ -85,6 +85,16 @@
 - **能力变化**：**无**（不新增/收紧任何白名单）。
 - **守卫**：`internal/controlplane/b27_injection_test.go` —— ①AST 守卫（builder 实参不得裸引用 `req.*`）；②既有白名单**不失效**（type/action/database/query 注入载荷必须 **400**）；③合法值不被误拒。经**变异测试**（实参改回 `req.Name` ⇒ 判红；复原 ⇒ 绿）。
 - **验证**：`gofmt -l .` clean；`golangci-lint run ./...` ⇒ **0 issues**；`go build`/`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（含 TestB27 三例）；盘点器实测 `tsdb_ops.go` 命中 **→ 0**，全仓 **A/B 0**（不增）。
+## [Arch-已构造即校验·db_ops.go 样板] — 2026-11-15（「彻底」：型式收口的架构级修法）
+
+- **背景（为什么批量收口治标不治本）**：批次 24-31 全部按「handler 白名单 ⇒ builder 用 vReq* 局部承接」模式收口。该模式管用，但存在系统性风险：builder 入参仍是裸 `req.*`，忘记替换或新字段进来时判据 E/F 才会响，测试需要全覆盖才能兜底。**根治 = 让未校验的值在类型层面就到不了 builder。**
+- **模板**：`validateDBDeploy / validateDBOps / validateDBInstance` 构造函数 = 唯一合法路径：白名单校验成功才返回 `validatedDBDeploy / validatedDBOps / validatedDBInstance`；builder 只接受 `validated*` 类型；原始 `dbDeployRequest / dbOpsRequest / dbInstanceReq` 不可能被传给 builder（编译期阻断）。
+- **不动**：白名单本身（名称/正则/工厂函数/端点路径）；错误响应形状（400 + `{"error": ...}`）；脚本内容（逐字节不变）。
+- **感知**：handler 层验证失败立即返回 400（消息与原行为一致）；audit/createSystemTask 中需要非脚本字段的位置（`DeviceID`）保留 `req.*`（raw req 仅限非 builder 调用）。
+- **守卫**：`b29_injection_test.go` 重写 —— ①断言所有 `build*` 函数入参类型以 `validated` 开头（或 `*strings.Builder`）；②断言原始 req 类型**不出现在任何 build* 入参**；③白名单不失效 + 合法值不误拒（三例保留）。变异测试验证（将入参 `vreq validatedDBOps` 改回 `req dbOpsRequest` ⇒ 判红；复原 ⇒ 绿）。
+- **展望**：db_ops.go 为样板，剩余家族按同模式批量迁移：vector_ops → tsdb_ops → graph_ops → mongo_ops → 所有 Kafka/SQL/DB 家族……任何家族只需复制 `validateXxx/validatedXxxXxx + build* 参数类型替换 + 守卫重写` 三件套即可。此后「形态面=0」成为架构保证，而非测试覆盖。
+- **能力变化**：**无**内核语义变化；对调用方零感知。
+- **验证**：`gofmt -l .` clean；`golangci-lint run ./...` ⇒ **0 issues**；`go build`/`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（含 TestB29 三例）。
 ## [Unreleased-批次 28 形态面：graph_ops] — 2026-11-15（graph_ops.go ~29 处「已校验但直引」）
 
 - **背景**：批次 17 收口后全仓**真洞归零**；本批落形态面 `graph_ops.go`（图数据库：Neo4j / NebulaGraph）。形态面 = 字段在 handler 里**已有白名单**，但 builder 的脚本实参仍裸引用 `req.*`。

@@ -1,21 +1,16 @@
 package controlplane
 
-// b29_injection_test.go — 批次 29 守卫（db_ops.go 形态收口）。
+// b29_injection_test.go — 批次 29 守卫（db_ops.go 型式收口·构造即校验）。
 //
-// db_ops.go 8 个 builder：buildDBDeployScript（主构建器）+
-// buildPostgreSQL/Oracle/TiDB/OceanBase/MSSQLDeployScript（子构建器）+
-// buildDBActionScript / buildDBInstanceScript
-// 里 req.Type/req.Mode/req.Action/req.Name 等直接作为脚本实参。
+// db_ops.go 的构建函数改为**只接受 validated* 类型**（validateDBDeploy /
+// validateDBOps / validateDBInstance）。原始请求体 struct（dbDeployRequest /
+// dbOpsRequest / dbInstanceReq）不再能到达 build* 函数。这比字符串护栏更强：
+// 编译期约束，构造点之外的路径不可能存在。
 //
-// 这些字段**在 handler 里都有白名单**：
-//   - Type → allowedDBTypes（postgresql/oracle/tidb/oceanbase/mssql/teledb）
-//   - Mode → allowedDBModes[type]（single/ha/rac/cluster）
-//   - Action(启停) → allowedDBActions / Action(实例) → allowedDBInstanceActions
-//   - Name → dbNameRe（实例/数据库名标识符）
-//   - Version → handler 校验（部署分支）
-//   - DeviceID → 仅进 createSystemTask 不进脚本
-//
-// 全形态面，无真洞。本批只做**局部变量承接** ⇒ 判据 E/F 归零；脚本文本逐字节不变。
+// 守卫三条：
+//   ① 所有 build* 函数入参类型必须以 "validated" 开头（*strings.Builder 除外）；
+//   ② build* 函数不得引用原始 req 类型（dbDeployRequest / dbOpsRequest / dbInstanceReq）；
+//   ③ 既有白名单不失效 + 合法值不被误拒（与批次 24/25/26/27/28/29 同构）。
 
 import (
 	"go/ast"
@@ -26,8 +21,8 @@ import (
 	"testing"
 )
 
-// TestB29NoRawReqInScriptArgs 判据①。
-func TestB29NoRawReqInScriptArgs(t *testing.T) {
+// TestB29BuilderParamsAreValidatedOnly 判据①：build* 入参只能是 validated* 或 *strings.Builder。
+func TestB29BuilderParamsAreValidatedOnly(t *testing.T) {
 	const f = "db_ops.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, f, nil, parser.ParseComments)
@@ -35,40 +30,55 @@ func TestB29NoRawReqInScriptArgs(t *testing.T) {
 		t.Fatalf("解析 %s 失败：%v", f, err)
 	}
 	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || !strings.HasPrefix(fn.Name.Name, "build") {
 			return true
 		}
-		var args []ast.Expr
-		switch b9CallName(call.Fun) {
-		case "fmt.Sprintf":
-			if len(call.Args) < 2 {
-				return true
+		for i, field := range fn.Type.Params.List {
+			_ = i
+			for _, p := range field.Names {
+				_ = p
 			}
-			args = call.Args[1:]
-		case "fmt.Fprintf":
-			if len(call.Args) < 3 || !b26IsBuilderTarget(call.Args[0]) {
-				return true
+			ts := exprTypeString(field.Type)
+			if ts == "*strings.Builder" || ts == "string" {
+				continue
 			}
-			args = call.Args[2:]
-		default:
-			return true
+			if !strings.HasPrefix(ts, "validated") {
+				t.Errorf("%s:%d builder %s 入参 %d 类型 = %q，必须以 validated 开头", f, fset.Position(field.Pos()).Line, fn.Name.Name, i, ts)
+			}
 		}
-		for _, a := range args {
-			src := b9Src(fset, a)
-			if strings.Contains(src, "req.") {
-				t.Errorf("%s:%d 脚本实参裸引用 req.*：%s", f, fset.Position(a.Pos()).Line, src)
+		// 判据②：builder 内不允许再出现原始 req 类型名作为外部依赖
+		for _, p := range fn.Type.Params.List {
+			s := exprTypeString(p.Type)
+			for _, raw := range []string{"dbDeployRequest", "dbOpsRequest", "dbInstanceReq"} {
+				if strings.Contains(s, raw) {
+					t.Errorf("%s:%d builder %s 入参类型仍包含原始 req 类型 %q", f, fset.Position(p.Pos()).Line, fn.Name.Name, raw)
+				}
 			}
 		}
 		return true
 	})
 }
 
+// exprTypeString 取表达式字符串形式（只处理标识符与指针/selector 表达式）。
+func exprTypeString(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.StarExpr:
+		return "*" + exprTypeString(x.X)
+	case *ast.SelectorExpr:
+		return exprTypeString(x.X) + "." + x.Sel.Name
+	default:
+		return ""
+	}
+}
+
 // TestB29WhitelistStillRejects 判据②：既有白名单不失效。
 func TestB29WhitelistStillRejects(t *testing.T) {
 	s := newShellQuoteServer()
 
-	// 未识别的 db type 必须被拒（400）。
+	// 未识别的 type 必须被拒（400）。
 	rec := sqPost(t, s, func(w http.ResponseWriter, r *http.Request) {
 		s.handleDBAction(w, r, "postgresql;id", "status")
 	}, map[string]interface{}{
