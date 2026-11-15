@@ -543,4 +543,3 @@ func (s *Server) registerK8sProvisionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/k8s/provision/join", s.handleK8sJoin)
 	mux.HandleFunc("/api/v1/k8s/provision/kubeconfig", s.handleK8sKubeconfig)
 }
-
