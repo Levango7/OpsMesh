@@ -19,6 +19,7 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -71,6 +72,83 @@ var k8sTokenRe = regexp.MustCompile(`^[a-zA-Z0-9_.:]+$`)
 // 该值进 `kubeadm join --discovery-token-ca-cert-hash` 命令位 ⇒ 必须是窄白名单。
 var k8sCertHashRe = regexp.MustCompile(`^sha256:[a-fA-F0-9]{32,128}$`)
 
+// validatedK8sProvision / validatedK8sLifecycle / validatedK8sJoin 是白名单校验后的形态。
+// builder 只接受这几种类型 —— 原始 k8sProvisionReq / k8sLifecycleReq / k8sJoinReq 无法被传入 builder。
+type validatedK8sProvision struct {
+	Tool, Mode, Version, ClusterName, PodCIDR string
+	Nodes                                     int
+}
+
+type validatedK8sLifecycle struct {
+	Tool, Action, ClusterName string
+}
+
+type validatedK8sJoin struct {
+	Tool, Role, MasterAddr, Token, CertHash string
+}
+
+func validateK8sProvision(req k8sProvisionReq) (validatedK8sProvision, error) {
+	if !allowedK8sTools[req.Tool] {
+		return validatedK8sProvision{}, errors.New("unsupported k8s tool (kubeadm/kind/k3s)")
+	}
+	mode := req.Mode
+	if mode == "" {
+		mode = "single"
+	}
+	if !allowedK8sModes[req.Tool][mode] {
+		return validatedK8sProvision{}, errors.New("unsupported mode for " + req.Tool)
+	}
+	if req.Version != "" && !k8sVersionRe.MatchString(req.Version) {
+		return validatedK8sProvision{}, errors.New("invalid k8s version")
+	}
+	if req.ClusterName != "" && !k8sClusterNameRe.MatchString(req.ClusterName) {
+		return validatedK8sProvision{}, errors.New("invalid cluster name")
+	}
+	return validatedK8sProvision{Tool: req.Tool, Mode: mode, Version: req.Version, ClusterName: req.ClusterName, PodCIDR: req.PodCIDR, Nodes: req.Nodes}, nil
+}
+
+func validateK8sLifecycle(req k8sLifecycleReq) (validatedK8sLifecycle, error) {
+	if !allowedK8sTools[req.Tool] {
+		return validatedK8sLifecycle{}, errors.New("unsupported k8s tool")
+	}
+	if !allowedK8sProvisionActions[req.Action] {
+		return validatedK8sLifecycle{}, errors.New("unsupported action (start/stop/delete/status)")
+	}
+	if req.ClusterName != "" && !k8sClusterNameRe.MatchString(req.ClusterName) {
+		return validatedK8sLifecycle{}, errors.New("invalid cluster name")
+	}
+	return validatedK8sLifecycle{Tool: req.Tool, Action: req.Action, ClusterName: req.ClusterName}, nil
+}
+
+func validateK8sKubeconfig(req k8sLifecycleReq) (validatedK8sLifecycle, error) {
+	if !allowedK8sTools[req.Tool] {
+		return validatedK8sLifecycle{}, errors.New("unsupported k8s tool")
+	}
+	if req.ClusterName != "" && !k8sClusterNameRe.MatchString(req.ClusterName) {
+		return validatedK8sLifecycle{}, errors.New("invalid cluster name")
+	}
+	return validatedK8sLifecycle{Tool: req.Tool, Action: "kubeconfig", ClusterName: req.ClusterName}, nil
+}
+
+func validateK8sJoin(req k8sJoinReq) (validatedK8sJoin, error) {
+	if req.Tool != "kubeadm" && req.Tool != "k3s" {
+		return validatedK8sJoin{}, errors.New("join only supports kubeadm/k3s")
+	}
+	if req.Role != "controlplane" && req.Role != "worker" && req.Role != "agent" {
+		return validatedK8sJoin{}, errors.New("invalid role (controlplane/worker/agent)")
+	}
+	if req.MasterAddr == "" || !monitorHostRe.MatchString(req.MasterAddr) {
+		return validatedK8sJoin{}, errors.New("invalid master address")
+	}
+	if req.CertHash != "" && !k8sCertHashRe.MatchString(req.CertHash) {
+		return validatedK8sJoin{}, errors.New("invalid certHash (expected sha256:<hex>)")
+	}
+	if !k8sTokenRe.MatchString(req.Token) {
+		return validatedK8sJoin{}, errors.New("invalid token")
+	}
+	return validatedK8sJoin{Tool: req.Tool, Role: req.Role, MasterAddr: req.MasterAddr, Token: req.Token, CertHash: req.CertHash}, nil
+}
+
 // k8sProvisionReq K8s 部署请求体。
 type k8sProvisionReq struct {
 	DeviceID    string `json:"deviceID"`
@@ -118,65 +196,48 @@ func (s *Server) handleK8sProvision(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if !allowedK8sTools[req.Tool] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported k8s tool (kubeadm/kind/k3s)"})
-		return
-	}
-	mode := req.Mode
-	if mode == "" {
-		mode = "single"
-	}
-	if !allowedK8sModes[req.Tool][mode] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported mode for " + req.Tool})
-		return
-	}
-	if req.Version != "" && !k8sVersionRe.MatchString(req.Version) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid k8s version"})
-		return
-	}
-	if req.ClusterName != "" && !k8sClusterNameRe.MatchString(req.ClusterName) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cluster name"})
-		return
-	}
 	if req.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	req.Mode = mode
-
-	script := buildK8sProvisionScript(req)
-	action := "k8s_provision_" + req.Tool + "_" + mode
+	vreq, verr := validateK8sProvision(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
+	script := buildK8sProvisionScript(vreq)
+	action := "k8s_provision_" + vreq.Tool + "_" + vreq.Mode
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, action)
 	if err != nil {
-		writeInternalError(r.Context(), w, "k8s.provision."+req.Tool, err)
+		writeInternalError(r.Context(), w, "k8s.provision."+vreq.Tool, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Tool + ":" + mode,
-		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version) + " cluster=" + opsSQLString(req.ClusterName)),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: vreq.Tool + ":" + vreq.Mode,
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(vreq.Version) + " cluster=" + opsSQLString(vreq.ClusterName)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildK8sProvisionScript(req k8sProvisionReq) string {
+func buildK8sProvisionScript(vreq validatedK8sProvision) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch req.Tool {
+	switch vreq.Tool {
 	case "kubeadm":
-		b.WriteString(buildKubeadmProvisionScript(req))
+		b.WriteString(buildKubeadmProvisionScript(vreq))
 	case "kind":
-		b.WriteString(buildKindProvisionScript(req))
+		b.WriteString(buildKindProvisionScript(vreq))
 	case "k3s":
-		b.WriteString(buildK3sProvisionScript(req))
+		b.WriteString(buildK3sProvisionScript(vreq))
 	}
 	return b.String()
 }
 
-func buildKubeadmProvisionScript(req k8sProvisionReq) string {
+func buildKubeadmProvisionScript(vreq validatedK8sProvision) string {
 	var b strings.Builder
 	b.WriteString("# kubeadm 生产级集群引导（需 containerd + kubelet/kubeadm/kubectl）\n")
-	b.WriteString("K8S_VERSION=${K8S_VERSION:-" + defaultIfEmpty(req.Version, "v1.29.0") + "}\n")
+	b.WriteString("K8S_VERSION=${K8S_VERSION:-" + defaultIfEmpty(vreq.Version, "v1.29.0") + "}\n")
 	b.WriteString("if command -v kubeadm >/dev/null 2>&1; then echo 'kubeadm 已安装'; else\n")
 	b.WriteString("  # 关闭 swap + 加载内核模块（kubeadm 前置条件）\n")
 	b.WriteString("  swapoff -a || true\n")
@@ -190,11 +251,11 @@ func buildKubeadmProvisionScript(req k8sProvisionReq) string {
 	b.WriteString("    yum install -y containerd kubelet kubeadm kubectl || echo '请配置 pkgs.k8s.io 源' \n")
 	b.WriteString("  fi\n")
 	b.WriteString("fi\n")
-	if req.Mode == "ha" {
+	if vreq.Mode == "ha" {
 		b.WriteString("# HA：需先初始化首个控制面，再用 --control-plane --certificate-key 加入其余控制面\n")
-		b.WriteString("kubeadm init --control-plane-endpoint ${LB_ADDR:-cluster-endpoint:6443} --pod-network-cidr=" + defaultIfEmpty(req.PodCIDR, "10.244.0.0/16") + " || true\n")
+		b.WriteString("kubeadm init --control-plane-endpoint ${LB_ADDR:-cluster-endpoint:6443} --pod-network-cidr=" + defaultIfEmpty(vreq.PodCIDR, "10.244.0.0/16") + " || true\n")
 	} else {
-		b.WriteString("kubeadm init --pod-network-cidr=" + defaultIfEmpty(req.PodCIDR, "10.244.0.0/16") + " || true\n")
+		b.WriteString("kubeadm init --pod-network-cidr=" + defaultIfEmpty(vreq.PodCIDR, "10.244.0.0/16") + " || true\n")
 	}
 	b.WriteString("mkdir -p $HOME/.kube && cp -f /etc/kubernetes/admin.conf $HOME/.kube/config || true\n")
 	b.WriteString("export KUBECONFIG=/etc/kubernetes/admin.conf\n")
@@ -204,18 +265,18 @@ func buildKubeadmProvisionScript(req k8sProvisionReq) string {
 	return b.String()
 }
 
-func buildKindProvisionScript(req k8sProvisionReq) string {
+func buildKindProvisionScript(vreq validatedK8sProvision) string {
 	var b strings.Builder
 	b.WriteString("# kind（Kubernetes IN Docker）测试/CI 级集群\n")
 	b.WriteString("if command -v kind >/dev/null 2>&1; then echo 'kind 已安装'; else\n")
 	b.WriteString("  curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64 && chmod +x ./kind && mv ./kind /usr/local/bin/kind || echo '安装 kind 失败' \n")
 	b.WriteString("fi\n")
-	cluster := defaultIfEmpty(req.ClusterName, "opsmesh-kind")
-	nodes := req.Nodes
+	cluster := defaultIfEmpty(vreq.ClusterName, "opsmesh-kind")
+	nodes := vreq.Nodes
 	if nodes <= 0 {
 		nodes = 1
 	}
-	if req.Mode == "multi" {
+	if vreq.Mode == "multi" {
 		b.WriteString("# 多节点集群：生成 kind 配置\n")
 		fmt.Fprintf(&b, "cat > /tmp/kind-%s.yaml <<EOF\nkind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n- role: control-plane\n", cluster)
 		fmt.Fprintf(&b, "  extraPortMappings:\n  - containerPort: 30000\n    hostPort: 30000\n    protocol: TCP\n")
@@ -223,7 +284,7 @@ func buildKindProvisionScript(req k8sProvisionReq) string {
 			b.WriteString("- role: worker\n")
 		}
 		b.WriteString("EOF\n")
-		ver := strings.TrimPrefix(req.Version, "v")
+		ver := strings.TrimPrefix(vreq.Version, "v")
 		if ver != "" {
 			fmt.Fprintf(&b, "kind create cluster --name %s --config /tmp/kind-%s.yaml --image kindest/node:v%s || true\n", cluster, cluster, ver)
 		} else {
@@ -237,13 +298,13 @@ func buildKindProvisionScript(req k8sProvisionReq) string {
 	return b.String()
 }
 
-func buildK3sProvisionScript(req k8sProvisionReq) string {
+func buildK3sProvisionScript(vreq validatedK8sProvision) string {
 	var b strings.Builder
 	b.WriteString("# k3s 轻量级生产可用发行版\n")
 	b.WriteString("if command -v k3s >/dev/null 2>&1; then echo 'k3s 已安装'; else\n")
-	b.WriteString("  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=" + defaultIfEmpty(req.Version, "v1.29.0+k3s1") + " sh - || echo '安装 k3s 失败'\n")
+	b.WriteString("  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=" + defaultIfEmpty(vreq.Version, "v1.29.0+k3s1") + " sh - || echo '安装 k3s 失败'\n")
 	b.WriteString("fi\n")
-	if req.Mode == "server-agent" {
+	if vreq.Mode == "server-agent" {
 		b.WriteString("# server-agent 分离：本机作为 server，agent 节点用 K3S_URL + K3S_TOKEN 加入\n")
 		b.WriteString("K3S_TOKEN=$(cat /var/lib/rancher/k3s/server/node-token 2>/dev/null || echo '')\n")
 		b.WriteString("echo \"k3s server 已就绪，agent 加入: curl -sfL https://get.k3s.io | K3S_URL=https://<server>:6443 K3S_TOKEN=$K3S_TOKEN sh -\"\n")
@@ -274,46 +335,39 @@ func (s *Server) handleK8sProvisionLifecycle(w http.ResponseWriter, r *http.Requ
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if !allowedK8sTools[req.Tool] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported k8s tool"})
-		return
-	}
-	if !allowedK8sProvisionActions[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (start/stop/delete/status)"})
-		return
-	}
 	if req.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if req.ClusterName != "" && !k8sClusterNameRe.MatchString(req.ClusterName) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cluster name"})
+	vreq, verr := validateK8sLifecycle(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildK8sLifecycleScript(req)
-	taskAction := "k8s_" + req.Action + "_" + req.Tool
+	script := buildK8sLifecycleScript(vreq)
+	taskAction := "k8s_" + vreq.Action + "_" + vreq.Tool
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {
-		writeInternalError(r.Context(), w, "k8s.lifecycle."+req.Tool, err)
+		writeInternalError(r.Context(), w, "k8s.lifecycle."+vreq.Tool, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: taskAction, Target: req.Tool,
-		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " cluster=" + opsSQLString(req.ClusterName)),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: taskAction, Target: vreq.Tool,
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " cluster=" + opsSQLString(vreq.ClusterName)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildK8sLifecycleScript(req k8sLifecycleReq) string {
+func buildK8sLifecycleScript(vreq validatedK8sLifecycle) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	cluster := defaultIfEmpty(req.ClusterName, "opsmesh-kind")
-	switch req.Tool {
+	cluster := defaultIfEmpty(vreq.ClusterName, "opsmesh-kind")
+	switch vreq.Tool {
 	case "kubeadm":
 		b.WriteString("# kubeadm 集群生命周期\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("systemctl start kubelet || true\n")
 		case "stop":
@@ -325,7 +379,7 @@ func buildK8sLifecycleScript(req k8sLifecycleReq) string {
 		}
 	case "kind":
 		b.WriteString("# kind 集群生命周期\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			fmt.Fprintf(&b, "docker start $(kind get nodes --name %s 2>/dev/null) 2>/dev/null || true\n", cluster)
 		case "stop":
@@ -337,7 +391,7 @@ func buildK8sLifecycleScript(req k8sLifecycleReq) string {
 		}
 	case "k3s":
 		b.WriteString("# k3s 集群生命周期\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("systemctl start k3s || true\n")
 		case "stop":
@@ -348,7 +402,7 @@ func buildK8sLifecycleScript(req k8sLifecycleReq) string {
 			b.WriteString("systemctl is-active k3s || echo 'not running'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo 'K8s(%s) %s 操作完成\n", req.Tool, req.Action)
+	fmt.Fprintf(&b, "echo 'K8s(%s) %s 操作完成\n", vreq.Tool, vreq.Action)
 	return b.String()
 }
 
@@ -370,56 +424,40 @@ func (s *Server) handleK8sJoin(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	// 仅支持 kubeadm/k3s 加入节点（kind 不支持）。
-	if req.Tool != "kubeadm" && req.Tool != "k3s" {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "join only supports kubeadm/k3s"})
-		return
-	}
-	if req.Role != "controlplane" && req.Role != "worker" && req.Role != "agent" {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid role (controlplane/worker/agent)"})
-		return
-	}
-	if req.MasterAddr == "" || !monitorHostRe.MatchString(req.MasterAddr) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid master address"})
-		return
-	}
-	if req.CertHash != "" && !k8sCertHashRe.MatchString(req.CertHash) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid certHash (expected sha256:<hex>)"})
-		return
-	}
-	if !k8sTokenRe.MatchString(req.Token) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid token"})
-		return
-	}
 	if req.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
+	vreq, verr := validateK8sJoin(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
 
-	script := buildK8sJoinScript(req)
-	taskAction := "k8s_join_" + req.Tool
+	script := buildK8sJoinScript(vreq)
+	taskAction := "k8s_join_" + vreq.Tool
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {
-		writeInternalError(r.Context(), w, "k8s.join."+req.Tool, err)
+		writeInternalError(r.Context(), w, "k8s.join."+vreq.Tool, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: taskAction, Target: req.Role,
-		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " master=" + opsSQLString(req.MasterAddr)),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: taskAction, Target: vreq.Role,
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " master=" + opsSQLString(vreq.MasterAddr)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildK8sJoinScript(req k8sJoinReq) string {
+func buildK8sJoinScript(vreq validatedK8sJoin) string {
 	var b strings.Builder
-	// 收口（批次 16）：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
-	certHashV, masterAddrV, tokenV := req.CertHash, req.MasterAddr, req.Token
+	// 收口：已校验值用局部变量承接 ⇒ 实参不再直引 req.*（判据 E/F）；脚本文本不变。
+	certHashV, masterAddrV, tokenV := vreq.CertHash, vreq.MasterAddr, vreq.Token
 	b.WriteString("set -e\n")
-	switch req.Tool {
+	switch vreq.Tool {
 	case "kubeadm":
 		b.WriteString("# kubeadm 节点加入\n")
-		if req.Role == "controlplane" {
+		if vreq.Role == "controlplane" {
 			fmt.Fprintf(&b, "kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash %s --control-plane || true\n", masterAddrV, tokenV, defaultIfEmpty(certHashV, "sha256:<hash>"))
 		} else {
 			fmt.Fprintf(&b, "kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash %s || true\n", masterAddrV, tokenV, defaultIfEmpty(certHashV, "sha256:<hash>"))
@@ -450,39 +488,36 @@ func (s *Server) handleK8sKubeconfig(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if !allowedK8sTools[req.Tool] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported k8s tool"})
-		return
-	}
 	if req.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if req.ClusterName != "" && !k8sClusterNameRe.MatchString(req.ClusterName) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cluster name"})
+	vreq, verr := validateK8sKubeconfig(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildK8sKubeconfigScript(req)
+	script := buildK8sKubeconfigScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "k8s_kubeconfig_"+req.Tool)
 	if err != nil {
-		writeInternalError(r.Context(), w, "k8s.kubeconfig."+req.Tool, err)
+		writeInternalError(r.Context(), w, "k8s.kubeconfig."+vreq.Tool, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "k8s_kubeconfig_" + req.Tool, Target: req.Tool,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "k8s_kubeconfig_" + vreq.Tool, Target: vreq.Tool,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildK8sKubeconfigScript(req k8sLifecycleReq) string {
+func buildK8sKubeconfigScript(vreq validatedK8sLifecycle) string {
 	var b strings.Builder
-	switch req.Tool {
+	switch vreq.Tool {
 	case "kubeadm":
 		b.WriteString("cat /etc/kubernetes/admin.conf\n")
 	case "kind":
-		fmt.Fprintf(&b, "kind get kubeconfig --name %s\n", defaultIfEmpty(req.ClusterName, "opsmesh-kind"))
+		fmt.Fprintf(&b, "kind get kubeconfig --name %s\n", defaultIfEmpty(vreq.ClusterName, "opsmesh-kind"))
 	case "k3s":
 		b.WriteString("cat /etc/rancher/k3s/k3s.yaml\n")
 	}
@@ -508,3 +543,4 @@ func (s *Server) registerK8sProvisionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/k8s/provision/join", s.handleK8sJoin)
 	mux.HandleFunc("/api/v1/k8s/provision/kubeconfig", s.handleK8sKubeconfig)
 }
+
