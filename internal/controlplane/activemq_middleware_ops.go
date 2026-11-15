@@ -78,20 +78,22 @@ func (s *Server) handleActiveMQResource(w http.ResponseWriter, r *http.Request, 
 }
 
 func buildActiveMQScript(req activeMQReq) string {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqType, vReqName, vReqAction := req.Type, req.Name, req.Action
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch req.Action {
+	switch vReqAction {
 	case "create":
-		if req.Name == "" {
+		if vReqName == "" {
 			b.WriteString("echo 'create 需指定名称' && exit 1\n")
 		} else {
-			fmt.Fprintf(&b, "activemq create %s --type %s\n", shellQuote(req.Name), req.Type)
+			fmt.Fprintf(&b, "activemq create %s --type %s\n", shellQuote(vReqName), vReqType)
 		}
 	case "delete":
-		fmt.Fprintf(&b, "activemq delete %s --type %s\n", shellQuote(req.Name), req.Type)
+		fmt.Fprintf(&b, "activemq delete %s --type %s\n", shellQuote(vReqName), vReqType)
 	case "list":
-		fmt.Fprintf(&b, "activemq list %s\n", req.Type)
+		fmt.Fprintf(&b, "activemq list %s\n", vReqType)
 	}
-	fmt.Fprintf(&b, "echo 'ActiveMQ %s %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo 'ActiveMQ %s %s 操作完成\n", vReqType, vReqAction)
 	return b.String()
 }

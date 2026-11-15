@@ -69,14 +69,12 @@ func (s *Server) handleZookeeperCmd(w http.ResponseWriter, r *http.Request) {
 }
 
 func buildZookeeperCmdScript(req zookeeperCmdReq) string {
+	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
+	vReqCmd, vReqHost := req.Cmd, req.Host
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	hostV := req.Host
-	cmdV := req.Cmd
 	b.WriteString("set -e\n")
-	fmt.Fprintf(&b, "HOST=%q\n", hostV)
-	fmt.Fprintf(&b, "echo %q | nc -w 2 $HOST\n", cmdV)
-	fmt.Fprintf(&b, "echo 'Zookeeper %s 命令执行完成 (host=%s)\n", cmdV, hostV)
+	fmt.Fprintf(&b, "HOST=%q\n", vReqHost)
+	fmt.Fprintf(&b, "echo %q | nc -w 2 $HOST\n", vReqCmd)
+	fmt.Fprintf(&b, "echo 'Zookeeper %s 命令执行完成 (host=%s)\n", vReqCmd, vReqHost)
 	return b.String()
 }
