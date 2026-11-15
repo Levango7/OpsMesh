@@ -19,6 +19,7 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -79,6 +80,40 @@ var middlewareVersionRe = regexp.MustCompile(`^[a-zA-Z0-9_.+-]+$`)
 
 // 话题名正则（Kafka Topic，允许字母数字下划线连字符点）。
 var kafkaTopicRe = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+
+// validatedMiddlewareDeploy / validatedMiddlewareAction 是白名单校验后的形态。
+// builder 只接受这几种类型 —— 原始 middlewareDeployRequest / middlewareOpsRequest 无法被传入 builder。
+type validatedMiddlewareDeploy struct {
+	Type, Mode, Version string
+}
+
+type validatedMiddlewareAction struct {
+	Type, Action string
+}
+
+func validateMiddlewareDeploy(req middlewareDeployRequest) (validatedMiddlewareDeploy, error) {
+	if !allowedMiddlewareTypes[req.Type] {
+		return validatedMiddlewareDeploy{}, errors.New("unsupported middleware type")
+	}
+	if !allowedMiddlewareModes[req.Type][req.Mode] {
+		return validatedMiddlewareDeploy{}, errors.New("unsupported mode for " + req.Type)
+	}
+	if req.Version != "" && !middlewareVersionRe.MatchString(req.Version) {
+		return validatedMiddlewareDeploy{}, errors.New("invalid version")
+	}
+	return validatedMiddlewareDeploy{Type: req.Type, Mode: req.Mode, Version: req.Version}, nil
+}
+
+func validateMiddlewareAction(mwType, action string, req middlewareOpsRequest) (validatedMiddlewareAction, error) {
+	_ = req
+	if !allowedMiddlewareTypes[mwType] {
+		return validatedMiddlewareAction{}, errors.New("unsupported middleware type")
+	}
+	if !allowedMiddlewareActions[action] {
+		return validatedMiddlewareAction{}, errors.New("unsupported action")
+	}
+	return validatedMiddlewareAction{Type: mwType, Action: action}, nil
+}
 
 // 中间件部署请求体。
 type middlewareDeployRequest struct {
@@ -167,58 +202,51 @@ func (s *Server) handleMiddlewareDeploy(w http.ResponseWriter, r *http.Request) 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if !allowedMiddlewareTypes[req.Type] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported middleware type"})
-		return
-	}
-	if !allowedMiddlewareModes[req.Type][req.Mode] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported mode for " + req.Type})
-		return
-	}
-	if req.Version != "" && !middlewareVersionRe.MatchString(req.Version) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version"})
-		return
-	}
 	if req.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
+	vreq, verr := validateMiddlewareDeploy(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
 
-	script := buildMiddlewareDeployScript(req)
-	action := "mw_deploy_" + req.Type + "_" + req.Mode
+	script := buildMiddlewareDeployScript(vreq)
+	action := "mw_deploy_" + vreq.Type + "_" + vreq.Mode
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, action)
 	if err != nil {
-		writeInternalError(r.Context(), w, "middleware.deploy."+req.Type, err)
+		writeInternalError(r.Context(), w, "middleware.deploy."+vreq.Type, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type + ":" + req.Mode,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: vreq.Type + ":" + vreq.Mode,
 		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
 // buildMiddlewareDeployScript 按类型+模式生成部署 shell 脚本（幂等，yum/apt 自动探测）。
-func buildMiddlewareDeployScript(req middlewareDeployRequest) string {
+func buildMiddlewareDeployScript(vreq validatedMiddlewareDeploy) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then PKG_MGR=yum; elif command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v apt-get >/dev/null 2>&1; then PKG_MGR=apt-get; else echo '未找到包管理器' && exit 1; fi\n")
-	b.WriteString("VERSION=" + shellQuote(req.Version) + "\n")
-	switch req.Type {
+	b.WriteString("VERSION=" + shellQuote(vreq.Version) + "\n")
+	switch vreq.Type {
 	case "redis":
-		buildRedisDeployScript(req, &b)
+		buildRedisDeployScript(vreq, &b)
 	case "kafka":
-		buildKafkaDeployScript(req, &b)
+		buildKafkaDeployScript(vreq, &b)
 	case "zookeeper":
-		buildZookeeperDeployScript(req, &b)
+		buildZookeeperDeployScript(vreq, &b)
 	case "rabbitmq":
-		buildRabbitMQDeployScript(req, &b)
+		buildRabbitMQDeployScript(vreq, &b)
 	case "activemq":
-		buildActiveMQDeployScript(req, &b)
+		buildActiveMQDeployScript(vreq, &b)
 	}
-	fmt.Fprintf(&b, "echo '%s %s 部署脚本执行完成\n", req.Type, req.Mode)
+	fmt.Fprintf(&b, "echo '%s %s 部署脚本执行完成\n", vreq.Type, vreq.Mode)
 	return b.String()
 }
 
@@ -244,10 +272,10 @@ func shellQuote(s string) string {
 // Redis 部署脚本（单点/主备/Sentinel/Cluster）
 // ============================================================================
 
-func buildRedisDeployScript(req middlewareDeployRequest, b *strings.Builder) {
+func buildRedisDeployScript(vreq validatedMiddlewareDeploy, b *strings.Builder) {
 	b.WriteString("# Redis 部署\n")
 	b.WriteString("if command -v redis-server >/dev/null 2>&1; then echo 'Redis 已安装'; else $PKG_MGR install -y redis; fi\n")
-	switch req.Mode {
+	switch vreq.Mode {
 	case "standalone":
 		b.WriteString("redis-server --daemonize yes\n")
 		b.WriteString("echo 'Redis 单点已启动'\n")
@@ -271,7 +299,7 @@ func buildRedisDeployScript(req middlewareDeployRequest, b *strings.Builder) {
 //   - 2.x: 依赖 Zookeeper，kafka-topics.sh/kafka-consumer-groups.sh 用 --zookeeper
 //   - 3.x: 过渡期，同时支持 --zookeeper 与 --bootstrap-server，KRaft 为预览
 //   - 4.x: KRaft 为默认，移除 --zookeeper，统一用 --bootstrap-server
-func buildKafkaDeployScript(req middlewareDeployRequest, b *strings.Builder) {
+func buildKafkaDeployScript(vreq validatedMiddlewareDeploy, b *strings.Builder) {
 	b.WriteString("# Kafka 部署（版本感知：2.x Zookeeper / 3.x 过渡 / 4.x KRaft）\n")
 	b.WriteString("if command -v kafka-server-start.sh >/dev/null 2>&1; then echo 'Kafka 已安装'; else echo '请先安装 Kafka 二进制包' && exit 1; fi\n")
 	b.WriteString("# 探测 Kafka 主版本，决定 CLI 参数（--zookeeper vs --bootstrap-server）\n")
@@ -282,7 +310,7 @@ func buildKafkaDeployScript(req middlewareDeployRequest, b *strings.Builder) {
 	b.WriteString("  if [ \"$MAJOR\" -eq 3 ]; then KAFKA_OPTS=\"--bootstrap-server localhost:9092\"; fi\n")
 	b.WriteString("  if [ \"$MAJOR\" -le 2 ]; then KAFKA_OPTS=\"--zookeeper localhost:2181\"; fi\n")
 	b.WriteString("else KAFKA_OPTS=\"--bootstrap-server localhost:9092\"; fi\n")
-	switch req.Mode {
+	switch vreq.Mode {
 	case "single":
 		b.WriteString("kafka-server-start.sh -daemon config/server.properties\n")
 		b.WriteString("echo 'Kafka 单节点已启动'\n")
@@ -297,10 +325,10 @@ func buildKafkaDeployScript(req middlewareDeployRequest, b *strings.Builder) {
 // Zookeeper 部署脚本（单节点/多节点）
 // ============================================================================
 
-func buildZookeeperDeployScript(req middlewareDeployRequest, b *strings.Builder) {
+func buildZookeeperDeployScript(vreq validatedMiddlewareDeploy, b *strings.Builder) {
 	b.WriteString("# Zookeeper 部署\n")
 	b.WriteString("if command -v zkServer.sh >/dev/null 2>&1; then echo 'Zookeeper 已安装'; else echo '请先安装 Zookeeper 二进制包' && exit 1; fi\n")
-	switch req.Mode {
+	switch vreq.Mode {
 	case "single":
 		b.WriteString("zkServer.sh start\n")
 		b.WriteString("echo 'Zookeeper 单节点已启动'\n")
@@ -314,10 +342,10 @@ func buildZookeeperDeployScript(req middlewareDeployRequest, b *strings.Builder)
 // RabbitMQ 部署脚本（单节点/多节点）
 // ============================================================================
 
-func buildRabbitMQDeployScript(req middlewareDeployRequest, b *strings.Builder) {
+func buildRabbitMQDeployScript(vreq validatedMiddlewareDeploy, b *strings.Builder) {
 	b.WriteString("# RabbitMQ 部署（依赖 Erlang/Elixir 运行时）\n")
 	b.WriteString("if command -v rabbitmq-server >/dev/null 2>&1; then echo 'RabbitMQ 已安装'; else echo '请先安装 RabbitMQ' && exit 1; fi\n")
-	switch req.Mode {
+	switch vreq.Mode {
 	case "single":
 		b.WriteString("rabbitmq-server -detached\n")
 		b.WriteString("echo 'RabbitMQ 单节点已启动'\n")
@@ -331,10 +359,10 @@ func buildRabbitMQDeployScript(req middlewareDeployRequest, b *strings.Builder) 
 // ActiveMQ 部署脚本（单节点/多节点）
 // ============================================================================
 
-func buildActiveMQDeployScript(req middlewareDeployRequest, b *strings.Builder) {
+func buildActiveMQDeployScript(vreq validatedMiddlewareDeploy, b *strings.Builder) {
 	b.WriteString("# ActiveMQ 部署（依赖 Java 运行时）\n")
 	b.WriteString("if command -v activemq >/dev/null 2>&1; then echo 'ActiveMQ 已安装'; else echo '请先安装 ActiveMQ' && exit 1; fi\n")
-	switch req.Mode {
+	switch vreq.Mode {
 	case "single":
 		b.WriteString("activemq start\n")
 		b.WriteString("echo 'ActiveMQ 单节点已启动'\n")
@@ -357,14 +385,6 @@ func (s *Server) handleMiddlewareAction(w http.ResponseWriter, r *http.Request, 
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedMiddlewareTypes[mwType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported middleware type"})
-		return
-	}
-	if !allowedMiddlewareActions[action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action"})
-		return
-	}
 	var req middlewareOpsRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -374,10 +394,13 @@ func (s *Server) handleMiddlewareAction(w http.ResponseWriter, r *http.Request, 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	req.Type = mwType
-	req.Action = action
+	vreq, verr := validateMiddlewareAction(mwType, action, req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
 
-	script := buildMiddlewareActionScript(req)
+	script := buildMiddlewareActionScript(vreq)
 	actionV, err := opsIdentifier("action", action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "middleware.action."+mwType, err)
@@ -398,13 +421,13 @@ func (s *Server) handleMiddlewareAction(w http.ResponseWriter, r *http.Request, 
 }
 
 // buildMiddlewareActionScript 生成启停重启/状态脚本。
-func buildMiddlewareActionScript(req middlewareOpsRequest) string {
+func buildMiddlewareActionScript(vreq validatedMiddlewareAction) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vreq.Type {
 	case "redis":
 		b.WriteString("# Redis 启停\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("redis-server --daemonize yes || true\n")
 		case "stop":
@@ -416,7 +439,7 @@ func buildMiddlewareActionScript(req middlewareOpsRequest) string {
 		}
 	case "kafka":
 		b.WriteString("# Kafka 启停\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("kafka-server-start.sh -daemon config/server.properties || true\n")
 		case "stop":
@@ -428,7 +451,7 @@ func buildMiddlewareActionScript(req middlewareOpsRequest) string {
 		}
 	case "zookeeper":
 		b.WriteString("# Zookeeper 启停\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("zkServer.sh start || true\n")
 		case "stop":
@@ -440,7 +463,7 @@ func buildMiddlewareActionScript(req middlewareOpsRequest) string {
 		}
 	case "rabbitmq":
 		b.WriteString("# RabbitMQ 启停\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("rabbitmq-server -detached || true\n")
 		case "stop":
@@ -452,7 +475,7 @@ func buildMiddlewareActionScript(req middlewareOpsRequest) string {
 		}
 	case "activemq":
 		b.WriteString("# ActiveMQ 启停\n")
-		switch req.Action {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("activemq start || true\n")
 		case "stop":
@@ -463,7 +486,7 @@ func buildMiddlewareActionScript(req middlewareOpsRequest) string {
 			b.WriteString("activemq status || echo 'not running'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", req.Type, req.Action)
+	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", vreq.Type, vreq.Action)
 	return b.String()
 }
 
