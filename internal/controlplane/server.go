@@ -12,6 +12,7 @@ import (
 	cryptoRand "crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"path/filepath"
 	"sync"
 	"time"
@@ -178,6 +179,10 @@ type Server struct {
 	// API 限流器：按 IP 令牌桶限流，超过阈值返回 429 Too Many Requests。
 	// nil=禁用限流（CBRateLimitPerSec<=0，向后兼容）。
 	rateLimiter *rateLimiter
+	// trustedProxyNets 可信反代 CIDR（ADR-2026-11-15 §ADR-1；TrustProxy=true 时非空）。
+	trustedProxyNets []*net.IPNet
+	// tenantRateLimiter 租户级限流（ADR-2026-11-15 §ADR-1；nil=禁用）。
+	tenantRateLimiter *rateLimiter
 
 	// M2 集成：告警规则引擎 + 静默器 + 聚合器 + 通知管理器。
 	// alertEngine 持有 alertengine.AlertRule 集合，周期评估设备指标触发告警事件；
@@ -845,6 +850,22 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	if cfg.CBRateLimitPerSec > 0 {
 		s.rateLimiter = newRateLimiter(cfg.CBRateLimitPerSec, 10*time.Minute)
 		logx.Info(context.Background(), "API 限流已启用", "ratePerSec", cfg.CBRateLimitPerSec)
+	}
+	// ADR-2026-11-15 §ADR-1：可信反代 CIDR 校验 + 租户级限流。
+	// --trust-proxy=true 但未给可信 CIDR ⇒ 拒绝启动（配置错误显式失败，不静默信任 XFF）。
+	if cfg.TrustProxy && len(cfg.TrustedProxies) == 0 {
+		return nil, fmt.Errorf("--trust-proxy=true requires --trusted-proxies (CIDR list, e.g. 10.0.0.0/8)")
+	}
+	if len(cfg.TrustedProxies) > 0 {
+		nets, perr := parseTrustedProxies(cfg.TrustedProxies)
+		if perr != nil {
+			return nil, fmt.Errorf("invalid --trusted-proxies: %w", perr)
+		}
+		s.trustedProxyNets = nets
+	}
+	if cfg.TenantRateLimit > 0 {
+		s.tenantRateLimiter = newRateLimiter(cfg.TenantRateLimit, 10*time.Minute)
+		logx.Info(context.Background(), "租户级限流已启用", "ratePerSec", cfg.TenantRateLimit)
 	}
 	// M3 集成：Helm 应用商店（RepoManager + ReleaseManager）。
 	// kubeconfig 留空，helm CLI 使用 KUBECONFIG 环境变量或 ~/.kube/config 默认路径；

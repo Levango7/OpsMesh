@@ -59,7 +59,7 @@ func (s *Server) handleInstallSh(w http.ResponseWriter, r *http.Request) {
 	// 访问审计：install.sh 是 bootstrap 端点，保持开放但审计访问来源供溯源。
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "bootstrap_install_sh", Target: "/install.sh",
+		TenantID: "default", UserID: s.clientIP(r), Action: "bootstrap_install_sh", Target: "/install.sh",
 		Detail: "remote=" + r.RemoteAddr,
 	})
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
@@ -84,7 +84,7 @@ func (s *Server) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	// 访问审计：agent 二进制分发端点，保持开放但审计下载来源供溯源。
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "bootstrap_serve_agent", Target: "/bin/opsmesh-agent",
+		TenantID: "default", UserID: s.clientIP(r), Action: "bootstrap_serve_agent", Target: "/bin/opsmesh-agent",
 		Detail: "remote=" + r.RemoteAddr,
 	})
 	path, err := os.Executable()

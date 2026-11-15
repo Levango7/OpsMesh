@@ -67,7 +67,8 @@ func isPrivateIP(ip net.IP) bool { return egress.IsPrivateIP(ip) }
 // rateLimiter=nil 时透传（禁用限流，向后兼容）。
 // 健康检查端点（/healthz, /readyz）不限流，避免 K8s 探针被限流误杀。
 func (s *Server) rateLimitMiddleware(h http.Handler) http.Handler {
-	if s.rateLimiter == nil {
+	// ADR-2026-11-15 §ADR-1：两层限流各自独立（IP 层 fail-open / 租户层 fail-closed）。
+	if s.rateLimiter == nil && s.tenantRateLimiter == nil {
 		return h
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,11 +77,25 @@ func (s *Server) rateLimitMiddleware(h http.Handler) http.Handler {
 			h.ServeHTTP(w, r)
 			return
 		}
-		ip := clientIP(r, s.cfg.TrustProxy)
-		if !s.rateLimiter.Allow(ip) {
-			w.Header().Set("Retry-After", "1")
-			paginate.JSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
-			return
+		if s.rateLimiter != nil {
+			ip := s.clientIP(r)
+			if !s.rateLimiter.Allow(ip) {
+				w.Header().Set("Retry-After", "1")
+				w.Header().Set("X-RateLimit-Dimension", "ip")
+				paginate.JSONError(w, http.StatusTooManyRequests, "rate limit exceeded")
+				return
+			}
+		}
+		// 租户级限流：仅当请求带租户标识时生效；超限 fail-closed（多租户公平性闸门）。
+		if s.tenantRateLimiter != nil {
+			if tenant := strings.TrimSpace(r.Header.Get("X-Tenant-ID")); tenant != "" {
+				if !s.tenantRateLimiter.Allow("tenant:" + tenant) {
+					w.Header().Set("Retry-After", "1")
+					w.Header().Set("X-RateLimit-Dimension", "tenant")
+					paginate.JSONError(w, http.StatusTooManyRequests, "tenant rate limit exceeded")
+					return
+				}
+			}
 		}
 		h.ServeHTTP(w, r)
 	})

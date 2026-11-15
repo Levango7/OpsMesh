@@ -312,6 +312,13 @@ type Config struct {
 	// 反向代理信任（安全运行于 LB/网关后时）：开启后 clientIP 信任 X-Forwarded-For 首段取真实客户端 IP；
 	// 默认 false=仅用 RemoteAddr（防止客户端伪造 XFF 绕过登录限流/审计）；仅当确有可信反代前置时才开启。
 	TrustProxy bool
+	// TrustedProxies 可信反代 CIDR 列表（逗号分隔，如 10.0.0.0/8,192.168.0.0/16）。
+	// ADR-2026-11-15 §ADR-1：TrustProxy=true 时必须非空，否则启动失败；
+	// 仅当 RemoteAddr 落在可信 CIDR 内才解析 X-Forwarded-For。
+	TrustedProxies []string
+	// TenantRateLimit 租户级限流（req/s）。ADR-2026-11-15 §ADR-1：
+	// 0=禁用；默认 1000。租户桶超限 fail-closed(429)，与 IP 层 fail-open 分离。
+	TenantRateLimit int
 	// 安全加固：是否信任网关注入的 X-User-Roles 头作为身份来源。
 	// 默认 false（安全基线）：忽略 X-User-Roles 头，要求请求携带 Bearer token/Cookie 或经联邦验签；
 	//   这避免非生产模式下客户端自称 admin 即得 admin 权限的越权路径。
@@ -603,6 +610,8 @@ func Load() *Config {
 	// 安全运行于反向代理/LB 后：开启后 clientIP 信任 X-Forwarded-For 首段；默认 false 仅用 RemoteAddr，
 	// 防止客户端伪造 XFF 绕过登录限流与审计。仅当确有可信反代（如 APISIX/Nginx 注入真实 IP）前置时启用。
 	trustProxy := flag.Bool("trust-proxy", false, "信任反向代理：开启后 clientIP 取 X-Forwarded-For 首段（仅当有可信 LB/网关前置时启用）；默认 false=仅用 RemoteAddr 防 XFF 伪造绕过限流；或 env OPSMESH_TRUST_PROXY")
+	trustedProxies := flag.String("trusted-proxies", "", "可信反代 CIDR 列表（逗号分隔，如 10.0.0.0/8,192.168.0.0/16）；--trust-proxy=true 时必填，否则拒绝启动；或 env OPSMESH_TRUSTED_PROXIES")
+	tenantRateLimit := flag.Int("tenant-rate-limit", 1000, "租户级限流 req/s（0=禁用）；租户桶超限返回 429；或 env OPSMESH_TENANT_RATE_LIMIT")
 	// 安全加固：信任网关注入的 X-User-Roles 头作为身份来源。
 	// 默认 false（安全基线，防客户端自称 admin 越权）；true=信任该头（仅当有可信网关前置剥离/注入时启用）；
 	// 生产模式（--production=true）下强制 false（即使显式 true 也覆盖），杜绝生产信任客户端可伪造的头。
@@ -823,6 +832,21 @@ func Load() *Config {
 		GRPCRequireSignature:       valBool("grpc-require-signature", *grpcRequireSignature, "OPSMESH_GRPC_REQUIRE_SIGNATURE"),
 		GRPCSignatureKey:           val("grpc-signature-key", *grpcSignatureKey, "OPSMESH_GRPC_SIGNATURE_KEY"),
 		TrustProxy:                 valBool("trust-proxy", *trustProxy, "OPSMESH_TRUST_PROXY"),
+		TrustedProxies: func() []string {
+			raw := val("trusted-proxies", *trustedProxies, "OPSMESH_TRUSTED_PROXIES")
+			if strings.TrimSpace(raw) == "" {
+				return nil
+			}
+			parts := strings.Split(raw, ",")
+			out := make([]string, 0, len(parts))
+			for _, p := range parts {
+				if s := strings.TrimSpace(p); s != "" {
+					out = append(out, s)
+				}
+			}
+			return out
+		}(),
+		TenantRateLimit:            valInt("tenant-rate-limit", *tenantRateLimit, "OPSMESH_TENANT_RATE_LIMIT"),
 		TrustGatewayHeaders:        valBool("trust-gateway-headers", *trustGatewayHeaders, "OPSMESH_TRUST_GATEWAY_HEADERS"),
 		CookieSecure:               valBool("cookie-secure", *cookieSecure, "OPSMESH_COOKIE_SECURE"),
 		AllowedOrigins:             val("allowed-origins", *allowedOrigins, "OPSMESH_ALLOWED_ORIGINS"),

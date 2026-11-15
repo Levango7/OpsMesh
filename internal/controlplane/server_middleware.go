@@ -117,7 +117,7 @@ func (s *Server) csrfOriginCheck(h http.Handler) http.Handler {
 		if ou.Host != advertiseHost {
 			// Origin host 与 AdvertiseAddr host 不匹配：疑似跨站 CSRF，拒绝。
 			s.audit(r.Context(), &proto.AuditEvent{
-				TenantID: "default", UserID: clientIP(r, s.cfg.TrustProxy), Action: "csrf_origin_rejected", Target: r.URL.Path,
+				TenantID: "default", UserID: s.clientIP(r), Action: "csrf_origin_rejected", Target: r.URL.Path,
 				Detail: "origin=" + opsSQLString(origin) + " expected_host=" + opsSQLString(advertiseHost) + " remote=" + opsSQLString(r.RemoteAddr),
 			})
 			paginate.JSONError(w, http.StatusForbidden, "origin not allowed")

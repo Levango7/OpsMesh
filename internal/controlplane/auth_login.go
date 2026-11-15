@@ -46,7 +46,7 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 限流：按客户端 IP 令牌桶约束注册频率，防滥用/枚举。
-	if !s.loginGuard.Allow(clientIP(r, s.cfg.TrustProxy)) {
+	if !s.loginGuard.Allow(s.clientIP(r)) {
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
@@ -153,7 +153,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 限流：按客户端 IP 令牌桶约束登录频率，防撞库与 DoS。
-	if !s.loginGuard.Allow(clientIP(r, s.cfg.TrustProxy)) {
+	if !s.loginGuard.Allow(s.clientIP(r)) {
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
@@ -462,7 +462,7 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 	}
 	// 限流：按客户端 IP 令牌桶约束改密频率，防暴力破解旧密码。
 	// 复用 loginGuard 的 IP 令牌桶（与登录/注册同维度），避免单独维护限流器。
-	if !s.loginGuard.Allow(clientIP(r, s.cfg.TrustProxy)) {
+	if !s.loginGuard.Allow(s.clientIP(r)) {
 		paginate.WriteJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, slow down"})
 		return
 	}
