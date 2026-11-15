@@ -16,6 +16,7 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -80,6 +81,58 @@ var allowedDBInstanceActions = map[string]bool{
 
 // 数据库名正则。
 var dbNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.$-]+$`)
+
+// validatedDBDeploy / validatedDBOps / validatedDBInstance 是 whitelists-checked 后的形态。
+// builder 只接受这几种类型 —— 裸 dbDeployRequest/dbOpsRequest/dbInstanceReq 无法被传入 builder。
+// 这样 builder 层上不可能自行传递未校验值，校验责任不留模糊地带。
+type validatedDBDeploy struct {
+	Type, Mode, Version string
+}
+
+type validatedDBOps struct {
+	Type, Action string
+}
+
+type validatedDBInstance struct {
+	Type, Action, Name string
+}
+
+func validateDBDeploy(req dbDeployRequest) (validatedDBDeploy, error) {
+	if !allowedDBTypes[req.Type] {
+		return validatedDBDeploy{}, errors.New("unsupported database type")
+	}
+	modes, ok := allowedDBModes[req.Type]
+	if !ok || !modes[req.Mode] {
+		return validatedDBDeploy{}, errors.New("unsupported mode for " + req.Type)
+	}
+	if req.Version != "" && !middlewareVersionRe.MatchString(req.Version) {
+		return validatedDBDeploy{}, errors.New("invalid version")
+	}
+	return validatedDBDeploy{Type: req.Type, Mode: req.Mode, Version: req.Version}, nil
+}
+
+func validateDBOps(dbType, action string) (validatedDBOps, error) {
+	if !allowedDBTypes[dbType] {
+		return validatedDBOps{}, errors.New("unsupported database type")
+	}
+	if !allowedDBActions[action] {
+		return validatedDBOps{}, errors.New("unsupported action")
+	}
+	return validatedDBOps{Type: dbType, Action: action}, nil
+}
+
+func validateDBInstance(dbType string, req dbInstanceReq) (validatedDBInstance, error) {
+	if !allowedDBTypes[dbType] {
+		return validatedDBInstance{}, errors.New("unsupported database type")
+	}
+	if !allowedDBInstanceActions[req.Action] {
+		return validatedDBInstance{}, errors.New("unsupported action (create/drop/list)")
+	}
+	if req.Action != "list" && !dbNameRe.MatchString(req.Name) {
+		return validatedDBInstance{}, errors.New("invalid db name")
+	}
+	return validatedDBInstance{Type: dbType, Action: req.Action, Name: req.Name}, nil
+}
 
 // 数据库部署请求体。
 type dbDeployRequest struct {
@@ -174,16 +227,9 @@ func (s *Server) handleDBDeploy(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if !allowedDBTypes[req.Type] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported database type"})
-		return
-	}
-	if !allowedDBModes[req.Type][req.Mode] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported mode for " + req.Type})
-		return
-	}
-	if req.Version != "" && !middlewareVersionRe.MatchString(req.Version) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version"})
+	vreq, verr := validateDBDeploy(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 	if req.DeviceID == "" {
@@ -191,55 +237,51 @@ func (s *Server) handleDBDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := buildDBDeployScript(req)
-	action := "db_deploy_" + req.Type + "_" + req.Mode
+	script := buildDBDeployScript(vreq)
+	action := "db_deploy_" + vreq.Type + "_" + vreq.Mode
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, action)
 	if err != nil {
-		writeInternalError(r.Context(), w, "db.deploy."+req.Type, err)
+		writeInternalError(r.Context(), w, "db.deploy."+vreq.Type, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type + ":" + req.Mode,
-		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: vreq.Type + ":" + vreq.Mode,
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(vreq.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
 // buildDBDeployScript 按类型+模式生成数据库部署 shell 脚本。
-func buildDBDeployScript(req dbDeployRequest) string {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqType, vReqMode, vReqVersion := req.Type, req.Mode, req.Version
+func buildDBDeployScript(vreq validatedDBDeploy) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then PKG_MGR=yum; elif command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v apt-get >/dev/null 2>&1; then PKG_MGR=apt-get; else echo '未找到包管理器' && exit 1; fi\n")
-	b.WriteString("VERSION=" + shellQuote(vReqVersion) + "\n")
-	switch vReqType {
+	b.WriteString("VERSION=" + shellQuote(vreq.Version) + "\n")
+	switch vreq.Type {
 	case "postgresql":
-		buildPostgreSQLDeployScript(req, &b)
+		buildPostgreSQLDeployScript(vreq, &b)
 	case "oracle":
-		buildOracleDeployScript(req, &b)
+		buildOracleDeployScript(vreq, &b)
 	case "tidb":
-		buildTiDBDeployScript(req, &b)
+		buildTiDBDeployScript(vreq, &b)
 	case "oceanbase":
-		buildOceanBaseDeployScript(req, &b)
+		buildOceanBaseDeployScript(vreq, &b)
 	case "mssql":
-		buildMSSQLDeployScript(req, &b)
+		buildMSSQLDeployScript(vreq, &b)
 	case "teledb":
 		b.WriteString("# Teledb 部署\n")
 		b.WriteString("echo 'Teledb deploy'\n")
 	}
-	fmt.Fprintf(&b, "echo '%s %s 数据库部署脚本执行完成\n", vReqType, vReqMode)
+	fmt.Fprintf(&b, "echo '%s %s 数据库部署脚本执行完成\n", vreq.Type, vreq.Mode)
 	return b.String()
 }
 
-func buildPostgreSQLDeployScript(req dbDeployRequest, b *strings.Builder) {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqMode := req.Mode
+func buildPostgreSQLDeployScript(vreq validatedDBDeploy, b *strings.Builder) {
 	b.WriteString("# PostgreSQL 部署\n")
 	b.WriteString("if command -v postgres >/dev/null 2>&1 || command -v pg_ctl >/dev/null 2>&1; then echo 'PostgreSQL 已安装'; else $PKG_MGR install -y postgresql; fi\n")
-	switch vReqMode {
+	switch vreq.Mode {
 	case "single":
 		b.WriteString("pg_ctlcluster 14 main start || systemctl start postgresql || true\n")
 		b.WriteString("echo 'PostgreSQL 单点已启动'\n")
@@ -249,12 +291,10 @@ func buildPostgreSQLDeployScript(req dbDeployRequest, b *strings.Builder) {
 	}
 }
 
-func buildOracleDeployScript(req dbDeployRequest, b *strings.Builder) {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqMode := req.Mode
+func buildOracleDeployScript(vreq validatedDBDeploy, b *strings.Builder) {
 	b.WriteString("# Oracle 数据库部署（需 Oracle 安装介质）\n")
 	b.WriteString("if command -v sqlplus >/dev/null 2>&1; then echo 'Oracle 已安装'; else echo '请先上传 Oracle 安装介质并运行 runInstaller' && exit 1; fi\n")
-	switch vReqMode {
+	switch vreq.Mode {
 	case "single":
 		b.WriteString("dbstart $ORACLE_HOME || systemctl start oracle || true\n")
 		b.WriteString("echo 'Oracle 单实例已启动'\n")
@@ -291,12 +331,10 @@ func buildOracleDeployScript(req dbDeployRequest, b *strings.Builder) {
 	}
 }
 
-func buildTiDBDeployScript(req dbDeployRequest, b *strings.Builder) {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqMode := req.Mode
+func buildTiDBDeployScript(vreq validatedDBDeploy, b *strings.Builder) {
 	b.WriteString("# TiDB 部署（依赖 PD/TiKV/TiDB）\n")
 	b.WriteString("if command -v tidb-server >/dev/null 2>&1; then echo 'TiDB 已安装'; else echo '请先安装 TiDB (tiup)' && exit 1; fi\n")
-	switch vReqMode {
+	switch vreq.Mode {
 	case "single":
 		b.WriteString("tidb-server --store=tikv --path=/tmp/tidb --host=0.0.0.0 --port=4000 &\n")
 		b.WriteString("echo 'TiDB 单节点已启动'\n")
@@ -306,12 +344,10 @@ func buildTiDBDeployScript(req dbDeployRequest, b *strings.Builder) {
 	}
 }
 
-func buildOceanBaseDeployScript(req dbDeployRequest, b *strings.Builder) {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqMode := req.Mode
+func buildOceanBaseDeployScript(vreq validatedDBDeploy, b *strings.Builder) {
 	b.WriteString("# OceanBase 部署（依赖 observer + obproxy）\n")
 	b.WriteString("if command -v observer >/dev/null 2>&1 || command -v obclient >/dev/null 2>&1; then echo 'OceanBase 已安装'; else echo '请先安装 OceanBase' && exit 1; fi\n")
-	switch vReqMode {
+	switch vreq.Mode {
 	case "single":
 		b.WriteString("observer --start || systemctl start oceanbase || true\n")
 		b.WriteString("echo 'OceanBase 单节点已启动'\n")
@@ -321,16 +357,14 @@ func buildOceanBaseDeployScript(req dbDeployRequest, b *strings.Builder) {
 	}
 }
 
-func buildMSSQLDeployScript(req dbDeployRequest, b *strings.Builder) {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqMode := req.Mode
+func buildMSSQLDeployScript(vreq validatedDBDeploy, b *strings.Builder) {
 	b.WriteString("# MS SQL Server 部署\n")
 	b.WriteString("if command -v sqlcmd >/dev/null 2>&1 || systemctl is-active --quiet mssql-server 2>/dev/null; then echo 'MS SQL Server 已安装'; else \n")
 	b.WriteString("  if command -v yum >/dev/null 2>&1; then $PKG_MGR install -y mssql-server; elif command -v apt-get >/dev/null 2>&1; then $PKG_MGR install -y mssql-server; fi\n")
 	b.WriteString("fi\n")
 	b.WriteString("# 配置 SA 密码并启动\n")
 	b.WriteString("echo '配置 SA 密码' && /opt/mssql/bin/mssql-conf set-sa-password 2>/dev/null || true\n")
-	switch vReqMode {
+	switch vreq.Mode {
 	case "single":
 		b.WriteString("systemctl enable mssql-server && systemctl start mssql-server || true\n")
 		b.WriteString("echo 'MS SQL Server 单点已启动'\n")
@@ -354,12 +388,9 @@ func (s *Server) handleDBAction(w http.ResponseWriter, r *http.Request, dbType, 
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedDBTypes[dbType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported database type"})
-		return
-	}
-	if !allowedDBActions[action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action"})
+	vreq, verr := validateDBOps(dbType, action)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 	var req dbOpsRequest
@@ -371,10 +402,7 @@ func (s *Server) handleDBAction(w http.ResponseWriter, r *http.Request, dbType, 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	req.Type = dbType
-	req.Action = action
-
-	script := buildDBActionScript(req)
+	script := buildDBActionScript(vreq)
 	actionV, err := opsIdentifier("action", action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.action."+dbType, err)
@@ -395,15 +423,13 @@ func (s *Server) handleDBAction(w http.ResponseWriter, r *http.Request, dbType, 
 }
 
 // buildDBActionScript 生成数据库启停重启/状态脚本。
-func buildDBActionScript(req dbOpsRequest) string {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqType, vReqAction := req.Type, req.Action
+func buildDBActionScript(vreq validatedDBOps) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch vReqType {
+	switch vreq.Type {
 	case "postgresql":
 		b.WriteString("# PostgreSQL 启停\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("pg_ctlcluster 14 main start || systemctl start postgresql || true\n")
 		case "stop":
@@ -415,7 +441,7 @@ func buildDBActionScript(req dbOpsRequest) string {
 		}
 	case "oracle":
 		b.WriteString("# Oracle 启停\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("dbstart $ORACLE_HOME || systemctl start oracle || true\n")
 		case "stop":
@@ -427,7 +453,7 @@ func buildDBActionScript(req dbOpsRequest) string {
 		}
 	case "tidb":
 		b.WriteString("# TiDB 启停\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("tiup cluster start <cluster-name> || systemctl start tidb || true\n")
 		case "stop":
@@ -439,7 +465,7 @@ func buildDBActionScript(req dbOpsRequest) string {
 		}
 	case "oceanbase":
 		b.WriteString("# OceanBase 启停\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("systemctl start oceanbase || observer --start || true\n")
 		case "stop":
@@ -451,7 +477,7 @@ func buildDBActionScript(req dbOpsRequest) string {
 		}
 	case "mssql":
 		b.WriteString("# MS SQL Server 启停\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "start":
 			b.WriteString("systemctl start mssql-server || true\n")
 		case "stop":
@@ -467,12 +493,12 @@ func buildDBActionScript(req dbOpsRequest) string {
 		}
 	case "teledb":
 		b.WriteString("# Teledb 启停\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "status":
 			b.WriteString("tel status 2>/dev/null || echo 'not running'\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", vReqType, vReqAction)
+	fmt.Fprintf(&b, "echo '%s %s 操作完成\n", vreq.Type, vreq.Action)
 	return b.String()
 }
 
@@ -489,10 +515,6 @@ func (s *Server) handleDBInstance(w http.ResponseWriter, r *http.Request, dbType
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedDBTypes[dbType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported database type"})
-		return
-	}
 	var req dbInstanceReq
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -502,87 +524,81 @@ func (s *Server) handleDBInstance(w http.ResponseWriter, r *http.Request, dbType
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if !allowedDBInstanceActions[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (create/drop/list)"})
+	vreq, verr := validateDBInstance(dbType, req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	if req.Action != "list" && !dbNameRe.MatchString(req.Name) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid db name"})
-		return
-	}
-	req.Type = dbType
 
-	script := buildDBInstanceScript(req)
-	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "db_instance_"+req.Action)
+	script := buildDBInstanceScript(vreq)
+	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "db_instance_"+vreq.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.instance."+dbType, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_instance_" + req.Action, Target: req.Name,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_instance_" + vreq.Action, Target: vreq.Name,
 		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " type=" + opsSQLString(dbType)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildDBInstanceScript(req dbInstanceReq) string {
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqType, vReqAction, vReqName := req.Type, req.Action, req.Name
+func buildDBInstanceScript(vreq validatedDBInstance) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch vReqType {
+	switch vreq.Type {
 	case "postgresql":
 		b.WriteString("# PostgreSQL 实例管理\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
-			fmt.Fprintf(&b, "createdb %s || echo '数据库已存在或创建失败: %s'\n", shellQuote(vReqName), vReqName)
+			fmt.Fprintf(&b, "createdb %s || echo '数据库已存在或创建失败: %s'\n", shellQuote(vreq.Name), vreq.Name)
 		case "drop":
-			fmt.Fprintf(&b, "dropdb %s || echo '数据库不存在或删除失败: %s'\n", shellQuote(vReqName), vReqName)
+			fmt.Fprintf(&b, "dropdb %s || echo '数据库不存在或删除失败: %s'\n", shellQuote(vreq.Name), vreq.Name)
 		case "list":
 			b.WriteString("psql -c '\\l'\n")
 		}
 	case "oracle":
 		b.WriteString("# Oracle 实例管理（sqlplus /sys as sysdba）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
-			fmt.Fprintf(&b, "sqlplus / as sysdba <<EOF\ncreate database %s;\nexit;\nEOF\n", shellQuote(vReqName))
+			fmt.Fprintf(&b, "sqlplus / as sysdba <<EOF\ncreate database %s;\nexit;\nEOF\n", shellQuote(vreq.Name))
 		case "drop":
-			fmt.Fprintf(&b, "sqlplus / as sysdba <<EOF\ndrop database %s;\nexit;\nEOF\n", shellQuote(vReqName))
+			fmt.Fprintf(&b, "sqlplus / as sysdba <<EOF\ndrop database %s;\nexit;\nEOF\n", shellQuote(vreq.Name))
 		case "list":
 			b.WriteString("sqlplus / as sysdba <<EOF\nselect name from v$database;\nexit;\nEOF\n")
 		}
 	case "tidb":
 		b.WriteString("# TiDB 实例管理（mysql 客户端）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
-			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 4000 -u root -e 'create database %s' || echo '创建失败: %s'\n", shellQuote(vReqName), vReqName)
+			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 4000 -u root -e 'create database %s' || echo '创建失败: %s'\n", shellQuote(vreq.Name), vreq.Name)
 		case "drop":
-			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 4000 -u root -e 'drop database %s' || echo '删除失败: %s'\n", shellQuote(vReqName), vReqName)
+			fmt.Fprintf(&b, "mysql -h 127.0.0.1 -P 4000 -u root -e 'drop database %s' || echo '删除失败: %s'\n", shellQuote(vreq.Name), vreq.Name)
 		case "list":
 			b.WriteString("mysql -h 127.0.0.1 -P 4000 -u root -e 'show databases'\n")
 		}
 	case "oceanbase":
 		b.WriteString("# OceanBase 实例管理（obclient）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
-			fmt.Fprintf(&b, "obclient -h 127.0.0.1 -P 2881 -u root -e 'create database %s' || echo '创建失败: %s'\n", shellQuote(vReqName), vReqName)
+			fmt.Fprintf(&b, "obclient -h 127.0.0.1 -P 2881 -u root -e 'create database %s' || echo '创建失败: %s'\n", shellQuote(vreq.Name), vreq.Name)
 		case "drop":
-			fmt.Fprintf(&b, "obclient -h 127.0.0.1 -P 2881 -u root -e 'drop database %s' || echo '删除失败: %s'\n", shellQuote(vReqName), vReqName)
+			fmt.Fprintf(&b, "obclient -h 127.0.0.1 -P 2881 -u root -e 'drop database %s' || echo '删除失败: %s'\n", shellQuote(vreq.Name), vreq.Name)
 		case "list":
 			b.WriteString("obclient -h 127.0.0.1 -P 2881 -u root -e 'show databases'\n")
 		}
 	case "mssql":
 		b.WriteString("# MS SQL Server 实例管理（sqlcmd）\n")
-		switch vReqAction {
+		switch vreq.Action {
 		case "create":
-			fmt.Fprintf(&b, "sqlcmd -S localhost -Q \"CREATE DATABASE %s\" || echo '创建失败: %s'\n", shellQuote(vReqName), vReqName)
+			fmt.Fprintf(&b, "sqlcmd -S localhost -Q \"CREATE DATABASE %s\" || echo '创建失败: %s'\n", shellQuote(vreq.Name), vreq.Name)
 		case "drop":
-			fmt.Fprintf(&b, "sqlcmd -S localhost -Q \"DROP DATABASE %s\" || echo '删除失败: %s'\n", shellQuote(vReqName), vReqName)
+			fmt.Fprintf(&b, "sqlcmd -S localhost -Q \"DROP DATABASE %s\" || echo '删除失败: %s'\n", shellQuote(vreq.Name), vreq.Name)
 		case "list":
 			b.WriteString("sqlcmd -S localhost -Q \"SELECT name FROM sys.databases\"\n")
 		}
 	}
-	fmt.Fprintf(&b, "echo '数据库 %s %s 操作完成\n", vReqType, vReqAction)
+	fmt.Fprintf(&b, "echo '数据库 %s %s 操作完成\n", vreq.Type, vreq.Action)
 	return b.String()
 }
 
