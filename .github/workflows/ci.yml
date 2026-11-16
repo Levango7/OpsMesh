@@ -264,7 +264,12 @@ jobs:
           run_batch agent_JZ go test -p 1 -timeout 180s -coverprofile=cov3b.out -v -run 'Test[J-Z]' ./internal/agent/
           cat cov3a.out cov3b.out | grep -v '^mode:' > cov3.out
           run_batch store_race go test -race -p 1 -timeout 300s -coverprofile=cov2.out ./internal/store/...
-          run_batch cp_race go test -race -p 1 -timeout 600s -coverprofile=cov1.out ./internal/controlplane/...
+          # -timeout 1200s（2026-11-16 由 600s 上调）：该批实测两次撞满 600s
+          # （#79、#80，日志 `FAIL github.com/Levango7/OpsMesh/internal/controlplane 600.332s`），
+          # 是**时长余量不足**而非挂死 —— 同一份套件在 main 上又跑得过去，属擦边 flake。
+          # 调大超时**不增加峰值内存**：内存由 -p 1 串行化与分批控制，不由时长控制；
+          # 1200s 与 services job 逐模块 test 的 -timeout 口径一致。
+          run_batch cp_race go test -race -p 1 -timeout 1200s -coverprofile=cov1.out ./internal/controlplane/...
           # 其余全部包（小包为主，-p 2 内存可控）
           # 用数组而不是裸 $(go list …)：不加引号是 SC2046 词分裂，加引号又会把整份清单
           # 当成一个参数交给 go test —— 数组两种错都不犯（actionlint+shellcheck 首跑报出）。
