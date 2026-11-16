@@ -3754,23 +3754,27 @@ MVP 限制：非 leader 实例无法得知 leader 详情（返回占位 `unknown
 
 ### POST /api/v1/ha/failover
 
-手动切换 leader。返回当前实例角色与说明：实际选主由 leader_lease 表续租驱动，
-手动切换需运维摘掉当前 leader Pod 触发重新选举（本端点不直接执行切换）。
+手动切换 leader —— **当前返回 `501 Not Implemented`**。
+
+选主由 `leader_lease` 表续租驱动（权威源 task-svc），"强制作废当前 leader 租约"的
+跨实例操作尚未接线。原实现曾返回 `200 {"status":"accepted"}` 但**不做任何切换**，
+属假成功（审计整改批次 1 已改为显式 501，避免运维误以为已触发切主）。
 
 - **认证**：需 `ha:write` 权限
 - **请求体**：无
-- **响应**：`200 OK`
+- **响应**：`501 Not Implemented`
 
 ```json
 {
-  "status": "accepted",
-  "message": "failover triggered; new leader will be elected via leader_lease renewal",
+  "code": "ERR_NOT_IMPLEMENTED",
+  "error": "手动 leader 切换尚未接线：选主由 leader_lease 续租驱动（权威源 task-svc）",
   "current": {"instanceId": "host-1", "role": "leader", "isLeader": true},
-  "simulated": false
+  "alternative": "摘除当前 leader 实例（滚动重启/缩容）后，租约过期将自动触发重新选主"
 }
 ```
 
-> `simulated: false` 表示响应返回的是真实当前状态（旧版本的占位 `simulated:true` 标记已移除）。
+> **可执行的替代路径**：摘除当前 leader 实例（滚动重启 / 缩容），租约过期后自动重新选主。
+> "一键强制切主"属未接线能力，实现见 `internal/controlplane/ha.go` 的 `handleHAFailover`。
 
 ---
 
