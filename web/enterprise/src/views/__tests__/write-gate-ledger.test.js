@@ -39,7 +39,11 @@ const GATED = [
   ['DeadLetterView.vue', 'task:write'],
   // 先行批（留档，勿删）
   ['FluxView.vue', 'flux:write'],
-  ['InfraConsoleView.vue', 'task:write']
+  ['InfraConsoleView.vue', 'task:write'],
+  ['UsersView.vue', 'user:write'],
+  ['RolesView.vue', 'role:write'],
+  ['CMDBChangesView.vue', 'cmdb:write'],
+  ['CMDBView.vue', 'cmdb:write']
 ]
 
 // —— 欠账（matrix 实测：调用写端点但视图内无对应 hasPerm）。每挂完一个视图，把它从这里挪到 GATED。
@@ -55,9 +59,7 @@ const PENDING = [
   ['BatchView.vue', 'task:write'],
   ['BotView.vue', 'bot:write'],
   ['CMDBAttrTemplatesView.vue', 'cmdb:write'],
-  ['CMDBChangesView.vue', 'cmdb:write'],
   ['CMDBCollectView.vue', 'cmdb:write'],
-  ['CMDBView.vue', 'cmdb:write'],
   ['CanaryView.vue', 'task:write'],
   ['ConfigHotpushView.vue', 'cmdb:write'],
   ['CostView.vue', 'cost:write'],
@@ -80,8 +82,6 @@ const PENDING = [
   ['PlatformConfigView.vue', 'platform:write'],
   ['PluginView.vue', 'plugin:write'],
   ['PortalView.vue', 'portal:write'],
-  ['RolesView.vue', 'role:write/user:write'],
-  ['UsersView.vue', 'role:write/user:write'],
   ['WorkflowsView.vue', 'workflow:write']
 ]
 

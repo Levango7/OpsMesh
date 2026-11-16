@@ -37,6 +37,12 @@ vi.mock('@/api/auth', () => ({
   }
 }))
 
+// 2026-11-17 写权限门 batch1：UsersView 现于 setup 取 auth store（无 Pinia 会抛 [🍍]）。
+// 测试以 hasPerm=true 走有权限路径，专注验服务端分页契约本身。
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ hasPerm: () => true })
+}))
+
 vi.mock('@/components/Icon.vue', () => ({
   default: { name: 'Icon', props: ['name', 'size'], template: '<span class="icon-mock" />' }
 }))

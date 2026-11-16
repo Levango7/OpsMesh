@@ -354,7 +354,8 @@
     "back": "Back",
     "menu": "Menu",
     "load_failed": "Load failed",
-    "tip": "Tips"
+    "tip": "Tips",
+    "not_found": "The page you requested does not exist or has been removed."
   },
   "alerts": {
     "root_cause": "Root Cause",
@@ -429,5 +430,12 @@
     "no_data": "No data",
     "load_failed": "Load failed",
     "download_failed": "Download failed"
+  },
+  "not_found": {
+    "title": "Page Not Found",
+    "subtitle": "The page you requested does not exist or has been removed.",
+    "path": "The URL in the address bar does not resolve to any page.",
+    "go_home": "Back to Overview",
+    "go_back": "Go Back"
   }
 }
