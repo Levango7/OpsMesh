@@ -17,6 +17,7 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -84,6 +85,107 @@ type dnsReq struct {
 
 const defaultDNSZone = "opsmesh.internal"
 
+// validatedDNS 是白名单校验后的形态。builder 只接受这种类型 —— 原始 dnsReq 无法被传入 builder。
+// 全部字段（含默认值补全）在 validator 内解析完毕，builder 不再有任何默认值逻辑。
+type validatedDNS struct {
+	Action     string
+	Type       string
+	Zone       string
+	TTL        int
+	Forwarders []string
+	Op         string
+	Name       string
+	Value      string
+	RecordType string
+	Server     string
+	Service    string
+}
+
+func validateDNS(action string, req dnsReq) (validatedDNS, error) {
+	if !allowedDNSActions[action] {
+		return validatedDNS{}, errors.New("unsupported action (status/deploy/record/query/service)")
+	}
+	v := validatedDNS{
+		Action: action,
+		Type:   req.Type,
+		Zone:   req.Zone,
+		TTL:    req.TTL,
+	}
+	if v.Type == "" {
+		v.Type = "dnsmasq"
+	}
+	if !allowedDNSTypes[v.Type] {
+		return validatedDNS{}, errors.New("unsupported dns type (bind/dnsmasq)")
+	}
+	if v.Zone == "" {
+		v.Zone = defaultDNSZone
+	}
+	if !dnsZoneRe.MatchString(v.Zone) {
+		return validatedDNS{}, errors.New("invalid zone name")
+	}
+	if v.TTL <= 0 {
+		v.TTL = 300
+	}
+	if v.TTL < 0 || v.TTL > 604800 {
+		return validatedDNS{}, errors.New("ttl must be 0-604800")
+	}
+	v.Forwarders = req.Forwarders
+	v.Op = req.Op
+	v.Name = req.Name
+	v.Value = req.Value
+	v.RecordType = req.RecordType
+	v.Server = req.Server
+	v.Service = req.Service
+
+	switch action {
+	case "deploy":
+		if len(v.Forwarders) == 0 {
+			v.Forwarders = []string{"223.5.5.5", "8.8.8.8"}
+		}
+		for _, fw := range v.Forwarders {
+			if !ipv4Re.MatchString(fw) && !ipv6Re.MatchString(fw) {
+				return validatedDNS{}, errors.New("invalid forwarder ip: " + fw)
+			}
+		}
+	case "record":
+		if !allowedDNSRecordOps[v.Op] {
+			return validatedDNS{}, errors.New("unsupported op (add/delete/list)")
+		}
+		if v.Op != "list" {
+			if !allowedDNSRecordTypes[v.RecordType] {
+				return validatedDNS{}, errors.New("unsupported record type (A/AAAA/CNAME/MX/TXT)")
+			}
+			if !dnsNameRe.MatchString(v.Name) {
+				return validatedDNS{}, errors.New("invalid record name")
+			}
+			if !validDNSRecordValue(v.RecordType, v.Value) {
+				return validatedDNS{}, errors.New("invalid record value for " + v.RecordType)
+			}
+		}
+	case "query":
+		if !dnsNameRe.MatchString(v.Name) {
+			return validatedDNS{}, errors.New("invalid query name")
+		}
+		if v.RecordType == "" {
+			v.RecordType = "A"
+		}
+		if !allowedDNSRecordTypes[v.RecordType] {
+			return validatedDNS{}, errors.New("unsupported record type")
+		}
+		if v.Server != "" && !ipv4Re.MatchString(v.Server) && !ipv6Re.MatchString(v.Server) {
+			return validatedDNS{}, errors.New("invalid dns server ip")
+		}
+	case "service":
+		if v.Service == "" {
+			v.Service = "status"
+		}
+		if !allowedNTPServiceActions[v.Service] {
+			return validatedDNS{}, errors.New("invalid service action (start/stop/restart/status)")
+		}
+	}
+	return v, nil
+}
+
 // handleDNS 处理 POST /api/v1/dns/{action}。
 func (s *Server) handleDNS(w http.ResponseWriter, r *http.Request, action string) {
 	if r.Method != http.MethodPost {
@@ -97,10 +199,6 @@ func (s *Server) handleDNS(w http.ResponseWriter, r *http.Request, action string
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedDNSActions[action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (status/deploy/record/query/service)"})
-		return
-	}
 	var req dnsReq
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -110,97 +208,24 @@ func (s *Server) handleDNS(w http.ResponseWriter, r *http.Request, action string
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	req.Action = action
-	if req.Type == "" {
-		req.Type = "dnsmasq"
-	}
-	if req.Zone == "" {
-		req.Zone = defaultDNSZone
-	}
-	if req.TTL <= 0 {
-		req.TTL = 300
-	}
-	if !allowedDNSTypes[req.Type] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported dns type (bind/dnsmasq)"})
-		return
-	}
-	if !dnsZoneRe.MatchString(req.Zone) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid zone name"})
+	vreq, verr := validateDNS(action, req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	switch action {
-	case "deploy":
-		if len(req.Forwarders) == 0 {
-			req.Forwarders = []string{"223.5.5.5", "8.8.8.8"}
-		}
-		for _, fw := range req.Forwarders {
-			if !ipv4Re.MatchString(fw) && !ipv6Re.MatchString(fw) {
-				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid forwarder ip: " + fw})
-				return
-			}
-		}
-	case "record":
-		if !allowedDNSRecordOps[req.Op] {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported op (add/delete/list)"})
-			return
-		}
-		if req.Op != "list" {
-			if !allowedDNSRecordTypes[req.RecordType] {
-				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported record type (A/AAAA/CNAME/MX/TXT)"})
-				return
-			}
-			if !dnsNameRe.MatchString(req.Name) {
-				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid record name"})
-				return
-			}
-			if !validDNSRecordValue(req.RecordType, req.Value) {
-				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid record value for " + req.RecordType})
-				return
-			}
-		}
-		if req.TTL < 0 || req.TTL > 604800 {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "ttl must be 0-604800"})
-			return
-		}
-	case "query":
-		if !dnsNameRe.MatchString(req.Name) {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid query name"})
-			return
-		}
-		if req.RecordType == "" {
-			req.RecordType = "A"
-		}
-		if !allowedDNSRecordTypes[req.RecordType] {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported record type"})
-			return
-		}
-		if req.Server != "" && !ipv4Re.MatchString(req.Server) && !ipv6Re.MatchString(req.Server) {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid dns server ip"})
-			return
-		}
-	case "service":
-		if req.Service == "" {
-			req.Service = "status"
-		}
-		if !allowedNTPServiceActions[req.Service] {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service action (start/stop/restart/status)"})
-			return
-		}
-	}
-
-	script := buildDNSScript(req)
+	script := buildDNSScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "dns_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "dns."+action, err)
 		return
 	}
-	target := req.Type
+	target := vreq.Type
 	if action == "record" {
-		target = req.Name + ":" + req.RecordType
+		target = vreq.Name + ":" + vreq.RecordType
 	}
 	if action == "query" {
-		target = req.Name
+		target = vreq.Name
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "dns_" + action, Target: target,
@@ -252,10 +277,9 @@ func isNumeric(s string) bool {
 	return true
 }
 
-func buildDNSScript(req dnsReq) string {
+func buildDNSScript(vreq validatedDNS) string {
 	var b strings.Builder
-	// 收口（批次 19）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本语义不变。
-	nameV, valueV, recordTypeV, zoneV, serverV, serviceV, opV, typeV, forwardersV, actionV, ttlV := req.Name, req.Value, req.RecordType, req.Zone, req.Server, req.Service, req.Op, req.Type, req.Forwarders, req.Action, req.TTL
+	nameV, valueV, recordTypeV, zoneV, serverV, serviceV, opV, typeV, forwardersV, actionV, ttlV := vreq.Name, vreq.Value, vreq.RecordType, vreq.Zone, vreq.Server, vreq.Service, vreq.Op, vreq.Type, vreq.Forwarders, vreq.Action, vreq.TTL
 	b.WriteString("set -e\n")
 	switch actionV {
 	case "status":
@@ -318,7 +342,7 @@ func buildDNSScript(req dnsReq) string {
 			b.WriteString("  echo \"include \\\"$FWD\\\";\" >> \"$MAIN\"\n")
 			b.WriteString("fi\n")
 			b.WriteString("if command -v named-checkconf >/dev/null 2>&1 && ! named-checkconf; then echo 'named.conf 语法校验失败，终止' && exit 1; fi\n")
-			b.WriteString("if command -v named-checkzone >/dev/null 2>&1 && ! named-checkzone " + req.Zone + " \"$ZONE_FILE\" >/dev/null; then echo 'zone 语法校验失败，终止' && exit 1; fi\n")
+			b.WriteString("if command -v named-checkzone >/dev/null 2>&1 && ! named-checkzone " + vreq.Zone + " \"$ZONE_FILE\" >/dev/null; then echo 'zone 语法校验失败，终止' && exit 1; fi\n")
 			b.WriteString("systemctl enable --now named 2>/dev/null || systemctl enable --now bind9 2>/dev/null || true\n")
 			b.WriteString("systemctl restart named 2>/dev/null || systemctl restart bind9 2>/dev/null || true\n")
 			b.WriteString("echo 'bind 已部署并启动'\n")

@@ -29,6 +29,7 @@ import (
 	"go/parser"
 	"go/token"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -36,9 +37,8 @@ import (
 // TestB19TXTValueOnlyInHeredoc 真洞判据①：注入载荷只能落在 heredoc 内。
 func TestB19TXTValueOnlyInHeredoc(t *testing.T) {
 	payload := "v'; id; echo '"
-	script := buildDNSScript(dnsReq{
+	v, verr := validateDNS("record", dnsReq{
 		DeviceID:   "b19-dns",
-		Action:     "record",
 		Type:       "bind",
 		Op:         "add",
 		Zone:       "opsmesh.internal",
@@ -47,6 +47,10 @@ func TestB19TXTValueOnlyInHeredoc(t *testing.T) {
 		RecordType: "TXT",
 		TTL:        300,
 	})
+	if verr != nil {
+		t.Fatalf("validator 拒绝合法 TXT：%s（err=%v）", payload, verr)
+	}
+	script := buildDNSScript(v)
 	if !strings.Contains(script, "<< 'OPSMESH_DNS_EOF'") {
 		t.Fatalf("bind 记录行应改由 heredoc 承载，实际脚本片段：\n%s", script)
 	}
@@ -105,6 +109,12 @@ func TestB19LegitTXTValueNotRejected(t *testing.T) {
 	}
 }
 
+// b19RawReqRef 检测脚本实参是否为「裸 req. 引用」——vreq. / validatedDNS* 不算。
+// 原始判据 strings.Contains(src, "req.") 在迁移后会把 vreq.* 误命中，故改为词边界正则。
+var b19ReqRawRe = regexp.MustCompile(`(^|[^A-Za-z0-9_])req\.`)
+
+func b19RawReqRef(src string) bool { return b19ReqRawRe.MatchString(src) }
+
 // TestB19NoRawReqInScriptArgs AST 判据③：builder 的 Fprintf 实参不得裸引用 req.*。
 func TestB19NoRawReqInScriptArgs(t *testing.T) {
 	const f = "dns_ops.go"
@@ -135,7 +145,7 @@ func TestB19NoRawReqInScriptArgs(t *testing.T) {
 		}
 		for _, a := range args {
 			src := b9Src(fset, a)
-			if strings.Contains(src, "req.") {
+			if b19RawReqRef(src) {
 				t.Errorf("%s:%d 脚本实参裸引用 req.*：%s", f, fset.Position(a.Pos()).Line, src)
 			}
 		}
