@@ -43,6 +43,12 @@ const nonceCachePruneEvery = 256
 // 取 2 倍签名时间窗：保证在签名仍有效的整个窗口内 nonce 都不会被清理。
 const defaultNonceCacheTTL = 2 * DefaultFederationMaxSkew
 
+// maxFederationNonceLen 入站 nonce 的最大长度。
+// 出站 nonce 固定为 32 个 hex 字符（16 字节随机数）；上限规范化到 256 以兼容
+// 其他实现并防止超长 nonce 进入缓存/日志（内存与日志放大攻击面）。
+// 不设下限：滚动升级期允许对端使用较短 nonce，重放保护由缓存语义独立保证。
+const maxFederationNonceLen = 256
+
 var (
 	// ErrFederationMalformed 联邦签名头缺失或格式非法。
 	ErrFederationMalformed = errors.New("auth: 联邦签名头缺失或格式非法")
@@ -219,6 +225,9 @@ func VerifyFederationSignature(secret []byte, maxSkew time.Duration, method, pat
 	if nonces != nil && nonce == "" {
 		return ErrFederationNonceRequired
 	}
+	if err := validateFederationNonce(nonce); err != nil {
+		return err
+	}
 	tenant := headers.Get("X-Tenant-ID")
 	user := headers.Get("X-User-Id")
 	roles := headers.Get("X-User-Roles")
@@ -235,6 +244,23 @@ func VerifyFederationSignature(secret []byte, maxSkew time.Duration, method, pat
 	}
 	if nonces != nil && !nonces.CheckAndAdd(nonce, now) {
 		return fmt.Errorf("%w: nonce=%q", ErrFederationReplay, nonce)
+	}
+	return nil
+}
+
+// validateFederationNonce 校验 nonce 的形态边界：仅允许可见 ASCII 且不超过上限。
+// 空 nonce 由调用方按"未启用防重放/旧格式"或 ErrFederationNonceRequired 处理，此处放行。
+func validateFederationNonce(nonce string) error {
+	if nonce == "" {
+		return nil
+	}
+	if len(nonce) > maxFederationNonceLen {
+		return fmt.Errorf("%w: %s 长度 %d 超过上限 %d", ErrFederationMalformed, FederationHeaderNonce, len(nonce), maxFederationNonceLen)
+	}
+	for i := 0; i < len(nonce); i++ {
+		if c := nonce[i]; c < 0x21 || c > 0x7e {
+			return fmt.Errorf("%w: %s 含非法字符（仅允许可见 ASCII）", ErrFederationMalformed, FederationHeaderNonce)
+		}
 	}
 	return nil
 }

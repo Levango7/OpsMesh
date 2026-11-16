@@ -154,6 +154,15 @@ func (s *Server) handleFederationForwardDeviceOp(w http.ResponseWriter, r *http.
 		Payload []byte `json:"payload"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
+		// 请求体上限由 decodeJSONBody（maxBodyBytes = 1 MiB）强制执行；
+		// 超限时 MaxBytesReader 返回 *http.MaxBytesError，映射为 413 而不是笼统的 400。
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			paginate.WriteJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
+				"error": "request body exceeds 1 MiB limit",
+			})
+			return
+		}
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
 		return
 	}

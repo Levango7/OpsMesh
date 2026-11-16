@@ -132,17 +132,27 @@ func parseAuditDetail(detail string) map[string]string {
 	return out
 }
 
-// validMiddlewareInstanceID 校验 URL 路径中的实例键：不得包含空白或 k=v/条目分隔符
-// （'='、';'），防止审计 Detail 注入与键混淆。空串表示调用方未提供，由请求体推导。
+// middlewareInstanceIDMaxLen URL 路径实例键的最大长度。
+// 复合键现实上限约 150 字符（模板 ID + agent ID + 部署方式 + 版本）；
+// 取 256 留余量，同时拒绝 10k 级超长键进入审计 Detail 与存储。
+const middlewareInstanceIDMaxLen = 256
+
+// validMiddlewareInstanceID 校验 URL 路径中的实例键：不得包含空白、控制字符或
+// k=v/条目分隔符（'='、';'），且长度不超过 middlewareInstanceIDMaxLen，
+// 防止审计 Detail 注入、键混淆与超长键放大。
+// 空串表示调用方未提供，由请求体推导。
 func validMiddlewareInstanceID(id string) bool {
 	if id == "" {
 		return true
+	}
+	if len(id) > middlewareInstanceIDMaxLen {
+		return false
 	}
 	if strings.ContainsAny(id, "=;") {
 		return false
 	}
 	for _, r := range id {
-		if unicode.IsSpace(r) {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
 			return false
 		}
 	}

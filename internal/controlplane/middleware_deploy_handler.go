@@ -305,6 +305,27 @@ func (s *Server) handleUninstallMiddlewareInstance(w http.ResponseWriter, r *htt
 	if _, ok := s.requireTenantAgent(w, body.AgentID, actx.TenantID); !ok {
 		return
 	}
+	// 实例存在性校验：URL 显式携带实例键时，该键必须出现在当前租户的派生实例清单中
+	// （含 uninstalling，便于重复卸载）。
+	// 清单是审计派生、受 2000 条扫描上限约束：若租户完全没有部署记录，无法区分
+	// "键写错"与"部署历史已被清理"，保留原直通语义；一旦存在清单，非清单键一律 404，
+	// 避免对不存在实例下发卸载脚本。
+	if instanceID != "" {
+		instances := s.deriveMiddlewareInstances(actx.TenantID, "", "", "", true)
+		if len(instances) > 0 {
+			found := false
+			for _, inst := range instances {
+				if inst.ID == instanceID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "middleware instance not found: " + instanceID})
+				return
+			}
+		}
+	}
 	// 拼接最终 command：将 Uninstall 脚本中占位符替换为 params 实际值。
 	// 与 deploy 同款拆分：多行脚本走 ScriptBody 通道，Command 保持单行。
 	// Quota gate: middleware uninstall creates a task.

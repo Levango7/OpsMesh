@@ -85,7 +85,7 @@ func TestFederationDeviceOp_InboundReplayRejected(t *testing.T) {
 	s := newFederationDeviceTestServer(t, secret, false)
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	body, _ := json.Marshal(map[string]interface{}{"op": "cmdb-discover", "payload": nil})
-	nonce := "replay-nonce-0001"
+	nonce := "replay-nonce-" + strconv.FormatInt(time.Now().UnixNano(), 10) // 进程级 NonceCache 跨 -count 复用，nonce 必须逐次唯一
 
 	newReq := func() *http.Request {
 		req := httptest.NewRequest(http.MethodPost, federationDeviceOpPath, bytes.NewReader(body))
