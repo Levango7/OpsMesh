@@ -1,13 +1,16 @@
 package evaluator
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/models"
+	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/store"
 )
 
 // maxDecisionHistory 是进程内决策历史的容量上限。
@@ -73,6 +76,9 @@ type Evaluator struct {
 	// decisions 是有界历史（尾部为最新，超限丢最旧），所有写入必须经 appendDecisionLocked。
 	decisions []*models.ScaleDecision
 	now       func() time.Time
+	// store 可选持久层（issue #48 裁决① 接线）：非 nil 时规则/决策**写穿**落库，
+	// 启动时由 SetStore 装载存量。nil = 纯内存（单副本/开发形态，行为与接线前逐字相同）。
+	store store.AutoscalerStore
 }
 
 // NewEvaluator creates a new Evaluator.
@@ -88,6 +94,26 @@ func NewEvaluator(now func() time.Time) *Evaluator {
 	// 起量前先落一个 0：没有这条序列时，面板上"历史为空"和"该版本从没写入过"长得一模一样。
 	metrics.SetBusinessMetric(decisionHistoryGauge, 0, nil)
 	return e
+}
+
+// SetStore 接线持久层（issue #48 裁决①）：装载存量规则到内存，并把后续写路径写穿。
+// 装载失败必须响亮（由 main 侧 fail-fast 阻断启动）——"声明了持久化却装载不进来"
+// 比启动失败更难发现。store 为 nil 表示纯内存（不装载、不写穿）。
+func (e *Evaluator) SetStore(st store.AutoscalerStore) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.store = st
+	if st == nil {
+		return nil
+	}
+	for _, r := range st.ListAllRules() {
+		if r == nil || r.ID == "" || r.TenantID == "" {
+			continue
+		}
+		cp := *r
+		e.rules[cp.ID] = &cp
+	}
+	return nil
 }
 
 // AddRule adds a new scaling rule.
@@ -108,7 +134,6 @@ func (e *Evaluator) AddRule(rule *models.ScaleRule) error {
 		return fmt.Errorf("scaleUpThreshold must be greater than scaleDownThreshold")
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	now := e.now()
 	if rule.CreatedAt.IsZero() {
 		rule.CreatedAt = now
@@ -118,10 +143,23 @@ func (e *Evaluator) AddRule(rule *models.ScaleRule) error {
 	}
 	// 跨租户同 ID 不覆盖（规则是租户资产，ID 撞车不能"抢走"别人的规则）。
 	if existing, ok := e.rules[rule.ID]; ok && existing.TenantID != rule.TenantID {
+		e.mu.Unlock()
 		return ErrTenantMismatch
 	}
 	cp := *rule
 	e.rules[rule.ID] = &cp
+	e.mu.Unlock()
+
+	// 写穿到持久层（issue #48 裁决①）：**锁外 I/O**——持锁做 MySQL 写会阻塞全部
+	// 求值读路径。失败**响亮记 Error 但保留内存态**：内存是求值权威，回滚反而让
+	// DB 故障期间 API 不可用（与 pkg/tenant 配额的 fail-open 同原则）；
+	// Error 必须响亮——它意味着"重启即丢"，运营要看见。
+	if e.store != nil {
+		if _, err := e.store.CreateRule(&cp); err != nil {
+			logx.Error(context.Background(), "[autoscaler] 规则落库失败（重启即丢）", err,
+				"service", "autoscaler-svc", "ruleID", cp.ID, "tenantID", cp.TenantID)
+		}
+	}
 	return nil
 }
 
@@ -131,12 +169,13 @@ func (e *Evaluator) UpdateRule(rule *models.ScaleRule, tenantID string) error {
 		return fmt.Errorf("rule must have a valid ID")
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	old, exists := e.rules[rule.ID]
 	if !exists {
+		e.mu.Unlock()
 		return fmt.Errorf("rule not found: %s", rule.ID)
 	}
 	if old.TenantID != tenantID {
+		e.mu.Unlock()
 		return ErrTenantMismatch
 	}
 	cp := *rule
@@ -144,18 +183,41 @@ func (e *Evaluator) UpdateRule(rule *models.ScaleRule, tenantID string) error {
 	cp.CreatedAt = old.CreatedAt
 	cp.UpdatedAt = e.now()
 	e.rules[rule.ID] = &cp
+	e.mu.Unlock()
+
+	// 写穿（锁外 I/O）：失败响亮记 Error 但保留内存态（同 AddRule 的 fail-open 口径）。
+	if e.store != nil {
+		if err := e.store.UpdateRule(&cp, tenantID); err != nil {
+			logx.Error(context.Background(), "[autoscaler] 规则更新落库失败（重启回旧值）", err,
+				"service", "autoscaler-svc", "ruleID", cp.ID, "tenantID", tenantID)
+		}
+	}
 	return nil
 }
 
 // DeleteRule deletes a rule by ID. 跨租户一律按"不存在"处理。
 func (e *Evaluator) DeleteRule(id, tenantID string) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	existing, exists := e.rules[id]
 	if !exists || existing.TenantID != tenantID {
+		e.mu.Unlock()
 		return fmt.Errorf("rule not found: %s", id)
 	}
+	old := *existing
 	delete(e.rules, id)
+	e.mu.Unlock()
+
+	// 写穿（锁外 I/O）：删除失败响亮记 Error 并**回滚内存删除**——库里还在的规则
+	// 不能表现为"已删除"，那会让运维以为停用了实际下次装载又回来。
+	if e.store != nil {
+		if ok := e.store.DeleteRule(id, tenantID); !ok {
+			e.mu.Lock()
+			e.rules[id] = &old
+			e.mu.Unlock()
+			logx.Error(context.Background(), "[autoscaler] 规则删除落库失败（已回滚，规则仍在）", nil,
+				"service", "autoscaler-svc", "ruleID", id, "tenantID", tenantID)
+		}
+	}
 	return nil
 }
 
@@ -445,8 +507,18 @@ func (e *Evaluator) RecordDecision(d *models.ScaleDecision) {
 		d.Timestamp = e.now()
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.appendDecisionLocked(d)
+	st := e.store
+	e.mu.Unlock()
+
+	// 决策写穿（best-effort）：决策历史是有界环形（500 条），失败不影响求值权威，
+	// 但 Error 必须响亮——审计/复盘依赖"决策落库"这一假设。
+	if st != nil {
+		if _, err := st.CreateDecision(d); err != nil {
+			logx.Error(context.Background(), "[autoscaler] 决策落库失败", err,
+				"service", "autoscaler-svc", "decisionID", d.ID, "ruleID", d.RuleID, "tenantID", d.TenantID)
+		}
+	}
 }
 
 // CooldownStatus 是单条规则的冷却状态快照（只读查询用，前端契约字段
