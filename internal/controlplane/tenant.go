@@ -368,7 +368,7 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id s
 		}
 		for _, a := range accounts {
 			if a != nil {
-				_ = s.store.DeleteCloudAccount(r.Context(), a.ID)
+				_ = s.store.DeleteCloudAccount(r.Context(), a.ID) //nolint:errcheck // 级联清理 best-effort：失败不阻塞租户销毁
 			}
 		}
 		offset += len(accounts)
@@ -384,7 +384,7 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id s
 		}
 		for _, res := range resources {
 			if res != nil {
-				_ = s.store.DeleteCloudResource(r.Context(), res.ID)
+				_ = s.store.DeleteCloudResource(r.Context(), res.ID) //nolint:errcheck // 同上
 			}
 		}
 		offset += len(resources)
