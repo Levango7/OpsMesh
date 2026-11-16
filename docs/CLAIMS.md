@@ -1280,3 +1280,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [DONE] 2026-11-16T03:20:00Z from=kilo scope=internal/controlplane/,pkg/auth/,web/enterprise/src/,docs/ note=批次33-34 收口（灰度/回滚预案、安全审查、分页竞态防护、三类验收用例与输入边界硬化） commit=b20f72f5978d825669b3c726a1a2328a5dc8fbe6
 [DONE] 2026-11-16T05:00:00Z from=kilo scope=internal/controlplane/,pkg/auth/,internal/config/,scripts/loadtest/,docs/,CHANGELOG.md note=批次35 收口（per-peer 联邦密钥+安全头+查询权限+结构化日志+k6 基线） commit=2ff4fcdbbf7f0b5d2e651498f83ee027b70d8bb1
+
+[DONE] 2026-11-16T07:00:00Z from=kilo scope=internal/controlplane/,internal/config/,pkg/auth/,deploy/k8s/,scripts/security/,docs/,CHANGELOG.md note=批次36 风险台账收口（R2/R4/R5/R7） commit=78f829559708653618f962a57e3ed00bbbb8a385
