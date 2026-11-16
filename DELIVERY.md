@@ -8,20 +8,19 @@
 
 **管控通道（已冻结决策：自研 gRPC，2026-07-27）**：MVP 管控通道 = **自研 gRPC（direct + proxy）**。原"蓝鲸 GSE 社区版底座 / GSE 级联纳管"**移出 MVP、降格为可选增强**（未来超大规模级联再独立立项）。跨网段规模化改为「每段一套控制面 + agent 集群 + 控制面联邦 / 任务跨段转发」。
 
-## 2. 代码规模（实测 2026-09-16 更新，含 services/ 18 微服务 + GPU/AIOps/ChatOps 新域）
+## 2. 代码规模（实测 2026-11-17 更新，含 services/ 13 微服务 + GPU/AIOps/ChatOps 新域）
 
-> 统计口径：`git ls-files` 实测。主模块 + operator 子模块 + `services/` 18 个微服务子模块（各自独立 go.mod，2026-08-29 起新增）。**2026-09-29 起 services/ 收敛为 12 个服务 + `tf-provider`（删除 5 个未被部署的模块，见 `docs/td60-decision-2026-09-26.md` §5.5），本节数值为该日之前的 2026-09-16 快照。**
+> 统计口径：本机全仓文件系统遍历（排除 vendor / node_modules / .git）。主模块 + operator 子模块 + `services/` 13 个微服务子模块（各自独立 go.mod）。
 > 前端按 `web/enterprise/src/` 下 `.js` + `.vue` 统计（不含 `.json` i18n 资源）。
 
-| 指标 | 数值（实测 2026-09-16） |
+| 指标 | 数值（实测 2026-11-17） |
 |------|----------------------|
-| 仓库文件合计 | 1,411 |
-| Go 文件合计 | **771**（含 288 测试文件） |
-| Go 行数合计 | ~234,200（其中测试 ~106,100，占比约 45.3%） |
-| 前端文件（`.js` + `.vue`） | 223（`web/enterprise/src/`） |
-| 微服务子模块 | 18 个（`services/`，独立 go.mod，与主模块双轨并存，见 README「services/ 微服务目录」） |
+| Go 文件合计 | **1,397**（含 664 测试文件） |
+| Go 行数合计 | ~419,400 |
+| 前端 Vue 文件 / 行数 | 119 / ~35,600（`web/enterprise/src/`） |
+| Go 模块 | 15（主 + operator + 13 services） |
 
-> 较 2026-08-24 版本（346 Go 文件 / ~51,700 行）大幅增长：新增 `services/` 微服务化拆分（约 8 万行）、GPU 资源管理、AIOps 引擎、ChatOps、成本分摊、Terraform provider 等能力；规模统计随 25 提交增量演进刷新。
+> 2026-11-17 校准：旧表停留在 2026-09-16 快照（771 Go 文件 / ~234k 行 / 18 微服务），与当前代码量偏差显著，已按实测更新。
 
 直接依赖清单（主模块 `go.mod` 非 indirect）：
 - 数据/消息：`go-sql-driver/mysql`、`redis/go-redis/v9`、`segmentio/kafka-go`
@@ -175,7 +174,7 @@ go build ./... && go vet ./... && go test ./...
 
 - 远端：`github.com/Levango7/OpsMesh`，分支 `main`
 - 根提交链：以 `git rev-list --count HEAD` 实测为准（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步，持续演进中）
-- 提交内容：34 包源码（主模块 31 + operator 3）+ ~771 Go 文件（含 ~288 测试，实测口径见 §2）+ ~223 前端文件（`web/enterprise/src/`）+ Dockerfile/Dockerfile.agent + 11 个微服务 Dockerfile（`services/<svc>/Dockerfile`）+ docker-compose + Helm Chart + systemd unit + README + DELIVERY + CHANGELOG + 23 个设计文档 + `.github/workflows/ci.yml` + `.gitignore`
+- 提交内容：34 包源码（主模块 31 + operator 3）+ ~1,397 Go 文件（含 ~664 测试，实测口径见 §2）+ ~223 前端文件（`web/enterprise/src/`）+ Dockerfile/Dockerfile.agent + 11 个微服务 Dockerfile（`services/<svc>/Dockerfile`）+ docker-compose + Helm Chart + systemd unit + README + DELIVERY + CHANGELOG + 23 个设计文档 + `.github/workflows/ci.yml` + `.gitignore`
 
 ---
 ## 9. 生产安全加固

@@ -19,6 +19,10 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+// KafkaAvailable 报告当前二进制是否编译进真实 Kafka 生产者（-tags kafka）。
+// 默认构建（!kafka）由 kafka_stub.go 提供返回 false 的同名函数。
+func KafkaAvailable() bool { return true }
+
 // newKafkaBus 由调用方传入 brokers/topic（参数传递，避免 os.Setenv 竞态）；
 // 未配置时返回 nil（调用方回退 noop）。
 //

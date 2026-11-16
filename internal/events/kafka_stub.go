@@ -11,3 +11,8 @@ package events
 
 // newKafkaBus 默认构建下返回 nil；kafka.go（//go:build kafka）提供真实实现（接收 brokers/topic 参数）。
 func newKafkaBus(brokers, topic string) Bus { return nil }
+
+// KafkaAvailable 报告当前二进制是否编译进真实 Kafka 生产者（-tags kafka）。
+// 供启动期 config.Validate 做 fail-fast：配置 --event-bus=kafka 但二进制未带此标签时，
+// New 会静默降级为 NoopBus（审计/告警事件被丢弃），必须提前拒绝而非运行中丢数据。
+func KafkaAvailable() bool { return false }

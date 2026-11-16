@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/events"
 	authpkg "github.com/Levango7/OpsMesh/pkg/auth"
 )
 
@@ -1212,6 +1213,12 @@ func (c *Config) Validate() error {
 	case "controlplane", "agent":
 	default:
 		return fmt.Errorf("非法 --mode=%q（应为 controlplane 或 agent）", c.Mode)
+	}
+	// 事件总线 fail-fast：配置 kafka 但二进制未编译 -tags kafka 时，
+	// events.New 会静默降级为 NoopBus（审计/告警事件被丢弃且启动无提示）——
+	// 这是「看似配置成功、实际事件静默丢失」的隐蔽故障，必须在启动期拒绝。
+	if c.EventBus == "kafka" && !events.KafkaAvailable() {
+		return fmt.Errorf("--event-bus=kafka 但当前二进制未编译 Kafka 生产者（构建需 -tags kafka 并安装 github.com/segmentio/kafka-go）；否则事件总线会静默降级为 NoopBus 丢弃全部审计/告警事件")
 	}
 	// 端口范围基本校验（1-65535）。
 	for _, p := range []struct {
