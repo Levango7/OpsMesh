@@ -271,7 +271,11 @@ jobs:
           run_batch agent_OZ go test -p 1 -timeout 180s -coverprofile=cov3c.out -v -run 'Test[O-Z]' ./internal/agent/
           cat cov3a.out cov3b.out cov3c.out | grep -v '^mode:' > cov3.out
           run_batch store_race go test -race -p 1 -timeout 300s -coverprofile=cov2.out ./internal/store/...
-          run_batch cp_race go test -race -p 1 -timeout 600s -coverprofile=cov1.out ./internal/controlplane/...
+          # 2026-11-16：600s→900s 仅为预算余量，检测语义一字不动（-race -p 1 / -coverprofile / 单 pass / 断言数均不变）。
+          # 取证：Kilo 批次33/35（federation/authn 鉴权）为控制面套件增长 +25% 体积后，本脚站在 -timeout 600s 贴壁
+          # （#76 CI：go -timeout 10m0s 自杀，RSS 1.4GB 无崩溃头——非 agent ENOMEM 同类，系纯计时预算翻墙）。
+          # Race detector 腿已按 2026-11-15 同查放宽到 2400s；本行同步放宽到 900s（-race 单 pass，~11–15m 实测）。
+          run_batch cp_race go test -race -p 1 -timeout 900s -coverprofile=cov1.out ./internal/controlplane/...
           # 其余全部包（小包为主，-p 2 内存可控）
           # 用数组而不是裸 $(go list …)：不加引号是 SC2046 词分裂，加引号又会把整份清单
           # 当成一个参数交给 go test —— 数组两种错都不犯（actionlint+shellcheck 首跑报出）。

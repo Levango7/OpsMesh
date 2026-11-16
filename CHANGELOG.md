@@ -60,6 +60,7 @@
 - **不变项**：白名单语义、错误响应形状（400 `{"error":...}`）、脚本逐字节不变（filter 单引号转义走 Quote 路径保留）、`DeviceID` 保留 raw（仅 handler 层使用）。
 - **验证**：`gofmt -l .` clean；`golangci-lint run ./internal/controlplane/` ⇒ **0 issues**；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（controlplane 72.95s 全绿，含 TestB21/TestB35 各三例）。
 - **顺带修复（CI 收编，用户裁决 2026-11-16 采选 A）**：`agent_JZ` 批 `go test -v -run 'Test[J-Z]' ./internal/agent/` 拆为 `agent_JN`（`Test[J-N]`）+ `agent_OZ`（`Test[O-Z]`）两批，覆盖文件合并同样扩为 `cat cov3a cov3b cov3c`；用例集合不变、断言数不变、判据语义不变（test 数量：[A-I]:132 / [J-N]:48 / [O-Z]:51，并集与 Test[J-Z] 完全相同）。取证：该批 12h 内两次 `fatal error: runtime: cannot allocate memory`（runtime.persistentalloc 头，用例全 PASS、0 --- FAIL，RSS 贴 ~265MB；ci-infra-death.sh fail-closed 判定为真实失败致 build-test 腿整体红）。沿用 agent_AI 同法（拆半/避绝对值内存瓶颈）折入本批。
+- **顺带修复×2（CI 收编，用户裁决 2026-11-16 采选 A）**：build-test `cp_race` 批 `go test -race -p 1 -timeout 600s→900s`（单 pass / -coverprofile / 断言数均不变）。取证：Kilo 批次33/35 增长控制面套件 ~25% 体积后本腿贴壁 600s 墙（#76 CI：`panic: test timed out after 10m0s`，RSS 1.4GB 无崩溃头）。
 ## [Unreleased-批次 30-32 收口] — 2026-11-15（前端阻断缺陷 + 后端正确性 + device 域 HMAC 联邦）
 
 - **批次 30 前端阻断缺陷修复**：`adminApi` TDZ（改用函数内惰性引用，消 `Cannot access before initialization`）；`Pagination` total 口径统一（分页组件 total 由服务端总数驱动，不再取当前页长度）；`Button` size 归一（消除未定义的 `md` 尺寸）；告警翻页保持（`AlertsView` 翻页不再重置筛选状态）；Users/Tenants 改服务端分页（page/pageSize 下发 + total 回填）。
