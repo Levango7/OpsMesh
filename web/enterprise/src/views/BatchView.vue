@@ -143,6 +143,7 @@ import { useRoute } from 'vue-router'
 import { useBatchStore } from '@/stores/batch'
 import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
+import { toast } from '@/utils/toast'
 import { Button, Input, Select, Table, Modal } from '@/components/ui'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
@@ -254,8 +255,8 @@ onMounted(async () => {
       errorConfirm.show = true
     }
   }
-  try { agents.value = await getAgents() || [] }
-  catch (e) { console.error('fetch agents failed:', e) }
+   try { agents.value = await getAgents() || [] }
+   catch { toast.error('fetch agents failed') }
 })
 </script>
 
