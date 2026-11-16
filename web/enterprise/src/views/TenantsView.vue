@@ -159,27 +159,53 @@ function usageText(row) {
   return parts.length ? parts.join(' · ') : '—'
 }
 
+// 请求序号：只允许最后发出的请求写回状态（rows/total/page/loadErr/loading），
+// 防止慢的旧响应覆盖新页面数据，或旧失败把新成功翻成错误横幅。
+let tenantsSeq = 0
+
+// 容错解包：支持 null / 旧版数组 / {tenants|null} / 缺失或字符串 total/page。
+// 数字统一收敛：total >= 0，page >= 1；异常值不抛错。
+function normalizeTenantsResponse(r, fallbackPage) {
+  const envelope = Array.isArray(r) ? { tenants: r } : (r && typeof r === 'object' ? r : {})
+  const rows = Array.isArray(envelope.tenants) ? envelope.tenants : []
+  const rawTotal = Number(envelope.total)
+  const normalizedTotal = Number.isFinite(rawTotal) ? Math.max(0, Math.floor(rawTotal)) : rows.length
+  const rawPage = Number(envelope.page)
+  const normalizedPage = Number.isFinite(rawPage) ? Math.max(1, Math.floor(rawPage)) : Math.max(1, fallbackPage)
+  return { rows, total: normalizedTotal, page: normalizedPage }
+}
+
 async function fetchTenants(target) {
-  // 兼容 @click="fetchTenants"（会把事件对象传入）与 fetchTenants(n) 两种调用
-  const p = typeof target === 'number' ? target : page.value
+  // 兼容 @click="fetchTenants"（事件对象 / 刷新按钮）与 fetchTenants(n)（分页器）两种调用。
+  // 分页请求在加载中被忽略，避免连点叠发；刷新按钮不受限制，可强制发起新请求
+  // （新请求序号更大，在途的旧响应随后会被丢弃）。
+  const isPageChange = typeof target === 'number'
+  if (isPageChange && loading.value) return
+  const p = Math.max(1, Math.floor(isPageChange ? target : page.value))
+  const seq = ++tenantsSeq
   loading.value = true
   loadErr.value = ''
+  let ok = false
   try {
     const r = await tenantApi.listTenants({ page: p, pageSize: pageSize.value })
-    tenants.value = (r && r.tenants) || (Array.isArray(r) ? r : [])
-    total.value = (r && typeof r.total === 'number') ? r.total : tenants.value.length
-    page.value = (r && typeof r.page === 'number') ? r.page : p
-    // 删除租户导致当前页为空时回退一页，避免停在空页
-    if (!tenants.value.length && page.value > 1) {
-      await fetchTenants(page.value - 1)
-      return
-    }
+    if (seq !== tenantsSeq) return
+    const norm = normalizeTenantsResponse(r, p)
+    tenants.value = norm.rows
+    total.value = norm.total
+    page.value = norm.page
+    ok = true
   } catch (e) {
+    if (seq !== tenantsSeq) return
     tenants.value = []
     // 此前静默吞错（只见空表）——统一骨架批次补上可见的加载错误
-    loadErr.value = e.j?.error || t('common.load_failed')
+    loadErr.value = e?.j?.error || t('common.load_failed')
   } finally {
-    loading.value = false
+    // 旧请求结束不得关闭新请求的 loading
+    if (seq === tenantsSeq) loading.value = false
+  }
+  // 删除租户导致当前页为空时回退一页，避免停在空页（仅最新且成功的请求触发）
+  if (ok && seq === tenantsSeq && !tenants.value.length && page.value > 1) {
+    await fetchTenants(page.value - 1)
   }
 }
 

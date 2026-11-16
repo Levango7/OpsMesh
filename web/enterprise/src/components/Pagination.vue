@@ -20,11 +20,25 @@ const props = defineProps({
   total: { type: Number, default: 0 }
 })
 defineEmits(['prev', 'next'])
-const hasPrev = computed(() => props.page > 1)
-const hasNext = computed(() =>
-  props.total > 0 ? props.page * props.limit < props.total : props.pageSize >= props.limit
-)
-const info = computed(() => t('common.page', { n: props.page, m: props.pageSize }))
+// props 来自服务端数据，做一次防御性数字收敛（字符串/负数/NaN 不抛错）。
+function toNumber(value, fallback) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+const normPage = computed(() => Math.max(1, Math.floor(toNumber(props.page, 1))))
+const normPageSize = computed(() => Math.max(0, Math.floor(toNumber(props.pageSize, 0))))
+const normLimit = computed(() => Math.max(0, Math.floor(toNumber(props.limit, 0))))
+const normTotal = computed(() => Math.max(0, Math.floor(toNumber(props.total, 0))))
+const hasPrev = computed(() => normPage.value > 1)
+const hasNext = computed(() => {
+  // total > 0 时按总数判定末页（page * limit == total 即无下一页）；
+  // total 缺失/为负/为零时回退旧的满页启发式。
+  if (normTotal.value > 0 && normLimit.value > 0) {
+    return normPage.value * normLimit.value < normTotal.value
+  }
+  return normLimit.value > 0 && normPageSize.value >= normLimit.value
+})
+const info = computed(() => t('common.page', { n: normPage.value, m: normPageSize.value }))
 </script>
 
 <style scoped>
