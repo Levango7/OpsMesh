@@ -256,13 +256,20 @@ jobs:
           }
 
           mem_line "测试开始前"
-          # agent 批不带 -race + GOMEMLIMIT=3GiB + 拆两半（取舍与诊断）：
+          # agent 批不带 -race + GOMEMLIMIT=3GiB + 拆三半（取舍与诊断）：
           # - TSan 在该包 goroutine 密集场景分配器恒 OOM（hardlimit 约束不了）
-          # - 拆两半（字母序）降低单进程累计分配；-v 保留死点可诊断
+          # - 拆三半（字母序）降低单进程累计分配；-v 保留死点可诊断
           # - 2026-09-25 复核见上方 env 注释：峰值堆实测 223–227MB，旧「打满 7GB」未被复现
+          #
+          # ⚠ 2026-11-16（用户裁决）：agent_JZ（Test[J-Z]）在本 runner 代际上 12h 内两次崩在
+          #   `fatal error: runtime: cannot allocate memory`（runtime.persistentalloc 头，
+          #   用例全 PASS、0 --- FAIL，RSS 贴 ~265MB；fail-closed 判据因无裸 PASS/ok 结束行
+          #   判定为真实失败 → build-test 腿整体红）。沿用 2026-09 先例折入拆分：JZ→[J-N]+[O-Z]，
+          #   单进程累计分配再减半，用例集合不变、判据语义不变。
           run_batch agent_AI go test -p 1 -timeout 180s -coverprofile=cov3a.out -v -run 'Test[A-I]' ./internal/agent/
-          run_batch agent_JZ go test -p 1 -timeout 180s -coverprofile=cov3b.out -v -run 'Test[J-Z]' ./internal/agent/
-          cat cov3a.out cov3b.out | grep -v '^mode:' > cov3.out
+          run_batch agent_JN go test -p 1 -timeout 180s -coverprofile=cov3b.out -v -run 'Test[J-N]' ./internal/agent/
+          run_batch agent_OZ go test -p 1 -timeout 180s -coverprofile=cov3c.out -v -run 'Test[O-Z]' ./internal/agent/
+          cat cov3a.out cov3b.out cov3c.out | grep -v '^mode:' > cov3.out
           run_batch store_race go test -race -p 1 -timeout 300s -coverprofile=cov2.out ./internal/store/...
           run_batch cp_race go test -race -p 1 -timeout 600s -coverprofile=cov1.out ./internal/controlplane/...
           # 其余全部包（小包为主，-p 2 内存可控）
