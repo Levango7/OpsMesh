@@ -16,7 +16,7 @@
 | 本轮回填验签/权限 | 联邦 nonce、任务创建类接口权限、实例键注入 | 已闭环（见 §2.5-2.7） |
 
 验证方式：`go build ./...`、`go vet ./...`、`go test ./...`、`npm run build`、`npx vitest run` 全绿；安全用例集中在下列测试文件：
-`p0_security_holes_test.go`、`query_exec_authz_test.go`、`http_method_semantics_test.go`、`federation_test.go`、`pkg/auth/federation_test.go`、`cloud_account_test.go`、`middleware_instances_test.go`。
+`p0_security_holes_test.go`、`query_exec_authz_test.go`、`http_method_semantics_test.go`、`federation_test.go`、`pkg/auth/federation_test.go`、`cloud_account_test.go`、`middleware_instances_test.go`、`acceptance_hardening_test.go`、`acceptance_idempotency_test.go`、`federation_peer_test.go`、`security_headers_test.go`。
 
 ---
 
@@ -62,7 +62,7 @@
 
 ### 2.9 云同步真实性（已修）
 - `handleSyncCloudAccount` 不再把调用方传入的 `DiscoveredCount` 当真实结果落库；凭据/厂商解析失败时状态为 `failed`、计数为 0；成功路径计数来自 provider 返回。
-- `handleTestCloudAccount` 调用 `provider.ValidateCredentials`，`handleListCloudAccountRegions` 调用 `provider.ListRegions`（6 家厂商均为真实 HTTP 实现）。
+- `handleTestCloudAccount` 调用 `provider.ValidateCredentials`（6 家厂商均为本地格式校验，无 HTTP）；`handleListCloudAccountRegions` 调用 `provider.ListRegions`（仅 aliyun 为真实 HTTP ECS DescribeRegions，其余 5 家为硬编码）；`Discover*`（VPC/Subnet/Instance/Cluster）、`CreateResource`、`DeleteResource`、`SyncTags`（tencent SyncTags 已修复 UIN）为 6 家真实 HTTP 实现。
 
 ---
 
@@ -101,12 +101,13 @@
 | R3 | `tsdb_ops.go`、`graph_ops.go` 的查询接口仍为 `device:read` 建任务 | **CLOSED** | — | 两处查询执行入口已提升为 `task:write`（`tsdb_ops.go:489`、`graph_ops.go:388`）；权限回归见 `query_exec_authz_test.go` 的 `TestQueryExecHandlersDenyViewer` / `TestQueryExecHandlersAllowOperator` | P1 |
 | R4 | 云厂商地域列表仍保留静态回退 | **CLOSED** | — | 地域响应统一携带 `source=provider\|static`；静态回退时附 `warning` 并以结构化字段（provider/accountID/脱敏 reason）告警；无静态兜底时返回 **502**，不再把兜底数据伪装成实时结果；厂商错误经 `sanitizeProviderReason` 折叠空白、抹除凭据键值对、截断 120 字符后回传 | P2 |
 | R5 | `log.Printf` 未全面替换为结构化日志 | **CLOSED** | — | 2026-11-16 三次收口：全部 13 个服务模块（aio/alert/auth/autoscaler/config/device/gpu/incident/log/portal/runbook/task 等）+ `internal/controlplane` + `pkg` 迁移完成；`services/` 下非测试 stdlib 日志可执行调用点 **0**（原 374 处）；auth-svc 种子密码哈希失败保留 Fatal 语义，改由 `logx.Error` + `os.Exit(1)`（`auth-svc/internal/store/store.go`）；`internal/controlplane` 与 `pkg` 可执行调用点 **0**（仅注释命中） | P2 |
-| R6 | 前端安全响应头（CSP/HSTS/X-Frame-Options）未在本轮验证 | OPEN | XSS 纵深不足 | 在反向代理/控制面统一注入并加回归断言 | P2 |
+| R6 | 前端安全响应头（CSP/HSTS/X-Frame-Options/X-Content-Type-Options/Referrer-Policy/Permissions-Policy/COOP） | **CLOSED** | — | `internal/controlplane/security_headers.go` 设置全部响应头；`server_lifecycle.go` 层 6 接入；环境变量可配；`security_headers_test.go` 全覆盖 | P2 |
 | R7 | 镜像/依赖 CVE 扫描依赖 CI 定时跑 | **CLOSED** | — | 新增 `scripts/security/` 扫描套件（`cve-scan.sh`、`cve-scan.ps1`、`README.md`）：trivy fs（vuln/secret/misconfig）+ 可选 `IMAGES` 镜像扫描 + Helm config，输出带时间戳报告并按 `--fail-on-high` 返回门禁退出码。`.github/workflows/` 按 `AGENTS.md` 冻结，**仓库内不加定时 job**，周期调度由外部调度器（host cron / Windows Task Scheduler / Jenkins / GitLab schedules）执行 | P3 |
 | R8 | Dockerfile 基础镜像未钉 digest（TD-89 残余） | **CLOSED** | — | docker-pull-retry.sh + 预热（_publish-image.yml）；CI mysql/redis 改 mirror.gcr.io；mirror-digest-check.yml 对 mysql:8/redis:7 硬门禁；scripts/security/verify-digest-pins.sh 验证器（16 条未钉 FROM 行清单）；Renovate 配置已启用 pinDigests。残余说明：实际 @sha256 钉定由 Renovate PR 落地（配置已启用）；CI Dockerfile digest 检查目前为 warn-only（验证器已可作手动/CI 门禁） | P3 |
 
-> **2026-11-16 三次收口**：R5 服务侧收口完成——13 个服务模块 stdlib `log.*` 全量迁移至 `logx`/`pkg/log`（374 处），`services/` 非测试可执行调用点 0；auth-svc 种子密码哈希失败保留 Fatal 语义（`logx.Error` + `os.Exit(1)`）；`internal/controlplane` 与 `pkg` 可执行调用点 0。
-> **2026-11-16 三次收口**：R2/R4/R5/R7/R8 本轮全部关闭。新增控制项：① 联邦入站路径前缀白名单（默认 `/api/v1/federation/,/api/v1/tasks,/api/v1/devices`，`--federation-allowed-paths` 可配，非法前缀启动 fail-fast，`path.Clean` 规范化）；② per-peer 设备操作白名单（`--federation-peer-secrets` 条目 `;ops=a|b|c`，越权 403）；③ `deploy/k8s/federation-networkpolicy.yaml` 默认拒绝型入站策略资产；④ 联邦未配 CA 的启动 mTLS 告警；⑤ 云地域响应 `source=provider|static` + `warning`，无兜底 502，厂商原因脱敏；⑥ `scripts/security/` CVE 扫描套件（受 workflow 冻结限制，由外部调度器定时执行）。日志扫尾复核结论：`internal/controlplane` 与 `pkg` 排除测试后可执行 stdlib `log.Print*/Fatal` 调用点为 **0**（仅剩注释命中）。R8：TD-89 digest 验证器（docker-pull-retry + 预热 + mirror.gcr.io + mirror-digest-check + verify-digest-pins.sh，Renovate pinDigests 已启用）。
+> **2026-11-16 四次收口**：R5 服务侧收口完成——13 个服务模块 stdlib `log.*` 全量迁移至 `logx`/`pkg/log`（374 处），`services/` 非测试可执行调用点 0；auth-svc 种子密码哈希失败保留 Fatal 语义（`logx.Error` + `os.Exit(1)`）；`internal/controlplane` 与 `pkg` 可执行调用点 0。
+> **2026-11-16 四次收口**：R2/R4/R5/R7/R8 本轮全部关闭。新增控制项：① 联邦入站路径前缀白名单（默认 `/api/v1/federation/,/api/v1/tasks,/api/v1/devices`，`--federation-allowed-paths` 可配，非法前缀启动 fail-fast，`path.Clean` 规范化）；② per-peer 设备操作白名单（`--federation-peer-secrets` 条目 `;ops=a|b|c`，越权 403）；③ `deploy/k8s/federation-networkpolicy.yaml` 默认拒绝型入站策略资产；④ 联邦未配 CA 的启动 mTLS 告警；⑤ 云地域响应 `source=provider|static` + `warning`，无兜底 502，厂商原因脱敏；⑥ `scripts/security/` CVE 扫描套件（受 workflow 冻结限制，由外部调度器定时执行）。日志扫尾复核结论：`internal/controlplane` 与 `pkg` 排除测试后可执行 stdlib `log.Print*/Fatal` 调用点为 **0**（仅剩注释命中）。R8：TD-89 digest 验证器（docker-pull-retry + 预热 + mirror.gcr.io + mirror-digest-check + verify-digest-pins.sh，Renovate pinDigests 已启用）。
+> **2026-11-16 四次收口**：R6 前端安全响应头闭环——`internal/controlplane/security_headers.go` 注入 CSP/HSTS/X-Frame-Options/X-Content-Type-Options/Referrer-Policy/Permissions-Policy/COOP；`server_lifecycle.go` 层 6 接入；`security_headers_test.go` 全覆盖；环境变量可配。
 
 ---
 
