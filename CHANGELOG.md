@@ -13,6 +13,7 @@
 - **守卫验证**：变异测试通过——新增 `buildNeverCalled(req k8sLifecycleReq)` 后 `TestB32BuilderParamsAreValidatedOnly` 判红并精确报错（编译可过但守卫拦截，证明守卫不是编译报错的附属）；撤销后全绿。
 - **不变项**：白名单语义、错误响应形状（400 `{"error":...}`）、脚本逐字节不变（kubeadm/kind/k3s 全部保留原文本与参数顺序）、`DeviceID` 保留 raw（仅 handler 层使用）。
 - **验证**：`gofmt -l .` clean；`golangci-lint run ./internal/controlplane/` ⇒ **0 issues**；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（controlplane 72.7s 全绿，含 TestB32 三例）。
+- **顺带修复（CI 预算，用户裁决 2026-11-16 采选 A）**：Race detector job 的 cp_race 批 `-timeout 1800s`→`2400s`（`-count=3`、断言数、覆盖范围均不变）。取证：该腿在本代 runner 上实测贴壁 1800s 墙（2026-11-15 两次 `panic: test timed out after 30m0s`，0 断言失败、0 数据竞争）；main #73 合入后同腿同样红（run 43719977623）；对照组 monitor PR 两腿 38m 以微小余量通过。按裁决放宽的是超时预算、不是断言，竞态检测语义不变。
 ## [Arch-monitor_ops 型式收口（架构级迁移，第四例）] — 2026-11-15（monitor_ops.go 6 builder 全部改为 validated*）
 
 - **背景**：db_ops.go（#70）、vector_ops.go（#71）、k8s_provision.go（#72）三个架构级样板落地后，本批迁移 monitor_ops.go：所有 `build*Script` 入参改为 `validated*`，原始 `monitorDeployRequest / monitorOpsRequest / zabbixHostReq / zabbixItemReq / nightingaleQueryReq / skywalkingTraceReq` 彻底不再能到达 builder——编译期阻断。

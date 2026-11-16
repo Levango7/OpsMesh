@@ -1281,7 +1281,11 @@ jobs:
           TSAN_OPTIONS: "hardlimit_mb=2560 exitcode=66"
         run: |
           set -e
-          go test -race -p 1 -count=3 -timeout 1800s ./internal/controlplane/...
+          # 2026-11-16：1800s→2400s 只为预算余量，检测语义一字不动（-count=3 不变、断言数不变）。
+          # 取证：controlplane 套件在该 runner 代际上实测贴壁 30m 墙；2026-11-15 该腿两次
+          # `panic: test timed out after 30m0s`（0 断言失败、0 数据竞争；main 合入 #73 后同一腿也红），
+          # 换证 runner 通过数在 ~38m；按 "红点折入本族 PR + 登记 CLAIMS/CHANGELOG" 先例放宽预算。
+          go test -race -p 1 -count=3 -timeout 2400s ./internal/controlplane/...
           go test -race -p 1 -count=3 -timeout 900s ./internal/store/...
           # agent 包同 build-test 注：TSan 在该包 goroutine 密集场景下内部分配器
           # 恒 OOM（hardlimit 无法约束），race 检测改为 count=1 降载尝试；若仍
