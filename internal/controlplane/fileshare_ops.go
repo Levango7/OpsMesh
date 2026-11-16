@@ -18,6 +18,7 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -71,6 +72,85 @@ var allowedNFSMountOpts = map[string]bool{
 	"noatime": true, "timeo=600": true, "retrans=2": true,
 }
 
+// validatedFSShare 是白名单校验后的形态。builder 只接受这种类型 —— 原始 fsShareReq 无法被传入 builder。
+type validatedFSShare struct {
+	Action, Type, Op, Name, Path, Options, Server, ExportPath, MountPoint, MountOpts, Service string
+	AnonymousOK                                                                               bool
+}
+
+func validateFSShare(action string, req fsShareReq) (validatedFSShare, error) {
+	if !allowedFSShareActions[action] {
+		return validatedFSShare{}, errors.New("unsupported action (status/deploy/share/mount/service)")
+	}
+	v := validatedFSShare{
+		Action:      action,
+		Type:        req.Type,
+		Op:          req.Op,
+		Name:        req.Name,
+		Path:        req.Path,
+		Options:     req.Options,
+		Server:      req.Server,
+		ExportPath:  req.ExportPath,
+		MountPoint:  req.MountPoint,
+		MountOpts:   req.MountOpts,
+		Service:     req.Service,
+		AnonymousOK: req.AnonymousOK,
+	}
+	if v.Type == "" {
+		v.Type = "nfs"
+	}
+	if !allowedFSShareTypes[v.Type] {
+		return validatedFSShare{}, errors.New("unsupported type (vsftpd/samba/nfs)")
+	}
+
+	switch action {
+	case "share":
+		if !allowedFSShareOps[v.Op] {
+			return validatedFSShare{}, errors.New("unsupported op (add/delete/list)")
+		}
+		if v.Op != "list" {
+			if !validFSPath(v.Path) {
+				return validatedFSShare{}, errors.New("invalid path (must be absolute, no .. or spaces)")
+			}
+			if v.Type == "samba" && !fsShareNameRe.MatchString(v.Name) {
+				return validatedFSShare{}, errors.New("invalid share name")
+			}
+			if v.Type == "nfs" {
+				v.Name = v.Path // NFS 以导出路径为标识。
+			}
+		}
+		if v.Options != "" && !validFSOptions(v.Type, v.Options) {
+			return validatedFSShare{}, errors.New("invalid share options")
+		}
+	case "mount":
+		if !allowedFSMountOps[v.Op] {
+			return validatedFSShare{}, errors.New("unsupported op (mount/umount/list)")
+		}
+		if v.Op != "list" {
+			if !monitorHostRe.MatchString(v.Server) {
+				return validatedFSShare{}, errors.New("invalid server")
+			}
+			if !validFSPath(v.ExportPath) {
+				return validatedFSShare{}, errors.New("invalid exportPath")
+			}
+			if !validFSPath(v.MountPoint) {
+				return validatedFSShare{}, errors.New("invalid mountPoint")
+			}
+			if !validMountOpts(v.MountOpts) {
+				return validatedFSShare{}, errors.New("invalid mountOpts (whitelist enforced)")
+			}
+		}
+	case "service":
+		if v.Service == "" {
+			v.Service = "status"
+		}
+		if !allowedNTPServiceActions[v.Service] {
+			return validatedFSShare{}, errors.New("invalid service action (start/stop/restart/status)")
+		}
+	}
+	return v, nil
+}
+
 // fsShareReq 文件共享请求体。
 type fsShareReq struct {
 	DeviceID    string `json:"deviceID"`
@@ -101,10 +181,6 @@ func (s *Server) handleFSShare(w http.ResponseWriter, r *http.Request, action st
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedFSShareActions[action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (status/deploy/share/mount/service)"})
-		return
-	}
 	var req fsShareReq
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -114,83 +190,24 @@ func (s *Server) handleFSShare(w http.ResponseWriter, r *http.Request, action st
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	req.Action = action
-	if req.Type == "" {
-		req.Type = "nfs"
-	}
-	if !allowedFSShareTypes[req.Type] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported type (vsftpd/samba/nfs)"})
+	vreq, verr := validateFSShare(action, req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	switch action {
-	case "share":
-		if !allowedFSShareOps[req.Op] {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported op (add/delete/list)"})
-			return
-		}
-		if req.Op != "list" {
-			if !validFSPath(req.Path) {
-				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path (must be absolute, no .. or spaces)"})
-				return
-			}
-			if req.Type == "samba" && !fsShareNameRe.MatchString(req.Name) {
-				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid share name"})
-				return
-			}
-			if req.Type == "nfs" {
-				req.Name = req.Path // NFS 以导出路径为标识。
-			}
-		}
-		if req.Options != "" && !validFSOptions(req.Type, req.Options) {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid share options"})
-			return
-		}
-	case "mount":
-		if !allowedFSMountOps[req.Op] {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported op (mount/umount/list)"})
-			return
-		}
-		if req.Op != "list" {
-			if !monitorHostRe.MatchString(req.Server) {
-				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid server"})
-				return
-			}
-			if !validFSPath(req.ExportPath) {
-				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid exportPath"})
-				return
-			}
-			if !validFSPath(req.MountPoint) {
-				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mountPoint"})
-				return
-			}
-			if !validMountOpts(req.MountOpts) {
-				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mountOpts (whitelist enforced)"})
-				return
-			}
-		}
-	case "service":
-		if req.Service == "" {
-			req.Service = "status"
-		}
-		if !allowedNTPServiceActions[req.Service] {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service action (start/stop/restart/status)"})
-			return
-		}
-	}
-
-	script := buildFSShareScript(req)
+	script := buildFSShareScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "fileshare_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "fileshare."+action, err)
 		return
 	}
-	target := req.Type
+	target := vreq.Type
 	if action == "share" {
-		target = req.Name
+		target = vreq.Name
 	}
 	if action == "mount" {
-		target = req.Server + ":" + req.ExportPath
+		target = vreq.Server + ":" + vreq.ExportPath
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "fileshare_" + action, Target: target,
@@ -274,10 +291,9 @@ func validMountOpts(opts string) bool {
 	return true
 }
 
-func buildFSShareScript(req fsShareReq) string {
+func buildFSShareScript(vreq validatedFSShare) string {
 	var b strings.Builder
-	// 收口：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	vReqAnonymousOK, vReqExportPath, vReqMountPoint, vReqMountOpts, vReqOptions, vReqService, vReqServer, vReqAction, vReqPath, vReqType, vReqName, vReqOp := req.AnonymousOK, req.ExportPath, req.MountPoint, req.MountOpts, req.Options, req.Service, req.Server, req.Action, req.Path, req.Type, req.Name, req.Op
+	vReqAnonymousOK, vReqExportPath, vReqMountPoint, vReqMountOpts, vReqOptions, vReqService, vReqServer, vReqAction, vReqPath, vReqType, vReqName, vReqOp := vreq.AnonymousOK, vreq.ExportPath, vreq.MountPoint, vreq.MountOpts, vreq.Options, vreq.Service, vreq.Server, vreq.Action, vreq.Path, vreq.Type, vreq.Name, vreq.Op
 	b.WriteString("set -e\n")
 	switch vReqAction {
 	case "status":
