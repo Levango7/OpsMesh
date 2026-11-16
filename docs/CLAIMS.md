@@ -1285,3 +1285,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [DONE] 2026-11-16T07:00:00Z from=kilo scope=internal/controlplane/,internal/config/,pkg/auth/,deploy/k8s/,scripts/security/,docs/,CHANGELOG.md note=批次36 风险台账收口（R2/R4/R5/R7） commit=78f829559708653618f962a57e3ed00bbbb8a385
 [DONE] 2026-11-16T09:00:00Z from=kilo scope=services/,docs/,CHANGELOG.md note=批次37 全服务日志迁移（13 模块，374 处 stdlib log → logx） commit=d434bf67b9b8302a1cfedaa8b78baf99d0f8e665
+[DONE] 2026-11-16T09:30:00Z from=kilo scope=web/enterprise/src/views/ note=前端 console.error → toast.error 转换（TasksView 3 处 + BatchView 1 处） commit=77bcdc0d1533e466233e232419bec25a03b26125
