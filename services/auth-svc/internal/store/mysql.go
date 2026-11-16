@@ -257,7 +257,7 @@ func (s *MySQLStore) Close() error {
 // GetUser returns a user by ID.
 func (s *MySQLStore) GetUser(id string) *User {
 	row := s.db.QueryRow(
-		"SELECT id, username, email, password_hash, status, created_at, must_change_password FROM users WHERE id = ?",
+		"SELECT id, tenant_id, username, email, password_hash, status, created_at, must_change_password FROM users WHERE id = ?",
 		id,
 	)
 	return s.scanUser(row)
@@ -266,7 +266,7 @@ func (s *MySQLStore) GetUser(id string) *User {
 // GetUserByUsername returns a user by username.
 func (s *MySQLStore) GetUserByUsername(username string) *User {
 	row := s.db.QueryRow(
-		"SELECT id, username, email, password_hash, status, created_at, must_change_password FROM users WHERE username = ?",
+		"SELECT id, tenant_id, username, email, password_hash, status, created_at, must_change_password FROM users WHERE username = ?",
 		username,
 	)
 	return s.scanUser(row)
@@ -275,7 +275,7 @@ func (s *MySQLStore) GetUserByUsername(username string) *User {
 func (s *MySQLStore) scanUser(row *sql.Row) *User {
 	var u User
 	var mustChange int
-	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Status, &u.CreatedAt, &mustChange)
+	err := row.Scan(&u.ID, &u.TenantID, &u.Username, &u.Email, &u.PasswordHash, &u.Status, &u.CreatedAt, &mustChange)
 	if err != nil {
 		return nil
 	}
@@ -302,7 +302,7 @@ func (s *MySQLStore) getUserRoleIDs(userID string) []string {
 
 // ListUsers returns all users.
 func (s *MySQLStore) ListUsers() []*User {
-	rows, err := s.db.Query("SELECT id, username, email, password_hash, status, created_at, must_change_password FROM users")
+	rows, err := s.db.Query("SELECT id, tenant_id, username, email, password_hash, status, created_at, must_change_password FROM users")
 	if err != nil {
 		return nil
 	}
@@ -311,7 +311,7 @@ func (s *MySQLStore) ListUsers() []*User {
 	for rows.Next() {
 		var u User
 		var mustChange int
-		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Status, &u.CreatedAt, &mustChange); err != nil {
+		if err := rows.Scan(&u.ID, &u.TenantID, &u.Username, &u.Email, &u.PasswordHash, &u.Status, &u.CreatedAt, &mustChange); err != nil {
 			continue
 		}
 		u.MustChangePassword = mustChange != 0
@@ -348,8 +348,8 @@ func (s *MySQLStore) CreateUser(u *User) (*User, error) {
 	defer tx.Rollback()
 
 	_, err = tx.Exec(
-		"INSERT INTO users (id, username, email, password_hash, status, created_at, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		u.ID, u.Username, u.Email, u.PasswordHash, u.Status, u.CreatedAt, u.MustChangePassword,
+		"INSERT INTO users (id, tenant_id, username, email, password_hash, status, created_at, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		u.ID, u.TenantID, u.Username, u.Email, u.PasswordHash, u.Status, u.CreatedAt, u.MustChangePassword,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert user: %w", err)

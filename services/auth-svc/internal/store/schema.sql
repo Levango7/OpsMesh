@@ -2,13 +2,17 @@
 
 CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(64) PRIMARY KEY,
+    -- tenant_id：行级租户归属（D4 / issue #27 裁决②）。
+    -- 归属随创建写入，之后不可改挂（UpdateUser 不设该列）。
+    tenant_id VARCHAR(64) NOT NULL DEFAULT '',
     username VARCHAR(128) NOT NULL UNIQUE,
     email VARCHAR(256) NOT NULL,
     password_hash VARCHAR(256) NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'active',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     must_change_password TINYINT(1) NOT NULL DEFAULT 0,
-    INDEX idx_users_username (username)
+    INDEX idx_users_username (username),
+    INDEX idx_users_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS roles (
