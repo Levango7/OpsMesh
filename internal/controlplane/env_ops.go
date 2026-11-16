@@ -17,6 +17,7 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -46,6 +47,80 @@ var allowedEnvActions = map[string]bool{
 
 // 版本号正则。
 var envVersionRe = regexp.MustCompile(`^[0-9]+(\.[0-9]+)*(-[a-zA-Z0-9]+)?$`)
+
+// validatedEnvInstall / validatedEnvAction / validatedFdLimit / validatedIPVS 是白名单校验后的形态。
+// builder 只接受这几种类型 —— 原始 envInstallReq / envQueryReq / fdLimitReq / ipvsReq 无法被传入 builder。
+type validatedEnvInstall struct {
+	Type, Version string
+}
+
+type validatedEnvAction struct {
+	Type, Action string
+}
+
+type validatedFdLimit struct {
+	Action string
+	Limit  int
+}
+
+type validatedIPVS struct {
+	Action   string
+	VIP      string
+	Port     int
+	Protocol string
+}
+
+func validateEnvInstall(req envInstallReq) (validatedEnvInstall, error) {
+	if !allowedEnvTypes[req.Type] {
+		return validatedEnvInstall{}, errors.New("unsupported env type")
+	}
+	if !envVersionRe.MatchString(req.Version) {
+		return validatedEnvInstall{}, errors.New("invalid version")
+	}
+	return validatedEnvInstall{Type: req.Type, Version: req.Version}, nil
+}
+
+func validateEnvAction(envType, action string, req envQueryReq) (validatedEnvAction, error) {
+	_ = req
+	if !allowedEnvTypes[envType] {
+		return validatedEnvAction{}, errors.New("unsupported env type")
+	}
+	if !allowedEnvActions[action] {
+		return validatedEnvAction{}, errors.New("unsupported action")
+	}
+	return validatedEnvAction{Type: envType, Action: action}, nil
+}
+
+func validateFdLimit(req fdLimitReq) (validatedFdLimit, error) {
+	if req.Action != "query" && req.Action != "set" {
+		return validatedFdLimit{}, errors.New("unsupported action (query/set)")
+	}
+	if req.Action == "set" && req.Limit <= 0 {
+		return validatedFdLimit{}, errors.New("limit must be positive")
+	}
+	return validatedFdLimit{Action: req.Action, Limit: req.Limit}, nil
+}
+
+func validateIPVS(req ipvsReq) (validatedIPVS, error) {
+	allowed := map[string]bool{"list": true, "add": true, "del": true}
+	if !allowed[req.Action] {
+		return validatedIPVS{}, errors.New("unsupported action (list/add/del)")
+	}
+	if req.Action != "list" {
+		if req.VIP == "" || req.Port <= 0 || req.Port > 65535 {
+			return validatedIPVS{}, errors.New("invalid vip/port")
+		}
+		// IPVS 的 -t 参数是 IP[:port]：必须是合法 IP 字面量；
+		// 它会进 shell（ipvsadm -A -t <VIP>:<port>），白名单比转义更严。
+		if net.ParseIP(req.VIP) == nil {
+			return validatedIPVS{}, errors.New("invalid vip: must be an IP literal")
+		}
+		if req.Protocol != "tcp" && req.Protocol != "udp" {
+			return validatedIPVS{}, errors.New("invalid protocol (tcp/udp)")
+		}
+	}
+	return validatedIPVS{Action: req.Action, VIP: req.VIP, Port: req.Port, Protocol: req.Protocol}, nil
+}
 
 // envQueryReq 环境查询请求体。
 type envQueryReq struct {
@@ -126,44 +201,39 @@ func (s *Server) handleEnvInstall(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if !allowedEnvTypes[req.Type] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported env type"})
-		return
-	}
-	if !envVersionRe.MatchString(req.Version) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version"})
-		return
-	}
 	if req.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
+	vreq, verr := validateEnvInstall(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
 
-	script := buildEnvInstallScript(req)
-	action := "env_install_" + req.Type
+	script := buildEnvInstallScript(vreq)
+	action := "env_install_" + vreq.Type
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, action)
 	if err != nil {
-		writeInternalError(r.Context(), w, "env.install."+req.Type, err)
+		writeInternalError(r.Context(), w, "env.install."+vreq.Type, err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: req.Type + ":" + req.Version,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: vreq.Type + ":" + vreq.Version,
 		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildEnvInstallScript(req envInstallReq) string {
+func buildEnvInstallScript(vreq validatedEnvInstall) string {
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	versionV := req.Version
-	typeV := req.Type
+	versionV := vreq.Version
+	typeV := vreq.Type
 	b.WriteString("set -e\n")
 	b.WriteString("# 自动探测包管理器\n")
 	b.WriteString("if command -v yum >/dev/null 2>&1; then PKG_MGR=yum; elif command -v dnf >/dev/null 2>&1; then PKG_MGR=dnf; elif command -v apt-get >/dev/null 2>&1; then PKG_MGR=apt-get; else echo '未找到包管理器' && exit 1; fi\n")
-	switch req.Type {
+	switch vreq.Type {
 	case "java":
 		b.WriteString("# Java 环境安装（OpenJDK）\n")
 		fmt.Fprintf(&b, "$PKG_MGR install -y java-%s-openjdk || $PKG_MGR install -y jdk-%s || true\n", versionV, versionV)
@@ -205,14 +275,6 @@ func (s *Server) handleEnvAction(w http.ResponseWriter, r *http.Request, envType
 	if _, ok := s.requireProd(w, r, "system:write"); !ok {
 		return
 	}
-	if !allowedEnvTypes[envType] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported env type"})
-		return
-	}
-	if !allowedEnvActions[action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action"})
-		return
-	}
 	var req envQueryReq
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -222,9 +284,13 @@ func (s *Server) handleEnvAction(w http.ResponseWriter, r *http.Request, envType
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	req.Type = envType
+	vreq, verr := validateEnvAction(envType, action, req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		return
+	}
 
-	script := buildEnvActionScript(req)
+	script := buildEnvActionScript(vreq)
 	actionV, err := opsIdentifier("action", action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "env.action."+envType, err)
@@ -244,10 +310,10 @@ func (s *Server) handleEnvAction(w http.ResponseWriter, r *http.Request, envType
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildEnvActionScript(req envQueryReq) string {
+func buildEnvActionScript(vreq validatedEnvAction) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch req.Type {
+	switch vreq.Type {
 	case "java":
 		b.WriteString("java -version 2>&1 || echo 'Java 未安装'\n")
 	case "nodejs":
@@ -291,38 +357,35 @@ func (s *Server) handleFdLimit(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if req.Action != "query" && req.Action != "set" {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (query/set)"})
-		return
-	}
-	if req.Action == "set" && req.Limit <= 0 {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be positive"})
+	vreq, verr := validateFdLimit(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildFdLimitScript(req)
+	script := buildFdLimitScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "env_fdlimit_"+req.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "env.fdlimit", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "env_fdlimit_" + req.Action, Target: "fdlimit",
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "env_fdlimit_" + vreq.Action, Target: "fdlimit",
 		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " limit=" + opsSQLString(strconv.Itoa(req.Limit))),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildFdLimitScript(req fdLimitReq) string {
+func buildFdLimitScript(vreq validatedFdLimit) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch req.Action {
+	switch vreq.Action {
 	case "query":
 		b.WriteString("ulimit -n\n")
 		b.WriteString("cat /etc/security/limits.conf 2>/dev/null | grep -v '^#' | grep -v '^$' || true\n")
 	case "set":
-		fmt.Fprintf(&b, "* soft nofile %d\n", req.Limit)
-		fmt.Fprintf(&b, "* hard nofile %d\n", req.Limit)
+		fmt.Fprintf(&b, "* soft nofile %d\n", vreq.Limit)
+		fmt.Fprintf(&b, "* hard nofile %d\n", vreq.Limit)
 		b.WriteString("echo 'fd-limit 已写入 /etc/security/limits.conf，需重新登录生效'\n")
 	}
 	return b.String()
@@ -359,58 +422,39 @@ func (s *Server) handleIPVS(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	allowed := map[string]bool{"list": true, "add": true, "del": true}
-	if !allowed[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (list/add/del)"})
+	vreq, verr := validateIPVS(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	var vipV string
-	if req.Action != "list" && (req.VIP == "" || req.Port <= 0 || req.Port > 65535) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid vip/port"})
-		return
-	}
-	if req.Action != "list" {
-		// IPVS 的 -t 参数是 IP[:port]：必须是合法 IP 字面量，否则 ipvsadm 直接拒绝；
-		// 更重要的是它会进 shell（ipvsadm -A -t <VIP>:<port>），白名单比转义更严。
-		if net.ParseIP(req.VIP) == nil {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid vip: must be an IP literal"})
-			return
-		}
-		vipV = req.VIP
-	}
-	if req.Action != "list" && req.Protocol != "tcp" && req.Protocol != "udp" {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid protocol (tcp/udp)"})
-		return
-	}
+	vipV := vreq.VIP
 
-	script := buildIPVSScript(req)
+	script := buildIPVSScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "env_ipvs_"+req.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "env.ipvs", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "env_ipvs_" + req.Action, Target: fmt.Sprintf("%s:%d", vipV, req.Port),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "env_ipvs_" + vreq.Action, Target: fmt.Sprintf("%s:%d", vipV, vreq.Port),
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildIPVSScript(req ipvsReq) string {
+func buildIPVSScript(vreq validatedIPVS) string {
 	var b strings.Builder
-	// 收口（批次 14）：handler 侧已做白名单校验 ⇒ builder 内用局部变量承接已校验值，
-	// 实参不再直接引用 req.*（判据 F）；**脚本文本逐字节不变**。
-	vipV := req.VIP
-	actionV := req.Action
+	vipV := vreq.VIP
+	actionV := vreq.Action
 	b.WriteString("set -e\n")
 	b.WriteString("modprobe ip_vs || true\n")
-	switch req.Action {
+	switch vreq.Action {
 	case "list":
 		b.WriteString("ipvsadm -L -n\n")
 	case "add":
-		fmt.Fprintf(&b, "ipvsadm -A -t %s:%d -s rr || true\n", vipV, req.Port)
+		fmt.Fprintf(&b, "ipvsadm -A -t %s:%d -s rr || true\n", vipV, vreq.Port)
 	case "del":
-		fmt.Fprintf(&b, "ipvsadm -D -t %s:%d || true\n", vipV, req.Port)
+		fmt.Fprintf(&b, "ipvsadm -D -t %s:%d || true\n", vipV, vreq.Port)
 	}
 	fmt.Fprintf(&b, "echo 'IPVS %s 操作完成\n", actionV)
 	return b.String()
