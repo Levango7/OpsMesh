@@ -333,6 +333,12 @@ func TestParseFederationPeerSecrets_Grouping(t *testing.T) {
 		t.Fatalf("base64 secrets parsed as %v", got2)
 	}
 
+	// ;ops= 后缀与轮换密钥共存，且不破坏后续 peer 条目切分。
+	got3 := parseFederationPeerSecrets("peer-a@http://a:8080=s1,s2;ops=retire|metrics,peer-b@http://b:8080=t1")
+	if len(got3) != 2 || got3[0] != "peer-a@http://a:8080=s1,s2;ops=retire|metrics" || got3[1] != "peer-b@http://b:8080=t1" {
+		t.Fatalf("ops suffix grouping parsed as %v", got3)
+	}
+
 	if got := parseFederationPeerSecrets("  "); got != nil {
 		t.Fatalf("blank input = %v, want nil", got)
 	}
@@ -394,5 +400,60 @@ func TestLoad_FederationPeerConfig(t *testing.T) {
 	envCfg := loadForTest()
 	if envCfg.FederationPeerID != "cp-env" || len(envCfg.FederationPeerSecrets) != 1 || envCfg.FederationPeerSecrets[0] != "peer-a@http://a:8080=env-secret" {
 		t.Fatalf("env mapping: peerID=%q secrets=%v", envCfg.FederationPeerID, envCfg.FederationPeerSecrets)
+	}
+}
+
+// TestParseFederationAllowedPaths 验证联邦入站白名单解析：去空白、忽略空项、空输入为 nil。
+func TestParseFederationAllowedPaths(t *testing.T) {
+	got := parseFederationAllowedPaths(" /api/v1/federation/ , ,/api/v1/tasks ")
+	want := []string{"/api/v1/federation/", "/api/v1/tasks"}
+	if len(got) != len(want) {
+		t.Fatalf("allowed paths = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("allowed paths[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if got := parseFederationAllowedPaths("  "); got != nil {
+		t.Fatalf("blank input = %v, want nil", got)
+	}
+}
+
+// TestValidate_FederationAllowedPaths 验证白名单项必须以 "/" 开头，否则启动期拒绝。
+func TestValidate_FederationAllowedPaths(t *testing.T) {
+	c := base()
+	c.FederationAllowedPaths = []string{"/api/v1/federation/", "/api/v1/tasks"}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid allowed paths rejected: %v", err)
+	}
+
+	bad := base()
+	bad.FederationAllowedPaths = []string{"api/v1/tasks"}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("allowed path without leading slash accepted")
+	}
+}
+
+// TestLoad_FederationAllowedPaths 验证 flag 与 env 映射。
+func TestLoad_FederationAllowedPaths(t *testing.T) {
+	restore := clearOpsmeshEnv()
+	defer restore()
+
+	cfg := loadForTest("--federation-allowed-paths=/api/v1/federation/,/api/v1/tasks")
+	if len(cfg.FederationAllowedPaths) != 2 || cfg.FederationAllowedPaths[0] != "/api/v1/federation/" || cfg.FederationAllowedPaths[1] != "/api/v1/tasks" {
+		t.Fatalf("flag mapping: %v", cfg.FederationAllowedPaths)
+	}
+
+	if def := loadForTest(); def.FederationAllowedPaths != nil {
+		t.Fatalf("default allowed paths = %v, want nil", def.FederationAllowedPaths)
+	}
+
+	if err := os.Setenv("OPSMESH_FEDERATION_ALLOWED_PATHS", "/api/v1/devices,/api/v1/tasks"); err != nil {
+		t.Fatalf("setenv: %v", err)
+	}
+	envCfg := loadForTest()
+	if len(envCfg.FederationAllowedPaths) != 2 || envCfg.FederationAllowedPaths[0] != "/api/v1/devices" || envCfg.FederationAllowedPaths[1] != "/api/v1/tasks" {
+		t.Fatalf("env mapping: %v", envCfg.FederationAllowedPaths)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -242,4 +243,72 @@ func TestForwardDeviceOp_OpWhitelist(t *testing.T) {
 	if n := atomic.LoadInt32(&hits); n != 0 {
 		t.Fatalf("peer received %d requests for non-whitelisted op, want 0", n)
 	}
+}
+
+// TestFederationPeerOps_Restricted 验证 per-peer 设备操作限制：
+// peer-a 配置 ;ops=retire 后调用 provision 必须 403；未声明 ops 的 peer-b 行为不变。
+func TestFederationPeerOps_Restricted(t *testing.T) {
+	entries := []string{
+		"peer-a@" + federationPeerAURL + "=secret-a;ops=retire",
+		"peer-b@" + federationPeerBURL + "=secret-b",
+	}
+	st := store.NewMemoryStore()
+	s := &Server{
+		store: st,
+		cfg: &config.Config{
+			FederationPeers:       []string{federationPeerAURL, federationPeerBURL},
+			FederationPeerSecrets: entries,
+		},
+		fed: NewFederationManager([]string{federationPeerAURL, federationPeerBURL}, st, "", nil,
+			WithFederationPeerSecrets(mustParsePeerSecrets(t, entries))),
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	body, _ := json.Marshal(map[string]interface{}{"op": "provision", "payload": []byte(`{"deviceID":"d1"}`)})
+
+	newSigned := func(secret, peerID string) *http.Request {
+		nonce := "peer-ops-" + peerID + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		req := httptest.NewRequest(http.MethodPost, federationDeviceOpPath, bytes.NewReader(body))
+		req.Header = federationTestHeaders(t, secret, http.MethodPost, federationDeviceOpPath, ts, nonce, "t1", "peer-user", "role-operator", body)
+		req.Header.Set(authpkg.FederationHeaderPeerID, peerID)
+		return req
+	}
+
+	// peer-a 被限制为 retire：provision 必须 403，且不进入执行链。
+	recA := httptest.NewRecorder()
+	s.handleFederationForwardDeviceOp(recA, newSigned("secret-a", "peer-a"))
+	if recA.Code != http.StatusForbidden {
+		t.Fatalf("restricted peer provision status = %d, want 403, body=%s", recA.Code, recA.Body.String())
+	}
+	if got := recA.Body.String(); !strings.Contains(got, "not allowed for this op") {
+		t.Fatalf("restricted peer body = %q", got)
+	}
+
+	// peer-b 未声明 ops：保持全局白名单语义，不得被 403 拦截。
+	recB := httptest.NewRecorder()
+	s.handleFederationForwardDeviceOp(recB, newSigned("secret-b", "peer-b"))
+	if recB.Code == http.StatusForbidden {
+		t.Fatalf("unrestricted peer provision unexpectedly 403: body=%s", recB.Body.String())
+	}
+
+	// 限制列表中允许的 retire 不因 ops 校验被拒（后续执行结果可为 404）。
+	retireBody, _ := json.Marshal(map[string]interface{}{"op": "retire", "payload": []byte(`{"deviceID":"d1"}`)})
+	reqRetire := httptest.NewRequest(http.MethodPost, federationDeviceOpPath, bytes.NewReader(retireBody))
+	reqRetire.Header = federationTestHeaders(t, "secret-a", http.MethodPost, federationDeviceOpPath, ts,
+		"peer-ops-retire-"+strconv.FormatInt(time.Now().UnixNano(), 10), "t1", "peer-user", "role-operator", retireBody)
+	reqRetire.Header.Set(authpkg.FederationHeaderPeerID, "peer-a")
+	recRetire := httptest.NewRecorder()
+	s.handleFederationForwardDeviceOp(recRetire, reqRetire)
+	if recRetire.Code == http.StatusForbidden {
+		t.Fatalf("allowed retire op unexpectedly 403: body=%s", recRetire.Body.String())
+	}
+}
+
+// mustParsePeerSecrets 解析 per-peer 条目，失败即终止测试。
+func mustParsePeerSecrets(t *testing.T, entries []string) []authpkg.FederationPeerSecret {
+	t.Helper()
+	peers, err := authpkg.ParseFederationPeerSecrets(entries)
+	if err != nil {
+		t.Fatalf("ParseFederationPeerSecrets: %v", err)
+	}
+	return peers
 }

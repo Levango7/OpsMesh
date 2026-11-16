@@ -373,6 +373,44 @@ func TestParseFederationPeerSecrets_Valid(t *testing.T) {
 	}
 }
 
+// TestParseFederationPeerSecrets_OpsSuffix 验证可选 ;ops= 后缀：
+// 操作按 | 分隔并去重，未声明时 Ops 为空（沿用全局白名单）。
+func TestParseFederationPeerSecrets_OpsSuffix(t *testing.T) {
+	got, err := ParseFederationPeerSecrets([]string{
+		"peer-a@http://peer-a:8080=s1,s2;ops=retire|metrics",
+		"peer-b@http://peer-b:8080=t1;ops= retire | metrics | retire ",
+	})
+	if err != nil {
+		t.Fatalf("ParseFederationPeerSecrets: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if len(got[0].Secrets) != 2 || got[0].Secrets[0] != "s1" || got[0].Secrets[1] != "s2" {
+		t.Fatalf("secrets with ops suffix = %v", got[0].Secrets)
+	}
+	if len(got[0].Ops) != 2 || got[0].Ops[0] != "retire" || got[0].Ops[1] != "metrics" {
+		t.Fatalf("ops = %v, want [retire metrics]", got[0].Ops)
+	}
+	if len(got[1].Ops) != 2 || got[1].Ops[0] != "retire" || got[1].Ops[1] != "metrics" {
+		t.Fatalf("trimmed/deduped ops = %v, want [retire metrics]", got[1].Ops)
+	}
+
+	// PeerForID 返回 Ops 副本，且未配置 peer 时 ok=false。
+	resolver := NewFederationPeerResolver(got)
+	peer, ok := resolver.PeerForID("peer-a")
+	if !ok || len(peer.Ops) != 2 {
+		t.Fatalf("PeerForID(peer-a) = (%+v, %v)", peer, ok)
+	}
+	peer.Ops[0] = "mutated"
+	if again, _ := resolver.PeerForID("peer-a"); again.Ops[0] != "retire" {
+		t.Fatalf("PeerForID aliases internal ops slice: %v", again.Ops)
+	}
+	if _, ok := resolver.PeerForID("ghost"); ok {
+		t.Fatal("PeerForID(ghost) ok=true, want false")
+	}
+}
+
 func TestParseFederationPeerSecrets_Invalid(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -387,6 +425,9 @@ func TestParseFederationPeerSecrets_Invalid(t *testing.T) {
 		{name: "empty_url", entries: []string{"peer-a@=s1"}},
 		{name: "duplicate_peer_id", entries: []string{"peer-a@http://a:8080=s1", "peer-a@http://b:8080=s2"}},
 		{name: "duplicate_url", entries: []string{"peer-a@http://a:8080=s1", "peer-b@http://a:8080=s2"}},
+		{name: "unknown_suffix", entries: []string{"peer-a@http://a:8080=s1;scope=read"}},
+		{name: "empty_ops", entries: []string{"peer-a@http://a:8080=s1;ops="}},
+		{name: "empty_ops_item", entries: []string{"peer-a@http://a:8080=s1;ops=retire||metrics"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

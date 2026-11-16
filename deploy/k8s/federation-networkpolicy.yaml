@@ -1,0 +1,66 @@
+# OpsMesh 联邦入站 NetworkPolicy（安全评审风险 R2 配套资产）。
+#
+# 目标：把控制面联邦端口的入站流量限制为「集群内其他控制面 pod」和「显式声明的外部
+# peer CIDR」，其余来源一律拒绝。仅靠 HMAC 验签无法阻止被攻陷 peer 发起连接或
+# 非 federation 路径探测，网络层最小化暴露面是第二道闸。
+#
+# 端口说明（已核对 internal/config/config.go）：
+#   --federation-port 的代码默认值是 0，即默认不启用独立联邦监听，联邦请求复用主 HTTP
+#   端口（--http-port，默认 8080）。本策略按 R2 约定使用 9092 作为独立联邦端口占位：
+#   部署时必须同时设置 --federation-port=9092（并配置 --federation-tls-cert/key/ca 才会
+#   启用 mTLS 监听），或把下方 port 改为实际的联邦端口。若联邦复用主 HTTP 端口，则
+#   不要把 8080 写进本策略——否则会误拦正常控制台/API 流量。
+#
+# 使用方式：
+#   1. 将 metadata.namespace 改为实际命名空间（占位 opsmesh）；
+#   2. 确认 podSelector 能选中控制面 pod（占位 app.kubernetes.io/name: opsmesh-controlplane；
+#      Helm chart 实际使用 app.kubernetes.io/name=opsmesh + app.kubernetes.io/component=controlplane，
+#      如用 Helm 请改成该组合或给 pod 补上本标签）；
+#   3. 外部 peer 按需取消注释 ipBlock 段并填写 peer 的 CIDR（不填则仅允许集群内控制面 pod）。
+#
+# 语义：podSelector 选中的控制面 pod 一旦被本策略覆盖，该端口进入默认拒绝——
+# 只有下面 ingress.from 明确列出的来源能访问 9092，任何未列出来源/端口都被拒绝。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opsmesh-federation-ingress
+  namespace: opsmesh # 占位：改成实际部署命名空间
+  labels:
+    app.kubernetes.io/name: opsmesh-controlplane
+    app.kubernetes.io/component: federation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: opsmesh-controlplane
+  policyTypes:
+    - Ingress
+  ingress:
+    # 1) 集群内其他控制面 pod（联邦对端）。
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opsmesh-controlplane
+      ports:
+        - port: 9092
+          protocol: TCP
+    # 2) 外部 peer（跨集群/跨 IDC）。默认注释：必须显式填写可信 peer 网段，
+    #    不要使用 0.0.0.0/0。可复制多段，每段一个 ipBlock。
+    # - from:
+    #     - ipBlock:
+    #         cidr: 203.0.113.0/24        # 示例：对端控制面出口网段
+    #         except:
+    #           - 203.0.113.128/25        # 可选：排除该网段内不可信子网
+    #   ports:
+    #     - port: 9092
+    #       protocol: TCP
+    # 3) 如 peer 位于其他命名空间且带固定 namespace 标签，可用 namespaceSelector + podSelector：
+    # - from:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: opsmesh-peer
+    #       podSelector:
+    #         matchLabels:
+    #           app.kubernetes.io/name: opsmesh-controlplane
+    #   ports:
+    #     - port: 9092
+    #       protocol: TCP

@@ -16,12 +16,14 @@ import (
 	"github.com/Levango7/OpsMesh/internal/store"
 )
 
-// fakeCloudProvider 是可注入发现结果/失败的云厂商适配器，仅供同步 handler 测试。
+// fakeCloudProvider 是可注入发现结果/失败的云厂商适配器，仅供云账号 handler 测试。
 type fakeCloudProvider struct {
 	*cloudprovider.NotImplementedProvider
 	providerType string
 	counts       [4]int // instances, vpcs, subnets, clusters
 	fail         bool
+	regions      []string
+	regionsErr   error
 }
 
 func (p *fakeCloudProvider) ProviderType() cloudprovider.ProviderType {
@@ -35,6 +37,17 @@ func (p *fakeCloudProvider) discover(n int) ([]cloudprovider.Resource, error) {
 	out := make([]cloudprovider.Resource, n)
 	for i := range out {
 		out[i].ID = fmt.Sprintf("res-%d", i)
+	}
+	return out, nil
+}
+
+func (p *fakeCloudProvider) ListRegions(context.Context, cloudprovider.Credentials) ([]cloudprovider.Region, error) {
+	if p.regionsErr != nil {
+		return nil, p.regionsErr
+	}
+	out := make([]cloudprovider.Region, 0, len(p.regions))
+	for _, id := range p.regions {
+		out = append(out, cloudprovider.Region{ID: id})
 	}
 	return out, nil
 }
@@ -177,6 +190,119 @@ func TestSyncCloudAccount_Success(t *testing.T) {
 	}
 }
 
+// regionsResponse 是 GET /cloud-accounts/{id}/regions 的响应体投影。
+type regionsResponse struct {
+	Provider string   `json:"provider"`
+	Regions  []string `json:"regions"`
+	Source   string   `json:"source"`
+	Warning  string   `json:"warning"`
+	Error    string   `json:"error"`
+}
+
+func getRegions(t *testing.T, s *Server, accountID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cloud-accounts/"+accountID+"/regions", nil)
+	rec := httptest.NewRecorder()
+	s.handleListCloudAccountRegions(rec, req, accountID)
+	return rec
+}
+
+func decodeRegions(t *testing.T, rec *httptest.ResponseRecorder) regionsResponse {
+	t.Helper()
+	var resp regionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode regions response: %v; body=%s", err, rec.Body.String())
+	}
+	return resp
+}
+
+// TestListCloudAccountRegions_ProviderSuccess 验证实时调用成功时 source=provider，
+// 区域取自厂商返回值且不出现 warning（调用方不会把实时数据误判为兜底）。
+func TestListCloudAccountRegions_ProviderSuccess(t *testing.T) {
+	acct := &store.CloudAccount{
+		ID: "acct-reg-live", TenantID: "default", Name: "fake", Provider: "fake",
+		Region: "r1", CredentialsRef: "AK:SK",
+	}
+	s, _ := newCloudSyncTestServer(t, &fakeCloudProvider{
+		providerType: "fake",
+		regions:      []string{"live-1", "live-2"},
+	}, acct)
+
+	rec := getRegions(t, s, "acct-reg-live")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeRegions(t, rec)
+	if resp.Source != cloudRegionSourceProvider {
+		t.Errorf("source=%q, want %q", resp.Source, cloudRegionSourceProvider)
+	}
+	if resp.Warning != "" {
+		t.Errorf("unexpected warning on provider success: %q", resp.Warning)
+	}
+	if len(resp.Regions) != 2 || resp.Regions[0] != "live-1" || resp.Regions[1] != "live-2" {
+		t.Errorf("regions=%v, want [live-1 live-2]", resp.Regions)
+	}
+}
+
+// TestListCloudAccountRegions_ProviderFailureFallsBackStatic 验证厂商失败时仍返回 200，
+// 但显式标记 source=static + warning，且 warning 已脱敏（不含凭据值）。
+func TestListCloudAccountRegions_ProviderFailureFallsBackStatic(t *testing.T) {
+	acct := &store.CloudAccount{
+		ID: "acct-reg-fail", TenantID: "default", Name: "aliyun", Provider: "aliyun",
+		Region: "cn-hangzhou", CredentialsRef: "AK:SK",
+	}
+	s, _ := newCloudSyncTestServer(t, &fakeCloudProvider{
+		providerType: "aliyun",
+		regionsErr:   errors.New("upstream 503 body={\"error\":\"busy\"} accessKeySecret=SECRETVALUE"),
+	}, acct)
+
+	rec := getRegions(t, s, "acct-reg-fail")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200（有静态兜底仍可用）; body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeRegions(t, rec)
+	if resp.Source != cloudRegionSourceStatic {
+		t.Errorf("source=%q, want %q", resp.Source, cloudRegionSourceStatic)
+	}
+	if !strings.HasPrefix(resp.Warning, "provider unavailable: ") {
+		t.Errorf("warning=%q, want prefix %q", resp.Warning, "provider unavailable: ")
+	}
+	if strings.Contains(resp.Warning, "SECRETVALUE") {
+		t.Errorf("warning leaked credential value: %q", resp.Warning)
+	}
+	want := cloudProviderRegions("aliyun")
+	if len(resp.Regions) != len(want) {
+		t.Fatalf("regions=%v, want static fallback %v", resp.Regions, want)
+	}
+	for i := range want {
+		if resp.Regions[i] != want[i] {
+			t.Errorf("regions[%d]=%q, want %q", i, resp.Regions[i], want[i])
+		}
+	}
+}
+
+// TestListCloudAccountRegions_NoFallbackReturns502 验证厂商未注册且无静态兜底时
+// 返回 502，而不是 200 + 空列表冒充成功。
+func TestListCloudAccountRegions_NoFallbackReturns502(t *testing.T) {
+	acct := &store.CloudAccount{
+		ID: "acct-reg-unknown", TenantID: "default", Name: "unknown", Provider: "not-registered",
+		Region: "r1", CredentialsRef: "AK:SK",
+	}
+	s, _ := newCloudSyncTestServer(t, nil, acct)
+
+	rec := getRegions(t, s, "acct-reg-unknown")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d, want 502; body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeRegions(t, rec)
+	if resp.Error != "provider regions unavailable" {
+		t.Errorf("error=%q, want %q", resp.Error, "provider regions unavailable")
+	}
+	if len(resp.Regions) != 0 || resp.Source != "" {
+		t.Errorf("regions=%v source=%q, want empty on 502", resp.Regions, resp.Source)
+	}
+}
+
 // TestCloudAccountRouting_MethodSemantics 表驱动：已识别子资源 + 错误动词 ⇒ 405 + Allow；
 // 未知子路径 ⇒ 404（不带 Allow）。
 func TestCloudAccountRouting_MethodSemantics(t *testing.T) {
@@ -237,6 +363,7 @@ func TestCloudAccountRouting_CorrectMethodsUnaffected(t *testing.T) {
 	s, _ := newCloudSyncTestServer(t, &fakeCloudProvider{
 		providerType: "fake",
 		counts:       [4]int{1, 0, 0, 0},
+		regions:      []string{"r1"},
 	}, acct)
 
 	do := func(method, path, body string) *httptest.ResponseRecorder {

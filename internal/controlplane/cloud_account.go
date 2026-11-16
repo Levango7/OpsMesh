@@ -6,7 +6,7 @@
 //   - GET/PUT/DELETE /api/v1/cloud-accounts/{id} 云账号详情/更新/删除
 //   - POST   /api/v1/cloud-accounts/{id}/sync    同步云账号（回写 sync_status/discovered_count）
 //   - POST   /api/v1/cloud-accounts/{id}/test    测试云账号连通性（不持久化凭据）
-//   - GET    /api/v1/cloud-accounts/{id}/regions 列出云账号可用区域（模拟/供 CloudProvider 接入）
+//   - GET    /api/v1/cloud-accounts/{id}/regions 列出云账号可用区域（source=provider|static，降级显式告警）
 //   - GET    /api/v1/cloud-resources             列出云资源（租户隔离，分页，可按 accountID/resourceType 过滤）
 //
 // 路由注册（server_lifecycle.go）：
@@ -30,9 +30,12 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -535,8 +538,81 @@ func (s *Server) handleTestCloudAccount(w http.ResponseWriter, r *http.Request, 
 	})
 }
 
+// 云账号区域列表来源标识：provider=实时调用云厂商，static=内置兜底列表。
+const (
+	cloudRegionSourceProvider = "provider"
+	cloudRegionSourceStatic   = "static"
+)
+
+// providerCredentialPattern 匹配错误消息中疑似凭据的键值对，用于回传/落日志前脱敏。
+var providerCredentialPattern = regexp.MustCompile(
+	`(?i)\b((?:access[_-]?key(?:[_-]?(?:id|secret))?|secret[_-]?key|password|passwd|token|session[_-]?token|private[_-]?key)\s*[=:]\s*)[^\s,;]+`,
+)
+
+// providerRegionReasonMaxRunes 限制回传的厂商错误原因长度。
+const providerRegionReasonMaxRunes = 120
+
+// sanitizeProviderReason 把厂商错误收敛为可安全回传的短原因：
+// 已知错误类别映射为稳定标识，其余错误折叠空白后截断，并抹掉凭据键值对，
+// 避免厂商原始响应体或凭据泄露给调用方。
+func sanitizeProviderReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, cloudprovider.ErrNotImplemented):
+		return "provider capability not implemented"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "provider request timeout"
+	case errors.Is(err, context.Canceled):
+		return "provider request canceled"
+	}
+	reason := strings.Join(strings.Fields(err.Error()), " ")
+	if reason == "" {
+		return "provider call failed"
+	}
+	reason = providerCredentialPattern.ReplaceAllString(reason, "${1}***")
+	if runes := []rune(reason); len(runes) > providerRegionReasonMaxRunes {
+		reason = string(runes[:providerRegionReasonMaxRunes])
+	}
+	return reason
+}
+
+// providerRegions 调用 CloudProvider.ListRegions 获取实时区域列表。
+// 返回 ("", nil) 表示实时成功；返回非空 reason 表示无法取得实时数据，
+// reason 已脱敏，可直接回传给调用方并落日志。
+func (s *Server) providerRegions(ctx context.Context, account *store.CloudAccount) ([]string, string) {
+	if s.cloudProviderFactory == nil {
+		return nil, "provider factory unavailable"
+	}
+	provider, ok := s.cloudProviderFactory.Get(cloudprovider.ProviderType(account.Provider))
+	if !ok {
+		return nil, "provider not supported: " + account.Provider
+	}
+	creds := s.resolveCloudCredentials(account)
+	if creds == nil {
+		return nil, "credentials unavailable"
+	}
+	realRegions, err := provider.ListRegions(ctx, *creds)
+	if err != nil {
+		return nil, sanitizeProviderReason(err)
+	}
+	regions := make([]string, 0, len(realRegions))
+	for _, rr := range realRegions {
+		if rr.ID != "" {
+			regions = append(regions, rr.ID)
+		}
+	}
+	if len(regions) == 0 {
+		return nil, "provider returned no regions"
+	}
+	return regions, ""
+}
+
 // handleListCloudAccountRegions 处理 GET /api/v1/cloud-accounts/{id}/regions：列出可用区域。
-// 供前端地域下拉；由 CloudProvider（Wave 2-A）按 provider 返回真实区域列表，本端点返回常见占位。
+// 供前端地域下拉。实时调用 CloudProvider.ListRegions 成功时返回 source=provider；
+// 厂商不可用时回退到内置静态列表并显式标记 source=static + warning；
+// 连静态兜底都没有时返回 502，避免调用方把陈旧数据误当实时数据。
 func (s *Server) handleListCloudAccountRegions(w http.ResponseWriter, r *http.Request, id string) {
 	actx, ok := s.requireTenantContext(w, r)
 	if !ok {
@@ -554,23 +630,33 @@ func (s *Server) handleListCloudAccountRegions(w http.ResponseWriter, r *http.Re
 		paginate.JSONError(w, http.StatusNotFound, "cloud account not found")
 		return
 	}
-	regions := cloudProviderRegions(existing.Provider)
-	// 尝试调用 CloudProvider.ListRegions 获取真实区域列表
-	creds := s.resolveCloudCredentials(existing)
-	if creds != nil {
-		provider, ok := s.cloudProviderFactory.Get(cloudprovider.ProviderType(existing.Provider))
-		if ok {
-			if realRegions, err := provider.ListRegions(r.Context(), *creds); err == nil && len(realRegions) > 0 {
-				regions = make([]string, 0, len(realRegions))
-				for _, r := range realRegions {
-					regions = append(regions, r.ID)
-				}
-			}
-		}
+
+	regions, reason := s.providerRegions(r.Context(), existing)
+	if reason == "" {
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"provider": existing.Provider,
+			"regions":  regions,
+			"source":   cloudRegionSourceProvider,
+		})
+		return
 	}
+
+	staticRegions := cloudProviderRegions(existing.Provider)
+	if len(staticRegions) == 0 {
+		paginate.JSONError(w, http.StatusBadGateway, "provider regions unavailable")
+		return
+	}
+	// 只记录 provider/accountID 与脱敏后的简短原因，凭据值不入日志、不回传。
+	logx.Warn(r.Context(), "cloud account regions: provider unavailable, using static fallback",
+		"provider", existing.Provider,
+		"accountID", existing.ID,
+		"reason", reason,
+	)
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"provider": existing.Provider,
-		"regions":  regions,
+		"regions":  staticRegions,
+		"source":   cloudRegionSourceStatic,
+		"warning":  "provider unavailable: " + reason,
 	})
 }
 

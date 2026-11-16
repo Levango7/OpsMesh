@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -130,11 +131,25 @@ func NewFederationManager(peers []string, localStore store.Store, secret string,
 	return f
 }
 
+// defaultFederationAllowedPaths 未显式配置 --federation-allowed-paths 时的入站路径前缀白名单：
+// 仅覆盖联邦协议自身端点与 peer 间复用的任务/设备 REST 端点。
+var defaultFederationAllowedPaths = []string{
+	"/api/v1/federation/",
+	"/api/v1/tasks",
+	"/api/v1/devices",
+}
+
 // NewFederationManagerFromConfig 按配置构造联邦管理器（含 per-peer 密钥与本地 peer 身份）。
 // 供 server 装配层使用；peers 为空时返回 (nil, nil)。
 func NewFederationManagerFromConfig(cfg *config.Config, localStore store.Store, tlsConfig *tls.Config) (*FederationManager, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("federation: nil config")
+	}
+	// 非致命启动告警：配置了 peer 但未提供联邦 CA 时，联邦通道可能是明文/未双向校验。
+	// 不阻断启动（兼容内网既有部署），仅提示运维补齐 mTLS 或网络层限制。
+	if len(cfg.FederationPeers) > 0 && cfg.FederationCA == "" {
+		logx.Warn(context.Background(),
+			"controlplane: 已启用控制面联邦但 --federation-ca 为空；联邦流量未强制 mTLS 双向认证，建议配置 --federation-tls-cert/key/ca 或使用 NetworkPolicy 限制对端来源")
 	}
 	opts := []FederationManagerOption{WithFederationPeerID(cfg.FederationPeerID)}
 	if len(cfg.FederationPeerSecrets) > 0 {
@@ -299,6 +314,11 @@ func newFederationNonce() (string, error) {
 // 而 NonceCache 的 nonce 只能消费一次；用 request context 标记确保每个请求只验一次。
 type federationVerifiedKey struct{}
 
+// federationInternalSubrequestKey 标记由联邦 handler 内部构造的子请求
+// （executeFederationDeviceOp 复用本地 handler）。子请求路径由入口白名单校验覆盖，
+// requireProd 不再重复校验，避免要求运维把每个内部端点都写进入站白名单。
+type federationInternalSubrequestKey struct{}
+
 // verifyFederationRequest 校验入站请求的联邦签名（实现在 pkg/auth，controlplane 不再内联 canonical）。
 // 仅当请求携带 X-Federation-Forwarded=1 时才验签；未携带则返回 nil（普通网关注入路径）。
 //
@@ -397,6 +417,30 @@ func (s *Server) federationPeerResolver() *authpkg.FederationPeerResolver {
 	federationPeerResolverVal = resolver
 	federationPeerResolverKey = key
 	return resolver
+}
+
+// federationAllowedPaths 返回生效的入站路径前缀白名单（配置为空时使用默认值）。
+func (s *Server) federationAllowedPaths() []string {
+	if s.cfg != nil && len(s.cfg.FederationAllowedPaths) > 0 {
+		return s.cfg.FederationAllowedPaths
+	}
+	return defaultFederationAllowedPaths
+}
+
+// federationPathAllowed 判断请求路径是否命中入站白名单前缀。
+// path.Clean 消除 ".." 等绕过（如 /api/v1/tasks/../users），非法/空前缀直接忽略。
+func (s *Server) federationPathAllowed(requestPath string) bool {
+	cleaned := path.Clean("/" + requestPath)
+	for _, prefix := range s.federationAllowedPaths() {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" || !strings.HasPrefix(prefix, "/") {
+			continue
+		}
+		if strings.HasPrefix(cleaned, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // federationMaxSkew 返回配置的签名时间窗（默认 ±300s）。

@@ -97,12 +97,14 @@
 | ID | 风险 | 状态 | 影响 | 处置/证据 | 优先级 |
 |---|---|---|---|---|---|
 | R1 | 联邦使用**全局共享密钥**，无 per-peer 密钥/轮换 | **CLOSED** | — | `NewFederationManagerFromConfig` 装配 per-peer 密钥（`--federation-peer-secrets`/`OPSMESH_FEDERATION_PEER_SECRETS`，`peerID@peerURL=secret1[,secret2]`）：出站用目标 peer 的 `Secrets[0]` 签名并写 `X-Federation-Peer-ID`，接收侧接受该 peer 全部 secret 以支持轮换，全局密钥仅兜底；`federation_peer_test.go` 的 per-peer 隔离/轮换/服务装配用例全绿（含 `TestFederationServerWiring_UsesPerPeerSecrets`） | P1 |
-| R2 | 验签通过的 peer 请求**跳过 per-permission RBAC**（信任源控制面） | OPEN | 源端被攻破即可横向 | 强制联邦端口 mTLS + 对端审计留痕 + 网络 ACL 仅放行已知 peer | P1 |
+| R2 | 验签通过的 peer 请求**跳过 per-permission RBAC**（信任源控制面） | **CLOSED** | — | 入站路径前缀白名单：默认 `/api/v1/federation/,/api/v1/tasks,/api/v1/devices`，可由 `--federation-allowed-paths`/`OPSMESH_FEDERATION_ALLOWED_PATHS` 覆盖（启动期校验必须以 `/` 开头，`path.Clean` 防 `..` 绕过）；per-peer 设备操作限制：peer 密钥条目支持 `;ops=a\|b\|c` 后缀，越权 op 返回 403；配套 `deploy/k8s/federation-networkpolicy.yaml`（默认拒绝、仅放行集群内控制面与显式 peer CIDR）；未配置 `--federation-ca` 时启动打印 mTLS 缺失告警 | P1 |
 | R3 | `tsdb_ops.go`、`graph_ops.go` 的查询接口仍为 `device:read` 建任务 | **CLOSED** | — | 两处查询执行入口已提升为 `task:write`（`tsdb_ops.go:489`、`graph_ops.go:388`）；权限回归见 `query_exec_authz_test.go` 的 `TestQueryExecHandlersDenyViewer` / `TestQueryExecHandlersAllowOperator` | P1 |
-| R4 | 云厂商地域列表仍保留静态回退 | OPEN | 展示可能过期，不影响鉴权 | 厂商 API 不可用时显式标注"回退数据"并告警 | P2 |
-| R5 | `log.Printf` 未全面替换为结构化日志 | **PARTIALLY CLOSED** | 剩余包内审计检索与关联能力仍弱 | auth/user/role 路径已迁移到 `internal/logx`（`auth.go`、`auth_users.go`、`auth_roles.go`）；其余包按批跟进，优先任务/联邦路径 | P2 |
+| R4 | 云厂商地域列表仍保留静态回退 | **CLOSED** | — | 地域响应统一携带 `source=provider\|static`；静态回退时附 `warning` 并以结构化字段（provider/accountID/脱敏 reason）告警；无静态兜底时返回 **502**，不再把兜底数据伪装成实时结果；厂商错误经 `sanitizeProviderReason` 折叠空白、抹除凭据键值对、截断 120 字符后回传 | P2 |
+| R5 | `log.Printf` 未全面替换为结构化日志 | **CLOSED** | — | 2026-11-16 全仓复核：`log.Print/Println/Printf/Fatal` 共 **417** 处（含测试）/ **414** 处（排除 `_test.go`），全部位于 `services/`、`internal/store`、`internal/agent` 等历史包；`internal/controlplane` 排除测试后 grep 命中 **1** 处、`pkg` 命中 **4** 处，**逐条核对均为注释**（`server_factory.go:140`、`pkg/log/log.go` 的说明文字），可执行调用点 **0**；controlplane 与 pkg 已无 stdlib 日志调用 | P2 |
 | R6 | 前端安全响应头（CSP/HSTS/X-Frame-Options）未在本轮验证 | OPEN | XSS 纵深不足 | 在反向代理/控制面统一注入并加回归断言 | P2 |
-| R7 | 镜像/依赖 CVE 扫描依赖 CI 定时跑 | OPEN | 新 CVE 可能滞后发现 | 保持 trivy 门禁 + 每周定时扫描与告警 | P3 |
+| R7 | 镜像/依赖 CVE 扫描依赖 CI 定时跑 | **CLOSED** | — | 新增 `scripts/security/` 扫描套件（`cve-scan.sh`、`cve-scan.ps1`、`README.md`）：trivy fs（vuln/secret/misconfig）+ 可选 `IMAGES` 镜像扫描 + Helm config，输出带时间戳报告并按 `--fail-on-high` 返回门禁退出码。`.github/workflows/` 按 `AGENTS.md` 冻结，**仓库内不加定时 job**，周期调度由外部调度器（host cron / Windows Task Scheduler / Jenkins / GitLab schedules）执行 | P3 |
+
+> **2026-11-16 二次收口**：R2/R4/R5/R7 本轮全部关闭。新增控制项：① 联邦入站路径前缀白名单（默认 `/api/v1/federation/,/api/v1/tasks,/api/v1/devices`，`--federation-allowed-paths` 可配，非法前缀启动 fail-fast，`path.Clean` 规范化）；② per-peer 设备操作白名单（`--federation-peer-secrets` 条目 `;ops=a|b|c`，越权 403）；③ `deploy/k8s/federation-networkpolicy.yaml` 默认拒绝型入站策略资产；④ 联邦未配 CA 的启动 mTLS 告警；⑤ 云地域响应 `source=provider|static` + `warning`，无兜底 502，厂商原因脱敏；⑥ `scripts/security/` CVE 扫描套件（受 workflow 冻结限制，由外部调度器定时执行）。日志扫尾复核结论：`internal/controlplane` 与 `pkg` 排除测试后可执行 stdlib `log.Print*/Fatal` 调用点为 **0**（仅剩注释命中）。
 
 ---
 

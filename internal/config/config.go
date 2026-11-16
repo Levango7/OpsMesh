@@ -268,11 +268,16 @@ type Config struct {
 	// 联邦 per-peer 身份与密钥（可选；为空时沿用 FederationSecret 全局密钥，向后兼容）：
 	//   - FederationPeerID：本地 peer 身份（默认 "default"），签名时写入 X-Federation-Peer-ID，
 	//     供对端按 peerID 选择 per-peer 验签密钥。
-	//   - FederationPeerSecrets：逗号分隔条目 `<peerID>@<peerURL>=<secret1>[,<secret2>...]`；
+	//   - FederationPeerSecrets：逗号分隔条目 `<peerID>@<peerURL>=<secret1>[,<secret2>...][;ops=a|b|c]`；
 	//     每个 peer 的首个 secret 用于签名，全部 secret 用于验签（轮换期新旧密钥并存）。
-	//     配置后对匹配的 peerURL 优先于全局 FederationSecret。
+	//     配置后对匹配的 peerURL 优先于全局 FederationSecret；可选 `;ops=` 限定该 peer 可调用的设备操作。
 	FederationPeerID      string
 	FederationPeerSecrets []string
+
+	// FederationAllowedPaths 联邦入站路径前缀白名单（逗号分隔，每项必须以 "/" 开头）。
+	// 验签通过的 peer 只能调用命中这些前缀的路径，避免被攻陷 peer 调用用户管理/部署等敏感端点。
+	// 为空时使用默认值：/api/v1/federation/,/api/v1/tasks,/api/v1/devices。
+	FederationAllowedPaths []string
 
 	// metrics 访问控制：逗号分隔的 CIDR 白名单，仅允许这些来源访问 /metrics 端点。
 	// 空（默认）=不限制（向后兼容 MVP），但生产建议显式配置内网监控网段（如 10.0.0.0/8）。
@@ -604,7 +609,8 @@ func Load() *Config {
 	federationPeers := flag.String("federation-peers", "", "控制面联邦 peer 地址列表（逗号分隔，如 http://peer1:8080,http://peer2:8080）；非空时启用联邦 API（跨网段任务转发/联邦设备视图）；或 env OPSMESH_FEDERATION_PEERS")
 	// 联邦 per-peer 身份与密钥（可选；全局 --federation-secret 仍作为兜底）。
 	federationPeerID := flag.String("federation-peer-id", "default", "联邦本地 peer 身份（写入 X-Federation-Peer-ID 头，供对端按 peerID 选择验签密钥）；默认 default；或 env OPSMESH_FEDERATION_PEER_ID")
-	federationPeerSecrets := flag.String("federation-peer-secrets", "", "联邦 per-peer HMAC 密钥（逗号分隔条目 <peerID>@<peerURL>=<secret1>[,<secret2>...]；首个 secret 签名，全部 secret 验签以支持轮换）；匹配 peer 时优先于 --federation-secret；或 env OPSMESH_FEDERATION_PEER_SECRETS")
+	federationPeerSecrets := flag.String("federation-peer-secrets", "", "联邦 per-peer HMAC 密钥（逗号分隔条目 <peerID>@<peerURL>=<secret1>[,<secret2>...][;ops=a|b|c]；首个 secret 签名，全部 secret 验签以支持轮换；可选 ;ops= 限定该 peer 可调用的设备操作）；匹配 peer 时优先于 --federation-secret；或 env OPSMESH_FEDERATION_PEER_SECRETS")
+	federationAllowedPaths := flag.String("federation-allowed-paths", "", "联邦入站路径前缀白名单（逗号分隔，每项以 / 开头，如 /api/v1/federation/,/api/v1/tasks,/api/v1/devices）；空=使用默认值；或 env OPSMESH_FEDERATION_ALLOWED_PATHS")
 	// metrics 访问控制：逗号分隔的 CIDR 白名单。
 	metricsAllowCIDR := flag.String("metrics-allow-cidr", "", "metrics(/metrics) 访问控制：逗号分隔的 CIDR 白名单；空=不限制（生产建议配置内网监控网段，如 10.0.0.0/8）；或 env OPSMESH_METRICS_ALLOW_CIDR")
 	// 联邦通道硬化配置。
@@ -842,6 +848,7 @@ func Load() *Config {
 		FederationPeers:            parseFederationPeers(val("federation-peers", *federationPeers, "OPSMESH_FEDERATION_PEERS")),
 		FederationPeerID:           val("federation-peer-id", *federationPeerID, "OPSMESH_FEDERATION_PEER_ID"),
 		FederationPeerSecrets:      parseFederationPeerSecrets(val("federation-peer-secrets", *federationPeerSecrets, "OPSMESH_FEDERATION_PEER_SECRETS")),
+		FederationAllowedPaths:     parseFederationAllowedPaths(val("federation-allowed-paths", *federationAllowedPaths, "OPSMESH_FEDERATION_ALLOWED_PATHS")),
 		MetricsAllowCIDR:           val("metrics-allow-cidr", *metricsAllowCIDR, "OPSMESH_METRICS_ALLOW_CIDR"),
 		FederationSecret:           val("federation-secret", *federationSecret, "OPSMESH_FEDERATION_SECRET"),
 		FederationTLSCert:          val("federation-tls-cert", *federationTLSCert, "OPSMESH_FEDERATION_TLS_CERT"),
@@ -1141,6 +1148,27 @@ func parseFederationPeerSecrets(s string) []string {
 	return out
 }
 
+// parseFederationAllowedPaths 解析逗号分隔的联邦入站路径前缀白名单为 []string。
+// 归一化：去除首尾空格、忽略空项；每项必须以 "/" 开头（由 Validate 启动期校验）。
+// 输入为空返回 nil，由调用方回退到默认白名单。
+func parseFederationAllowedPaths(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // parseLogPushFiles 解析逗号分隔的日志采集文件路径列表为 []string，去除空白项与首尾空格。
 // 输入空串返回 nil（不启用日志推送），保证 agent 中 `if len(cfg.LogPushFiles) > 0` 判空可用。
 // 与 parseFederationPeers 同结构，独立保留以备未来差异化校验（如路径绝对值检查）。
@@ -1358,6 +1386,12 @@ func (c *Config) Validate() error {
 	}
 	if len(c.FederationPeers) > 0 && c.FederationSecret == "" && len(c.FederationPeerSecrets) == 0 {
 		return fmt.Errorf("federation-secret or federation-peer-secrets is required when federation-peers is set")
+	}
+	// 联邦入站路径白名单：每项必须是绝对路径前缀（以 "/" 开头），启动期 fail-fast。
+	for i, p := range c.FederationAllowedPaths {
+		if !strings.HasPrefix(p, "/") {
+			return fmt.Errorf("非法 --federation-allowed-paths[%d]=%q（必须以 / 开头）", i, p)
+		}
 	}
 	// 多副本会话状态共享校验：session-store 格式须为
 	// "redis://host:port" 或 "redis://:password@host:port"（口令可内嵌，百分号编码特殊字符）。

@@ -1266,6 +1266,8 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [CLAIM] 2026-11-16T03:45:00Z from=kilo ttl=8h scope=pkg/auth/federation.go,internal/controlplane/federation.go,internal/config/config.go,internal/controlplane/federation_peer_test.go,internal/controlplane/security_headers.go,internal/controlplane/server.go,internal/controlplane/server_middleware.go,internal/controlplane/auth_users.go,internal/controlplane/auth.go,internal/controlplane/auth_roles.go,scripts/loadtest/ note=批次35 剩余项收口：联邦 per-peer 密钥与轮换、前端安全响应头（CSP/HSTS 等）、鉴权路径结构化日志、k6 压测基线；tsdb/graph 权限提升按 TAKEOVER 执行
 
+[CLAIM] 2026-11-16T05:40:00Z from=kilo ttl=8h scope=internal/controlplane/auth.go,internal/controlplane/federation.go,internal/controlplane/federation_device.go,internal/controlplane/cloud_account.go,internal/config/config.go,internal/controlplane/*_test.go,deploy/k8s/federation-networkpolicy.yaml,scripts/security/,docs/security-review-2026-11-16.md note=批次36 风险台账收口：R2 联邦入站路径白名单+mTLS/网络策略资产、R4 云地域回退显式标注、R5 结构化日志扫尾、R7 CVE 扫描脚本
+
 [DONE] 2026-11-15T10:00:00Z from=kilo scope=web/enterprise/src/,internal/controlplane/,internal/config/config.go,pkg/auth/,docs/CLAIMS.md,CHANGELOG.md commit=1bd034ab8f451efbeeb82f51f5bfd09096e1364a note=批次30-32 收口（前端阻断缺陷/后端正确性/device HMAC 联邦）
 
 [CLAIM] 2026-11-15T09:58:52Z from=opencode ttl=48h scope=internal/controlplane/vector_ops.go,internal/controlplane/b31_injection_test.go note=ARCH 模板迁移第二例：vector_ops.go 7 builder 入参全改 validated*（validate* 构造函数承载白名单），builder 内 0 raw req 残留；守卫 b31 同型重写。第二个架构样板证明方案可复制。

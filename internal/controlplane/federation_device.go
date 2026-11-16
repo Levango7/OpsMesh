@@ -147,6 +147,12 @@ func (s *Server) handleFederationForwardDeviceOp(w http.ResponseWriter, r *http.
 		if _, ok := s.requireProd(w, r, "task:write"); !ok {
 			return
 		}
+	} else if !s.federationPathAllowed(r.URL.Path) {
+		// 入站路径白名单（与 requireProd 的联邦分支同语义）：本端点虽在默认白名单内，
+		// 显式收窄 --federation-allowed-paths 时也必须拒绝，避免 peer 绕过配置。
+		logx.Warn(r.Context(), "controlplane: 联邦设备操作路径不在白名单", "path", r.URL.Path)
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "federation path not allowed"})
+		return
 	}
 	var body struct {
 		PeerURL string `json:"peerURL"`
@@ -170,6 +176,12 @@ func (s *Server) handleFederationForwardDeviceOp(w http.ResponseWriter, r *http.
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "unsupported device op (allowed: " + federationDeviceOpNames() + ")",
 		})
+		return
+	}
+	if isPeer && !s.federationPeerOpAllowed(r, body.Op) {
+		logx.Warn(r.Context(), "controlplane: 联邦 peer 越权请求设备操作",
+			"peer", r.Header.Get(authpkg.FederationHeaderPeerID), "op", body.Op)
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "federation peer not allowed for this op"})
 		return
 	}
 	if isPeer {
@@ -213,6 +225,25 @@ func (s *Server) handleFederationForwardDeviceOp(w http.ResponseWriter, r *http.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(respBody)
+}
+
+// federationPeerOpAllowed 校验入站 peer 是否被允许调用指定设备操作。
+// 命中 per-peer 配置且声明了 ;ops= 时按该列表限制；未配置条目或未声明 ops 时保持全局白名单语义。
+func (s *Server) federationPeerOpAllowed(r *http.Request, op string) bool {
+	peerID := r.Header.Get(authpkg.FederationHeaderPeerID)
+	if peerID == "" || s.federationPeerResolver() == nil {
+		return true
+	}
+	peer, ok := s.federationPeerResolver().PeerForID(peerID)
+	if !ok || len(peer.Ops) == 0 {
+		return true
+	}
+	for _, allowed := range peer.Ops {
+		if allowed == op {
+			return true
+		}
+	}
+	return false
 }
 
 // federationDeviceOpPayload 设备操作参数（payload 为 JSON 字节，按 op 取用相关字段）。
@@ -308,7 +339,7 @@ func federationNetSecCapability(name string) (netsec.Capability, string, bool) {
 
 // federationDeviceSubRequest 构造与当前请求共享 context/身份头的本地子请求。
 func (s *Server) federationDeviceSubRequest(r *http.Request, method, path string, body []byte) *http.Request {
-	sub := r.Clone(r.Context())
+	sub := r.Clone(context.WithValue(r.Context(), federationInternalSubrequestKey{}, true))
 	sub.Method = method
 	sub.URL.Path = path
 	sub.URL.RawQuery = ""

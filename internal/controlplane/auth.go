@@ -149,6 +149,14 @@ func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required st
 			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "federation signature verification failed"})
 			return nil, false
 		}
+		// 路径白名单：验签只证明"来自可信 peer"，不限制可调用的端点；被攻陷 peer 若可任意
+		// 调用 /api/v1/users 等端点即可绕过全部用户 RBAC。仅放行联邦协议所需前缀。
+		// 内部子请求（executeFederationDeviceOp 复用本地 handler）已在入口校验过原始路径，跳过。
+		if r.Context().Value(federationInternalSubrequestKey{}) == nil && !s.federationPathAllowed(r.URL.Path) {
+			logx.Warn(r.Context(), "controlplane: 联邦入站路径不在白名单", "method", r.Method, "path", r.URL.Path)
+			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "federation path not allowed"})
+			return nil, false
+		}
 		return nil, true
 	}
 	// 2.5. API Key 路径（H5 认证接入）：Authorization 以 "Bearer om_" 开头 或 X-API-Key 头非空。

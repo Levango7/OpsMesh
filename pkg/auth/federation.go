@@ -87,10 +87,12 @@ func FederationBodySHA256(body []byte) string {
 
 // FederationPeerSecret 单个 peer 的 HMAC 密钥集合。
 // Secrets[0] 为当前签名密钥，其余为轮换期保留的旧密钥（仅用于验签）。
+// Ops 为可选的设备操作限制（`;ops=a|b|c`）；为空表示沿用全局白名单（向后兼容）。
 type FederationPeerSecret struct {
 	PeerID  string
 	URL     string
 	Secrets []string
+	Ops     []string
 }
 
 // FederationPeerResolver 按 peer URL / peer ID 查询 per-peer 密钥；构造后只读，可并发使用。
@@ -99,8 +101,9 @@ type FederationPeerResolver struct {
 	byPeerID map[string]FederationPeerSecret
 }
 
-// ParseFederationPeerSecrets 解析 `<peerID>@<peerURL>=<secret1>[,<secret2>...]` 条目。
+// ParseFederationPeerSecrets 解析 `<peerID>@<peerURL>=<secret1>[,<secret2>...][;ops=a|b|c]` 条目。
 // 每个条目至少一个非空 secret；peerID 与 URL 均不可为空，且不允许重复。
+// `;ops=` 后缀可选：存在时仅允许该 peer 调用列出的设备操作（| 分隔，非空且去重）。
 func ParseFederationPeerSecrets(entries []string) ([]FederationPeerSecret, error) {
 	out := make([]FederationPeerSecret, 0, len(entries))
 	seenPeerID := make(map[string]struct{}, len(entries))
@@ -110,15 +113,41 @@ func ParseFederationPeerSecrets(entries []string) ([]FederationPeerSecret, error
 		if entry == "" {
 			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]为空", i)
 		}
-		at := strings.Index(entry, "@")
+		// 可选 `;ops=` 后缀：先剥离再解析 <peerID>@<url>=<secrets>，避免与 URL/密钥字符冲突。
+		main := entry
+		var ops []string
+		if semi := strings.Index(entry, ";"); semi >= 0 {
+			main = strings.TrimSpace(entry[:semi])
+			suffix := strings.TrimSpace(entry[semi+1:])
+			if !strings.HasPrefix(suffix, "ops=") {
+				return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 含未知后缀（仅支持 ;ops=a|b|c）", i, entry)
+			}
+			opsRaw := strings.TrimSpace(strings.TrimPrefix(suffix, "ops="))
+			if opsRaw == "" {
+				return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 的 ;ops= 为空", i, entry)
+			}
+			seenOps := make(map[string]struct{})
+			for _, op := range strings.Split(opsRaw, "|") {
+				op = strings.TrimSpace(op)
+				if op == "" {
+					return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 的 ;ops= 含空操作", i, entry)
+				}
+				if _, dup := seenOps[op]; dup {
+					continue
+				}
+				seenOps[op] = struct{}{}
+				ops = append(ops, op)
+			}
+		}
+		at := strings.Index(main, "@")
 		if at <= 0 {
 			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 缺少 <peerID>@", i, entry)
 		}
-		peerID := strings.TrimSpace(entry[:at])
+		peerID := strings.TrimSpace(main[:at])
 		if peerID == "" {
 			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 的 peerID 为空", i, entry)
 		}
-		rest := entry[at+1:]
+		rest := main[at+1:]
 		eq := strings.Index(rest, "=")
 		if eq <= 0 {
 			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 缺少 <peerURL>=", i, entry)
@@ -144,7 +173,7 @@ func ParseFederationPeerSecrets(entries []string) ([]FederationPeerSecret, error
 		}
 		seenPeerID[peerID] = struct{}{}
 		seenURL[peerURL] = struct{}{}
-		out = append(out, FederationPeerSecret{PeerID: peerID, URL: peerURL, Secrets: secrets})
+		out = append(out, FederationPeerSecret{PeerID: peerID, URL: peerURL, Secrets: secrets, Ops: ops})
 	}
 	return out, nil
 }
@@ -181,6 +210,24 @@ func (r *FederationPeerResolver) SecretForURL(url string) (peerID, secret string
 		return "", "", false
 	}
 	return p.PeerID, p.Secrets[0], true
+}
+
+// PeerForID 返回该 peerID 的配置副本（含 Ops 限制）；未配置返回 ok=false。
+func (r *FederationPeerResolver) PeerForID(peerID string) (FederationPeerSecret, bool) {
+	if r == nil {
+		return FederationPeerSecret{}, false
+	}
+	p, found := r.byPeerID[peerID]
+	if !found {
+		return FederationPeerSecret{}, false
+	}
+	if len(p.Secrets) > 0 {
+		p.Secrets = append([]string(nil), p.Secrets...)
+	}
+	if len(p.Ops) > 0 {
+		p.Ops = append([]string(nil), p.Ops...)
+	}
+	return p, true
 }
 
 // SecretsForPeerID 返回该 peer 的全部可验签密钥（含轮换期旧密钥）；未配置返回 nil。

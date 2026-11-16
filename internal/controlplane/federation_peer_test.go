@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -313,5 +314,74 @@ func TestFederationVerification_NoSecretsConfigured(t *testing.T) {
 	req.Header.Set(authpkg.FederationHeaderPeerID, "peer-a")
 	if err := s.verifyFederationRequest(req); err == nil {
 		t.Fatal("federation request accepted with no configured secrets")
+	}
+}
+
+// TestFederationAllowlist_SignedPeerPaths 验证 R2 入站路径白名单：
+// 验签通过但路径不在白名单的联邦请求必须 403，且 handler 不得执行；
+// 默认白名单内的联邦/设备/任务路径放行。
+func TestFederationAllowlist_SignedPeerPaths(t *testing.T) {
+	const secret = "fed-allowlist-secret"
+	s := &Server{store: store.NewMemoryStore(), cfg: &config.Config{FederationSecret: secret}}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+
+	newSigned := func(path, nonce string) *http.Request {
+		body := []byte(`{"agentID":"a1"}`)
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		req.Header = federationTestHeaders(t, secret, http.MethodPost, path, ts, nonce, "t1", "peer-user", "role-admin", body)
+		return req
+	}
+
+	// 1) 已签名但调用用户管理端点：403 + 指定错误 + handler 未执行。
+	handlerReached := false
+	rec := httptest.NewRecorder()
+	req := newSigned("/api/v1/users", "allowlist-denied-"+strconv.FormatInt(time.Now().UnixNano(), 10))
+	if _, ok := s.requireProd(rec, req, "user:delete"); ok {
+		handlerReached = true
+	}
+	if handlerReached {
+		t.Fatal("handler reached for federation request to /api/v1/users")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("disallowed path status = %d, want 403, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); !strings.Contains(got, `"error":"federation path not allowed"`) {
+		t.Fatalf("disallowed path body = %q", got)
+	}
+
+	// 2) 默认白名单内的路径全部放行。
+	for i, path := range []string{"/api/v1/federation/devices", "/api/v1/devices", "/api/v1/tasks"} {
+		rec := httptest.NewRecorder()
+		nonce := "allowlist-ok-" + strconv.Itoa(i) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		if _, ok := s.requireProd(rec, newSigned(path, nonce), "task:write"); !ok {
+			t.Fatalf("allowed path %s rejected: status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestFederationAllowlist_NonFederationUnchanged 验证非联邦请求行为不变：
+// 无身份仍按原语义 401，不因新增路径白名单提前放行或改变状态码。
+func TestFederationAllowlist_NonFederationUnchanged(t *testing.T) {
+	s := &Server{store: store.NewMemoryStore(), cfg: &config.Config{FederationSecret: "fed-allowlist-secret"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	req.Header.Set("X-Tenant-ID", "t1")
+	if _, ok := s.requireProd(rec, req, "user:read"); ok {
+		t.Fatal("non-federation request without identity was allowed")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("non-federation status = %d, want 401, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestFederationPathAllowed_Traversal 验证白名单前缀匹配前先 path.Clean：
+// /api/v1/tasks/../users 不能被 /api/v1/tasks 前缀放行。
+func TestFederationPathAllowed_Traversal(t *testing.T) {
+	s := &Server{cfg: &config.Config{}}
+	if s.federationPathAllowed("/api/v1/tasks/../users") {
+		t.Fatal("traversal path normalized into allowed prefix")
+	}
+	if !s.federationPathAllowed("/api/v1/tasks") || !s.federationPathAllowed("/api/v1/devices/abc") {
+		t.Fatal("default allowlist rejected expected prefixes")
 	}
 }
