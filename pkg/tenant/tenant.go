@@ -25,9 +25,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Levango7/OpsMesh/pkg/httpx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+
+	"github.com/Levango7/OpsMesh/pkg/httpx"
 )
 
 // ResourceType identifies a tracked resource category.
