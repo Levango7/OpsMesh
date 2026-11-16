@@ -63,6 +63,14 @@
 - **顺带修复×2（CI 收编，用户裁决 2026-11-16 采选 A）**：build-test `cp_race` 批 `go test -race -p 1 -timeout 600s→900s`（单 pass / -coverprofile / 断言数均不变）。取证：Kilo 批次33/35 增长控制面套件 ~25% 体积后本腿贴壁 600s 墙（#76 CI：`panic: test timed out after 10m0s`，RSS 1.4GB 无崩溃头）。
 - **顺带修复×3（CI 收编）**：Kilo 批次36 交付 `scripts/security/cve-scan.sh`（8 处 SC2016 信息级）。该批脚本被 shellcheck `-S info` 门禁（security 腿）卡死——literal markdown 反引号与 shellcheck 以 '表达式未展开' 误判，设计本意为字面反引号。按信息级豁免保留 Kilo 设计输出逐字节不变（一处块级 disable 指令 + 理由注释），security 腿恢复。**非门禁放宽、无断言变更**。
 - **顺带修复×4（CI 收编，用户裁决 2026-11-16 采选 A）**：build-test 三条 `agent_*` 批次（AI/JN/OZ）各加 `GOMEMLIMIT=250MiB` 环境变量。取证：本 runner 代际对本包 test 二进制的进程级上限稳定在 ~265–271MB——`[J-N]` 凭 271220KB 过绿、`[O-Z]` 凭 271628KB 失败、旧 `[J-Z]` 凭 265MB 失败三个数据点证实限制与用例挑选无关；`GOMEMLIMIT=3GiB` 按大盘预期推算而不知墙，运行时 GC 贴壁失败。改为运行时 GC 硬约 250MB：堆不会撞到 persistentalloc 墙，测试语义/断言/覆盖率指示一字不动。
+## [Arch-ansible_ops 型式收口（架构级迁移，第七例）] — 2026-11-16（ansible_ops.go 3 builder 全部改为 validated*）
+
+- **背景**：db_ops.go（#70）/ vector_ops.go（#71）/ k8s_provision.go（#72）/ monitor_ops.go（#73）/ middleware_ops.go（#74）/ mongo_ops.go（#76）六例架构样板落地后，本批迁移 ansible_ops.go：所有 `build*Script` 入参改为 `validated*`，原始 `ansibleAdhocReq / ansiblePlaybookReq / ansibleInventoryReq` 彻底不再能到达 builder——编译期阻断。
+- **模板**：`validateAnsibleAdhoc（Pattern 缺省 all 内置）/ validateAnsiblePlaybook / validateAnsibleInventory（sync 必填 hosts 校验内置）` 构造函数在 handler 内调用；builder 内 **0** raw req 残留（3/3）。Pattern 由独立字符串参数并入 validated 结构。
+- **范围**：3 个 builder（Adhoc/Playbook/Inventory）+ 3 个 handler 更新为调用 validator（deploy 内联 heredoc 无 builder，不动）；新增 `b36_injection_test.go` 守卫（断言 build* 入参类型必须 validated*，原始 req 类型不得出现）。
+- **守卫验证**：变异测试通过——新增 `buildNeverCalled(req ansibleAdhocReq)`（无任何调用方、编译可过）⇒ `TestB36BuilderParamsAreValidatedOnly` 判红并精确指到 466 行；撤销后全绿（EOF 无多余空行）。
+- **不变项**：白名单语义、错误响应形状（400 `{"error":...}`）、脚本逐字节不变、`DeviceID` 保留 raw（仅 handler 层使用）。
+- **验证**：`gofmt -l .` clean；`golangci-lint run ./internal/controlplane/` ⇒ **0 issues**；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（controlplane 96.1s 全绿，含 TestB36 三例）。
 ## [Unreleased-批次 30-32 收口] — 2026-11-15（前端阻断缺陷 + 后端正确性 + device 域 HMAC 联邦）
 
 - **批次 30 前端阻断缺陷修复**：`adminApi` TDZ（改用函数内惰性引用，消 `Cannot access before initialization`）；`Pagination` total 口径统一（分页组件 total 由服务端总数驱动，不再取当前页长度）；`Button` size 归一（消除未定义的 `md` 尺寸）；告警翻页保持（`AlertsView` 翻页不再重置筛选状态）；Users/Tenants 改服务端分页（page/pageSize 下发 + total 回填）。
