@@ -92,3 +92,8 @@
 ## 五、一句话
 
 > 你最初那一句审计值该补：**不可抄送摘要，每行 claim 都必须实测**。本次修订证实：**“功能已达成品、远端合并迅速、CI 主干绿、工作量集中 38 个权限门”**是当前真实的形状。
+
+## 追加修订（2026-11-16）
+
+- **修复 #89 CI 双红**：(1) K8sClusterDeployView 误写 `\(` 导致 ESLint 解析失败 → `$t()`；(2) Kilo a940a924 同款 cost/tenant/discovery errcheck + monthReset typo（本次审计已多次遇到）折入本 PR。
+- 最终验证：vitest 78 文件 / 1416 用例全绿，eslint 0 error，go vet/golangci-lint 0 issue。
