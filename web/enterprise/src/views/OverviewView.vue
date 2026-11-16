@@ -196,13 +196,13 @@ onMounted(() => {
 /* Stats grid */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--space-3, 12px);
   margin: var(--space-4, 16px) 0;
 }
 .stats-skeleton {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--space-3, 12px);
   margin: var(--space-4, 16px) 0;
 }
@@ -242,7 +242,7 @@ onMounted(() => {
 /* Quick entries */
 .quick-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: var(--space-2, 8px);
   margin-top: var(--space-1, 4px);
 }
@@ -305,7 +305,7 @@ onMounted(() => {
 }
 .cap-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: var(--space-3, 12px);
   margin-top: var(--space-1, 6px);
 }

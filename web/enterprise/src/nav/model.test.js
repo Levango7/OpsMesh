@@ -28,7 +28,7 @@ function resolve(dict, key) {
 }
 
 // hideInNav 白名单：详情页（参数路由）/ 子 tab 页。新增一条 = 明确决定该页不进侧栏。
-const HIDDEN_ALLOW = new Set(['device-detail', 'batch-exec', 'batch-detail', 'canary-detail'])
+const HIDDEN_ALLOW = new Set(['device-detail', 'batch-exec', 'batch-detail', 'canary-detail', 'not-found'])
 
 describe('侧栏导航模型（路由表单一来源）', () => {
   const groups = buildNavGroups(routes)

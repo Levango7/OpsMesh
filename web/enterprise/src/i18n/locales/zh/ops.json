@@ -20,7 +20,7 @@
     "recent_results": "最近结果",
     "no_results": "无结果",
     "drawer_title_prefix": "设备 ",
-    "col_device_id": "DeviceID",
+    "col_device_id": "设备 ID",
     "col_hostname": "主机名",
     "col_segment": "网段",
     "col_ip": "IP",
@@ -28,7 +28,7 @@
     "col_state": "状态",
     "col_os": "操作系统",
     "col_task_state": "任务态",
-    "col_last_result": "LastResult",
+    "col_last_result": "最近输出",
     "col_actions": "操作",
     "col_type": "类型",
     "col_status": "状态",
@@ -689,7 +689,10 @@
     "progress": "进度",
     "current_step": "当前步骤",
     "deploy_started": "部署已启动：{id}",
-    "deploy_failed": "部署失败："
+    "deploy_failed": "部署失败：",
+    "host": "主机",
+    "user": "用户名",
+    "ssh_key": "SSH 私钥"
   },
   "k8sLifecycle": {
     "title": "K8s 生命周期",

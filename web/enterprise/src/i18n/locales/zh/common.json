@@ -429,5 +429,12 @@
     "no_data": "无数据",
     "load_failed": "加载失败",
     "download_failed": "下载失败"
+  },
+  "not_found": {
+    "title": "页面不存在",
+    "subtitle": "您访问的页面不存在或已被移除。",
+    "path": "地址栏里的路径不指向任何页面。",
+    "go_home": "返回概览",
+    "go_back": "返回上一页"
   }
 }

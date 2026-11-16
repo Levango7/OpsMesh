@@ -20,7 +20,7 @@
     "recent_results": "Recent Results",
     "no_results": "No results",
     "drawer_title_prefix": "Device ",
-    "col_device_id": "DeviceID",
+    "col_device_id": "Device ID",
     "col_hostname": "Hostname",
     "col_segment": "Segment",
     "col_ip": "IP",
@@ -28,7 +28,7 @@
     "col_state": "State",
     "col_os": "OS",
     "col_task_state": "TaskState",
-    "col_last_result": "LastResult",
+    "col_last_result": "Last Output",
     "col_actions": "Actions",
     "col_type": "Type",
     "col_status": "Status",
@@ -689,7 +689,10 @@
     "progress": "Progress",
     "current_step": "Current Step",
     "deploy_started": "Deployment started: {id}",
-    "deploy_failed": "Deployment failed: "
+    "deploy_failed": "Deployment failed: ",
+    "host": "Host",
+    "user": "User",
+    "ssh_key": "SSH Key"
   },
   "k8sLifecycle": {
     "title": "K8s Lifecycle",
