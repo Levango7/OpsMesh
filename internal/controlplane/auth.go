@@ -144,7 +144,8 @@ func (s *Server) requireProd(w http.ResponseWriter, r *http.Request, required st
 	//    原实现仅判断头存在即放行，未验签，任意客户端伪造 X-Federation-Forwarded=1 即可绕过 RBAC。
 	if r.Header.Get("X-Federation-Forwarded") == "1" {
 		if err := s.verifyFederationRequest(r); err != nil {
-			logx.Error(r.Context(), "controlplane: requireProd 联邦验签失败", err)
+			logx.Error(r.Context(), "controlplane: requireProd 联邦验签失败", err,
+				"permission", required, "method", r.Method, "path", r.URL.Path)
 			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "federation signature verification failed"})
 			return nil, false
 		}

@@ -57,7 +57,8 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		Permissions []string `json:"permissions"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		logx.Error(r.Context(), "controlplane: handleCreateRole 解析请求体失败", err)
+		logx.Error(r.Context(), "controlplane: handleCreateRole 解析请求体失败", err,
+			"userID", caller.ID, "action", "role_create")
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -115,7 +116,8 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request, id str
 		Permissions []string `json:"permissions"`
 	}
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		logx.Error(r.Context(), "controlplane: handleUpdateRole 解析请求体失败", err)
+		logx.Error(r.Context(), "controlplane: handleUpdateRole 解析请求体失败", err,
+			"userID", caller.ID, "roleID", id, "action", "role_update")
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}

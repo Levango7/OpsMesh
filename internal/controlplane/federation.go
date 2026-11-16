@@ -30,6 +30,7 @@ import (
 
 	authpkg "github.com/Levango7/OpsMesh/pkg/auth"
 
+	"github.com/Levango7/OpsMesh/internal/config"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/logx"
@@ -49,6 +50,11 @@ var (
 	federationNonceMu   sync.Mutex
 	federationNoncesVal *authpkg.NonceCache
 	federationNonceTTL  time.Duration
+
+	// per-peer 验签密钥解析缓存：进程内配置固定，按条目内容缓存避免每请求重复解析。
+	federationPeerResolverMu  sync.Mutex
+	federationPeerResolverKey string
+	federationPeerResolverVal *authpkg.FederationPeerResolver
 )
 
 // PeerStatus 描述一个联邦 peer 的地址与当前在线状态。
@@ -64,18 +70,43 @@ type PeerStatus struct {
 //
 // 硬化：
 //   - tlsConfig：非空时出站请求走 mTLS（呈现客户端证书 + 校验证书链），防伪 peer/MITM；
-//   - secret：非空时对转发的身份头做 HMAC 签名 + 时间戳，peer 侧验签防跨段伪造与重放。
+//   - secret：全局联邦 HMAC 密钥（per-peer 无匹配时的兜底），非空时对转发的身份头签名；
+//   - peerID/peerSecrets：本地 peer 身份与 per-peer 密钥（可选），匹配目标 peerURL 时优先使用。
 type FederationManager struct {
-	peers      []string     // 不可变 peer 地址列表（构造时确定）
-	httpClient *http.Client // 共享 HTTP 客户端（带超时 + 可选 mTLS）
-	localStore store.Store  // 本地存储引用（聚合设备视图时取本地数据）
-	secret     string       // 联邦共享 HMAC 密钥（空=不签名）
-	tlsConfig  *tls.Config  // 联邦 mTLS 配置（空=明文）
+	peers       []string                        // 不可变 peer 地址列表（构造时确定）
+	httpClient  *http.Client                    // 共享 HTTP 客户端（带超时 + 可选 mTLS）
+	localStore  store.Store                     // 本地存储引用（聚合设备视图时取本地数据）
+	secret      string                          // 联邦共享 HMAC 密钥（空=无全局密钥）
+	peerID      string                          // 本地 peer 身份（写入 X-Federation-Peer-ID）
+	peerSecrets *authpkg.FederationPeerResolver // per-peer 密钥（nil=仅用全局密钥）
+	tlsConfig   *tls.Config                     // 联邦 mTLS 配置（空=明文）
+}
+
+// defaultFederationPeerID 未显式配置本地 peer 身份时的默认值（与 config 默认一致）。
+const defaultFederationPeerID = "default"
+
+// FederationManagerOption 可选构造参数（保持 NewFederationManager 四参数签名向后兼容）。
+type FederationManagerOption func(*FederationManager)
+
+// WithFederationPeerID 设置本地 peer 身份（签名时写入 X-Federation-Peer-ID）。
+func WithFederationPeerID(peerID string) FederationManagerOption {
+	return func(f *FederationManager) {
+		if peerID != "" {
+			f.peerID = peerID
+		}
+	}
+}
+
+// WithFederationPeerSecrets 设置 per-peer 密钥解析结果（匹配目标 peerURL 时优先于全局密钥）。
+func WithFederationPeerSecrets(peers []authpkg.FederationPeerSecret) FederationManagerOption {
+	return func(f *FederationManager) {
+		f.peerSecrets = authpkg.NewFederationPeerResolver(peers)
+	}
 }
 
 // NewFederationManager 构造联邦管理器。peers 为空时返回 nil（调用方据此跳过联邦路由注册）。
 // localStore 用于 FederatedDevices 聚合本地设备列表；secret/tlsConfig 为 硬化参数（可空）。
-func NewFederationManager(peers []string, localStore store.Store, secret string, tlsConfig *tls.Config) *FederationManager {
+func NewFederationManager(peers []string, localStore store.Store, secret string, tlsConfig *tls.Config, opts ...FederationManagerOption) *FederationManager {
 	if len(peers) == 0 {
 		return nil
 	}
@@ -83,13 +114,37 @@ func NewFederationManager(peers []string, localStore store.Store, secret string,
 	if tlsConfig != nil {
 		cli.Transport = &http.Transport{TLSClientConfig: tlsConfig}
 	}
-	return &FederationManager{
+	f := &FederationManager{
 		peers:      peers,
 		httpClient: cli,
 		localStore: localStore,
 		secret:     secret,
+		peerID:     defaultFederationPeerID,
 		tlsConfig:  tlsConfig,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(f)
+		}
+	}
+	return f
+}
+
+// NewFederationManagerFromConfig 按配置构造联邦管理器（含 per-peer 密钥与本地 peer 身份）。
+// 供 server 装配层使用；peers 为空时返回 (nil, nil)。
+func NewFederationManagerFromConfig(cfg *config.Config, localStore store.Store, tlsConfig *tls.Config) (*FederationManager, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("federation: nil config")
+	}
+	opts := []FederationManagerOption{WithFederationPeerID(cfg.FederationPeerID)}
+	if len(cfg.FederationPeerSecrets) > 0 {
+		peerSecrets, err := authpkg.ParseFederationPeerSecrets(cfg.FederationPeerSecrets)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, WithFederationPeerSecrets(peerSecrets))
+	}
+	return NewFederationManager(cfg.FederationPeers, localStore, cfg.FederationSecret, tlsConfig, opts...), nil
 }
 
 // Peers 返回每个 peer 的地址与在线状态（即时健康检查，并发可控：调用方按需缓存）。
@@ -173,10 +228,27 @@ func (f *FederationManager) ForwardTask(ctx context.Context, peerURL string, tas
 // signFederationRequest 对出站联邦请求的身份头与请求体做 HMAC 签名 + 时间戳 + nonce。
 // canonical 与签名/验签实现统一收敛到 pkg/auth（同一份代码，controlplane 与 device-svc 共享），
 // 本方法只负责取头、生成 nonce、写入 X-Federation-* 头。
-// 仅在管理器配置了共享密钥时签名；未配置则跳过（向后兼容明文联邦，但启动已告警）。
+//
+// 密钥选择：目标 peerURL 命中 per-peer 配置时用其首个 secret 签名；否则回退全局共享密钥。
+// 始终写入 X-Federation-Peer-ID（本地身份）。无任何可用密钥时返回错误，绝不发送未签名请求。
 func (f *FederationManager) signFederationRequest(req *http.Request, body []byte) error {
-	if f.secret == "" {
-		return nil
+	peerID := f.peerID
+	if peerID == "" {
+		peerID = defaultFederationPeerID
+	}
+	req.Header.Set(authpkg.FederationHeaderPeerID, peerID)
+	target := federationRequestTargetURL(req)
+	secret := ""
+	if f.peerSecrets != nil {
+		if _, perPeerSecret, ok := f.peerSecrets.SecretForURL(target); ok {
+			secret = perPeerSecret
+		}
+	}
+	if secret == "" {
+		secret = f.secret
+	}
+	if secret == "" {
+		return fmt.Errorf("federation: 目标 peer %q 无可用 HMAC 密钥（--federation-peer-secrets/--federation-secret 均未命中）: %w", target, authpkg.ErrFederationSecretMissing)
 	}
 	nonce, err := newFederationNonce()
 	if err != nil {
@@ -196,8 +268,20 @@ func (f *FederationManager) signFederationRequest(req *http.Request, body []byte
 	req.Header.Set(authpkg.FederationHeaderForwarded, "1")
 	req.Header.Set(authpkg.FederationHeaderTS, ts)
 	req.Header.Set(authpkg.FederationHeaderNonce, nonce)
-	req.Header.Set(authpkg.FederationHeaderSignature, authpkg.SignFederation(f.secret, canonical))
+	req.Header.Set(authpkg.FederationHeaderSignature, authpkg.SignFederation(secret, canonical))
 	return nil
+}
+
+// federationRequestTargetURL 返回出站请求的 peer 基地址（scheme://host），
+// 与 --federation-peers / --federation-peer-secrets 中的 peerURL 精确匹配。
+func federationRequestTargetURL(req *http.Request) string {
+	if req == nil || req.URL == nil {
+		return ""
+	}
+	if req.URL.Scheme != "" && req.URL.Host != "" {
+		return req.URL.Scheme + "://" + req.URL.Host
+	}
+	return strings.TrimRight(req.URL.String(), "/")
 }
 
 // newFederationNonce 生成 16 字节随机 nonce（hex 编码，32 字符）。
@@ -217,6 +301,12 @@ type federationVerifiedKey struct{}
 
 // verifyFederationRequest 校验入站请求的联邦签名（实现在 pkg/auth，controlplane 不再内联 canonical）。
 // 仅当请求携带 X-Federation-Forwarded=1 时才验签；未携带则返回 nil（普通网关注入路径）。
+//
+// 密钥选择（与出站签名对称）：
+//   - 携带 X-Federation-Peer-ID 且 per-peer 配置命中该 peerID：接受该 peer 任一 secret
+//     （Secrets[0] 为当前签名密钥，其余为轮换期旧密钥）；
+//   - 头缺失或 peerID 未知：回退全局 FederationSecret（旧配置兼容）。
+//
 // 验签覆盖 method/path/ts/nonce/身份头/sha256(body)，并强制执行时间窗与 nonce 防重放；
 // 验签读取 body 后以 NopCloser 复原，下游 handler（decodeJSONBody）可继续读取。
 // 失败原因（密钥缺失/签名不符/时间戳超窗/nonce 重放）可用 errors.Is 判断，
@@ -228,7 +318,12 @@ func (s *Server) verifyFederationRequest(r *http.Request) error {
 	if r.Context().Value(federationVerifiedKey{}) != nil {
 		return nil // 本请求已验签，避免重复消费 nonce
 	}
-	if s.cfg == nil || s.cfg.FederationSecret == "" {
+	peerID := r.Header.Get(authpkg.FederationHeaderPeerID)
+	candidates := s.federationVerificationSecrets(peerID)
+	if len(candidates) == 0 {
+		if peerID != "" {
+			return fmt.Errorf("federation request from peer %q received but no matching secret configured (--federation-peer-secrets/--federation-secret)", peerID)
+		}
 		return fmt.Errorf("federation request received but --federation-secret not configured")
 	}
 	var bodyBytes []byte
@@ -243,8 +338,8 @@ func (s *Server) verifyFederationRequest(r *http.Request) error {
 		bodyBytes = b
 		r.Body = io.NopCloser(bytes.NewReader(b))
 	}
-	if err := authpkg.VerifyFederationSignature(
-		[]byte(s.cfg.FederationSecret),
+	if err := authpkg.VerifyFederationSignatureAny(
+		candidates,
 		s.federationMaxSkew(),
 		r.Method,
 		r.URL.Path,
@@ -258,6 +353,50 @@ func (s *Server) verifyFederationRequest(r *http.Request) error {
 	// 标记已验签（*r 与原请求同一对象，下游调用可见）。
 	*r = *r.WithContext(context.WithValue(r.Context(), federationVerifiedKey{}, true))
 	return nil
+}
+
+// federationVerificationSecrets 按 peerID 解析验签候选密钥：
+// 命中 per-peer 配置时返回该 peer 全部 secret（轮换），否则回退全局共享密钥。
+func (s *Server) federationVerificationSecrets(peerID string) [][]byte {
+	if s.cfg == nil {
+		return nil
+	}
+	if peerID != "" {
+		if resolver := s.federationPeerResolver(); resolver != nil {
+			if secrets := resolver.SecretsForPeerID(peerID); len(secrets) > 0 {
+				out := make([][]byte, 0, len(secrets))
+				for _, secret := range secrets {
+					out = append(out, []byte(secret))
+				}
+				return out
+			}
+		}
+	}
+	if s.cfg.FederationSecret == "" {
+		return nil
+	}
+	return [][]byte{[]byte(s.cfg.FederationSecret)}
+}
+
+// federationPeerResolver 返回按 cfg.FederationPeerSecrets 构造的只读解析器（含缓存）。
+// 解析失败视为未配置（config.Validate 已在启动期 fail-fast），回退全局密钥。
+func (s *Server) federationPeerResolver() *authpkg.FederationPeerResolver {
+	if s.cfg == nil || len(s.cfg.FederationPeerSecrets) == 0 {
+		return nil
+	}
+	key := strings.Join(s.cfg.FederationPeerSecrets, "\x00")
+	federationPeerResolverMu.Lock()
+	defer federationPeerResolverMu.Unlock()
+	if federationPeerResolverVal != nil && federationPeerResolverKey == key {
+		return federationPeerResolverVal
+	}
+	resolver, err := authpkg.ParseFederationPeerResolver(s.cfg.FederationPeerSecrets)
+	if err != nil {
+		return nil
+	}
+	federationPeerResolverVal = resolver
+	federationPeerResolverKey = key
+	return resolver
 }
 
 // federationMaxSkew 返回配置的签名时间窗（默认 ±300s）。

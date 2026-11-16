@@ -94,15 +94,15 @@
 
 ## 5. 剩余风险登记（按优先级）
 
-| ID | 风险 | 影响 | 处置建议 | 优先级 |
-|---|---|---|---|---|
-| R1 | 联邦使用**全局共享密钥**，无 per-peer 密钥/轮换 | 单点泄露影响所有对端 | 配置扩为 `{peer,secret}` 列表 + 轮换流程；保留全局密钥作兼容 | P1 |
-| R2 | 验签通过的 peer 请求**跳过 per-permission RBAC**（信任源控制面） | 源端被攻破即可横向 | 强制联邦端口 mTLS + 对端审计留痕 + 网络 ACL 仅放行已知 peer | P1 |
-| R3 | `tsdb_ops.go`、`graph_ops.go` 的查询接口仍为 `device:read` 建任务 | viewer 可执行查询命令 | 待 opencode 活跃 CLAIM 释放后按 §2.5 同法提升为 `task:write` | P1 |
-| R4 | 云厂商地域列表仍保留静态回退 | 展示可能过期，不影响鉴权 | 厂商 API 不可用时显式标注"回退数据"并告警 | P2 |
-| R5 | `log.Printf` 未全面替换为结构化日志 | 审计检索与关联能力弱 | 按包分批迁移到 `internal/logx`，优先鉴权/任务/联邦路径 | P2 |
-| R6 | 前端安全响应头（CSP/HSTS/X-Frame-Options）未在本轮验证 | XSS 纵深不足 | 在反向代理/控制面统一注入并加回归断言 | P2 |
-| R7 | 镜像/依赖 CVE 扫描依赖 CI 定时跑 | 新 CVE 可能滞后发现 | 保持 trivy 门禁 + 每周定时扫描与告警 | P3 |
+| ID | 风险 | 状态 | 影响 | 处置/证据 | 优先级 |
+|---|---|---|---|---|---|
+| R1 | 联邦使用**全局共享密钥**，无 per-peer 密钥/轮换 | **CLOSED** | — | `NewFederationManagerFromConfig` 装配 per-peer 密钥（`--federation-peer-secrets`/`OPSMESH_FEDERATION_PEER_SECRETS`，`peerID@peerURL=secret1[,secret2]`）：出站用目标 peer 的 `Secrets[0]` 签名并写 `X-Federation-Peer-ID`，接收侧接受该 peer 全部 secret 以支持轮换，全局密钥仅兜底；`federation_peer_test.go` 的 per-peer 隔离/轮换/服务装配用例全绿（含 `TestFederationServerWiring_UsesPerPeerSecrets`） | P1 |
+| R2 | 验签通过的 peer 请求**跳过 per-permission RBAC**（信任源控制面） | OPEN | 源端被攻破即可横向 | 强制联邦端口 mTLS + 对端审计留痕 + 网络 ACL 仅放行已知 peer | P1 |
+| R3 | `tsdb_ops.go`、`graph_ops.go` 的查询接口仍为 `device:read` 建任务 | **CLOSED** | — | 两处查询执行入口已提升为 `task:write`（`tsdb_ops.go:489`、`graph_ops.go:388`）；权限回归见 `query_exec_authz_test.go` 的 `TestQueryExecHandlersDenyViewer` / `TestQueryExecHandlersAllowOperator` | P1 |
+| R4 | 云厂商地域列表仍保留静态回退 | OPEN | 展示可能过期，不影响鉴权 | 厂商 API 不可用时显式标注"回退数据"并告警 | P2 |
+| R5 | `log.Printf` 未全面替换为结构化日志 | **PARTIALLY CLOSED** | 剩余包内审计检索与关联能力仍弱 | auth/user/role 路径已迁移到 `internal/logx`（`auth.go`、`auth_users.go`、`auth_roles.go`）；其余包按批跟进，优先任务/联邦路径 | P2 |
+| R6 | 前端安全响应头（CSP/HSTS/X-Frame-Options）未在本轮验证 | OPEN | XSS 纵深不足 | 在反向代理/控制面统一注入并加回归断言 | P2 |
+| R7 | 镜像/依赖 CVE 扫描依赖 CI 定时跑 | OPEN | 新 CVE 可能滞后发现 | 保持 trivy 门禁 + 每周定时扫描与告警 | P3 |
 
 ---
 

@@ -1,6 +1,6 @@
 // query_exec_authz_test.go 钉住「查询入口会下发 shell 任务」的鉴权面。
 //
-// 背景（审计发现）：monitor/vector/olap/mongo 六条 query 端点都通过 createSystemTask
+// 背景（审计发现）：monitor/vector/olap/mongo/tsdb/graph 八条 query 端点都通过 createSystemTask
 // 在设备上执行 shell，却只要求 device:read——viewer 因此拿到了远程执行面。
 // 这些入口与 handleCreateTask 同属「下发任务」，口径统一为 task:write
 // （server_tasks.go:114，operatorGroups 含 task ⇒ operator 仍可运维，viewer 无 task:write）。
@@ -18,7 +18,7 @@ import (
 	"testing"
 )
 
-// queryExecRoutes 是被钉住的六条「查询即下发任务」路由（生产里全部只接受 POST）。
+// queryExecRoutes 是被钉住的八条「查询即下发任务」路由（生产里全部只接受 POST）。
 var queryExecRoutes = []struct {
 	name string
 	path string
@@ -54,9 +54,19 @@ var queryExecRoutes = []struct {
 		path: "/api/v1/mongo/query",
 		body: `{"deviceID":"dev-query-exec","database":"db1","collection":"coll1","filter":"{}","limit":10}`,
 	},
+	{
+		name: "tsdb-query",
+		path: "/api/v1/tsdb/tdengine/query",
+		body: `{"deviceID":"dev-query-exec","database":"db1","query":"SELECT 1"}`,
+	},
+	{
+		name: "graph-query",
+		path: "/api/v1/graph/neo4j/cypher",
+		body: `{"deviceID":"dev-query-exec","database":"graph1","query":"MATCH (n) RETURN n LIMIT 1"}`,
+	},
 }
 
-// newQueryExecAuthzServer 用 g1 夹具（真 RBAC/真 JWT）并挂上四族路由。
+// newQueryExecAuthzServer 用 g1 夹具（真 RBAC/真 JWT）并挂上六族路由。
 func newQueryExecAuthzServer(t *testing.T) (*Server, *http.ServeMux) {
 	t.Helper()
 	s, mux := newG1E2EServer(t)
@@ -64,6 +74,8 @@ func newQueryExecAuthzServer(t *testing.T) (*Server, *http.ServeMux) {
 	s.registerVectorRoutes(mux)
 	s.registerOLAPRoutes(mux)
 	s.registerMongoRoutes(mux)
+	s.registerTSDBRoutes(mux)
+	s.registerGraphRoutes(mux)
 	return s, mux
 }
 

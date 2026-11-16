@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	authpkg "github.com/Levango7/OpsMesh/pkg/auth"
 )
 
 // defaultAgentShellWhitelist 是 agent shell 白名单的预置安全默认值（安全加固）。
@@ -262,6 +264,15 @@ type Config struct {
 	// 非空时启用联邦 API（跨网段任务转发 / 联邦设备视图），控制面之间通过 HTTP/JSON 复用现有 REST API 通信。
 	// peer 不可达不影响本地服务（容错设计：联邦 API 返回可用部分 + 不可达标记）。
 	FederationPeers []string
+
+	// 联邦 per-peer 身份与密钥（可选；为空时沿用 FederationSecret 全局密钥，向后兼容）：
+	//   - FederationPeerID：本地 peer 身份（默认 "default"），签名时写入 X-Federation-Peer-ID，
+	//     供对端按 peerID 选择 per-peer 验签密钥。
+	//   - FederationPeerSecrets：逗号分隔条目 `<peerID>@<peerURL>=<secret1>[,<secret2>...]`；
+	//     每个 peer 的首个 secret 用于签名，全部 secret 用于验签（轮换期新旧密钥并存）。
+	//     配置后对匹配的 peerURL 优先于全局 FederationSecret。
+	FederationPeerID      string
+	FederationPeerSecrets []string
 
 	// metrics 访问控制：逗号分隔的 CIDR 白名单，仅允许这些来源访问 /metrics 端点。
 	// 空（默认）=不限制（向后兼容 MVP），但生产建议显式配置内网监控网段（如 10.0.0.0/8）。
@@ -591,6 +602,9 @@ func Load() *Config {
 	schemaPrefix := flag.String("schema-prefix", "opsmesh_tenant_", "schema 名前缀；最终 schema 名 = 前缀 + tenantID（或 env OPSMESH_SCHEMA_PREFIX）")
 	// 控制面联邦：逗号分隔的 peer 控制面 HTTP 地址列表。
 	federationPeers := flag.String("federation-peers", "", "控制面联邦 peer 地址列表（逗号分隔，如 http://peer1:8080,http://peer2:8080）；非空时启用联邦 API（跨网段任务转发/联邦设备视图）；或 env OPSMESH_FEDERATION_PEERS")
+	// 联邦 per-peer 身份与密钥（可选；全局 --federation-secret 仍作为兜底）。
+	federationPeerID := flag.String("federation-peer-id", "default", "联邦本地 peer 身份（写入 X-Federation-Peer-ID 头，供对端按 peerID 选择验签密钥）；默认 default；或 env OPSMESH_FEDERATION_PEER_ID")
+	federationPeerSecrets := flag.String("federation-peer-secrets", "", "联邦 per-peer HMAC 密钥（逗号分隔条目 <peerID>@<peerURL>=<secret1>[,<secret2>...]；首个 secret 签名，全部 secret 验签以支持轮换）；匹配 peer 时优先于 --federation-secret；或 env OPSMESH_FEDERATION_PEER_SECRETS")
 	// metrics 访问控制：逗号分隔的 CIDR 白名单。
 	metricsAllowCIDR := flag.String("metrics-allow-cidr", "", "metrics(/metrics) 访问控制：逗号分隔的 CIDR 白名单；空=不限制（生产建议配置内网监控网段，如 10.0.0.0/8）；或 env OPSMESH_METRICS_ALLOW_CIDR")
 	// 联邦通道硬化配置。
@@ -826,6 +840,8 @@ func Load() *Config {
 		MultiSchema:                valBool("multi-schema", *multiSchema, "OPSMESH_MULTI_SCHEMA"),
 		SchemaPrefix:               val("schema-prefix", *schemaPrefix, "OPSMESH_SCHEMA_PREFIX"),
 		FederationPeers:            parseFederationPeers(val("federation-peers", *federationPeers, "OPSMESH_FEDERATION_PEERS")),
+		FederationPeerID:           val("federation-peer-id", *federationPeerID, "OPSMESH_FEDERATION_PEER_ID"),
+		FederationPeerSecrets:      parseFederationPeerSecrets(val("federation-peer-secrets", *federationPeerSecrets, "OPSMESH_FEDERATION_PEER_SECRETS")),
 		MetricsAllowCIDR:           val("metrics-allow-cidr", *metricsAllowCIDR, "OPSMESH_METRICS_ALLOW_CIDR"),
 		FederationSecret:           val("federation-secret", *federationSecret, "OPSMESH_FEDERATION_SECRET"),
 		FederationTLSCert:          val("federation-tls-cert", *federationTLSCert, "OPSMESH_FEDERATION_TLS_CERT"),
@@ -1093,6 +1109,38 @@ func parseFederationPeers(s string) []string {
 	return out
 }
 
+// parseFederationPeerSecrets 解析逗号分隔的 per-peer 密钥条目。
+//
+// 语法：`<peerID>@<peerURL>=<secret1>[,<secret2>...]`。由于多个 peer 与同一 peer 的多个
+// 轮换密钥都以逗号分隔，这里按 token 形态归并：形如 `<peerID>@...=...` 的 token 开启新条目，
+// 其余 token（不含 `@...=` 结构）作为上一条目的追加 secret（兼容 base64 密钥中的 '='）。
+// 输入为空返回 nil；语法细节（空 secret / 重复 peerID/URL 等）由 pkg/auth 统一校验。
+func parseFederationPeerSecrets(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	tokens := strings.Split(s, ",")
+	out := make([]string, 0, len(tokens))
+	for _, raw := range tokens {
+		token := strings.TrimSpace(raw)
+		if token == "" {
+			continue
+		}
+		at := strings.Index(token, "@")
+		eq := strings.Index(token, "=")
+		startsEntry := at > 0 && eq > at
+		if len(out) == 0 || startsEntry {
+			out = append(out, token)
+			continue
+		}
+		out[len(out)-1] += "," + token
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // parseLogPushFiles 解析逗号分隔的日志采集文件路径列表为 []string，去除空白项与首尾空格。
 // 输入空串返回 nil（不启用日志推送），保证 agent 中 `if len(cfg.LogPushFiles) > 0` 判空可用。
 // 与 parseFederationPeers 同结构，独立保留以备未来差异化校验（如路径绝对值检查）。
@@ -1292,8 +1340,24 @@ func (c *Config) Validate() error {
 	}
 	// 联邦通道硬化校验（强校验）：启用联邦但缺失共享密钥时直接拒绝启动，
 	// 防止跨不可信网段伪造租户身份头（原告警改为 fail-fast）。
-	if len(c.FederationPeers) > 0 && c.FederationSecret == "" {
-		return fmt.Errorf("federation-secret is required when federation-peers is set")
+	// per-peer 密钥（--federation-peer-secrets）可替代全局密钥，且需通过格式与 URL 校验。
+	if len(c.FederationPeerSecrets) > 0 {
+		peers, err := authpkg.ParseFederationPeerSecrets(c.FederationPeerSecrets)
+		if err != nil {
+			return fmt.Errorf("非法 --federation-peer-secrets: %w", err)
+		}
+		for i, p := range peers {
+			u, err := url.Parse(p.URL)
+			if err != nil {
+				return fmt.Errorf("非法 --federation-peer-secrets[%d] URL=%q: %w", i, p.URL, err)
+			}
+			if u.Scheme == "" || u.Host == "" {
+				return fmt.Errorf("非法 --federation-peer-secrets[%d] URL=%q（需含 scheme 与 host，如 http://peer:8080）", i, p.URL)
+			}
+		}
+	}
+	if len(c.FederationPeers) > 0 && c.FederationSecret == "" && len(c.FederationPeerSecrets) == 0 {
+		return fmt.Errorf("federation-secret or federation-peer-secrets is required when federation-peers is set")
 	}
 	// 多副本会话状态共享校验：session-store 格式须为
 	// "redis://host:port" 或 "redis://:password@host:port"（口令可内嵌，百分号编码特殊字符）。

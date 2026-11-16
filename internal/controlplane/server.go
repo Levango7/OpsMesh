@@ -13,7 +13,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,11 +67,13 @@ type Server struct {
 	metricsPort int
 	// metricsCounts 缓存 /metrics 的应用级计数（P1-6：每次抓取 5 次全量扫描 → TTL 内合并）。
 	// 零值 = 不缓存，故测试里直接 &Server{...} 构造的老路径行为不变。
-	metricsCounts       metricscache.AppCountsCache
-	requireAuth         bool
-	tlsCert             string
-	tlsKey              string
-	clientCA            string
+	metricsCounts metricscache.AppCountsCache
+	requireAuth   bool
+	tlsCert       string
+	tlsKey        string
+	clientCA      string
+	// securityHeaders 安全响应头配置（nil ⇒ 包级缺省值；NewServer 从环境变量装配）。
+	securityHeaders     *securityHeadersConfig
 	shutdownWait        time.Duration
 	bus                 events.Bus                        // 审计/告警事件总线（默认 noop）
 	metrics             *metrics.M                        // 观测指标
@@ -392,6 +397,33 @@ func newBudgetedKnowledgeHandler() *knowledge.KnowledgeHandler {
 	return knowledge.NewKnowledgeHandler(knowledge.NewInMemoryKnowledgeStore(), budgetedGateway())
 }
 
+// securityHeadersFromEnv 从环境变量装配安全响应头配置。
+//
+// 临时接线：internal/config 尚无 SecurityHeaders/CSPPolicy 字段（另一条线在改
+// config.go，本批次不得触碰），故在服务启动时直接读取环境变量：
+//   - OPSMESH_SECURITY_HEADERS：总开关，缺省 true；
+//   - OPSMESH_CSP_POLICY：CSP 策略，缺省见 defaultSecurityCSPPolicy；显式置空关闭 CSP；
+//   - OPSMESH_HSTS：明文 HTTP 也注入 HSTS 的显式开关，缺省 false。
+//
+// 解析失败保留缺省值，避免一个拼写错误就把安全头整体关掉。
+func securityHeadersFromEnv() securityHeadersConfig {
+	cfg := defaultSecurityHeadersConfig()
+	if v := strings.TrimSpace(os.Getenv("OPSMESH_SECURITY_HEADERS")); v != "" {
+		if enabled, err := strconv.ParseBool(v); err == nil {
+			cfg.Disabled = !enabled
+		}
+	}
+	if v, ok := os.LookupEnv("OPSMESH_CSP_POLICY"); ok {
+		cfg.CSPPolicy = strings.TrimSpace(v)
+	}
+	if v := strings.TrimSpace(os.Getenv("OPSMESH_HSTS")); v != "" {
+		if enabled, err := strconv.ParseBool(v); err == nil {
+			cfg.HSTSEnabled = enabled
+		}
+	}
+	return cfg
+}
+
 func NewServer(cfg *config.Config) (*Server, error) {
 	// Kafka brokers/topic 经参数传入事件总线（避免 os.Setenv 并发不安全）。
 	bus := events.New(cfg.EventBus, cfg.KafkaBrokers, cfg.KafkaTopic)
@@ -417,6 +449,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	secHeaders := securityHeadersFromEnv()
 	s := &Server{
 		cfg:              cfg,
 		store:            st,
@@ -428,6 +461,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		tlsCert:          cfg.TLSCert,
 		tlsKey:           cfg.TLSKey,
 		clientCA:         cfg.ClientCA,
+		securityHeaders:  &secHeaders,
 		shutdownWait:     cfg.ShutdownTimeout,
 		bus:              bus,
 		metrics:          metrics.New(),
@@ -730,12 +764,17 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 	// 控制面联邦：cfg.FederationPeers 非空时构造 FederationManager，启用联邦 API。
 	// nil 时路由层跳过 /api/v1/federation/* 注册（向后兼容，不影响未启用联邦的部署）。
-	// 硬化：传入共享 HMAC 密钥 + 出站 mTLS 配置（nil 表示明文联邦）。
+	// 硬化：经 FromConfig 装配 per-peer 密钥与本地 peer 身份（出站签名优先用目标 peer 的
+	// Secrets[0] 并写 X-Federation-Peer-ID，全局 FederationSecret 仅作兜底）；
+	// 出站 mTLS 配置可空（nil 表示明文联邦）。
 	fedClientTLS, err := tlsutil.HTTPClientTLSConfig(cfg.FederationTLSCert, cfg.FederationTLSKey, cfg.FederationCA)
 	if err != nil {
 		return nil, fmt.Errorf("联邦客户端 TLS 配置失败: %w", err)
 	}
-	s.fed = NewFederationManager(cfg.FederationPeers, st, cfg.FederationSecret, fedClientTLS)
+	s.fed, err = NewFederationManagerFromConfig(cfg, st, fedClientTLS)
+	if err != nil {
+		return nil, fmt.Errorf("联邦管理器初始化失败: %w", err)
+	}
 	// 用户中心 JWT 密钥：优先用 config.JWTSecret，空则随机生成 32 字节（重启后旧 token 失效）。
 	if cfg.JWTSecret != "" {
 		s.jwtSecret = []byte(cfg.JWTSecret)

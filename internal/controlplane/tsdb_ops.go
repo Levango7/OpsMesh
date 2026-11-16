@@ -486,7 +486,7 @@ func (s *Server) handleTSDBQuery(w http.ResponseWriter, r *http.Request, tsType 
 	if !ok {
 		return
 	}
-	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	if !allowedTSDBTypes[tsType] {

@@ -385,7 +385,7 @@ func (s *Server) handleGraphQuery(w http.ResponseWriter, r *http.Request, gType 
 	if !ok {
 		return
 	}
-	if _, ok := s.requireProd(w, r, "device:read"); !ok {
+	if _, ok := s.requireProd(w, r, "task:write"); !ok {
 		return
 	}
 	if !allowedGraphTypes[gType] {

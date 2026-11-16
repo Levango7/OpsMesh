@@ -38,6 +38,9 @@ func federationTestHeaders(t *testing.T, secret, method, path, ts, nonce, tenant
 	return h
 }
 
+// federationLegacyTestSecret 测试用全局共享密钥（peer 与本地管理器共用）。
+const federationLegacyTestSecret = "fed-legacy-test-secret"
+
 // newPeerTestServer 构造一个模拟 peer 控制面的 httptest.Server，复用真实 Server 的 handler。
 // 这样 peer 侧的任务创建/设备列表/健康检查走真实代码路径，测试更接近生产。
 // cfg.Demo=true：demo 模式放宽认证，便于测试在不显式注入网关头时调用 peer handler
@@ -49,7 +52,7 @@ func newPeerTestServer(t *testing.T) *httptest.Server {
 	st.Register(&proto.AgentInfo{Segment: "peer-seg", TenantID: "t1", Hostname: "peer-agent-1"})
 	srv := &Server{
 		store:       st,
-		cfg:         &config.Config{TaskMaxRetries: 3, Demo: true},
+		cfg:         &config.Config{TaskMaxRetries: 3, Demo: true, FederationSecret: federationLegacyTestSecret},
 		requireAuth: false,
 	}
 	mux := http.NewServeMux()
@@ -66,7 +69,7 @@ func TestFederationManager_ForwardTask(t *testing.T) {
 	defer peer.Close()
 
 	localStore := store.NewMemoryStore()
-	fed := NewFederationManager([]string{peer.URL}, localStore, "", nil)
+	fed := NewFederationManager([]string{peer.URL}, localStore, federationLegacyTestSecret, nil)
 	if fed == nil {
 		t.Fatal("NewFederationManager returned nil for non-empty peers")
 	}
@@ -128,7 +131,7 @@ func TestFederationManager_FederatedDevices(t *testing.T) {
 	// 本地也注册一台 agent，使 local 部分非空。
 	localStore.Register(&proto.AgentInfo{Segment: "local-seg", TenantID: "t1", Hostname: "local-agent"})
 
-	fed := NewFederationManager([]string{peer1.URL, peer2URL}, localStore, "", nil)
+	fed := NewFederationManager([]string{peer1.URL, peer2URL}, localStore, federationLegacyTestSecret, nil)
 	// 认证防御：传 t1 租户，peer 侧 demo 模式但 agent 属于 t1，需带 X-Tenant-ID 才能查到。
 	result := fed.FederatedDevices(context.Background(), "t1", 0, 0, "")
 
@@ -203,7 +206,7 @@ func TestHandleFederationPeers(t *testing.T) {
 	s := &Server{
 		store: store.NewMemoryStore(),
 		cfg:   &config.Config{FederationPeers: []string{peer.URL}, Demo: true}, // ：Demo 放行 requireProd
-		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore(), "", nil),
+		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore(), federationLegacyTestSecret, nil),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/federation/peers", nil)
@@ -231,7 +234,7 @@ func TestHandleFederationForwardTask(t *testing.T) {
 	s := &Server{
 		store: store.NewMemoryStore(),
 		cfg:   &config.Config{FederationPeers: []string{peer.URL}, Demo: true}, // ：Demo 放行 requireProd
-		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore(), "", nil),
+		fed:   NewFederationManager([]string{peer.URL}, store.NewMemoryStore(), federationLegacyTestSecret, nil),
 	}
 
 	// 取 peer 上 agent ID（黑盒：通过 /api/v1/devices 反推）。
@@ -307,7 +310,7 @@ func TestHandleFederationDevices(t *testing.T) {
 	s := &Server{
 		store: localSt,
 		cfg:   &config.Config{FederationPeers: []string{peer.URL}, Demo: true},
-		fed:   NewFederationManager([]string{peer.URL}, localSt, "", nil),
+		fed:   NewFederationManager([]string{peer.URL}, localSt, federationLegacyTestSecret, nil),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/federation/devices", nil)

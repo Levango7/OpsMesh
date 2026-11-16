@@ -308,3 +308,91 @@ func TestValidate_InhibitRulesFile_NotExists(t *testing.T) {
 		t.Fatal("不存在的 InhibitRulesFile 应被拒绝")
 	}
 }
+
+// ============================================================================
+// 联邦 per-peer 密钥配置：解析 / 校验 / Load 映射
+// ============================================================================
+
+// TestParseFederationPeerSecrets_Grouping 验证逗号分隔条目的归并规则：
+// `<peerID>@<peerURL>=<secret1>[,<secret2>...]` 中的轮换密钥与后续 peer 条目可共存。
+func TestParseFederationPeerSecrets_Grouping(t *testing.T) {
+	got := parseFederationPeerSecrets("peer-a@http://a:8080=s1,s2,peer-b@http://b:8080=t1")
+	want := []string{"peer-a@http://a:8080=s1,s2", "peer-b@http://b:8080=t1"}
+	if len(got) != len(want) {
+		t.Fatalf("entries = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("entries[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	// base64 密钥末尾的 '=' 不应被误判为新条目（不含 @ 结构）。
+	got2 := parseFederationPeerSecrets("peer-a@http://a:8080=c2VjcmV0,ZW5k=")
+	if len(got2) != 1 || got2[0] != "peer-a@http://a:8080=c2VjcmV0,ZW5k=" {
+		t.Fatalf("base64 secrets parsed as %v", got2)
+	}
+
+	if got := parseFederationPeerSecrets("  "); got != nil {
+		t.Fatalf("blank input = %v, want nil", got)
+	}
+}
+
+// TestValidate_FederationPeerSecrets 验证 per-peer 密钥可替代全局密钥，且非法条目被拒绝。
+func TestValidate_FederationPeerSecrets(t *testing.T) {
+	c := base()
+	c.FederationPeers = []string{"http://peer-a:8080", "http://peer-b:8080"}
+	c.FederationSecret = ""
+	c.FederationPeerSecrets = []string{"peer-a@http://peer-a:8080=s1,s2", "peer-b@http://peer-b:8080=t1"}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid per-peer secrets rejected: %v", err)
+	}
+
+	c2 := base()
+	c2.FederationPeers = []string{"http://peer-a:8080"}
+	c2.FederationPeerSecrets = []string{"peer-a@http://peer-a:8080"} // 缺 =<secret>
+	if err := c2.Validate(); err == nil {
+		t.Fatal("malformed per-peer entry accepted")
+	}
+
+	c3 := base()
+	c3.FederationPeers = []string{"http://peer-a:8080"}
+	c3.FederationPeerSecrets = []string{"peer-a@peer-a:8080=s1"} // URL 缺 scheme/host
+	if err := c3.Validate(); err == nil {
+		t.Fatal("invalid per-peer URL accepted")
+	}
+}
+
+// TestLoad_FederationPeerConfig 验证 flag 与 env 映射：
+// --federation-peer-id / --federation-peer-secrets 及 OPSMESH_* 环境变量。
+func TestLoad_FederationPeerConfig(t *testing.T) {
+	restore := clearOpsmeshEnv()
+	defer restore()
+
+	cfg := loadForTest(
+		"--federation-peer-id=cp-a",
+		"--federation-peer-secrets=peer-a@http://a:8080=s1,s2,peer-b@http://b:8080=t1",
+	)
+	if cfg.FederationPeerID != "cp-a" {
+		t.Fatalf("FederationPeerID = %q, want cp-a", cfg.FederationPeerID)
+	}
+	if len(cfg.FederationPeerSecrets) != 2 || cfg.FederationPeerSecrets[0] != "peer-a@http://a:8080=s1,s2" || cfg.FederationPeerSecrets[1] != "peer-b@http://b:8080=t1" {
+		t.Fatalf("FederationPeerSecrets = %v", cfg.FederationPeerSecrets)
+	}
+
+	def := loadForTest()
+	if def.FederationPeerID != "default" || def.FederationPeerSecrets != nil {
+		t.Fatalf("defaults: peerID=%q secrets=%v", def.FederationPeerID, def.FederationPeerSecrets)
+	}
+
+	if err := os.Setenv("OPSMESH_FEDERATION_PEER_ID", "cp-env"); err != nil {
+		t.Fatalf("setenv: %v", err)
+	}
+	if err := os.Setenv("OPSMESH_FEDERATION_PEER_SECRETS", "peer-a@http://a:8080=env-secret"); err != nil {
+		t.Fatalf("setenv: %v", err)
+	}
+	envCfg := loadForTest()
+	if envCfg.FederationPeerID != "cp-env" || len(envCfg.FederationPeerSecrets) != 1 || envCfg.FederationPeerSecrets[0] != "peer-a@http://a:8080=env-secret" {
+		t.Fatalf("env mapping: peerID=%q secrets=%v", envCfg.FederationPeerID, envCfg.FederationPeerSecrets)
+	}
+}

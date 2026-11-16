@@ -2,8 +2,6 @@
 package controlplane
 
 import (
-	cryptoRand "crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,48 +16,6 @@ import (
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
-
-func (s *Server) securityHeadersMiddleware(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		// 修复 5：Permissions-Policy 禁用敏感设备权限。
-		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		// 修复 5：HSTS 仅 HTTPS 部署时注入（tlsCert 非空表示启用了 TLS）。
-		if s.tlsCert != "" {
-			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-		}
-		// 修复 6：CSP nonce-based 收紧。
-		// 每请求生成 16 字节随机 nonce（hex 编码 32 字符），注入 CSP 头。
-
-		// 安全加固（CSP 收紧 — 已完成）：
-		// 个人版前端是 Phase 1 原生 JS 仪表盘（internal/controlplane/embed/web/），
-		// 含 88 个 ES Module .js（40 flow + 41 render + 7 核心），均通过 <script type="module"> 外部引用，无 inline script。
-		// 企业版前端是 Vue3+Vite 编译产物（web/enterprise/dist/），独立部署，<script> 均为外部 src 引用，
-		// Vue 的 @click 编译为 addEventListener（非 inline onclick），无 inline script。
-		// → script-src 已移除 'unsafe-inline'，仅保留 'self' + 'nonce-{nonce}'（nonce 作防御纵深）。
-
-		// style-src 仍保留 'unsafe-inline'：企业版 Vue 组件使用 :style 绑定（运行时注入 inline style，
-		// 如 ProgressRing/MetricsCard/DataTable 等 7 处），个人版引导页亦有 inline <style> 块。
-		// style 的 inline 安全风险显著低于 script（无法执行代码），保留是可接受的安全取舍。
-		// 后续若需进一步收紧 style-src，可将 :style 绑定改为 class 切换 + 预定义 CSS 变量。
-		nonceBytes := make([]byte, 16)
-		if _, err := cryptoRand.Read(nonceBytes); err != nil {
-			// 随机数生成失败（极罕见）：回退到固定 nonce（仅影响 CSP 强度，不阻断请求）。
-			nonceBytes = []byte("fallback-nonce-v1")
-		}
-		nonce := hex.EncodeToString(nonceBytes)
-		var csp strings.Builder
-		csp.WriteString("default-src 'self'; script-src 'self' 'nonce-")
-		csp.WriteString(nonce)
-		csp.WriteString("'; style-src 'self' 'unsafe-inline' 'nonce-")
-		csp.WriteString(nonce)
-		csp.WriteString("'; img-src 'self' data:; connect-src 'self'")
-		w.Header().Set("Content-Security-Policy", csp.String())
-		h.ServeHTTP(w, r)
-	})
-}
 
 // csrfOriginCheck 是 CSRF Origin 校验中间件（安全加固）。
 // 对状态变更方法（POST/PUT/DELETE/PATCH）校验 Origin 头，防跨站提交。

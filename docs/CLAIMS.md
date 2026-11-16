@@ -1261,6 +1261,11 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [CLAIM] 2026-11-16T02:00:00Z from=kilo ttl=8h scope=docs/canary-release-and-rollback-plan.md,docs/security-review-2026-11-16.md note=批次33 发布治理：灰度发布与回滚预案 + 安全审查报告（依据审计 A/B/C 与本轮整改证据）
 
+[TAKEOVER] 2026-11-16T03:45:00Z from=kilo scope=internal/controlplane/tsdb_ops.go reason=ttl-expired note=原 CLAIM（opencode 2026-11-15T01:23Z, ttl=24h）已于 2026-11-16T01:23Z 过期且无 DONE/RELEASE/LANDED；批次35 将查询接口权限由 device:read 提升为 task:write（与批次31 六个同类接口一致）
+[TAKEOVER] 2026-11-16T03:45:00Z from=kilo scope=internal/controlplane/graph_ops.go reason=ttl-expired note=原 CLAIM（opencode 2026-11-15T02:50Z, ttl=24h）已于 2026-11-16T02:50Z 过期且无 DONE/RELEASE/LANDED；同上批次35 权限提升
+
+[CLAIM] 2026-11-16T03:45:00Z from=kilo ttl=8h scope=pkg/auth/federation.go,internal/controlplane/federation.go,internal/config/config.go,internal/controlplane/federation_peer_test.go,internal/controlplane/security_headers.go,internal/controlplane/server.go,internal/controlplane/server_middleware.go,internal/controlplane/auth_users.go,internal/controlplane/auth.go,internal/controlplane/auth_roles.go,scripts/loadtest/ note=批次35 剩余项收口：联邦 per-peer 密钥与轮换、前端安全响应头（CSP/HSTS 等）、鉴权路径结构化日志、k6 压测基线；tsdb/graph 权限提升按 TAKEOVER 执行
+
 [DONE] 2026-11-15T10:00:00Z from=kilo scope=web/enterprise/src/,internal/controlplane/,internal/config/config.go,pkg/auth/,docs/CLAIMS.md,CHANGELOG.md commit=1bd034ab8f451efbeeb82f51f5bfd09096e1364a note=批次30-32 收口（前端阻断缺陷/后端正确性/device HMAC 联邦）
 
 [CLAIM] 2026-11-15T09:58:52Z from=opencode ttl=48h scope=internal/controlplane/vector_ops.go,internal/controlplane/b31_injection_test.go note=ARCH 模板迁移第二例：vector_ops.go 7 builder 入参全改 validated*（validate* 构造函数承载白名单），builder 内 0 raw req 残留；守卫 b31 同型重写。第二个架构样板证明方案可复制。

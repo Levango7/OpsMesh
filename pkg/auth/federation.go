@@ -31,6 +31,9 @@ const (
 	FederationHeaderTS        = "X-Federation-Ts"
 	FederationHeaderNonce     = "X-Federation-Nonce"
 	FederationHeaderSignature = "X-Federation-Sig"
+	// FederationHeaderPeerID 签名方本地 peer 身份；接收方据此选择 per-peer 验签密钥。
+	// 缺省时按全局共享密钥验签（向后兼容）。
+	FederationHeaderPeerID = "X-Federation-Peer-ID"
 )
 
 // DefaultNonceCacheMaxEntries NonceCache 默认容量上限（超出后先清理过期项，仍满则拒绝）。
@@ -80,6 +83,118 @@ func FederationCanonicalStringLegacy(method, path, ts, tenantID, userID, roles, 
 func FederationBodySHA256(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
+}
+
+// FederationPeerSecret 单个 peer 的 HMAC 密钥集合。
+// Secrets[0] 为当前签名密钥，其余为轮换期保留的旧密钥（仅用于验签）。
+type FederationPeerSecret struct {
+	PeerID  string
+	URL     string
+	Secrets []string
+}
+
+// FederationPeerResolver 按 peer URL / peer ID 查询 per-peer 密钥；构造后只读，可并发使用。
+type FederationPeerResolver struct {
+	byURL    map[string]FederationPeerSecret
+	byPeerID map[string]FederationPeerSecret
+}
+
+// ParseFederationPeerSecrets 解析 `<peerID>@<peerURL>=<secret1>[,<secret2>...]` 条目。
+// 每个条目至少一个非空 secret；peerID 与 URL 均不可为空，且不允许重复。
+func ParseFederationPeerSecrets(entries []string) ([]FederationPeerSecret, error) {
+	out := make([]FederationPeerSecret, 0, len(entries))
+	seenPeerID := make(map[string]struct{}, len(entries))
+	seenURL := make(map[string]struct{}, len(entries))
+	for i, raw := range entries {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]为空", i)
+		}
+		at := strings.Index(entry, "@")
+		if at <= 0 {
+			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 缺少 <peerID>@", i, entry)
+		}
+		peerID := strings.TrimSpace(entry[:at])
+		if peerID == "" {
+			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 的 peerID 为空", i, entry)
+		}
+		rest := entry[at+1:]
+		eq := strings.Index(rest, "=")
+		if eq <= 0 {
+			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 缺少 <peerURL>=", i, entry)
+		}
+		peerURL := strings.TrimSpace(rest[:eq])
+		if peerURL == "" {
+			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 的 peerURL 为空", i, entry)
+		}
+		parts := strings.Split(rest[eq+1:], ",")
+		secrets := make([]string, 0, len(parts))
+		for _, part := range parts {
+			secret := strings.TrimSpace(part)
+			if secret == "" {
+				return nil, fmt.Errorf("auth: 联邦 per-peer 密钥条目[%d]=%q 含空 secret", i, entry)
+			}
+			secrets = append(secrets, secret)
+		}
+		if _, dup := seenPeerID[peerID]; dup {
+			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥 peerID %q 重复", peerID)
+		}
+		if _, dup := seenURL[peerURL]; dup {
+			return nil, fmt.Errorf("auth: 联邦 per-peer 密钥 URL %q 重复", peerURL)
+		}
+		seenPeerID[peerID] = struct{}{}
+		seenURL[peerURL] = struct{}{}
+		out = append(out, FederationPeerSecret{PeerID: peerID, URL: peerURL, Secrets: secrets})
+	}
+	return out, nil
+}
+
+// NewFederationPeerResolver 用已解析的 per-peer 密钥构造只读查询器。
+func NewFederationPeerResolver(peers []FederationPeerSecret) *FederationPeerResolver {
+	r := &FederationPeerResolver{
+		byURL:    make(map[string]FederationPeerSecret, len(peers)),
+		byPeerID: make(map[string]FederationPeerSecret, len(peers)),
+	}
+	for _, p := range peers {
+		r.byURL[p.URL] = p
+		r.byPeerID[p.PeerID] = p
+	}
+	return r
+}
+
+// ParseFederationPeerResolver 解析条目并直接构造查询器。
+func ParseFederationPeerResolver(entries []string) (*FederationPeerResolver, error) {
+	peers, err := ParseFederationPeerSecrets(entries)
+	if err != nil {
+		return nil, err
+	}
+	return NewFederationPeerResolver(peers), nil
+}
+
+// SecretForURL 返回目标 peer 的 peerID 与当前签名密钥（Secrets[0]）；未配置返回 ok=false。
+func (r *FederationPeerResolver) SecretForURL(url string) (peerID, secret string, ok bool) {
+	if r == nil {
+		return "", "", false
+	}
+	p, found := r.byURL[url]
+	if !found || len(p.Secrets) == 0 {
+		return "", "", false
+	}
+	return p.PeerID, p.Secrets[0], true
+}
+
+// SecretsForPeerID 返回该 peer 的全部可验签密钥（含轮换期旧密钥）；未配置返回 nil。
+func (r *FederationPeerResolver) SecretsForPeerID(peerID string) []string {
+	if r == nil {
+		return nil
+	}
+	p, found := r.byPeerID[peerID]
+	if !found || len(p.Secrets) == 0 {
+		return nil
+	}
+	out := make([]string, len(p.Secrets))
+	copy(out, p.Secrets)
+	return out
 }
 
 // SignFederation 对 canonical 原文做 HMAC-SHA256，返回十六进制签名。
@@ -197,7 +312,20 @@ func (c *NonceCache) pruneLocked(now time.Time) {
 // 签名不匹配返回 ErrFederationSignature，重放返回 ErrFederationReplay；
 // 错误均可用 errors.Is 判断。
 func VerifyFederationSignature(secret []byte, maxSkew time.Duration, method, path string, headers http.Header, body []byte, nonces *NonceCache, now time.Time) error {
-	if len(secret) == 0 {
+	return VerifyFederationSignatureAny([][]byte{secret}, maxSkew, method, path, headers, body, nonces, now)
+}
+
+// VerifyFederationSignatureAny 与 VerifyFederationSignature 语义一致，但接受多个候选密钥：
+// 任一非空候选匹配即通过（per-peer 密钥轮换期新旧密钥并存）。空候选集合一律拒绝；
+// nonce 仅在签名匹配成功后消费一次，避免错误候选提前耗尽重放缓存。
+func VerifyFederationSignatureAny(secrets [][]byte, maxSkew time.Duration, method, path string, headers http.Header, body []byte, nonces *NonceCache, now time.Time) error {
+	candidates := make([][]byte, 0, len(secrets))
+	for _, secret := range secrets {
+		if len(secret) > 0 {
+			candidates = append(candidates, secret)
+		}
+	}
+	if len(candidates) == 0 {
 		return ErrFederationSecretMissing
 	}
 	if headers.Get(FederationHeaderForwarded) != "1" {
@@ -238,8 +366,15 @@ func VerifyFederationSignature(secret []byte, maxSkew time.Duration, method, pat
 	} else {
 		canonical = FederationCanonicalStringLegacy(method, path, tsRaw, tenant, user, roles, bodySHA)
 	}
-	expected := SignFederation(string(secret), canonical)
-	if !hmac.Equal([]byte(expected), []byte(sig)) {
+	matched := false
+	for _, secret := range candidates {
+		expected := SignFederation(string(secret), canonical)
+		if hmac.Equal([]byte(expected), []byte(sig)) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return ErrFederationSignature
 	}
 	if nonces != nil && !nonces.CheckAndAdd(nonce, now) {

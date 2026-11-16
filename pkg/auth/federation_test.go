@@ -353,3 +353,95 @@ func TestFederationNonceCache_ConcurrentDistinct(t *testing.T) {
 		t.Fatalf("accepted=%d distinct nonces, want 64", accepted)
 	}
 }
+
+func TestParseFederationPeerSecrets_Valid(t *testing.T) {
+	got, err := ParseFederationPeerSecrets([]string{
+		"peer-a@http://peer-a:8080=s1,s2",
+		" peer-b@http://peer-b:8080=t1 ",
+	})
+	if err != nil {
+		t.Fatalf("ParseFederationPeerSecrets: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].PeerID != "peer-a" || got[0].URL != "http://peer-a:8080" || len(got[0].Secrets) != 2 || got[0].Secrets[0] != "s1" || got[0].Secrets[1] != "s2" {
+		t.Fatalf("entry[0] = %+v", got[0])
+	}
+	if got[1].PeerID != "peer-b" || got[1].URL != "http://peer-b:8080" || len(got[1].Secrets) != 1 || got[1].Secrets[0] != "t1" {
+		t.Fatalf("entry[1] = %+v", got[1])
+	}
+}
+
+func TestParseFederationPeerSecrets_Invalid(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []string
+	}{
+		{name: "empty_entry", entries: []string{""}},
+		{name: "missing_at", entries: []string{"peer-ahttp://peer-a:8080=s1"}},
+		{name: "missing_eq", entries: []string{"peer-a@http://peer-a:8080"}},
+		{name: "empty_secret", entries: []string{"peer-a@http://peer-a:8080="}},
+		{name: "trailing_empty_secret", entries: []string{"peer-a@http://peer-a:8080=s1,"}},
+		{name: "empty_peer_id", entries: []string{"@http://peer-a:8080=s1"}},
+		{name: "empty_url", entries: []string{"peer-a@=s1"}},
+		{name: "duplicate_peer_id", entries: []string{"peer-a@http://a:8080=s1", "peer-a@http://b:8080=s2"}},
+		{name: "duplicate_url", entries: []string{"peer-a@http://a:8080=s1", "peer-b@http://a:8080=s2"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, err := ParseFederationPeerSecrets(tt.entries); err == nil {
+				t.Fatalf("entries %v accepted, got %+v; want error", tt.entries, got)
+			}
+		})
+	}
+}
+
+func TestFederationPeerResolver_Lookup(t *testing.T) {
+	resolver, err := ParseFederationPeerResolver([]string{"peer-a@http://peer-a:8080=s1,s2"})
+	if err != nil {
+		t.Fatalf("ParseFederationPeerResolver: %v", err)
+	}
+	peerID, secret, ok := resolver.SecretForURL("http://peer-a:8080")
+	if !ok || peerID != "peer-a" || secret != "s1" {
+		t.Fatalf("SecretForURL = (%q, %q, %v), want (peer-a, s1, true)", peerID, secret, ok)
+	}
+	if _, _, ok := resolver.SecretForURL("http://unknown:8080"); ok {
+		t.Fatal("SecretForURL(unknown) ok=true, want false")
+	}
+	secrets := resolver.SecretsForPeerID("peer-a")
+	if len(secrets) != 2 || secrets[0] != "s1" || secrets[1] != "s2" {
+		t.Fatalf("SecretsForPeerID = %v, want [s1 s2]", secrets)
+	}
+	secrets[0] = "mutated"
+	if got := resolver.SecretsForPeerID("peer-a"); got[0] != "s1" {
+		t.Fatalf("SecretsForPeerID aliases internal slice: %v", got)
+	}
+	if got := resolver.SecretsForPeerID("unknown"); got != nil {
+		t.Fatalf("SecretsForPeerID(unknown) = %v, want nil", got)
+	}
+	var nilResolver *FederationPeerResolver
+	if _, _, ok := nilResolver.SecretForURL("http://peer-a:8080"); ok {
+		t.Fatal("nil resolver returned ok=true")
+	}
+	if got := nilResolver.SecretsForPeerID("peer-a"); got != nil {
+		t.Fatalf("nil resolver SecretsForPeerID = %v, want nil", got)
+	}
+}
+
+func TestFederationVerifyAny_AcceptsRotationSecret(t *testing.T) {
+	now := time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC)
+	ts := strconv.FormatInt(now.Unix(), 10)
+	const path = "/api/v1/devices"
+	h := federationTestHeaders(http.MethodGet, path, ts, "n-rotation", "t1", "u1", "role-admin", "s2", nil)
+	h.Set(FederationHeaderPeerID, "peer-a")
+	if err := VerifyFederationSignatureAny([][]byte{[]byte("s1"), []byte("s2")}, DefaultFederationMaxSkew, http.MethodGet, path, h, nil, nil, now); err != nil {
+		t.Fatalf("old/new rotation secret rejected: %v", err)
+	}
+	if err := VerifyFederationSignatureAny([][]byte{[]byte("x"), []byte("y")}, DefaultFederationMaxSkew, http.MethodGet, path, h, nil, nil, now); !errors.Is(err, ErrFederationSignature) {
+		t.Fatalf("wrong candidates err = %v, want ErrFederationSignature", err)
+	}
+	if err := VerifyFederationSignatureAny(nil, DefaultFederationMaxSkew, http.MethodGet, path, h, nil, nil, now); !errors.Is(err, ErrFederationSecretMissing) {
+		t.Fatalf("empty candidates err = %v, want ErrFederationSecretMissing", err)
+	}
+}
