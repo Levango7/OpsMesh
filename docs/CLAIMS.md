@@ -1296,3 +1296,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-16T11:00:00Z from=kilo scope=scripts/security/,docs/,CHANGELOG.md note=批次39 收口（TD-89 digest 验证器、风险台账三次收口、tech-debt 状态更新） commit=464ed920
 [DONE] 2026-11-16T15:00:00Z from=kilo scope=docs/security-review-2026-11-16.md note=安全审查报告修正（R6 CLOSED、云厂商 claim 精确化、测试文件列表补全） commit=377d4e60cd006a57a73e88237685ac775aa51916
 [DONE] 2026-11-16T16:00:00Z from=kilo scope=web/enterprise/src/api/sse.js,docs/tech-debt.md note=批次40 收口（sse.js warn dev-only、tech-debt 状态更新） commit=1146d26afd80d7ce4b9c5447415d812b8f7c72b4
+[DONE] 2026-11-16T17:00:00Z from=kilo scope=Dockerfile*,internal/config/,internal/events/,web/enterprise/src/router/,web/enterprise/src/views/NotFoundView.vue,docs/DELIVERY.md note=批次41 收口（Kafka -tags kafka + 启动校验、404 兜底页、DELIVERY 数字更新） commit=335aca918633680c833275fc4e05ef05f7ed0b8e
