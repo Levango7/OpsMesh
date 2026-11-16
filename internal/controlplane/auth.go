@@ -50,7 +50,7 @@ import (
 // 两者均为 HttpOnly + SameSite=Lax（防 XSS 读取 / 防 CSRF 跨站携带），同源由浏览器自动携带。
 const (
 	accessTokenCookieName  = "opsmesh_at"
-	refreshTokenCookieName = "opsmesh_rt"
+	refreshTokenCookieName = "opsmesh_rt" // #nosec G101 -- HTTP cookie NAME, not a credential value; refresh tokens are random server-issued and never hardcoded.
 	accessTokenExpiry      = 15 * time.Minute
 	refreshTokenExpiry     = 7 * 24 * time.Hour
 )

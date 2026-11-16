@@ -3,6 +3,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	eventspkg "github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	authpkg "github.com/Levango7/OpsMesh/pkg/auth"
 )
 
@@ -143,6 +145,11 @@ type Config struct {
 	Replicas int
 	// 生产模式：开启后默认 require-auth=true 且对 store=memory 强告警（生产基线）。
 	Production bool
+	// AllowInsecureStore 显式接受「持久化 store + 匿名读 API」的危险组合（仅限隔离 dev lab）。
+	// --store=mysql 等持久化后端在未开启 --production/--require-auth 时会把读 API
+	// （如 GET /api/v1/devices）暴露给匿名请求；默认 fail-fast，本开关把它降级为启动 WARN。
+	// 对应 --allow-insecure-store / env OPSMESH_ALLOW_INSECURE_STORE。
+	AllowInsecureStore bool
 	// 注册安全：是否允许公开注册。
 	// true（默认，向后兼容）=允许 /api/v1/auth/register 公开调用，但新用户 Status="pending" 须管理员审批；
 	// false=关闭公开注册接口（仅管理员可通过 POST /api/v1/users 创建用户）。
@@ -698,6 +705,9 @@ func Load() *Config {
 	quotaMaxAlerts := flag.Int("quota-max-alerts", 0, "默认最大告警数（未显式设置配额的租户回退到此值；0=不限，默认）；或 env OPSMESH_QUOTA_MAX_ALERTS")
 	// H2/H3 配套开关：SQL 后端桩存储放行开关（生产模式 + --store=mysql 时默认拒绝启动）。
 	allowStubStores := flag.Bool("allow-stub-stores", false, "H2/H3 止血：允许 SQL 后端继续使用 P1-P6 桩存储（15 个领域写入不持久化，见启动日志清单）；生产模式（--production=true）+ --store=mysql 时默认 false=拒绝启动，须显式 true 确认接受桩限制；memory 后端不受影响；或 env OPSMESH_ALLOW_STUB_STORES")
+	// 启动守卫豁免：持久化 store + 未开启 require-auth 时默认 fail-fast；
+	// 本开关显式确认「持久化 store 匿名读 API」的风险（仅限隔离 dev lab）。
+	allowInsecureStore := flag.Bool("allow-insecure-store", false, "显式接受持久化 store（--store=mysql 等）在未开启 require-auth 时的匿名读 API 风险（仅限隔离 dev lab）：默认 fail-fast，本开关降级为启动 WARN；或 env OPSMESH_ALLOW_INSECURE_STORE")
 	// AIOps（故障根因分析 + 智能修复生成 + 自然语言运维）：接入 Kilo Gateway / OpenAI 兼容接口。
 	aiopsEnabled := flag.Bool("aiops-enabled", false, "启用 AIOps 引擎（故障根因分析+智能修复+自然语言运维）；默认 false（向后兼容）；或 env OPSMESH_AIOPS_ENABLED")
 	aiopsProvider := flag.String("aiops-provider", "kilo", "AIOps LLM 提供商：kilo|openai|anthropic（默认 kilo，走 Kilo Gateway 路由免费模型）；或 env OPSMESH_AIOPS_PROVIDER")
@@ -912,6 +922,7 @@ func Load() *Config {
 		QuotaMaxTasks:          valInt("quota-max-tasks", *quotaMaxTasks, "OPSMESH_QUOTA_MAX_TASKS"),
 		QuotaMaxAlerts:         valInt("quota-max-alerts", *quotaMaxAlerts, "OPSMESH_QUOTA_MAX_ALERTS"),
 		AllowStubStores:        valBool("allow-stub-stores", *allowStubStores, "OPSMESH_ALLOW_STUB_STORES"),
+		AllowInsecureStore:     valBool("allow-insecure-store", *allowInsecureStore, "OPSMESH_ALLOW_INSECURE_STORE"),
 		AIOpsEnabled:           valBool("aiops-enabled", *aiopsEnabled, "OPSMESH_AIOPS_ENABLED"),
 		AIOpsProvider:          val("aiops-provider", *aiopsProvider, "OPSMESH_AIOPS_PROVIDER"),
 		AIOpsModel:             val("aiops-model", *aiopsModel, "OPSMESH_AIOPS_MODEL"),
@@ -1496,6 +1507,44 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("event-bus=kafka requires binary built with -tags kafka")
 	}
 	return nil
+}
+
+// StoreIsPersistent 报告 Store 是否指向持久化后端。
+// 约定：空值与 "memory" 为进程内后端（demo/单测/本地开发），其余任何值
+// （mysql/postgres/sqlite 等）都视为持久化后端——新增后端无需改本判断。
+func (c *Config) StoreIsPersistent() bool {
+	s := strings.ToLower(strings.TrimSpace(c.Store))
+	return s != "" && s != "memory"
+}
+
+// ValidateAuthStoreSafety 是控制面启动期的鉴权/存储组合守卫。
+//
+// 审计背景：--require-auth 默认 false，仅 --production 会自动开启（见 Load）。
+// 运维执行 --store=mysql 却漏了 --production 时，所有读 API（如 GET /api/v1/devices）
+// 对匿名请求开放——这是部署纪律陷阱。守卫分两级：
+//   - ERROR（fail-fast）：持久化 store + Production=false + RequireAuth=false，
+//     除非显式 --allow-insecure-store / env OPSMESH_ALLOW_INSECURE_STORE（隔离 dev lab）。
+//   - WARN：持久化 store + RequireAuth=false（不论 Production），始终输出结构化启动日志，
+//     字段 store/requireAuth/production 便于日志检索。
+//
+// 非持久化 store（memory/空）不干预，demo 与既有单测构造的配置不受影响。
+func (c *Config) ValidateAuthStoreSafety() error {
+	if !c.StoreIsPersistent() || c.RequireAuth {
+		return nil
+	}
+	logx.Warn(context.Background(),
+		"持久化 store 未开启 require-auth：读 API 对匿名请求开放",
+		"store", c.Store,
+		"requireAuth", c.RequireAuth,
+		"production", c.Production,
+		"allowInsecureStore", c.AllowInsecureStore,
+	)
+	if c.Production || c.AllowInsecureStore {
+		// --production 已在 Load 中默认开启 require-auth；主流程只有显式
+		// --require-auth=false 才会到这里（尊重显式降级，仅告警）。
+		return nil
+	}
+	return fmt.Errorf("--store=%s: persistent store without --production leaves read APIs anonymous; pass --production (or --require-auth) to proceed; for isolated dev labs pass --allow-insecure-store (or env OPSMESH_ALLOW_INSECURE_STORE) to downgrade this to a warning", c.Store)
 }
 
 // 通知渠道配置

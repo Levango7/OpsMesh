@@ -155,7 +155,7 @@ func AutoProvision(ctx context.Context, deps DeviceDeps, cfg Config, cidrs []str
 				defer wg.Done()
 				sshSem <- struct{}{} // 并发限流（最多 8 个并行 SSH 推送）
 				defer func() { <-sshSem }()
-				out, e := PushAndExec(context.Background(), addr, cfg.ProvisionSSHUser, cfg.ProvisionSSHKey, cfg.ProvisionSSHKP, cfg.ProvisionSSHKnownHosts, cmd)
+				out, e := PushAndExec(ctx, addr, cfg.ProvisionSSHUser, cfg.ProvisionSSHKey, cfg.ProvisionSSHKP, cfg.ProvisionSSHKnownHosts, cmd)
 				if e != nil {
 					mu.Lock()
 					sum.Failures = append(sum.Failures, fmt.Sprintf("ssh %s: %v (out=%s)", addr, e, out))

@@ -1268,6 +1268,8 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [CLAIM] 2026-11-16T05:40:00Z from=kilo ttl=8h scope=internal/controlplane/auth.go,internal/controlplane/federation.go,internal/controlplane/federation_device.go,internal/controlplane/cloud_account.go,internal/config/config.go,internal/controlplane/*_test.go,deploy/k8s/federation-networkpolicy.yaml,scripts/security/,docs/security-review-2026-11-16.md note=批次36 风险台账收口：R2 联邦入站路径白名单+mTLS/网络策略资产、R4 云地域回退显式标注、R5 结构化日志扫尾、R7 CVE 扫描脚本
 
+[CLAIM] 2026-11-16T16:30:00Z from=kilo ttl=8h scope=internal/controlplane/server_devices.go,internal/controlplane/audit_query.go,internal/controlplane/server_middleware.go,internal/controlplane/webhook*.go,internal/controlplane/script*.go,internal/controlplane/paginate/,internal/config/config.go,cmd/,scripts/smoke/,web/enterprise/src/views/,web/enterprise/src/components/,web/enterprise/src/layouts/,web/enterprise/src/i18n/,docs/api-pagination.md note=批次42 交付收口：opt-in 分页信封与契约文档、生产模式不安全默认告警+冒烟、前端写权限门补齐、抽屉可达性/i18n/侧栏滚动
+
 [CLAIM] 2026-11-16T07:00:00Z from=kilo ttl=8h scope=services/ note=批次37 日志统一：services/* 全部 stdlib log.* 迁移到各服务可用的结构化日志（无行为变化），按模块分批施工
 
 [DONE] 2026-11-15T10:00:00Z from=kilo scope=web/enterprise/src/,internal/controlplane/,internal/config/config.go,pkg/auth/,docs/CLAIMS.md,CHANGELOG.md commit=1bd034ab8f451efbeeb82f51f5bfd09096e1364a note=批次30-32 收口（前端阻断缺陷/后端正确性/device HMAC 联邦）

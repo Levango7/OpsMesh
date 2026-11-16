@@ -95,6 +95,16 @@ func runMain() int {
 		return 1
 	}
 
+	// 控制面鉴权/存储组合守卫：持久化 store 未开启 require-auth 时读 API 对匿名开放。
+	// 默认 fail-fast；--allow-insecure-store / OPSMESH_ALLOW_INSECURE_STORE 降级为 WARN。
+	// 仅控制面需要（agent 不暴露 B/S 读 API，backup/restore 等子命令已在上面短路）。
+	if cfg.Mode == "controlplane" {
+		if err := cfg.ValidateAuthStoreSafety(); err != nil {
+			fmt.Fprintf(os.Stderr, "[config] 校验失败: %v\n", err)
+			return 1
+		}
+	}
+
 	switch cfg.Mode {
 	case "controlplane":
 		// 控制面模式：HTTP(B/S) 8080 + gRPC 9090（真实注册通道） + metrics 9091。
