@@ -16,7 +16,7 @@ func TestNoopDiscovery(t *testing.T) {
 		t.Fatalf("Register 应返回 ErrNotImplemented，得到: %v", err)
 	}
 	// Deregister 返回 ErrNotImplemented
-	if err := n.Deregister(ctx, "x"); err != ErrNotImplemented {
+	if err := n.Deregister(ctx, "", "x", 0); err != ErrNotImplemented {
 		t.Fatalf("Deregister 应返回 ErrNotImplemented，得到: %v", err)
 	}
 	// List 返回空切片 + nil
@@ -75,7 +75,7 @@ func TestStaticDiscoveryRegisterDeregister(t *testing.T) {
 	}
 
 	// 注销 a
-	if err := d.Deregister(ctx, "a"); err != nil {
+	if err := d.Deregister(ctx, "svc", "host1", 9090); err != nil {
 		t.Fatal(err)
 	}
 	list, _ = d.List(ctx, "svc")
@@ -84,7 +84,7 @@ func TestStaticDiscoveryRegisterDeregister(t *testing.T) {
 	}
 
 	// 注销不存在的 ID 不报错（幂等）
-	if err := d.Deregister(ctx, "nonexistent"); err != nil {
+	if err := d.Deregister(ctx, "svc", "nohost", 0); err != nil {
 		t.Fatalf("注销不存在的 ID 应幂等无错: %v", err)
 	}
 }

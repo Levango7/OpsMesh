@@ -177,7 +177,7 @@ func (s *Server) handleUpdateTenant(w http.ResponseWriter, r *http.Request, id s
 //   - Plugin 为平台级资源，不按租户隔离，跳过；
 //   - Agent 无独立 store 方法（Agent 归属 device，随 Device 级联退役）。
 //
-// TODO: 若未来新增租户级域，需在此追加级联清理。
+// NOTE: 若未来新增租户级域，必须在此追加级联清理。
 func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id string) {
 	caller, ok := s.requirePermission(w, r, "tenant:write")
 	if !ok {
@@ -192,7 +192,7 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id s
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		return
 	}
-	// L3 三域级联清理：APIKey/Webhook/Script。
+	// L3 全域级联清理：按 tenantID 删除所有租户级资源，避免孤儿与跨租户泄露。
 	// store 已有按 tenantID 的 List+Delete 方法，handler 侧聚合调用确保孤儿资源被清。
 	for _, k := range s.store.ListAPIKeys(id) {
 		if k != nil {
@@ -232,7 +232,6 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id s
 		}
 	}
 
-	// 级联清理 Plugin：插件为平台级资源，不按租户隔离，跳过。
 	// 级联清理 Subscription/Invoice：按 tenantID 删除。
 	for _, sub := range s.store.ListSubscriptions(id) {
 		if sub != nil {
@@ -245,9 +244,158 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request, id s
 		}
 	}
 
+	// 级联清理 SLO。
+	for _, slo := range s.store.ListSLOs(id) {
+		if slo != nil {
+			s.store.DeleteSLO(id, slo.ID)
+		}
+	}
+
+	// 级联清理 K8sCluster。
+	for _, c := range s.store.ListK8sClusters(id) {
+		if c != nil {
+			s.store.DeleteK8sCluster(c.ID)
+		}
+	}
+
+	// 级联清理 OSTemplate / MiddlewareTemplate。
+	for _, t := range s.store.ListOSTemplates(id) {
+		if t != nil {
+			s.store.DeleteOSTemplate(t.ID)
+		}
+	}
+	for _, t := range s.store.ListMiddlewareTemplates(id) {
+		if t != nil {
+			s.store.DeleteMiddlewareTemplate(t.ID)
+		}
+	}
+
+	// 级联清理 Silence。
+	for _, sil := range s.store.ListSilences(id) {
+		if sil != nil {
+			s.store.DeleteSilence(sil.ID, id)
+		}
+	}
+
+	// 级联清理 NotifyChannel / NotifyTemplate。
+	for _, ch := range s.store.ListNotifyChannels(id) {
+		if ch != nil {
+			s.store.DeleteNotifyChannel(ch.ID, id)
+		}
+	}
+	for _, nt := range s.store.ListNotifyTemplates(id) {
+		if nt != nil {
+			s.store.DeleteNotifyTemplate(nt.ID, id)
+		}
+	}
+
+	// 级联清理 GatewayRoute。
+	for _, gr := range s.store.ListGatewayRoutes(id) {
+		if gr != nil {
+			s.store.DeleteGatewayRoute(id, gr.ID)
+		}
+	}
+
+	// 级联清理 Config（key 为配置键）。
+	for _, cfg := range s.store.ListConfigs(id) {
+		if cfg != nil {
+			s.store.DeleteConfig(id, cfg.Key)
+		}
+	}
+
+	// 级联清理 Secret（key 为密钥键）。
+	for _, sec := range s.store.ListSecrets(id) {
+		if sec != nil {
+			s.store.DeleteSecret(id, sec.Key)
+		}
+	}
+
+	// 级联清理 TrafficPolicy。
+	for _, tp := range s.store.ListPolicies(id) {
+		if tp != nil {
+			s.store.DeletePolicy(id, tp.ID)
+		}
+	}
+
+	// 级联清理 PipelineTemplate。
+	for _, pt := range s.store.ListTemplates(id) {
+		if pt != nil {
+			s.store.DeleteTemplate(id, pt.ID)
+		}
+	}
+
+	// 级联清理 ArgoCDApp。
+	for _, app := range s.store.ListApps(id) {
+		if app != nil {
+			s.store.DeleteApp(id, app.ID)
+		}
+	}
+
+	// 级联清理 ComplianceReport。
+	for _, rep := range s.store.ListReports(id) {
+		if rep != nil {
+			s.store.DeleteReport(id, rep.ID)
+		}
+	}
+
+	// 级联清理 Backup。
+	for _, bk := range s.store.ListBackups(id) {
+		if bk != nil {
+			s.store.DeleteBackup(id, bk.ID)
+		}
+	}
+
+	// 级联清理 NetworkDevice。
+	for _, nd := range s.store.ListNetworkDevices(id) {
+		if nd != nil {
+			s.store.DeleteNetworkDevice(id, nd.ID)
+		}
+	}
+
+	// 级联清理 AutomationRule。
+	for _, ar := range s.store.ListAutomationRules(id) {
+		if ar != nil {
+			s.store.DeleteAutomationRule(id, ar.ID)
+		}
+	}
+
+	// 级联清理 CloudAccount / CloudResource。
+	offset, limit := 0, 1000
+	for {
+		accounts, total, err := s.store.ListCloudAccounts(r.Context(), id, offset, limit)
+		if err != nil {
+			break
+		}
+		for _, a := range accounts {
+			if a != nil {
+				_ = s.store.DeleteCloudAccount(r.Context(), a.ID)
+			}
+		}
+		offset += len(accounts)
+		if len(accounts) == 0 || offset >= total {
+			break
+		}
+	}
+	offset, limit = 0, 1000
+	for {
+		resources, total, err := s.store.ListCloudResources(r.Context(), id, "", "", offset, limit)
+		if err != nil {
+			break
+		}
+		for _, res := range resources {
+			if res != nil {
+				_ = s.store.DeleteCloudResource(r.Context(), res.ID)
+			}
+		}
+		offset += len(resources)
+		if len(resources) == 0 || offset >= total {
+			break
+		}
+	}
+
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: "default", UserID: caller.ID, Action: "tenant_delete", Target: id,
-		Detail: "cascade:apikeys,webhooks,scripts,tasks,devices,alerts,subscriptions,invoices",
+		Detail: "cascade:apikeys,webhooks,scripts,tasks,devices,alerts,subscriptions,invoices,slos,k8sclusters,ostemplates,middlewaretemplates,silences,notifychannels,notifytemplates,gatewayroutes,configs,secrets,trafficpolicies,pipelinetemplates,argocdapps,compliancereports,backups,networkdevices,automationrules,cloudaccounts,cloudresources",
 	})
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

@@ -551,12 +551,46 @@ func (p *TencentProvider) DeleteResource(ctx context.Context, creds types.Creden
 	return nil
 }
 
-// SyncTags 同步资源标签。
-//
-// 腾讯云标签走独立 Tag 服务（tag.tencentcloudapi.com），其 ResourceList 需
-// QCS 全限定名（qcs::cvm:<region>:uin/<UIN>:instance/<id>），而我们的
-// Credentials 不含 UIN（账号 ID）。为避免拼接出错误标识导致误改他账号资源，
-// 此处返回带原因的明确错误；待凭据模型补充 UIN 后再接线。
 func (p *TencentProvider) SyncTags(ctx context.Context, creds types.Credentials, resourceID string, tags map[string]string) error {
-	return fmt.Errorf("tencent SyncTags: requires account UIN for QCS resource identifier (qcs::cvm:<region>:uin/<UIN>:instance/<id>); credentials do not carry UIN — unsupported for now")
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
+	if creds.UIN == "" {
+		return fmt.Errorf("tencent: SyncTags requires account UIN in credentials (set credentials.uin)")
+	}
+	if creds.Type != types.AuthTypeAKSK {
+		return fmt.Errorf("tencent: only AKSK auth supported for sync tags")
+	}
+	if resourceID == "" {
+		return fmt.Errorf("tencent: resourceID is required")
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	region := creds.Region
+	if region == "" {
+		region = "ap-guangzhou"
+	}
+
+	client := newTencentClient(creds)
+	replaceTags := make([]map[string]string, 0, len(tags))
+	for k, v := range tags {
+		replaceTags = append(replaceTags, map[string]string{"TagKey": k, "TagValue": v})
+	}
+	body := map[string]interface{}{
+		"Resource":    fmt.Sprintf("qcs::cvm:%s:uin/%s:instance/%s", region, creds.UIN, resourceID),
+		"ReplaceTags": replaceTags,
+	}
+
+	_, err := client.call(ctx, "tag.tencentcloudapi.com", "tag", "ModifyResourceTags", "2018-08-13", region, body)
+	if err != nil {
+		logx.Warn(ctx, "tencent SyncTags failed", "error", err, "resource_id", resourceID)
+		return fmt.Errorf("tencent: sync tags: %w", err)
+	}
+	logx.Info(ctx, "tencent tags synced", "instance_id", resourceID, "tags", tags)
+	return nil
 }

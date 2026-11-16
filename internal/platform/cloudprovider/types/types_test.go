@@ -135,9 +135,10 @@ func TestCredentials_JSONContract(t *testing.T) {
 			OIDCToken:       "oidc-token",
 			RoleARN:         "acs:ram::123:role/ops",
 			Region:          "cn-hangzhou",
+			UIN:             "100000000001",
 		}
 		obj := marshalToMap(t, in)
-		assertKeys(t, obj, "type", "accessKeyId", "accessKeySecret", "oidcToken", "roleArn", "region")
+		assertKeys(t, obj, "type", "accessKeyId", "accessKeySecret", "oidcToken", "roleArn", "region", "uin")
 		if obj["type"] != "aksk" || obj["region"] != "cn-hangzhou" {
 			t.Fatalf("字段值失真: %v", obj)
 		}
