@@ -546,7 +546,10 @@ onUnmounted(() => {
 .tab-icon { display: inline-flex; flex-shrink: 0; }
 .tab-label { flex: 1; min-width: 0; }
 
-.content { flex: 1; max-width: 1200px; margin: 0 auto; padding: 22px; }
+/* min-width: 0 —— 父级 .layout 是行 flex，flex 项默认 min-width:auto 会取自身
+   min-content 宽（宽表格/长串把它顶到 800+px），窄视口（≤1024）下整页横向滚动。
+   置 0 后内容区可收缩，溢出由 DataTable 的 .dt-wrap{overflow-x:auto} 就地承接。 */
+.content { flex: 1; min-width: 0; max-width: 1200px; margin: 0 auto; padding: 22px; }
 
 .footbar {
   display: flex; align-items: center; justify-content: space-between;
