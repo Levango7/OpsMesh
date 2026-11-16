@@ -1277,3 +1277,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [CLAIM] 2026-11-16T00:58:29Z from=opencode ttl=24h scope=.github/workflows/ci.yml,CHANGELOG.md note=Option A（用户裁决 2026-11-16）：Race detector 的 cp_race 批 -timeout 1800s→2400s（仅预算，-count=3/断言数/竞态检测语义不变）；证据=该腿本代 runner 贴壁 30m 墙（#72 两次同红 + main #73 合入后同腿红 run 43719977623，0 fail 0 竞争）。折入 #72 随其合主。
 
 [DONE] 2026-11-16T03:20:00Z from=kilo scope=internal/controlplane/,pkg/auth/,web/enterprise/src/,docs/ note=批次33-34 收口（灰度/回滚预案、安全审查、分页竞态防护、三类验收用例与输入边界硬化） commit=b20f72f5978d825669b3c726a1a2328a5dc8fbe6
+[DONE] 2026-11-16T05:00:00Z from=kilo scope=internal/controlplane/,pkg/auth/,internal/config/,scripts/loadtest/,docs/,CHANGELOG.md note=批次35 收口（per-peer 联邦密钥+安全头+查询权限+结构化日志+k6 基线） commit=2ff4fcdbbf7f0b5d2e651498f83ee027b70d8bb1
