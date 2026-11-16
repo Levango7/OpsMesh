@@ -51,6 +51,14 @@
 - **守卫验证**：变异测试通过——新增 `buildNeverCalled(req middlewareOpsRequest)`（无任何调用方、编译可过）⇒ `TestB34BuilderParamsAreValidatedOnly` 判红并精确指到 521 行；撤销后全绿。
 - **不变项**：白名单语义、错误响应形状（400 `{"error":...}`）、脚本逐字节不变（Kafka 版本探测/zookeeper 多节点等原文保留）、`DeviceID` 保留 raw（仅 handler 层使用）。
 - **验证**：`gofmt -l .` clean；`golangci-lint run ./internal/controlplane/` ⇒ **0 issues**；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（controlplane 69.9s 全绿，含 TestB34 三例）。
+## [Arch-mongo_ops 型式收口（架构级迁移，第六例）] — 2026-11-16（mongo_ops.go 6 builder 全部改为 validated*）
+
+- **背景**：db_ops.go（#70）/ vector_ops.go（#71）/ k8s_provision.go（#72）/ monitor_ops.go（#73）/ middleware_ops.go（#74）五例架构样板落地后，本批迁移 mongo_ops.go：所有 `build*Script` 入参改为 `validated*`，原始 `mongoDeployRequest / mongoOpsRequest / mongoDatabaseReq / mongoCollectionReq / mongoQueryReq / mongoBackupReq` 彻底不再能到达 builder——编译期阻断。
+- **模板**：`validateMongoDeploy（Mode 缺省 single + 三态 whitelist 内置）/ validateMongoAction / validateMongoDatabase / validateMongoCollection / validateMongoQuery（Limit<=0→20 内置）/ validateMongoBackup（Path 缺省 /backup/mongodb + 绝对路径校验内置）` 构造函数在 handler 内调用；builder 内 **0** raw req 残留（6/6）。
+- **范围**：6 个 builder（Deploy/Action/Database/Collection/Query/Backup）+ 6 个 handler 更新为调用 validator；b21_injection_test.go 同步更新至 validated* 签名（builder 调用、`req.` 词边界正则 `b21RawReqRef`、DeviceID 移出 validated 结构）；新增 `b35_injection_test.go` 守卫（断言 build* 入参类型必须 validated*，原始 req 类型不得出现）。
+- **守卫验证**：变异测试通过——新增 `buildNeverCalled(req mongoOpsRequest)`（无任何调用方、编译可过）⇒ `TestB35BuilderParamsAreValidatedOnly` 判红并精确指到 634 行；撤销后全绿（EOF 无多余空行）。
+- **不变项**：白名单语义、错误响应形状（400 `{"error":...}`）、脚本逐字节不变（filter 单引号转义走 Quote 路径保留）、`DeviceID` 保留 raw（仅 handler 层使用）。
+- **验证**：`gofmt -l .` clean；`golangci-lint run ./internal/controlplane/` ⇒ **0 issues**；`go vet` ok；`go test ./internal/controlplane/ -count=1` ok（controlplane 72.95s 全绿，含 TestB21/TestB35 各三例）。
 ## [Unreleased-批次 30-32 收口] — 2026-11-15（前端阻断缺陷 + 后端正确性 + device 域 HMAC 联邦）
 
 - **批次 30 前端阻断缺陷修复**：`adminApi` TDZ（改用函数内惰性引用，消 `Cannot access before initialization`）；`Pagination` total 口径统一（分页组件 total 由服务端总数驱动，不再取当前页长度）；`Button` size 归一（消除未定义的 `md` 尺寸）；告警翻页保持（`AlertsView` 翻页不再重置筛选状态）；Users/Tenants 改服务端分页（page/pageSize 下发 + total 回填）。

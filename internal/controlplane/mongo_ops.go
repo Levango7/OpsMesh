@@ -22,6 +22,7 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -44,6 +45,111 @@ var allowedMongoActions = map[string]bool{
 
 // MongoDB 库名/集合名正则。
 var mongoNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.\-]{1,120}$`)
+
+// validatedMongoDeploy / validatedMongoAction / validatedMongoDatabase /
+// validatedMongoCollection / validatedMongoQuery / validatedMongoBackup 是白名单校验后的形态。
+// builder 只接受这几种类型 —— 原始 mongoDeployRequest / mongoOpsRequest /
+// mongoDatabaseReq / mongoCollectionReq / mongoQueryReq / mongoBackupReq 无法被传入 builder。
+type validatedMongoDeploy struct {
+	Version, Mode string
+	Port          int
+}
+
+type validatedMongoAction struct {
+	Action string
+}
+
+type validatedMongoDatabase struct {
+	Action, Database string
+}
+
+type validatedMongoCollection struct {
+	Action, Database, Collection string
+}
+
+type validatedMongoQuery struct {
+	Database, Collection, Filter string
+	Limit                        int
+}
+
+type validatedMongoBackup struct {
+	Action, Database, Path string
+}
+
+func validateMongoDeploy(req mongoDeployRequest) (validatedMongoDeploy, error) {
+	if req.Version != "" && !middlewareVersionRe.MatchString(req.Version) {
+		return validatedMongoDeploy{}, errors.New("invalid version")
+	}
+	mode := req.Mode
+	if mode == "" {
+		mode = "single"
+	}
+	if mode != "single" && mode != "replicaSet" && mode != "sharded" {
+		return validatedMongoDeploy{}, errors.New("invalid mode (single/replicaSet/sharded)")
+	}
+	return validatedMongoDeploy{Version: req.Version, Port: req.Port, Mode: mode}, nil
+}
+
+func validateMongoAction(req mongoOpsRequest) (validatedMongoAction, error) {
+	if !allowedMongoActions[req.Action] {
+		return validatedMongoAction{}, errors.New("unsupported action")
+	}
+	return validatedMongoAction{Action: req.Action}, nil
+}
+
+var allowedMongoCRUDActions = map[string]bool{"create": true, "delete": true, "list": true}
+
+func validateMongoDatabase(req mongoDatabaseReq) (validatedMongoDatabase, error) {
+	if !allowedMongoCRUDActions[req.Action] {
+		return validatedMongoDatabase{}, errors.New("unsupported action (create/delete/list)")
+	}
+	if req.Action != "list" && !mongoNameRe.MatchString(req.Database) {
+		return validatedMongoDatabase{}, errors.New("invalid database name")
+	}
+	return validatedMongoDatabase{Action: req.Action, Database: req.Database}, nil
+}
+
+func validateMongoCollection(req mongoCollectionReq) (validatedMongoCollection, error) {
+	if !allowedMongoCRUDActions[req.Action] {
+		return validatedMongoCollection{}, errors.New("unsupported action (create/delete/list)")
+	}
+	if !mongoNameRe.MatchString(req.Database) {
+		return validatedMongoCollection{}, errors.New("invalid database name")
+	}
+	if req.Action != "list" && !mongoNameRe.MatchString(req.Collection) {
+		return validatedMongoCollection{}, errors.New("invalid collection name")
+	}
+	return validatedMongoCollection{Action: req.Action, Database: req.Database, Collection: req.Collection}, nil
+}
+
+func validateMongoQuery(req mongoQueryReq) (validatedMongoQuery, error) {
+	if !mongoNameRe.MatchString(req.Database) || !mongoNameRe.MatchString(req.Collection) {
+		return validatedMongoQuery{}, errors.New("invalid database or collection name")
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	return validatedMongoQuery{Database: req.Database, Collection: req.Collection, Filter: req.Filter, Limit: limit}, nil
+}
+
+func validateMongoBackup(req mongoBackupReq) (validatedMongoBackup, error) {
+	allowed := map[string]bool{"export": true, "import": true}
+	if !allowed[req.Action] {
+		return validatedMongoBackup{}, errors.New("unsupported action (export/import)")
+	}
+	if !mongoNameRe.MatchString(req.Database) {
+		return validatedMongoBackup{}, errors.New("invalid database name")
+	}
+	path := req.Path
+	if path == "" {
+		path = "/backup/mongodb"
+	}
+	if !strings.HasPrefix(path, "/") {
+		return validatedMongoBackup{}, errors.New("path must be absolute")
+	}
+	return validatedMongoBackup{Action: req.Action, Database: req.Database, Path: path}, nil
+}
 
 // MongoDB 部署请求体。
 type mongoDeployRequest struct {
@@ -148,25 +254,18 @@ func (s *Server) handleMongoDeploy(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if req.Version != "" && !middlewareVersionRe.MatchString(req.Version) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid version"})
-		return
-	}
 	if req.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	mode := req.Mode
-	if mode == "" {
-		mode = "single"
-	}
-	if mode != "single" && mode != "replicaSet" && mode != "sharded" {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mode (single/replicaSet/sharded)"})
+	vreq, verr := validateMongoDeploy(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildMongoDeployScript(req, mode)
-	action := "mongo_deploy_" + mode
+	script := buildMongoDeployScript(vreq)
+	action := "mongo_deploy_" + vreq.Mode
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, action)
 	if err != nil {
@@ -174,18 +273,16 @@ func (s *Server) handleMongoDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: "mongodb:" + mode,
-		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(req.Version)),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: action, Target: "mongodb:" + vreq.Mode,
+		Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(req.DeviceID) + " version=" + opsSQLString(vreq.Version)),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildMongoDeployScript(req mongoDeployRequest, mode string) string {
+func buildMongoDeployScript(vreq validatedMongoDeploy) string {
 	var b strings.Builder
-	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	portV := req.Port
 	b.WriteString("set -e\n")
-	port := portV
+	port := vreq.Port
 	if port <= 0 {
 		port = 27017
 	}
@@ -196,7 +293,7 @@ func buildMongoDeployScript(req mongoDeployRequest, mode string) string {
 	b.WriteString("    yum install -y mongodb-org\n")
 	b.WriteString("  elif command -v apt-get >/dev/null 2>&1; then apt-get install -y mongodb-org || apt-get install -y mongodb; fi\n")
 	b.WriteString("fi\n")
-	switch mode {
+	switch vreq.Mode {
 	case "single":
 		b.WriteString("systemctl enable --now mongod || mongod --port $PORT --dbpath /data/mongodb --fork --logpath /var/log/mongodb.log || true\n")
 		b.WriteString("echo 'MongoDB 单节点已启动 (端口:'$PORT')'\n")
@@ -212,10 +309,9 @@ func buildMongoDeployScript(req mongoDeployRequest, mode string) string {
 	return b.String()
 }
 
-func buildMongoActionScript(req mongoOpsRequest) string {
+func buildMongoActionScript(vreq validatedMongoAction) string {
 	var b strings.Builder
-	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	actionV := req.Action
+	actionV := vreq.Action
 	b.WriteString("set -e\n")
 	switch actionV {
 	case "start":
@@ -253,33 +349,28 @@ func (s *Server) handleMongoDatabase(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	allowed := map[string]bool{"create": true, "delete": true, "list": true}
-	if !allowed[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (create/delete/list)"})
-		return
-	}
-	if req.Action != "list" && !mongoNameRe.MatchString(req.Database) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid database name"})
+	vreq, verr := validateMongoDatabase(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildMongoDatabaseScript(req)
-	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "mongo_database_"+req.Action)
+	script := buildMongoDatabaseScript(vreq)
+	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "mongo_database_"+vreq.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "mongo.database", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "mongo_database_" + req.Action, Target: req.Database,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "mongo_database_" + vreq.Action, Target: vreq.Database,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildMongoDatabaseScript(req mongoDatabaseReq) string {
+func buildMongoDatabaseScript(vreq validatedMongoDatabase) string {
 	var b strings.Builder
-	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	databaseV, actionV := req.Database, req.Action
+	databaseV, actionV := vreq.Database, vreq.Action
 	b.WriteString("set -e\n")
 	switch actionV {
 	case "create":
@@ -315,37 +406,28 @@ func (s *Server) handleMongoCollection(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	allowed := map[string]bool{"create": true, "delete": true, "list": true}
-	if !allowed[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (create/delete/list)"})
-		return
-	}
-	if !mongoNameRe.MatchString(req.Database) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid database name"})
-		return
-	}
-	if req.Action != "list" && !mongoNameRe.MatchString(req.Collection) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid collection name"})
+	vreq, verr := validateMongoCollection(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildMongoCollectionScript(req)
-	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "mongo_collection_"+req.Action)
+	script := buildMongoCollectionScript(vreq)
+	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "mongo_collection_"+vreq.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "mongo.collection", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "mongo_collection_" + req.Action, Target: req.Database + "." + req.Collection,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "mongo_collection_" + vreq.Action, Target: vreq.Database + "." + vreq.Collection,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildMongoCollectionScript(req mongoCollectionReq) string {
+func buildMongoCollectionScript(vreq validatedMongoCollection) string {
 	var b strings.Builder
-	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	databaseV, collectionV, actionV := req.Database, req.Collection, req.Action
+	databaseV, collectionV, actionV := vreq.Database, vreq.Collection, vreq.Action
 	b.WriteString("set -e\n")
 	switch actionV {
 	case "create":
@@ -381,31 +463,28 @@ func (s *Server) handleMongoQuery(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if !mongoNameRe.MatchString(req.Database) || !mongoNameRe.MatchString(req.Collection) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid database or collection name"})
+	vreq, verr := validateMongoQuery(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	if req.Limit <= 0 {
-		req.Limit = 20
-	}
 
-	script := buildMongoQueryScript(req)
+	script := buildMongoQueryScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "mongo_query")
 	if err != nil {
 		writeInternalError(r.Context(), w, "mongo.query", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "mongo_query", Target: req.Database + "." + req.Collection,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "mongo_query", Target: vreq.Database + "." + vreq.Collection,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildMongoQueryScript(req mongoQueryReq) string {
+func buildMongoQueryScript(vreq validatedMongoQuery) string {
 	var b strings.Builder
-	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	databaseV, collectionV, filterV, limitV := req.Database, req.Collection, req.Filter, req.Limit
+	databaseV, collectionV, filterV, limitV := vreq.Database, vreq.Collection, vreq.Filter, vreq.Limit
 	b.WriteString("set -e\n")
 	filter := filterV
 	if strings.TrimSpace(filter) == "" {
@@ -448,40 +527,28 @@ func (s *Server) handleMongoBackup(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	allowed := map[string]bool{"export": true, "import": true}
-	if !allowed[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (export/import)"})
-		return
-	}
-	if !mongoNameRe.MatchString(req.Database) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid database name"})
-		return
-	}
-	if req.Path == "" {
-		req.Path = "/backup/mongodb"
-	}
-	if !strings.HasPrefix(req.Path, "/") {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path must be absolute"})
+	vreq, verr := validateMongoBackup(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildMongoBackupScript(req)
-	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "mongo_backup_"+req.Action)
+	script := buildMongoBackupScript(vreq)
+	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "mongo_backup_"+vreq.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "mongo.backup", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "mongo_backup_" + req.Action, Target: req.Database,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "mongo_backup_" + vreq.Action, Target: vreq.Database,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildMongoBackupScript(req mongoBackupReq) string {
+func buildMongoBackupScript(vreq validatedMongoBackup) string {
 	var b strings.Builder
-	// 收口（批次 21）：handler 侧已白名单校验 ⇒ 局部变量承接已校验值，实参不再直引 req.*（判据 E/F）；脚本内容不变。
-	databaseV, actionV, pathV := req.Database, req.Action, req.Path
+	databaseV, actionV, pathV := vreq.Database, vreq.Action, vreq.Path
 	b.WriteString("set -e\n")
 	switch actionV {
 	case "export":
@@ -533,13 +600,14 @@ func (s *Server) handleMongoLifecycle(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if !allowedMongoActions[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action"})
+	vreq, verr := validateMongoAction(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildMongoActionScript(req)
-	taskAction := "mongo_" + req.Action
+	script := buildMongoActionScript(vreq)
+	taskAction := "mongo_" + vreq.Action
 
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, taskAction)
 	if err != nil {
