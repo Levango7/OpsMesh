@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Levango7/OpsMesh/pkg/httpx"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -352,7 +353,7 @@ func RequireTenant(authSecret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			tenantID := extractTenantFromRequest(r, authSecret)
 			if tenantID == "" {
-				http.Error(w, "tenant: missing tenant identity", http.StatusForbidden)
+				httpx.WriteError(w, http.StatusForbidden, "tenant: missing tenant identity")
 				return
 			}
 			ctx := WithTenantID(r.Context(), tenantID)
@@ -368,16 +369,16 @@ func (m *Manager) QuotaMiddleware(resourceType ResourceType, amount int) func(ht
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			tenantID, err := TenantIDFromContext(r.Context())
 			if err != nil {
-				http.Error(w, ErrTenantNotFound.Error(), http.StatusForbidden)
+				httpx.WriteError(w, http.StatusForbidden, ErrTenantNotFound.Error())
 				return
 			}
 
 			if err := m.EnforceQuota(r.Context(), tenantID, resourceType, amount); err != nil {
 				if errors.Is(err, ErrQuotaExceeded) {
-					http.Error(w, err.Error(), http.StatusTooManyRequests)
+					httpx.WriteError(w, http.StatusTooManyRequests, err.Error())
 					return
 				}
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 
