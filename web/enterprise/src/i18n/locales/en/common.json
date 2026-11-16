@@ -355,6 +355,7 @@
     "menu": "Menu",
     "load_failed": "Load failed",
     "tip": "Tips",
+    "no_results": "No matching results",
     "not_found": "The page you requested does not exist or has been removed."
   },
   "alerts": {
