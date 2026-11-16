@@ -152,7 +152,7 @@ func TestBudgetManagerMonthlyReset(t *testing.T) {
 	bm.budgets["t1"].UsedMonth = 900
 	// 用「上月 1 日」而非 AddDate(0,-1,0)：月末（如 10-31）回退一个月会被规范化到本月。
 	now := time.Now()
-	bm.budgets["t1"].monthReset = time.Date(now.Year(), now.Month()-1, 1, 0, 0, 0, 0, now.Location())
+	bm.budgets["t1"].MonthReset = time.Date(now.Year(), now.Month()-1, 1, 0, 0, 0, 0, now.Location())
 	bm.mu.Unlock()
 
 	if _, alerts := bm.RecordUsage("t1", 50); len(alerts) != 0 {
@@ -209,7 +209,7 @@ func TestBudgetManagerWindowFollowsTenantTimezone(t *testing.T) {
 		bm.mu.Lock()
 		bm.budgets["t1"] = &TokenBudget{
 			TenantID: "t1", DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8,
-			Timezone: tc.tz, UsedToday: 900, UsedMonth: 900, LastReset: stored, monthReset: stored,
+			Timezone: tc.tz, UsedToday: 900, UsedMonth: 900, LastReset: stored, MonthReset: stored,
 		}
 		bm.mu.Unlock()
 

@@ -183,7 +183,7 @@ func (bm *BudgetManager) SetBudget(tenantID string, daily, monthly int, threshol
 	budget.normalizeLocked(bm.now())
 	if bm.store != nil {
 		cp := cloneBudget(budget)
-		_ = bm.store.UpsertBudget(context.Background(), cp)
+		_ = bm.store.UpsertBudget(context.Background(), cp) //nolint:errcheck // fail-open：内存权威源，落库失败只降持久性不丢配额
 	}
 }
 
@@ -216,7 +216,7 @@ func (bm *BudgetManager) SetTimezone(tenantID, tz string) error {
 	budget.Timezone = loc.String()
 	budget.normalizeLocked(bm.now())
 	if bm.store != nil {
-		_ = bm.store.UpsertBudget(context.Background(), cloneBudget(budget))
+		_ = bm.store.UpsertBudget(context.Background(), cloneBudget(budget)) //nolint:errcheck // fail-open：内存权威源
 	}
 	return nil
 }
@@ -281,12 +281,12 @@ func (bm *BudgetManager) RecordUsage(tenantID string, tokens int) (bool, []Budge
 		bm.alerts = append(bm.alerts, alerts...)
 		if bm.store != nil {
 			for _, a := range alerts {
-				_ = bm.store.RecordAlert(context.Background(), a)
+				_ = bm.store.RecordAlert(context.Background(), a) //nolint:errcheck // fail-open：告警持久化失败不阻断调用方
 			}
 		}
 	}
 	if bm.store != nil {
-		_ = bm.store.UpsertBudget(context.Background(), cloneBudget(budget))
+		_ = bm.store.UpsertBudget(context.Background(), cloneBudget(budget)) //nolint:errcheck // fail-open：内存权威源
 	}
 	return !budget.overLimitLocked(), alerts
 }
