@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/incident-svc/internal/models"
 )
 
@@ -32,7 +32,7 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.Ping(); err != nil {
-		log.Printf("[store] mysql ping 失败（将延迟重连）: %v", err)
+		logx.Warn(context.Background(), "[store] mysql ping 失败（将延迟重连）", "service", "incident-svc", "error", err)
 	}
 	if err := initSchema(db); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
@@ -145,7 +145,7 @@ func ensureColumn(ctx context.Context, db *sql.DB, table, column, ddl string) er
 	if _, err := db.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("补列 %s.%s: %w", table, column, err)
 	}
-	log.Printf("[store] %s 表已补列 %s（既有库迁移）", table, column)
+	logx.Info(ctx, "[store] 表已补列（既有库迁移）", "service", "incident-svc", "table", table, "column", column)
 	return nil
 }
 
@@ -174,7 +174,7 @@ func (m *MySQLStore) CreateIncident(inc *models.Incident) *models.Incident {
 		inc.ID, inc.TenantID, inc.Title, inc.Description, inc.Severity, inc.Status, alertIDs, deviceIDs, inc.Assignee,
 		tags, nullTimePtr(inc.OccurredAt), nullTime(inc.DetectedAt), nullTimePtr(inc.ResolvedAt), nullTimePtr(inc.ClosedAt), nullTime(inc.CreatedAt), nullTime(inc.UpdatedAt))
 	if err != nil {
-		log.Printf("[store] CreateIncident 失败: %v", err)
+		logx.Error(ctx, "[store] CreateIncident 失败", err, "service", "incident-svc", "incidentID", inc.ID, "tenantID", inc.TenantID)
 	}
 	return inc
 }
@@ -191,7 +191,7 @@ func (m *MySQLStore) GetIncident(id, tenantID string) *models.Incident {
 	var occurredAt, detectedAt, resolvedAt, closedAt, createdAt, updatedAt sql.NullTime
 	if err := row.Scan(&inc.ID, &inc.TenantID, &inc.Title, &description, &severity, &inc.Status, &alertIDs, &deviceIDs, &assignee, &tags, &occurredAt, &detectedAt, &resolvedAt, &closedAt, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetIncident 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetIncident 查询失败", err, "service", "incident-svc", "incidentID", id, "tenantID", tenantID)
 		}
 		return nil
 	}
@@ -199,17 +199,17 @@ func (m *MySQLStore) GetIncident(id, tenantID string) *models.Incident {
 	inc.Severity = models.Severity(severity.String)
 	if len(alertIDs) > 0 {
 		if err := json.Unmarshal(alertIDs, &inc.AlertIDs); err != nil {
-			log.Printf("[store] scan Unmarshal: %v", err)
+			logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "incident-svc", "incidentID", inc.ID, "field", "alert_ids", "error", err)
 		}
 	}
 	if len(deviceIDs) > 0 {
 		if err := json.Unmarshal(deviceIDs, &inc.DeviceIDs); err != nil {
-			log.Printf("[store] scan Unmarshal: %v", err)
+			logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "incident-svc", "incidentID", inc.ID, "field", "device_ids", "error", err)
 		}
 	}
 	if len(tags) > 0 {
 		if err := json.Unmarshal(tags, &inc.Tags); err != nil {
-			log.Printf("[store] scan Unmarshal: %v", err)
+			logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "incident-svc", "incidentID", inc.ID, "field", "tags", "error", err)
 		}
 	}
 	if detectedAt.Valid {
@@ -250,7 +250,7 @@ func (m *MySQLStore) UpdateIncident(inc *models.Incident, tenantID string) *mode
 		inc.Title, inc.Description, inc.Severity, inc.Status, alertIDs, deviceIDs, inc.Assignee,
 		tags, nullTime(inc.DetectedAt), nullTimePtr(inc.ResolvedAt), nullTimePtr(inc.ClosedAt), nullTime(inc.UpdatedAt), inc.ID, tenantID)
 	if err != nil {
-		log.Printf("[store] UpdateIncident 失败: %v", err)
+		logx.Error(ctx, "[store] UpdateIncident 失败", err, "service", "incident-svc", "incidentID", inc.ID, "tenantID", tenantID)
 	}
 	return inc
 }
@@ -261,16 +261,16 @@ func (m *MySQLStore) DeleteIncident(id, tenantID string) bool {
 	defer cancel()
 	res, err := m.db.ExecContext(ctx, `DELETE FROM incidents WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteIncident 失败: %v", err)
+		logx.Error(ctx, "[store] DeleteIncident 失败", err, "service", "incident-svc", "incidentID", id, "tenantID", tenantID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "incident-svc", "error", err)
 	}
 	if n > 0 {
 		if _, err := m.db.ExecContext(ctx, `DELETE FROM timeline_events WHERE incident_id=?`, id); err != nil {
-			log.Printf("[store] best-effort exec: %v", err)
+			logx.Warn(ctx, "[store] best-effort 清理时间线失败", "service", "incident-svc", "incidentID", id, "error", err)
 		}
 	}
 	return n > 0
@@ -297,7 +297,7 @@ func (m *MySQLStore) ListIncidents(status string, severity models.Severity, tena
 	q += " ORDER BY created_at DESC"
 	rows, err := m.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListIncidents 失败: %v", err)
+		logx.Error(ctx, "[store] ListIncidents 失败", err, "service", "incident-svc", "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -314,17 +314,17 @@ func (m *MySQLStore) ListIncidents(status string, severity models.Severity, tena
 		inc.Severity = models.Severity(severity.String)
 		if len(alertIDs) > 0 {
 			if err := json.Unmarshal(alertIDs, &inc.AlertIDs); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "incident-svc", "incidentID", inc.ID, "error", err)
 			}
 		}
 		if len(deviceIDs) > 0 {
 			if err := json.Unmarshal(deviceIDs, &inc.DeviceIDs); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "incident-svc", "incidentID", inc.ID, "error", err)
 			}
 		}
 		if len(tags) > 0 {
 			if err := json.Unmarshal(tags, &inc.Tags); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "incident-svc", "incidentID", inc.ID, "error", err)
 			}
 		}
 		if detectedAt.Valid {
@@ -368,7 +368,7 @@ func (m *MySQLStore) AddTimelineEvent(ev *models.TimelineEvent, tenantID string)
 		`INSERT INTO timeline_events (id, incident_id, timestamp, type, description, author) VALUES (?, ?, ?, ?, ?, ?)`,
 		ev.ID, ev.IncidentID, nullTime(ev.Timestamp), ev.Type, ev.Description, ev.Author)
 	if err != nil {
-		log.Printf("[store] AddTimelineEvent 失败: %v", err)
+		logx.Error(ctx, "[store] AddTimelineEvent 失败", err, "service", "incident-svc", "incidentID", ev.IncidentID, "tenantID", tenantID)
 	}
 	return ev
 }
@@ -383,7 +383,7 @@ func (m *MySQLStore) GetTimeline(incidentID, tenantID string) []models.TimelineE
 	rows, err := m.db.QueryContext(ctx,
 		`SELECT id, incident_id, timestamp, type, description, author FROM timeline_events WHERE incident_id=? ORDER BY timestamp ASC`, incidentID)
 	if err != nil {
-		log.Printf("[store] GetTimeline 失败: %v", err)
+		logx.Error(ctx, "[store] GetTimeline 失败", err, "service", "incident-svc", "incidentID", incidentID, "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -411,7 +411,7 @@ func (m *MySQLStore) Incidents(tenantID string) []*models.Incident {
 	rows, err := m.db.QueryContext(ctx,
 		`SELECT id, tenant_id, title, description, severity, status, alert_ids, device_ids, assignee, tags, occurred_at, detected_at, resolved_at, closed_at, created_at, updated_at FROM incidents WHERE tenant_id=?`, tenantID)
 	if err != nil {
-		log.Printf("[store] Incidents 失败: %v", err)
+		logx.Error(ctx, "[store] Incidents 失败", err, "service", "incident-svc", "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -428,17 +428,17 @@ func (m *MySQLStore) Incidents(tenantID string) []*models.Incident {
 		inc.Severity = models.Severity(severity.String)
 		if len(alertIDs) > 0 {
 			if err := json.Unmarshal(alertIDs, &inc.AlertIDs); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "incident-svc", "incidentID", inc.ID, "error", err)
 			}
 		}
 		if len(deviceIDs) > 0 {
 			if err := json.Unmarshal(deviceIDs, &inc.DeviceIDs); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "incident-svc", "incidentID", inc.ID, "error", err)
 			}
 		}
 		if len(tags) > 0 {
 			if err := json.Unmarshal(tags, &inc.Tags); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "incident-svc", "incidentID", inc.ID, "error", err)
 			}
 		}
 		if detectedAt.Valid {

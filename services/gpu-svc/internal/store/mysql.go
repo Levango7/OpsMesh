@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/models"
 )
 
@@ -32,7 +32,7 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.Ping(); err != nil {
-		log.Printf("[store] mysql ping 失败（将延迟重连）: %v", err)
+		logx.Warn(context.Background(), "[store] mysql ping 失败（将延迟重连）", "service", "gpu-svc", "store", "mysql", "error", err)
 	}
 	if err := initSchema(db); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
@@ -155,19 +155,20 @@ func (m *MySQLStore) GetNode(id string) (*models.GPUNode, bool) {
 	var lastHeartbeat, createdAt, updatedAt sql.NullTime
 	if err := row.Scan(&n.ID, &n.Name, &address, &gpus, &n.Status, &labels, &n.TotalVRAMMB, &n.UsedVRAMMB, &n.GPUErrors, &lastHeartbeat, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetNode 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetNode 查询失败", err,
+				"service", "gpu-svc", "store", "mysql", "nodeID", id)
 		}
 		return nil, false
 	}
 	n.Address = address.String
 	if len(gpus) > 0 {
 		if err := json.Unmarshal(gpus, &n.GPUs); err != nil {
-			log.Printf("[store] scan Unmarshal: %v", err)
+			logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "GetNode", "nodeID", n.ID, "field", "gpus", "error", err)
 		}
 	}
 	if len(labels) > 0 {
 		if err := json.Unmarshal(labels, &n.Labels); err != nil {
-			log.Printf("[store] scan Unmarshal: %v", err)
+			logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "GetNode", "nodeID", n.ID, "field", "labels", "error", err)
 		}
 	}
 	if lastHeartbeat.Valid {
@@ -193,7 +194,8 @@ func (m *MySQLStore) ListNodes(status string) []*models.GPUNode {
 	}
 	rows, err := m.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListNodes 失败: %v", err)
+		logx.Error(ctx, "[store] ListNodes 失败", err,
+			"service", "gpu-svc", "store", "mysql", "status", status)
 		return nil
 	}
 	defer rows.Close()
@@ -209,12 +211,12 @@ func (m *MySQLStore) ListNodes(status string) []*models.GPUNode {
 		n.Address = address.String
 		if len(gpus) > 0 {
 			if err := json.Unmarshal(gpus, &n.GPUs); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "ListNodes", "nodeID", n.ID, "field", "gpus", "error", err)
 			}
 		}
 		if len(labels) > 0 {
 			if err := json.Unmarshal(labels, &n.Labels); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "ListNodes", "nodeID", n.ID, "field", "labels", "error", err)
 			}
 		}
 		if lastHeartbeat.Valid {
@@ -236,12 +238,13 @@ func (m *MySQLStore) DeleteNode(id string) bool {
 	defer cancel()
 	res, err := m.db.ExecContext(ctx, `DELETE FROM gpu_nodes WHERE id=?`, id)
 	if err != nil {
-		log.Printf("[store] DeleteNode 失败: %v", err)
+		logx.Error(ctx, "[store] DeleteNode 失败", err,
+			"service", "gpu-svc", "store", "mysql", "nodeID", id)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "gpu-svc", "store", "mysql", "op", "DeleteNode", "nodeID", id, "error", err)
 	}
 	return n > 0
 }
@@ -287,7 +290,8 @@ func (m *MySQLStore) GetWorkload(id string) (*models.Workload, bool) {
 	var createdAt, updatedAt, startedAt, finishedAt sql.NullTime
 	if err := row.Scan(&w.ID, &w.Name, &w.TenantID, &wType, &w.Status, &gpuReq, &nodeIDs, &w.Priority, &image, &cmd, &env, &w.Replicas, &modelName, &createdAt, &updatedAt, &startedAt, &finishedAt, &errorMsg); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetWorkload 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetWorkload 查询失败", err,
+				"service", "gpu-svc", "store", "mysql", "workloadID", id)
 		}
 		return nil, false
 	}
@@ -295,22 +299,22 @@ func (m *MySQLStore) GetWorkload(id string) (*models.Workload, bool) {
 	w.Type = models.WorkloadType(wType.String)
 	if len(gpuReq) > 0 {
 		if err := json.Unmarshal(gpuReq, &w.GPURequest); err != nil {
-			log.Printf("[store] scan Unmarshal: %v", err)
+			logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "GetWorkload", "workloadID", w.ID, "field", "gpu_request", "error", err)
 		}
 	}
 	if len(nodeIDs) > 0 {
 		if err := json.Unmarshal(nodeIDs, &w.NodeIDs); err != nil {
-			log.Printf("[store] scan Unmarshal: %v", err)
+			logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "GetWorkload", "workloadID", w.ID, "field", "node_ids", "error", err)
 		}
 	}
 	if len(cmd) > 0 {
 		if err := json.Unmarshal(cmd, &w.Command); err != nil {
-			log.Printf("[store] scan Unmarshal: %v", err)
+			logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "GetWorkload", "workloadID", w.ID, "field", "command", "error", err)
 		}
 	}
 	if len(env) > 0 {
 		if err := json.Unmarshal(env, &w.Env); err != nil {
-			log.Printf("[store] scan Unmarshal: %v", err)
+			logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "GetWorkload", "workloadID", w.ID, "field", "env", "error", err)
 		}
 	}
 	if createdAt.Valid {
@@ -357,7 +361,8 @@ func (m *MySQLStore) ListWorkloads(status string) []*models.Workload {
 	}
 	rows, err := m.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListWorkloads 失败: %v", err)
+		logx.Error(ctx, "[store] ListWorkloads 失败", err,
+			"service", "gpu-svc", "store", "mysql", "status", status)
 		return nil
 	}
 	defer rows.Close()
@@ -374,22 +379,22 @@ func (m *MySQLStore) ListWorkloads(status string) []*models.Workload {
 		w.Type = models.WorkloadType(wType.String)
 		if len(gpuReq) > 0 {
 			if err := json.Unmarshal(gpuReq, &w.GPURequest); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "ListWorkloads", "workloadID", w.ID, "field", "gpu_request", "error", err)
 			}
 		}
 		if len(nodeIDs) > 0 {
 			if err := json.Unmarshal(nodeIDs, &w.NodeIDs); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "ListWorkloads", "workloadID", w.ID, "field", "node_ids", "error", err)
 			}
 		}
 		if len(cmd) > 0 {
 			if err := json.Unmarshal(cmd, &w.Command); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "ListWorkloads", "workloadID", w.ID, "field", "command", "error", err)
 			}
 		}
 		if len(env) > 0 {
 			if err := json.Unmarshal(env, &w.Env); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "gpu-svc", "store", "mysql", "op", "ListWorkloads", "workloadID", w.ID, "field", "env", "error", err)
 			}
 		}
 		if createdAt.Valid {
@@ -436,7 +441,8 @@ func (m *MySQLStore) GetModel(name string) (*models.GPUModel, bool) {
 	var lastPulled sql.NullTime
 	if err := row.Scan(&mod.Name, &mod.SizeBytes, &parameterCount, &mod.Quantized, &mod.Serving, &mod.Port, &nodeID, &mod.Replicas, &lastPulled); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetModel 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetModel 查询失败", err,
+				"service", "gpu-svc", "store", "mysql", "model", name)
 		}
 		return nil, false
 	}
@@ -452,7 +458,7 @@ func (m *MySQLStore) ListModels() []*models.GPUModel {
 	defer cancel()
 	rows, err := m.db.QueryContext(ctx, `SELECT name, size_bytes, parameter_count, quantized, serving, port, node_id, replicas, last_pulled FROM gpu_models`)
 	if err != nil {
-		log.Printf("[store] ListModels 失败: %v", err)
+		logx.Error(ctx, "[store] ListModels 失败", err, "service", "gpu-svc", "store", "mysql")
 		return nil
 	}
 	defer rows.Close()

@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/portal-svc/internal/models"
 )
 
@@ -32,7 +32,7 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.Ping(); err != nil {
-		log.Printf("[store] mysql ping 失败（将延迟重连）: %v", err)
+		logx.Warn(context.Background(), "[store] mysql ping 失败（将延迟重连）", "service", "portal-svc", "error", err)
 	}
 	if err := initSchema(db); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
@@ -152,7 +152,7 @@ func (m *MySQLStore) CreateRequest(r *models.ResourceRequest) *models.ResourceRe
 		r.ID, r.TenantID, r.Requester, r.Title, r.Description, r.ResourceType, r.CPU, r.MemoryGB, r.StorageGB,
 		r.CostEstimate, r.Status, r.Approver, r.ApprovalNote, nullTime(r.CreatedAt), nullTime(r.UpdatedAt))
 	if err != nil {
-		log.Printf("[store] CreateRequest 失败: %v", err)
+		logx.Error(ctx, "[store] CreateRequest 失败", err, "service", "portal-svc", "id", r.ID, "tenantID", r.TenantID)
 	}
 	return r
 }
@@ -167,7 +167,7 @@ func (m *MySQLStore) GetRequest(id string) *models.ResourceRequest {
 	var createdAt, updatedAt sql.NullTime
 	if err := row.Scan(&r.ID, &r.TenantID, &requester, &r.Title, &description, &resourceType, &r.CPU, &r.MemoryGB, &r.StorageGB, &r.CostEstimate, &r.Status, &approver, &approvalNote, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetRequest 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetRequest 查询失败", err, "service", "portal-svc", "id", id)
 		}
 		return nil
 	}
@@ -202,7 +202,7 @@ func (m *MySQLStore) ListRequests(tenantID, status string) []*models.ResourceReq
 	q += " ORDER BY created_at DESC"
 	rows, err := m.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListRequests 失败: %v", err)
+		logx.Error(ctx, "[store] ListRequests 失败", err, "service", "portal-svc", "tenantID", tenantID, "status", status)
 		return nil
 	}
 	defer rows.Close()
@@ -238,12 +238,12 @@ func (m *MySQLStore) UpdateRequest(r *models.ResourceRequest) bool {
 		r.TenantID, r.Requester, r.Title, r.Description, r.ResourceType, r.CPU, r.MemoryGB, r.StorageGB,
 		r.CostEstimate, r.Status, r.Approver, r.ApprovalNote, time.Now().UTC(), r.ID)
 	if err != nil {
-		log.Printf("[store] UpdateRequest 失败: %v", err)
+		logx.Error(ctx, "[store] UpdateRequest 失败", err, "service", "portal-svc", "id", r.ID, "tenantID", r.TenantID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "portal-svc", "error", err)
 	}
 	return n > 0
 }
@@ -253,12 +253,12 @@ func (m *MySQLStore) DeleteRequest(id string) bool {
 	defer cancel()
 	res, err := m.db.ExecContext(ctx, `DELETE FROM resource_requests WHERE id=?`, id)
 	if err != nil {
-		log.Printf("[store] DeleteRequest 失败: %v", err)
+		logx.Error(ctx, "[store] DeleteRequest 失败", err, "service", "portal-svc", "id", id)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "portal-svc", "error", err)
 	}
 	return n > 0
 }
@@ -335,7 +335,7 @@ func (m *MySQLStore) AddRecommendation(r *models.CostRecommendation) {
 		 ON DUPLICATE KEY UPDATE category=VALUES(category), resource_id=VALUES(resource_id), description=VALUES(description), savings=VALUES(savings), priority=VALUES(priority)`,
 		r.ID, r.TenantID, r.Category, r.ResourceID, r.Description, r.Savings, r.Priority)
 	if err != nil {
-		log.Printf("[store] AddRecommendation 失败: %v", err)
+		logx.Error(ctx, "[store] AddRecommendation 失败", err, "service", "portal-svc", "id", r.ID, "tenantID", r.TenantID)
 	}
 }
 
@@ -378,7 +378,7 @@ func (m *MySQLStore) SetUtilization(u *models.Utilization) {
 		 ON DUPLICATE KEY UPDATE cpu_usage=VALUES(cpu_usage), memory_usage=VALUES(memory_usage), storage_usage=VALUES(storage_usage), idle_count=VALUES(idle_count)`,
 		u.TenantID, u.CPUUsage, u.MemoryUsage, u.StorageUsage, u.IdleCount)
 	if err != nil {
-		log.Printf("[store] SetUtilization 失败: %v", err)
+		logx.Error(ctx, "[store] SetUtilization 失败", err, "service", "portal-svc", "tenantID", u.TenantID)
 	}
 }
 
@@ -406,7 +406,7 @@ func (m *MySQLStore) AddActivity(a *models.ActivityEvent) {
 		`INSERT INTO activities (tenant_id, user_id, action, target, detail, timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
 		a.TenantID, a.UserID, a.Action, a.Target, a.Detail, nullTime(a.Timestamp))
 	if err != nil {
-		log.Printf("[store] AddActivity 失败: %v", err)
+		logx.Error(ctx, "[store] AddActivity 失败", err, "service", "portal-svc", "tenantID", a.TenantID, "userID", a.UserID)
 	}
 }
 

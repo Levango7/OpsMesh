@@ -1,13 +1,14 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"runtime"
 	"strings"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/version"
 	"github.com/Levango7/OpsMesh/services/runbook-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/runbook-svc/internal/service"
@@ -381,7 +382,8 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Webhook triggered %d runbook(s) from %s", len(records), payload.Source)
+	logx.Info(r.Context(), "Webhook triggered runbooks", "service", "runbook-svc",
+		"tenantID", tid, "source", payload.Source, "triggered", len(records))
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"triggered": len(records),
 		"records":   records,
@@ -403,7 +405,7 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("failed to encode response: %v", err)
+		logx.Error(context.Background(), "failed to encode response", err, "service", "runbook-svc")
 	}
 }
 

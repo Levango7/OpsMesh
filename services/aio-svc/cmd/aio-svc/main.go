@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -60,11 +59,11 @@ func main() {
 	if promClient.Available() {
 		// G706：URL 来自 env，且 taint 分析无法被消毒函数说服——干脆不把
 		// 地址打进日志（连接目标在配置里可见，日志只报状态）。
-		log.Printf("[aio-svc] Prometheus connected")
+		lgr.Info(context.Background(), "[aio-svc] Prometheus connected")
 	} else if promURL != "" {
-		log.Printf("[aio-svc] Prometheus unreachable, using simulated mode")
+		lgr.Warn(context.Background(), "[aio-svc] Prometheus unreachable, using simulated mode")
 	} else {
-		log.Printf("[aio-svc] Prometheus disabled (set PROMETHEUS_URL to enable)")
+		lgr.Info(context.Background(), "[aio-svc] Prometheus disabled (set PROMETHEUS_URL to enable)")
 	}
 
 	mux := http.NewServeMux()
@@ -514,7 +513,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("[aio-svc] AIOps 引擎启动 :%d (5 engines ready)", port)
+		lgr.Info(context.Background(), "[aio-svc] AIOps 引擎启动 (5 engines ready)", "port", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			lgr.Fatalf("[aio-svc] 启动失败: %v", err)
 		}
@@ -524,13 +523,13 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("[aio-svc] 优雅停机...")
+	lgr.Info(context.Background(), "[aio-svc] 优雅停机...")
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("[aio-svc] 停机失败: %v", err)
+		lgr.Error(context.Background(), "[aio-svc] 停机失败", err)
 	}
-	log.Println("[aio-svc] 已停止")
+	lgr.Info(context.Background(), "[aio-svc] 已停止")
 }
 
 // samplesResponse 是 /api/v1/prometheus/{cpu,memory,disk,gpu} 的统一响应形状。

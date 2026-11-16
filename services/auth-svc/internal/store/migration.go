@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
-	"log"
 	"strings"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 //go:embed schema.sql
@@ -56,7 +57,7 @@ func ensureColumn(ctx context.Context, db *sql.DB, table, column, ddl string) er
 	if _, err := db.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("补列 %s.%s: %w", table, column, err)
 	}
-	log.Printf("[store] %s 表已补列 %s（既有库迁移）", table, column)
+	logx.Info(ctx, "[store] 表已补列（既有库迁移）", "service", "auth-svc", "table", table, "column", column)
 	return nil
 }
 

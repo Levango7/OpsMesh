@@ -18,11 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // Session 表示一个用户会话。
@@ -71,7 +72,7 @@ func NewSessionStore(addr string, ttl time.Duration) *SessionStore {
 
 	enabled := true
 	if err := client.Ping(ctx).Err(); err != nil {
-		log.Printf("[session] Redis unreachable (degraded to stateless JWT mode): %v", err)
+		logx.Warn(ctx, "[session] Redis unreachable (degraded to stateless JWT mode)", "service", "auth-svc", "error", err.Error())
 		enabled = false
 	}
 

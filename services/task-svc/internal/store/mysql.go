@@ -1,14 +1,15 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/models"
 )
 
@@ -80,7 +81,7 @@ func scanStringSlice(data []byte) []string {
 		return nil
 	}
 	if err := json.Unmarshal(data, &s); err != nil {
-		log.Printf("[store] scan Unmarshal: %v", err)
+		logx.Warn(context.Background(), "[store] scanStringSlice Unmarshal 失败", "service", "task-svc", "error", err.Error())
 	}
 	return s
 }
@@ -132,7 +133,7 @@ func (s *MySQLStore) scanTask(row *sql.Row) *models.Task {
 		&deadLetter, &t.Timeout, &t.RetryDelay, &t.Schedule, &t.ParentID, &dependsOn,
 		&approvalRequired, &approvedBy, &approvedAt, &batchID)
 	if err != nil {
-		log.Printf("[store] scanTask 失败: %v", err)
+		logx.Warn(context.Background(), "[store] scanTask 失败", "service", "task-svc", "taskID", t.TaskID, "error", err.Error())
 		return nil
 	}
 	if content.Valid {
@@ -401,7 +402,7 @@ func (s *MySQLStore) CancelTask(taskID, tenantID string) bool {
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] CancelTask RowsAffected 读取失败", "service", "task-svc", "taskID", taskID, "error", err.Error())
 	}
 	return n > 0
 }
@@ -421,7 +422,7 @@ func (s *MySQLStore) ApproveTask(taskID, tenantID, approvedBy string) bool {
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] ApproveTask RowsAffected 读取失败", "service", "task-svc", "taskID", taskID, "error", err.Error())
 	}
 	return n > 0
 }
@@ -441,7 +442,7 @@ func (s *MySQLStore) RejectTask(taskID, tenantID, rejectedBy string) bool {
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] RejectTask RowsAffected 读取失败", "service", "task-svc", "taskID", taskID, "error", err.Error())
 	}
 	return n > 0
 }
@@ -554,12 +555,12 @@ func (s *MySQLStore) UpdateTask(t *models.Task) bool {
 		deadLetter, t.Timeout, t.RetryDelay, t.Schedule, t.ParentID, dependsOn, approvalRequired, t.ApprovedBy, nullTime(t.ApprovedAt), t.BatchID, nullTime(t.LastFiredAt), t.TaskID,
 	)
 	if err != nil {
-		log.Printf("[store] UpdateTask 失败: %v", err)
+		logx.Error(context.Background(), "[store] UpdateTask 失败", err, "service", "task-svc", "taskID", t.TaskID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] UpdateTask RowsAffected 读取失败", "service", "task-svc", "taskID", t.TaskID, "error", err.Error())
 	}
 	if n > 0 {
 		return true
@@ -662,7 +663,7 @@ func (s *MySQLStore) DeleteSchedule(id string) bool {
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] DeleteSchedule RowsAffected 读取失败", "service", "task-svc", "scheduleID", id, "error", err.Error())
 	}
 	return n > 0
 }
@@ -718,7 +719,8 @@ func (s *MySQLStore) SaveResult(r *models.TaskResult) {
 		r.TaskID, r.AgentID, r.ExitCode, r.Stdout, r.Stderr, r.DurationMs, finishedAt, r.ClaimEpoch,
 		r.AgentID, r.ExitCode, r.Stdout, r.Stderr, r.DurationMs, finishedAt, r.ClaimEpoch,
 	); err != nil {
-		log.Printf("[store] best-effort exec: %v", err)
+		logx.Error(context.Background(), "[store] SaveResult best-effort exec 失败", err,
+			"service", "task-svc", "taskID", r.TaskID, "agentID", r.AgentID)
 	}
 }
 
@@ -791,14 +793,14 @@ func (s *MySQLStore) SaveLogs(taskID string, logs []models.LogLine) {
 		return
 	}
 	if _, err := s.db.Exec("DELETE FROM task_logs WHERE task_id = ?", taskID); err != nil {
-		log.Printf("[store] best-effort exec: %v", err)
+		logx.Warn(context.Background(), "[store] SaveLogs 清理旧日志失败", "service", "task-svc", "taskID", taskID, "error", err.Error())
 	}
 	for _, line := range logs {
 		if _, err := s.db.Exec(
 			"INSERT INTO task_logs (task_id, log_timestamp, level, message) VALUES (?, ?, ?, ?)",
 			taskID, line.Timestamp, line.Level, line.Message,
 		); err != nil {
-			log.Printf("[store] best-effort exec: %v", err)
+			logx.Warn(context.Background(), "[store] SaveLogs best-effort exec 失败", "service", "task-svc", "taskID", taskID, "error", err.Error())
 		}
 	}
 }
@@ -865,7 +867,8 @@ func (s *MySQLStore) UpdateBatch(b *models.BatchTask) {
 		"UPDATE batches SET tenant_id = ?, name = ?, total_count = ?, success_count = ?, failed_count = ?, pending_count = ?, status = ? WHERE batch_id = ?",
 		b.TenantID, b.Name, b.TotalCount, b.SuccessCount, b.FailedCount, b.PendingCount, b.Status, b.BatchID,
 	); err != nil {
-		log.Printf("[store] best-effort exec: %v", err)
+		logx.Error(context.Background(), "[store] UpdateBatch best-effort exec 失败", err,
+			"service", "task-svc", "batchID", b.BatchID, "tenantID", b.TenantID)
 	}
 }
 
@@ -902,7 +905,8 @@ func (s *MySQLStore) AddTaskToBatch(batchID, taskID string) {
 		"INSERT IGNORE INTO batch_tasks (batch_id, task_id) VALUES (?, ?)",
 		batchID, taskID,
 	); err != nil {
-		log.Printf("[store] best-effort exec: %v", err)
+		logx.Error(context.Background(), "[store] AddTaskToBatch best-effort exec 失败", err,
+			"service", "task-svc", "batchID", batchID, "taskID", taskID)
 	}
 }
 
@@ -942,13 +946,15 @@ func (s *MySQLStore) CreateCanary(c *models.CanaryRelease) *models.CanaryRelease
 	}
 	payload, err := json.Marshal(c)
 	if err != nil {
-		log.Printf("[store] canary marshal %s: %v", c.CanaryID, err)
+		logx.Error(context.Background(), "[store] canary marshal 失败", err,
+			"service", "task-svc", "canaryID", c.CanaryID)
 		return nil
 	}
 	if _, err := s.db.Exec(canaryUpsert,
 		c.CanaryID, c.TenantID, payload, c.CreatedAt, c.TenantID, payload,
 	); err != nil {
-		log.Printf("[store] best-effort exec: %v", err)
+		logx.Error(context.Background(), "[store] CreateCanary best-effort exec 失败", err,
+			"service", "task-svc", "canaryID", c.CanaryID)
 		return nil
 	}
 	return c
@@ -969,7 +975,7 @@ func (s *MySQLStore) GetCanary(canaryID string) *models.CanaryRelease {
 	}
 	var c models.CanaryRelease
 	if err := json.Unmarshal(payload, &c); err != nil {
-		log.Printf("[store] canary payload %s 解不出，按不存在处理: %v", canaryID, err)
+		logx.Warn(context.Background(), "[store] canary payload 解不出，按不存在处理", "service", "task-svc", "canaryID", canaryID, "error", err.Error())
 		return nil
 	}
 	return &c
@@ -992,13 +998,15 @@ func (s *MySQLStore) UpdateCanary(c *models.CanaryRelease) {
 	}
 	payload, err := json.Marshal(c)
 	if err != nil {
-		log.Printf("[store] canary marshal %s: %v", c.CanaryID, err)
+		logx.Error(context.Background(), "[store] canary marshal 失败", err,
+			"service", "task-svc", "canaryID", c.CanaryID)
 		return
 	}
 	if _, err := s.db.Exec(canaryUpsert,
 		c.CanaryID, c.TenantID, payload, c.CreatedAt, c.TenantID, payload,
 	); err != nil {
-		log.Printf("[store] best-effort exec: %v", err)
+		logx.Error(context.Background(), "[store] UpdateCanary best-effort exec 失败", err,
+			"service", "task-svc", "canaryID", c.CanaryID)
 	}
 }
 
@@ -1027,7 +1035,7 @@ func (s *MySQLStore) ListCanaries(tenantID string) []*models.CanaryRelease {
 		}
 		var c models.CanaryRelease
 		if err := json.Unmarshal(payload, &c); err != nil {
-			log.Printf("[store] canary payload 解不出，跳过该行: %v", err)
+			logx.Warn(context.Background(), "[store] canary payload 解不出，跳过该行", "service", "task-svc", "error", err.Error())
 			continue
 		}
 		out = append(out, &c)

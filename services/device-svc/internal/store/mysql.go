@@ -1,14 +1,15 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
 )
 
@@ -100,7 +101,7 @@ func scanStringSlice(data []byte) []string {
 		return nil
 	}
 	if err := json.Unmarshal(data, &s); err != nil {
-		log.Printf("[store] scan Unmarshal: %v", err)
+		logx.Warn(context.Background(), "[store] scanStringSlice Unmarshal 失败", "service", "device-svc", "error", err.Error())
 	}
 	return s
 }
@@ -112,7 +113,7 @@ func scanStringMap(data []byte) map[string]string {
 		return nil
 	}
 	if err := json.Unmarshal(data, &m); err != nil {
-		log.Printf("[store] scan Unmarshal: %v", err)
+		logx.Warn(context.Background(), "[store] scanStringSlice Unmarshal 失败", "service", "device-svc", "error", err.Error())
 	}
 	return m
 }
@@ -139,7 +140,8 @@ func (s *MySQLStore) RegisterDevice(d *models.Device) *models.Device {
 		jsonString(d.Tags), jsonMap(d.Labels), d.Group, nullTime(d.LastHeartbeat), d.CreatedAt, d.UpdatedAt,
 	)
 	if err != nil {
-		log.Printf("[store] RegisterDevice %s 写入失败: %v", d.ID, err)
+		logx.Error(context.Background(), "[store] RegisterDevice 写入失败", err,
+			"service", "device-svc", "deviceID", d.ID, "tenantID", d.TenantID)
 		return nil
 	}
 	return d
@@ -164,7 +166,7 @@ func (s *MySQLStore) scanDevice(row *sql.Row) *models.Device {
 	err := row.Scan(&d.ID, &d.TenantID, &d.Name, &d.IP, &d.MAC, &d.OS, &d.Arch, &d.Status, &d.AgentID,
 		&tags, &labels, &d.Group, &lastHeartbeat, &d.CreatedAt, &d.UpdatedAt, &d.Retired)
 	if err != nil {
-		log.Printf("[store] scanDevice 失败: %v", err)
+		logx.Warn(context.Background(), "[store] scanDevice 失败", "service", "device-svc", "error", err.Error())
 		return nil
 	}
 	d.LastHeartbeat = scanNullTime(lastHeartbeat)
@@ -235,12 +237,13 @@ func (s *MySQLStore) UpdateDevice(d *models.Device) (*models.Device, bool) {
 		jsonString(d.Tags), jsonMap(d.Labels), d.Group, nullTime(d.LastHeartbeat), d.UpdatedAt, d.Retired, d.ID,
 	)
 	if err != nil {
-		log.Printf("[store] UpdateDevice %s 更新失败: %v", d.ID, err)
+		logx.Error(context.Background(), "[store] UpdateDevice 更新失败", err,
+			"service", "device-svc", "deviceID", d.ID, "tenantID", d.TenantID)
 		return nil, false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] UpdateDevice RowsAffected 读取失败", "service", "device-svc", "deviceID", d.ID, "error", err.Error())
 	}
 	if n == 0 {
 		// RowsAffected=0 有两种成因：不存在/已退役，或值完全没变（TIMESTAMP 秒精度下
@@ -262,7 +265,7 @@ func (s *MySQLStore) DeleteDevice(id string) bool {
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] DeleteDevice RowsAffected 读取失败", "service", "device-svc", "deviceID", id, "error", err.Error())
 	}
 	return n > 0
 }
@@ -285,7 +288,7 @@ func (s *MySQLStore) Heartbeat(deviceID, status string) bool {
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] Heartbeat RowsAffected 读取失败", "service", "device-svc", "deviceID", deviceID, "error", err.Error())
 	}
 	return n > 0
 }
@@ -344,7 +347,8 @@ func (s *MySQLStore) RegisterAgent(a *models.Agent) *models.Agent {
 		a.OS, a.Arch, a.Addr, a.GRPCPort, a.MetricsPort, nullTime(a.LastHeartbeat), a.CreatedAt, a.UpdatedAt,
 	)
 	if err != nil {
-		log.Printf("[store] RegisterAgent %s 写入失败: %v", a.ID, err)
+		logx.Error(context.Background(), "[store] RegisterAgent 写入失败", err,
+			"service", "device-svc", "agentID", a.ID, "deviceID", a.DeviceID)
 		return nil
 	}
 	return a
@@ -421,7 +425,7 @@ func (s *MySQLStore) UpdateAgentStatus(agentID, status string, load int) (*model
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] UpdateAgentStatus RowsAffected 读取失败", "service", "device-svc", "agentID", agentID, "error", err.Error())
 	}
 	if n == 0 {
 		return nil, false
@@ -447,7 +451,7 @@ func (s *MySQLStore) AgentHeartbeat(agentID, status string, load int) bool {
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] AgentHeartbeat RowsAffected 读取失败", "service", "device-svc", "agentID", agentID, "error", err.Error())
 	}
 	return n > 0
 }
@@ -557,7 +561,7 @@ func (s *MySQLStore) DeleteCI(id, tenantID string) bool {
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] DeleteCI RowsAffected 读取失败", "service", "device-svc", "ciID", id, "error", err.Error())
 	}
 	return n > 0
 }
@@ -620,7 +624,8 @@ func (s *MySQLStore) CreateRelation(rel *models.CIRelation) *models.CIRelation {
 	}
 	rel.ID, err = res.LastInsertId()
 	if err != nil {
-		log.Printf("[store] LastInsertId: %v", err)
+		logx.Warn(context.Background(), "[store] CreateRelation LastInsertId 读取失败", "service", "device-svc",
+			"sourceCIID", rel.SourceCIID, "targetCIID", rel.TargetCIID, "error", err.Error())
 	}
 	return rel
 }
@@ -672,7 +677,8 @@ func (s *MySQLStore) CreateJob(job *models.DiscoveryJob) *models.DiscoveryJob {
 		job.ID, job.TenantID, job.CIDR, job.Status, job.TotalHosts, job.ScannedHosts, job.FoundDevices, job.Error, nullTime(job.StartedAt), nullTime(job.CompletedAt),
 	)
 	if err != nil {
-		log.Printf("[store] CreateDiscoveryJob %s 写入失败: %v", job.ID, err)
+		logx.Error(context.Background(), "[store] CreateDiscoveryJob 写入失败", err,
+			"service", "device-svc", "jobID", job.ID, "tenantID", job.TenantID)
 		return nil
 	}
 	return job
@@ -740,7 +746,7 @@ func (s *MySQLStore) UpdateJob(job *models.DiscoveryJob) (*models.DiscoveryJob, 
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(context.Background(), "[store] UpdateJob RowsAffected 读取失败", "service", "device-svc", "jobID", job.ID, "error", err.Error())
 	}
 	if n == 0 {
 		return nil, false

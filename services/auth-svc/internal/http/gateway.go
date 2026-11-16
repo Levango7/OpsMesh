@@ -22,12 +22,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	authv1 "github.com/Levango7/OpsMesh/services/auth-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/cache"
@@ -259,7 +259,7 @@ func (g *Gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 	} else if at != "" {
 		if err := g.sessions.Revoke(sessionIDFromToken(at)); err != nil {
 			sessionRevocation = "failed: " + err.Error()
-			log.Printf("[gateway] logout: session revoke failed: %v", err)
+			logx.Error(r.Context(), "[gateway] logout: session revoke failed", err, "service", "auth-svc")
 		}
 	}
 	// 复用 service.Logout（jti 黑名单 + rt 删除）。
@@ -345,7 +345,8 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// viewer 同语义。先校验角色存在——缺失时拒绝注册并留痕，而不是静默建出
 	// 一个无任何权限的孤儿账号（对齐 controlplane auth_login.go:80 的前置校验）。
 	if g.svc.Store().GetRole("role-viewer") == nil {
-		log.Printf("[auth-svc] handleRegister 默认角色 role-viewer 不存在，注册中止（seed 未生效）")
+		logx.Error(r.Context(), "[auth-svc] handleRegister 默认角色 role-viewer 不存在，注册中止（seed 未生效）", nil,
+			"service", "auth-svc")
 		writeError(w, http.StatusInternalServerError, "default role missing, registration refused")
 		return
 	}
@@ -464,7 +465,8 @@ func (g *Gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		}, fp)
 		if loginErr != nil {
 			// 口令已改成功但会话签发失败：不得留半成品状态，清 Cookie 让客户端重新登录。
-			log.Printf("[auth-svc] handleChangePassword 首登改密后签发会话失败 (user=%s): %v", u.Username, loginErr)
+			logx.Error(r.Context(), "[auth-svc] handleChangePassword 首登改密后签发会话失败", loginErr,
+				"service", "auth-svc", "userID", u.ID)
 			g.clearCookies(w)
 			writeError(w, http.StatusInternalServerError, "password changed, but session issue failed; please log in again")
 			return
@@ -731,7 +733,8 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 			// 不落原始 user id：它来自路径参数（外部可控），gosec G706 的污点分析不认 %%q，
 			// 仓内先例是"修法不落原值"而非加豁免（见 .golangci.services.yml 的 G 规则注释）。
 			// 该 id 已在响应体里返回给调用方，日志只需说明"Redis 侧撤销失败"这一事实。
-			log.Printf("[gateway] revoke-sessions: Redis 会话撤销失败（用户 id 见响应体）: %v", err)
+			logx.Error(r.Context(), "[gateway] revoke-sessions: Redis 会话撤销失败（用户 id 见响应体）", err,
+				"service", "auth-svc")
 			sessionRevocation = "failed: " + err.Error()
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

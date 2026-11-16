@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -39,7 +38,7 @@ func main() {
 			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		}
 		st = ms
-		log.Printf("MySQL store 已启用")
+		lgr.Info(context.Background(), "MySQL store 已启用")
 		defer func() { _ = ms.Close() }()
 	}
 	r := runner.NewRunner()
@@ -57,7 +56,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Starting runbook-svc HTTP server on :%d", cfg.HTTPPort)
+		lgr.Info(context.Background(), "Starting runbook-svc HTTP server", "port", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			lgr.Fatalf("HTTP server failed: %v", err)
 		}
@@ -66,14 +65,14 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down...")
+	lgr.Info(context.Background(), "Shutting down...")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		lgr.Error(context.Background(), "HTTP server shutdown error", err)
 	}
 
-	log.Println("Server stopped")
+	lgr.Info(context.Background(), "Server stopped")
 }

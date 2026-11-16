@@ -5,13 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/pkg/secretcrypto"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/models"
 )
@@ -42,13 +42,14 @@ func NewMySQLStore(dsn string, encryptionKey string, maxHistory int) (*MySQLStor
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.Ping(); err != nil {
-		log.Printf("[store] mysql ping 失败（将延迟重连）: %v", err)
+		logx.Warn(context.Background(), "[store] mysql ping 失败（将延迟重连）", "service", "config-svc", "store", "mysql", "error", err)
 	}
 	if err := initSchema(db); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 	if encryptionKey == "" {
-		log.Printf("[store] 警告: 未配置 encryption key，将生成随机 key（重启后已存 secret 无法解密，仅限演示环境）")
+		logx.Warn(context.Background(), "[store] 警告: 未配置 encryption key，将生成随机 key（重启后已存 secret 无法解密，仅限演示环境）",
+			"service", "config-svc", "store", "mysql")
 		encryptionKey = fmt.Sprintf("ephemeral-%d-%s", time.Now().UnixNano(), dsn)
 	}
 	if maxHistory <= 0 {
@@ -159,7 +160,8 @@ func (s *MySQLStore) GetConfig(tenantID, key string) (*models.ConfigEntry, bool)
 	e := &models.ConfigEntry{}
 	if err := scanConfigEntryRow(row, e); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetConfig 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetConfig 查询失败", err,
+				"service", "config-svc", "store", "mysql", "tenantID", tenantID, "key", key)
 		}
 		return nil, false
 	}
@@ -215,7 +217,8 @@ func (s *MySQLStore) SetConfig(item *models.ConfigEntry) *models.ConfigEntry {
 		   description=VALUES(description), updated_by=VALUES(updated_by), updated_at=VALUES(updated_at)`,
 		item.TenantID, item.Key, item.Value, item.Format, item.Version, item.Description, item.UpdatedBy, nullTime(item.CreatedAt), nullTime(item.UpdatedAt))
 	if err != nil {
-		log.Printf("[store] SetConfig 失败: %v", err)
+		logx.Error(ctx, "[store] SetConfig 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", item.TenantID, "key", item.Key)
 	}
 	return item
 }
@@ -235,7 +238,8 @@ func (s *MySQLStore) appendConfigHistory(ctx context.Context, e *models.ConfigEn
 		`INSERT INTO config_history (tenant_id, key_name, value, format, version, description, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.TenantID, e.Key, e.Value, e.Format, e.Version, e.Description, e.UpdatedBy, nullTime(e.CreatedAt), nullTime(e.UpdatedAt))
 	if err != nil {
-		log.Printf("[store] appendConfigHistory 失败: %v", err)
+		logx.Error(ctx, "[store] appendConfigHistory 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", e.TenantID, "key", e.Key)
 	}
 }
 
@@ -244,12 +248,13 @@ func (s *MySQLStore) DeleteConfig(tenantID, key string) bool {
 	defer cancel()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM config_entries WHERE tenant_id=? AND key_name=?`, tenantID, key)
 	if err != nil {
-		log.Printf("[store] DeleteConfig 失败: %v", err)
+		logx.Error(ctx, "[store] DeleteConfig 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID, "key", key)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "config-svc", "store", "mysql", "op", "DeleteConfig", "tenantID", tenantID, "key", key, "error", err)
 	}
 	return n > 0
 }
@@ -266,7 +271,8 @@ func (s *MySQLStore) ListConfigs(tenantID string) []*models.ConfigEntry {
 	q += " ORDER BY key_name ASC"
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListConfigs 失败: %v", err)
+		logx.Error(ctx, "[store] ListConfigs 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -287,7 +293,8 @@ func (s *MySQLStore) GetConfigHistory(tenantID, key string) []*models.ConfigEntr
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT tenant_id, key_name, value, format, version, description, updated_by, created_at, updated_at FROM config_history WHERE tenant_id=? AND key_name=? ORDER BY version ASC`, tenantID, key)
 	if err != nil {
-		log.Printf("[store] GetConfigHistory 失败: %v", err)
+		logx.Error(ctx, "[store] GetConfigHistory 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID, "key", key)
 		return nil
 	}
 	defer rows.Close()
@@ -351,7 +358,8 @@ func (s *MySQLStore) CreateSecret(item *models.SecretEntry) *models.SecretEntry 
 	item.UpdatedAt = now
 	enc, err := secretcrypto.Encrypt(s.encryptionKey, item.Value)
 	if err != nil {
-		log.Printf("[store] CreateSecret 加密失败: %v", err)
+		logx.Error(ctx, "[store] CreateSecret 加密失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", item.TenantID, "key", item.Key)
 		return nil
 	}
 	_, err = s.db.ExecContext(ctx,
@@ -360,7 +368,8 @@ func (s *MySQLStore) CreateSecret(item *models.SecretEntry) *models.SecretEntry 
 		 ON DUPLICATE KEY UPDATE value=VALUES(value), key_type=VALUES(key_type), version=VALUES(version)+1, updated_at=VALUES(updated_at)`,
 		item.TenantID, item.Key, enc, item.KeyType, item.Version, nullTime(item.CreatedAt), nullTime(item.UpdatedAt))
 	if err != nil {
-		log.Printf("[store] CreateSecret 失败: %v", err)
+		logx.Error(ctx, "[store] CreateSecret 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", item.TenantID, "key", item.Key)
 	}
 	return item
 }
@@ -373,17 +382,20 @@ func (s *MySQLStore) GetSecret(tenantID, key string) (*models.SecretEntry, bool)
 	e := &models.SecretEntry{}
 	if err := scanSecretRow(row, e); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetSecret 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetSecret 查询失败", err,
+				"service", "config-svc", "store", "mysql", "tenantID", tenantID, "key", key)
 		}
 		return nil, false
 	}
 	plain, legacy, decErr := secretcrypto.Decrypt(s.encryptionKey, e.Value)
 	if decErr != nil {
-		log.Printf("[store] GetSecret 解密失败（密钥不匹配或数据损坏）: tenant=%s key=%s: %v", tenantID, key, decErr)
+		logx.Error(ctx, "[store] GetSecret 解密失败（密钥不匹配或数据损坏）", decErr,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID, "key", key)
 		return nil, false
 	}
 	if legacy {
-		log.Printf("[store] GetSecret 读到未加密的历史存量: tenant=%s key=%s——建议轮换（RotateSecret）以加密落库", tenantID, key)
+		logx.Warn(ctx, "[store] GetSecret 读到未加密的历史存量，建议轮换（RotateSecret）以加密落库",
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID, "key", key)
 	}
 	e.Value = plain
 	return e, true
@@ -416,7 +428,8 @@ func (s *MySQLStore) UpdateSecret(item *models.SecretEntry) *models.SecretEntry 
 		`SELECT tenant_id, key_name, value, key_type, version, created_at, updated_at FROM config_secrets WHERE tenant_id=? AND key_name=?`, item.TenantID, item.Key,
 	)
 	if err := scanSecretRow(row, &existing); err != nil {
-		log.Printf("[store] UpdateSecret 查询失败: %v", err)
+		logx.Error(ctx, "[store] UpdateSecret 查询失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", item.TenantID, "key", item.Key)
 		return nil
 	}
 	item.Version = existing.Version + 1
@@ -424,13 +437,15 @@ func (s *MySQLStore) UpdateSecret(item *models.SecretEntry) *models.SecretEntry 
 	item.UpdatedAt = time.Now().UTC()
 	enc, encErr := secretcrypto.Encrypt(s.encryptionKey, item.Value)
 	if encErr != nil {
-		log.Printf("[store] UpdateSecret 加密失败: %v", encErr)
+		logx.Error(ctx, "[store] UpdateSecret 加密失败", encErr,
+			"service", "config-svc", "store", "mysql", "tenantID", item.TenantID, "key", item.Key)
 		return nil
 	}
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE config_secrets SET value=?, key_type=?, version=?, updated_at=? WHERE tenant_id=? AND key_name=?`,
 		enc, item.KeyType, item.Version, nullTime(item.UpdatedAt), item.TenantID, item.Key); err != nil {
-		log.Printf("[store] UpdateSecret 失败: %v", err)
+		logx.Error(ctx, "[store] UpdateSecret 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", item.TenantID, "key", item.Key)
 	}
 	return item
 }
@@ -440,12 +455,13 @@ func (s *MySQLStore) DeleteSecret(tenantID, key string) bool {
 	defer cancel()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM config_secrets WHERE tenant_id=? AND key_name=?`, tenantID, key)
 	if err != nil {
-		log.Printf("[store] DeleteSecret 失败: %v", err)
+		logx.Error(ctx, "[store] DeleteSecret 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID, "key", key)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "config-svc", "store", "mysql", "op", "DeleteSecret", "tenantID", tenantID, "key", key, "error", err)
 	}
 	return n > 0
 }
@@ -462,7 +478,8 @@ func (s *MySQLStore) ListSecrets(tenantID string) []*models.SecretMeta {
 	q += " ORDER BY key_name ASC"
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListSecrets 失败: %v", err)
+		logx.Error(ctx, "[store] ListSecrets 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -494,20 +511,23 @@ func (s *MySQLStore) RotateSecret(tenantID, key, newValue string) *models.Secret
 		`SELECT tenant_id, key_name, value, key_type, version, created_at, updated_at FROM config_secrets WHERE tenant_id=? AND key_name=?`, tenantID, key,
 	)
 	if err := scanSecretRow(row, &existing); err != nil {
-		log.Printf("[store] RotateSecret 查询失败: %v", err)
+		logx.Error(ctx, "[store] RotateSecret 查询失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID, "key", key)
 		return nil
 	}
 	newVersion := existing.Version + 1
 	now := time.Now().UTC()
 	enc, encErr := secretcrypto.Encrypt(s.encryptionKey, newValue)
 	if encErr != nil {
-		log.Printf("[store] RotateSecret 加密失败: %v", encErr)
+		logx.Error(ctx, "[store] RotateSecret 加密失败", encErr,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID, "key", key)
 		return nil
 	}
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE config_secrets SET value=?, version=?, updated_at=? WHERE tenant_id=? AND key_name=?`,
 		enc, newVersion, now, tenantID, key); err != nil {
-		log.Printf("[store] RotateSecret 失败: %v", err)
+		logx.Error(ctx, "[store] RotateSecret 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID, "key", key)
 		return nil
 	}
 	return &models.SecretMeta{
@@ -539,7 +559,8 @@ func (s *MySQLStore) CreateChannel(item *models.ChannelEntry) *models.ChannelEnt
 		   config=VALUES(config), enabled=VALUES(enabled), updated_at=VALUES(updated_at)`,
 		item.ID, item.TenantID, item.Name, item.Type, nullString(item.Config), boolToInt(item.Enabled), nullTime(item.CreatedAt), nullTime(item.UpdatedAt))
 	if err != nil {
-		log.Printf("[store] CreateChannel 失败: %v", err)
+		logx.Error(ctx, "[store] CreateChannel 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", item.TenantID, "channelID", item.ID)
 	}
 	return item
 }
@@ -554,7 +575,8 @@ func (s *MySQLStore) GetChannel(id string) *models.ChannelEntry {
 	var config, channelType sql.NullString
 	if err := row.Scan(&c.ID, &c.TenantID, &c.Name, &channelType, &config, &c.Enabled, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetChannel 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetChannel 查询失败", err,
+				"service", "config-svc", "store", "mysql", "channelID", id)
 		}
 		return nil
 	}
@@ -578,12 +600,13 @@ func (s *MySQLStore) UpdateChannel(item *models.ChannelEntry) bool {
 		`UPDATE notify_channels SET tenant_id=?, name=?, type=?, config=?, enabled=?, updated_at=? WHERE id=?`,
 		item.TenantID, item.Name, item.Type, nullString(item.Config), boolToInt(item.Enabled), time.Now().UTC(), item.ID)
 	if err != nil {
-		log.Printf("[store] UpdateChannel 失败: %v", err)
+		logx.Error(ctx, "[store] UpdateChannel 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", item.TenantID, "channelID", item.ID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "config-svc", "store", "mysql", "op", "UpdateChannel", "channelID", item.ID, "error", err)
 	}
 	return n > 0
 }
@@ -599,12 +622,13 @@ func (s *MySQLStore) DeleteChannel(id, tenantID string) bool {
 		res, err = s.db.ExecContext(ctx, `DELETE FROM notify_channels WHERE id=?`, id)
 	}
 	if err != nil {
-		log.Printf("[store] DeleteChannel 失败: %v", err)
+		logx.Error(ctx, "[store] DeleteChannel 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID, "channelID", id)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "config-svc", "store", "mysql", "op", "DeleteChannel", "channelID", id, "error", err)
 	}
 	return n > 0
 }
@@ -621,7 +645,8 @@ func (s *MySQLStore) ListChannels(tenantID string) []*models.ChannelEntry {
 	q += " ORDER BY name ASC"
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListChannels 失败: %v", err)
+		logx.Error(ctx, "[store] ListChannels 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -665,7 +690,8 @@ func (s *MySQLStore) CreateTemplate(item *models.TemplateEntry) *models.Template
 		   content=VALUES(content), variables=VALUES(variables), updated_at=VALUES(updated_at)`,
 		item.ID, item.TenantID, item.Name, item.Description, item.Content, vars, nullTime(item.CreatedAt), nullTime(item.UpdatedAt))
 	if err != nil {
-		log.Printf("[store] CreateTemplate 失败: %v", err)
+		logx.Error(ctx, "[store] CreateTemplate 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", item.TenantID, "templateID", item.ID)
 	}
 	return item
 }
@@ -681,14 +707,15 @@ func (s *MySQLStore) GetTemplate(id string) *models.TemplateEntry {
 	var desc, content sql.NullString
 	if err := row.Scan(&t.ID, &t.TenantID, &t.Name, &desc, &content, &vars, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetTemplate 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetTemplate 查询失败", err,
+				"service", "config-svc", "store", "mysql", "templateID", id)
 		}
 		return nil
 	}
 	t.Description, t.Content = desc.String, content.String
 	if len(vars) > 0 {
 		if err := json.Unmarshal(vars, &t.Variables); err != nil {
-			log.Printf("[store] scan Unmarshal: %v", err)
+			logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "config-svc", "store", "mysql", "op", "GetTemplate", "templateID", id, "error", err)
 		}
 	}
 	if createdAt.Valid {
@@ -711,12 +738,13 @@ func (s *MySQLStore) UpdateTemplate(item *models.TemplateEntry) bool {
 		`UPDATE config_templates SET tenant_id=?, name=?, description=?, content=?, variables=?, updated_at=? WHERE id=?`,
 		item.TenantID, item.Name, item.Description, item.Content, vars, time.Now().UTC(), item.ID)
 	if err != nil {
-		log.Printf("[store] UpdateTemplate 失败: %v", err)
+		logx.Error(ctx, "[store] UpdateTemplate 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", item.TenantID, "templateID", item.ID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "config-svc", "store", "mysql", "op", "UpdateTemplate", "templateID", item.ID, "error", err)
 	}
 	return n > 0
 }
@@ -732,12 +760,13 @@ func (s *MySQLStore) DeleteTemplate(id, tenantID string) bool {
 		res, err = s.db.ExecContext(ctx, `DELETE FROM config_templates WHERE id=?`, id)
 	}
 	if err != nil {
-		log.Printf("[store] DeleteTemplate 失败: %v", err)
+		logx.Error(ctx, "[store] DeleteTemplate 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID, "templateID", id)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "config-svc", "store", "mysql", "op", "DeleteTemplate", "templateID", id, "error", err)
 	}
 	return n > 0
 }
@@ -754,7 +783,8 @@ func (s *MySQLStore) ListTemplates(tenantID string) []*models.TemplateEntry {
 	q += " ORDER BY name ASC"
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListTemplates 失败: %v", err)
+		logx.Error(ctx, "[store] ListTemplates 失败", err,
+			"service", "config-svc", "store", "mysql", "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -770,7 +800,7 @@ func (s *MySQLStore) ListTemplates(tenantID string) []*models.TemplateEntry {
 		t.Description, t.Content = desc.String, content.String
 		if len(vars) > 0 {
 			if err := json.Unmarshal(vars, &t.Variables); err != nil {
-				log.Printf("[store] scan Unmarshal: %v", err)
+				logx.Warn(ctx, "[store] scan Unmarshal 失败", "service", "config-svc", "store", "mysql", "op", "ListTemplates", "templateID", t.ID, "error", err)
 			}
 		}
 		if createdAt.Valid {

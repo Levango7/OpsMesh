@@ -1,12 +1,13 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
-	"log"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/pkg/secretcrypto"
 	"github.com/Levango7/OpsMesh/services/config-svc/internal/models"
 )
@@ -239,7 +240,8 @@ func (s *MemoryStore) CreateSecret(item *models.SecretEntry) *models.SecretEntry
 	encrypted, err := s.encrypt(item.Value)
 	if err != nil {
 		// 不静默降级存明文：加密失败宁可写入失败（密钥/随机源异常是可观测的故障）。
-		log.Printf("[store] CreateSecret 加密失败: %v", err)
+		logx.Error(context.Background(), "[store] CreateSecret 加密失败", err,
+			"service", "config-svc", "store", "memory", "tenantID", item.TenantID, "key", item.Key)
 		return nil
 	}
 
@@ -259,11 +261,13 @@ func (s *MemoryStore) GetSecret(tenantID, key string) (*models.SecretEntry, bool
 
 	decrypted, legacy, err := secretcrypto.Decrypt(s.encryptionKey, entry.Value)
 	if err != nil {
-		log.Printf("[store] GetSecret 解密失败（密钥不匹配或数据损坏）: tenant=%s key=%s: %v", tenantID, key, err)
+		logx.Error(context.Background(), "[store] GetSecret 解密失败（密钥不匹配或数据损坏）", err,
+			"service", "config-svc", "store", "memory", "tenantID", tenantID, "key", key)
 		return nil, false
 	}
 	if legacy {
-		log.Printf("[store] GetSecret 读到未加密的历史存量: tenant=%s key=%s——建议轮换（RotateSecret）以加密落库", tenantID, key)
+		logx.Warn(context.Background(), "[store] GetSecret 读到未加密的历史存量，建议轮换（RotateSecret）以加密落库",
+			"service", "config-svc", "store", "memory", "tenantID", tenantID, "key", key)
 	}
 
 	cp := *entry
@@ -287,7 +291,8 @@ func (s *MemoryStore) UpdateSecret(item *models.SecretEntry) *models.SecretEntry
 	encrypted, err := s.encrypt(item.Value)
 	if err != nil {
 		// 不静默降级存明文：加密失败宁可写入失败（密钥/随机源异常是可观测的故障）。
-		log.Printf("[store] UpdateSecret 加密失败: %v", err)
+		logx.Error(context.Background(), "[store] UpdateSecret 加密失败", err,
+			"service", "config-svc", "store", "memory", "tenantID", item.TenantID, "key", item.Key)
 		return nil
 	}
 
@@ -348,7 +353,8 @@ func (s *MemoryStore) RotateSecret(tenantID, key, newValue string) *models.Secre
 
 	encrypted, err := s.encrypt(newValue)
 	if err != nil {
-		log.Printf("[store] RotateSecret 加密失败: %v", err)
+		logx.Error(context.Background(), "[store] RotateSecret 加密失败", err,
+			"service", "config-svc", "store", "memory", "tenantID", tenantID, "key", key)
 		return nil
 	}
 

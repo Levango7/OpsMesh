@@ -1,10 +1,11 @@
 package service
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/metrics"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/node"
@@ -179,14 +180,16 @@ func (s *Service) CancelWorkload(id string) error {
 		if n, err := s.nodes.Get(nodeID); err == nil {
 			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
 			if err := s.nodes.Update(n); err != nil {
-				log.Printf("[service] update node %s: %v", n.ID, err)
+				logx.Error(context.Background(), "[service] update node 失败", err,
+					"service", "gpu-svc", "nodeID", n.ID, "workloadID", wl.ID)
 			}
 		}
 	}
 
 	// Release quota
 	if err := s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
-		log.Printf("[service] release quota for workload %s: %v", wl.ID, err)
+		logx.Error(context.Background(), "[service] release quota 失败", err,
+			"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 	}
 	return nil
 }
@@ -216,14 +219,16 @@ func (s *Service) CompleteWorkload(id string) error {
 		if n, err := s.nodes.Get(nodeID); err == nil {
 			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
 			if err := s.nodes.Update(n); err != nil {
-				log.Printf("[service] update node %s: %v", n.ID, err)
+				logx.Error(context.Background(), "[service] update node 失败", err,
+					"service", "gpu-svc", "nodeID", n.ID, "workloadID", wl.ID)
 			}
 		}
 	}
 
 	// Release quota
 	if err := s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
-		log.Printf("[service] release quota for workload %s: %v", wl.ID, err)
+		logx.Error(context.Background(), "[service] release quota 失败", err,
+			"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 	}
 	return nil
 }
@@ -248,14 +253,16 @@ func (s *Service) FailWorkload(id, errMsg string) error {
 		if n, err := s.nodes.Get(nodeID); err == nil {
 			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
 			if err := s.nodes.Update(n); err != nil {
-				log.Printf("[service] update node %s: %v", n.ID, err)
+				logx.Error(context.Background(), "[service] update node 失败", err,
+					"service", "gpu-svc", "nodeID", n.ID, "workloadID", wl.ID)
 			}
 		}
 	}
 
 	// Release quota
 	if err := s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
-		log.Printf("[service] release quota for workload %s: %v", wl.ID, err)
+		logx.Error(context.Background(), "[service] release quota 失败", err,
+			"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 	}
 	return nil
 }
@@ -268,14 +275,16 @@ func (s *Service) TriggerScheduling() []*models.ScheduleResult {
 	for _, wl := range pending {
 		result, schedErr := s.scheduler.Schedule(wl, s.nodes)
 		if schedErr != nil {
-			log.Printf("[service] schedule workload %s: %v", wl.ID, schedErr)
+			logx.Error(context.Background(), "[service] schedule workload 失败", schedErr,
+				"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 		}
 		if result == nil {
 			continue
 		}
 		if result.Assigned {
 			if err := s.workloads.AssignNode(wl.ID, result.NodeIDs); err != nil {
-				log.Printf("[service] assign node for workload %s: %v", wl.ID, err)
+				logx.Error(context.Background(), "[service] assign node for workload 失败", err,
+					"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 			}
 			// Update node VRAM allocation
 			vramPerWorkload := wl.GPURequest.MinVRAMMB
@@ -286,12 +295,14 @@ func (s *Service) TriggerScheduling() []*models.ScheduleResult {
 				if n, err := s.nodes.Get(nodeID); err == nil {
 					s.scheduler.AssignNodeResources(n, vramPerWorkload)
 					if err := s.nodes.Update(n); err != nil {
-						log.Printf("[service] update node %s: %v", n.ID, err)
+						logx.Error(context.Background(), "[service] update node 失败", err,
+							"service", "gpu-svc", "nodeID", n.ID, "workloadID", wl.ID)
 					}
 				}
 			}
 			if err := s.quotas.RecordAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
-				log.Printf("[service] record quota for workload %s: %v", wl.ID, err)
+				logx.Error(context.Background(), "[service] record quota 失败", err,
+					"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 			}
 		}
 		results = append(results, result)

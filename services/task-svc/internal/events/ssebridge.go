@@ -16,7 +16,8 @@ package events
 
 import (
 	"context"
-	"log"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // SSEBridge 桥接接口：将 task-svc 事件转发到 controlplane SSE 通道。
@@ -38,7 +39,8 @@ type StubSSEBridge struct{}
 
 // Forward 记日志后返回（不实际转发）。
 func (StubSSEBridge) Forward(ctx context.Context, typ string, tenantID string, data interface{}) {
-	log.Printf("[sse-bridge-stub] type=%s tenant=%s data=%v", typ, tenantID, data)
+	logx.Info(ctx, "[sse-bridge-stub] 事件未转发（stub 实现）", "service", "task-svc",
+		"type", typ, "tenantID", tenantID, "data", data)
 }
 
 // NoopSSEBridge 空实现：完全静默（测试用，避免日志噪声）。

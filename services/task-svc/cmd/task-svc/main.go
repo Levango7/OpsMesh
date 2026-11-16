@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +17,7 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/version"
 	"github.com/Levango7/OpsMesh/pkg/circuit"
 	"github.com/Levango7/OpsMesh/pkg/compress"
@@ -67,9 +67,11 @@ func (w leaseElectorWithDB) Close() error {
 func buildElector(cfg *config.Config) (leader.LeaderElector, error) {
 	if cfg.LeaderMode != "mysql" {
 		if cfg.LeaderMode != "stub" {
-			log.Printf("[task-svc] TASK_SVC_LEADER_MODE=%q 无法识别，按 stub（永真）继续", cfg.LeaderMode)
+			logx.Warn(context.Background(), "[task-svc] TASK_SVC_LEADER_MODE 无法识别，按 stub（永真）继续",
+				"service", "task-svc", "leaderMode", cfg.LeaderMode)
 		}
-		log.Printf("[task-svc] 选主=stub（永真，单副本语义）：多副本部署必须设置 TASK_SVC_LEADER_MODE=mysql（需 StoreType=sql）")
+		logx.Info(context.Background(), "[task-svc] 选主=stub（永真，单副本语义）：多副本部署必须设置 TASK_SVC_LEADER_MODE=mysql（需 StoreType=sql）",
+			"service", "task-svc", "leaderMode", "stub")
 		return leader.NewStub(), nil
 	}
 	if cfg.StoreType != "sql" || cfg.DSN == "" {
@@ -91,7 +93,8 @@ func buildElector(cfg *config.Config) (leader.LeaderElector, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ensure lease table: %w", err)
 	}
-	log.Printf("[task-svc] 选主=mysql lease=%s holder=%s ttl=%s", cfg.LeaderLeaseName, cfg.LeaderHolderID, cfg.LeaderTTL)
+	logx.Info(ctx, "[task-svc] 选主=mysql", "service", "task-svc",
+		"lease", cfg.LeaderLeaseName, "holder", cfg.LeaderHolderID, "ttl", cfg.LeaderTTL.String())
 	return leaseElectorWithDB{
 		LeaderElector: leader.NewK8sLease(ops, cfg.LeaderLeaseName, cfg.LeaderHolderID),
 		db:            db,
@@ -135,7 +138,7 @@ func main() {
 			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
 			ts, ss, rs, bs = ms, ms, ms, ms
-			log.Printf("MySQL store 已启用")
+			logx.Info(context.Background(), "MySQL store 已启用", "service", "task-svc", "store", "mysql")
 			defer func() { _ = ms.Close() }()
 		}
 	}
@@ -155,7 +158,8 @@ func main() {
 	svc.SetSSEBridge(events.StubSSEBridge{})
 	// 审计整改批次2：显式告警——默认 SSE 桩只写日志、不向 /api/v1/events 转发，
 	// 依赖 SSE 的前端会收不到任务状态推送。生产部署必须注入真实 bridge。
-	log.Printf("[task-svc] WARN: SSE bridge = stub（仅日志，不转发）——依赖 /api/v1/events 的前端收不到任务状态推送；生产需注入真实实现")
+	logx.Warn(context.Background(), "[task-svc] SSE bridge = stub（仅日志，不转发）——依赖 /api/v1/events 的前端收不到任务状态推送；生产需注入真实实现",
+		"service", "task-svc", "sseBridge", "stub")
 
 	cb := circuit.New("task-execution", 5, 30*time.Second)
 	svc.SetCircuitBreaker(cb)
@@ -222,9 +226,9 @@ func main() {
 		approvalEngine := approval.New()
 		httpGateway.SetApprovalEngine(approvalEngine)
 		httpGateway.RegisterRoutes(mux)
-		log.Printf("HTTP 业务网关已启用（/api/v1/tasks, /api/v1/schedules）")
+		logx.Info(context.Background(), "HTTP 业务网关已启用（/api/v1/tasks, /api/v1/schedules）", "service", "task-svc")
 	} else {
-		log.Printf("HTTP 业务网关已关闭（TASK_SVC_HTTP_GATEWAY_ENABLED=false）")
+		logx.Info(context.Background(), "HTTP 业务网关已关闭（TASK_SVC_HTTP_GATEWAY_ENABLED=false）", "service", "task-svc")
 	}
 
 	var handler http.Handler = mux
@@ -258,7 +262,7 @@ func main() {
 	var reclaimFn scheduler.ReclaimFunc
 	var fireFn scheduler.FireFunc
 	if !cfg.ShadowMode {
-		reclaimFn = func(_ context.Context, maxAge time.Duration) int {
+		reclaimFn = func(ctx context.Context, maxAge time.Duration) int {
 			if maxAge <= 0 {
 				maxAge = 30 * time.Second
 			}
@@ -276,7 +280,7 @@ func main() {
 					reclaimed++
 				} else {
 					reclaimFailed++
-					log.Printf("[reclaim] UpdateTask failed for task %s", t.TaskID)
+					logx.Warn(ctx, "[reclaim] UpdateTask failed", "service", "task-svc", "taskID", t.TaskID)
 				}
 			}
 			// 计数在这里出，不在调度器里出：reclaimed/reclaimFailed 是这一轮的事实来源，
@@ -286,7 +290,7 @@ func main() {
 			metrics.AddBusinessMetric("task_reclaim_failures", float64(reclaimFailed), nil)
 			return reclaimed
 		}
-		fireFn = func(_ context.Context, now time.Time) int {
+		fireFn = func(ctx context.Context, now time.Time) int {
 			fired := 0
 			fireFailed := 0
 			minuteStart := now.Truncate(time.Minute)
@@ -306,7 +310,7 @@ func main() {
 					fired++
 				} else {
 					fireFailed++
-					log.Printf("[fire] UpdateTask failed for task %s", t.TaskID)
+					logx.Warn(ctx, "[fire] UpdateTask failed", "service", "task-svc", "taskID", t.TaskID)
 				}
 			}
 			// 同 reclaimFn：本轮事实就地成序列，失败单独一列（见上）。
@@ -334,14 +338,15 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Starting gRPC server on :%d", cfg.GRPCPort)
+		logx.Info(context.Background(), "Starting gRPC server", "service", "task-svc", "port", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcLis); err != nil {
 			lgr.Fatalf("gRPC server failed: %v", err)
 		}
 	}()
 
 	go func() {
-		log.Printf("Starting HTTP server on :%d (health/ready/metrics + business gateway)", cfg.HTTPPort)
+		logx.Info(context.Background(), "Starting HTTP server (health/ready/metrics + business gateway)",
+			"service", "task-svc", "port", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			lgr.Fatalf("HTTP server failed: %v", err)
 		}
@@ -350,7 +355,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down...")
+	logx.Info(context.Background(), "Shutting down...", "service", "task-svc")
 
 	healthServer.SetServingStatus("opsmesh.task.v1.TaskService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 	healthServer.SetServingStatus("opsmesh.task.v1.ScheduleService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
@@ -363,8 +368,8 @@ func main() {
 	grpcServer.GracefulStop()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		logx.Error(shutdownCtx, "HTTP server shutdown error", err, "service", "task-svc")
 	}
 
-	log.Println("Server stopped")
+	logx.Info(context.Background(), "Server stopped", "service", "task-svc")
 }

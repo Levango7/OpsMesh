@@ -6,13 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/pkg/circuit"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
@@ -310,8 +310,9 @@ func (s *Service) ReportResult(ctx context.Context, req *taskv1.ReportResultRequ
 			metrics.AddBusinessMetric("task_dead_lettered", 1, map[string]string{
 				"tenant_id": mt.TenantID,
 			})
-			log.Printf("[task-svc] 任务进入死信：task=%s retry=%d/%d exit=%d tenant=%s（重试已耗尽，不会再被下发）",
-				mt.TaskID, mt.RetryCount, mt.MaxRetries, r.ExitCode, mt.TenantID)
+			logx.Warn(ctx, "[task-svc] 任务进入死信（重试已耗尽，不会再被下发）", "service", "task-svc",
+				"taskID", mt.TaskID, "retry", mt.RetryCount, "maxRetries", mt.MaxRetries,
+				"exitCode", r.ExitCode, "tenantID", mt.TenantID)
 		}
 	}
 	s.emitAudit(ctx, "", r.AgentId, action, r.TaskId, detail, level, map[string]string{
@@ -730,7 +731,8 @@ func genCanaryID() string {
 	var b [8]byte
 	// crypto/rand 失败仅见于系统熵源故障的极端环境：占位 ID 保持非空可用。
 	if _, err := rand.Read(b[:]); err != nil {
-		log.Printf("[task-svc] genCanaryID: crypto/rand 读取失败（使用零值占位 ID）: %v", err)
+		logx.Warn(context.Background(), "[task-svc] genCanaryID: crypto/rand 读取失败（使用零值占位 ID）",
+			"service", "task-svc", "error", err.Error())
 	}
 	return "canary-" + hex.EncodeToString(b[:])
 }

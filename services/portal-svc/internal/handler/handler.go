@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/portal-svc/internal/cost"
 	"github.com/Levango7/OpsMesh/services/portal-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/portal-svc/internal/service"
@@ -257,7 +257,7 @@ type approvalContractInput struct {
 func decodeApprovalContractInput(r *http.Request) approvalContractInput {
 	var in approvalContractInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
-		log.Printf("[portal-svc] approvals: 可选请求体解析失败（按空体继续）: %v", err)
+		logx.Warn(r.Context(), "[portal-svc] approvals: 可选请求体解析失败（按空体继续）", "service", "portal-svc", "error", err)
 	}
 	return in
 }

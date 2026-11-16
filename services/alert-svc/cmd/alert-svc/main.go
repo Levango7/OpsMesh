@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -75,7 +74,7 @@ func main() {
 			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
 			st = ms
-			log.Printf("MySQL store 已启用")
+			lgr.Info(context.Background(), "MySQL store 已启用")
 			defer func() { _ = ms.Close() }()
 		}
 	}
@@ -91,7 +90,8 @@ func main() {
 		svc.SetCircuitBreaker(cb)
 		// 通道已启用 ⇒ 先把失败计数的两条序列登记成 0，让"第一次失败"就能被 increase() 看见。
 		service.InitNotifyFailureBaseline()
-		log.Printf("PagerDuty notifications enabled (routing key: %s)", maskRoutingKey(cfg.PagerDutyRoutingKey))
+		lgr.Info(context.Background(), "PagerDuty notifications enabled",
+			"routingKey", maskRoutingKey(cfg.PagerDutyRoutingKey))
 	}
 
 	srv := server.NewServer(svc)
@@ -112,10 +112,10 @@ func main() {
 		),
 	)
 	if cfg.GRPCAuthToken == "" {
-		log.Printf("gRPC auth: 未配置 ALERT_SVC_GRPC_TOKEN ⇒ 该面无鉴权（出厂只绑 127.0.0.1；" +
+		lgr.Warn(context.Background(), "gRPC auth: 未配置 ALERT_SVC_GRPC_TOKEN ⇒ 该面无鉴权（出厂只绑 127.0.0.1；"+
 			"PAGERDUTY_ENABLED=true 时启动会被拒绝，见 config.Validate）")
 	} else {
-		log.Printf("gRPC auth: 已启用共享密钥鉴权（authorization: Bearer <ALERT_SVC_GRPC_TOKEN>）")
+		lgr.Info(context.Background(), "gRPC auth: 已启用共享密钥鉴权（authorization: Bearer <ALERT_SVC_GRPC_TOKEN>）")
 	}
 	alertv1.RegisterAlertServiceServer(grpcServer, srv)
 
@@ -189,14 +189,14 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Starting gRPC server on :%d", cfg.GRPCPort)
+		lgr.Info(context.Background(), "Starting gRPC server", "port", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcLis); err != nil {
 			lgr.Fatalf("gRPC server failed: %v", err)
 		}
 	}()
 
 	go func() {
-		log.Printf("Starting HTTP health server on :%d", cfg.HTTPPort)
+		lgr.Info(context.Background(), "Starting HTTP health server", "port", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			lgr.Fatalf("HTTP server failed: %v", err)
 		}
@@ -205,7 +205,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down...")
+	lgr.Info(context.Background(), "Shutting down...")
 
 	cancel()
 	esc.Stop()
@@ -218,10 +218,10 @@ func main() {
 	grpcServer.GracefulStop()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		lgr.Error(context.Background(), "HTTP server shutdown error", err)
 	}
 
-	log.Println("Server stopped")
+	lgr.Info(context.Background(), "Server stopped")
 }
 
 // maskRoutingKey returns a masked version of the routing key for logging.

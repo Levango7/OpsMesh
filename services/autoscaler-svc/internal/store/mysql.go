@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/models"
 )
 
@@ -31,7 +31,7 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.Ping(); err != nil {
-		log.Printf("[store] mysql ping 失败（将延迟重连）: %v", err)
+		logx.Warn(context.Background(), "[store] mysql ping 失败（将延迟重连）", "service", "autoscaler-svc", "store", "mysql", "error", err)
 	}
 	if err := initSchema(db); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
@@ -134,7 +134,7 @@ func ensureColumn(ctx context.Context, db *sql.DB, table, column, ddl string) er
 	if _, err := db.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("补列 %s.%s: %w", table, column, err)
 	}
-	log.Printf("[store] %s 表已补列 %s（既有库迁移）", table, column)
+	logx.Info(ctx, "[store] 表已补列（既有库迁移）", "service", "autoscaler-svc", "store", "mysql", "table", table, "column", column)
 	return nil
 }
 
@@ -182,7 +182,8 @@ func (m *MySQLStore) GetRule(id, tenantID string) (*models.ScaleRule, bool) {
 	if err := row.Scan(&r.ID, &r.TenantID, &r.Name, &deployment, &namespace, &metric, &scaleUp, &scaleDown,
 		&minReplicas, &maxReplicas, &cooldownUp, &cooldownDown, &r.Enabled, &createdAt, &updatedAt); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetRule 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetRule 查询失败", err,
+				"service", "autoscaler-svc", "store", "mysql", "ruleID", id, "tenantID", tenantID)
 		}
 		return nil, false
 	}
@@ -221,12 +222,13 @@ func (m *MySQLStore) DeleteRule(id, tenantID string) bool {
 	defer cancel()
 	res, err := m.db.ExecContext(ctx, `DELETE FROM scaling_rules WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteRule 失败: %v", err)
+		logx.Error(ctx, "[store] DeleteRule 失败", err,
+			"service", "autoscaler-svc", "store", "mysql", "ruleID", id, "tenantID", tenantID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "autoscaler-svc", "store", "mysql", "op", "DeleteRule", "ruleID", id, "error", err)
 	}
 	return n > 0
 }
@@ -238,7 +240,8 @@ func (m *MySQLStore) ListRules(tenantID string) []*models.ScaleRule {
 	rows, err := m.db.QueryContext(ctx,
 		`SELECT id, tenant_id, name, deployment, namespace, metric, scale_up_threshold, scale_down_threshold, min_replicas, max_replicas, cooldown_up, cooldown_down, enabled, created_at, updated_at FROM scaling_rules WHERE tenant_id=?`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListRules 失败: %v", err)
+		logx.Error(ctx, "[store] ListRules 失败", err,
+			"service", "autoscaler-svc", "store", "mysql", "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -306,7 +309,8 @@ func (m *MySQLStore) ListDecisions(tenantID, ruleID string, limit int) []*models
 	}
 	rows, err := m.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListDecisions 失败: %v", err)
+		logx.Error(ctx, "[store] ListDecisions 失败", err,
+			"service", "autoscaler-svc", "store", "mysql", "tenantID", tenantID, "ruleID", ruleID)
 		return nil
 	}
 	defer rows.Close()

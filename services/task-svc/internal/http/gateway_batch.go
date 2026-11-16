@@ -19,15 +19,16 @@
 package http
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/models"
 )
@@ -74,7 +75,8 @@ var batchIdx = &batchIndex{batches: make(map[string]*batchTask)}
 func genBatchID(prefix string) string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		log.Printf("[task-svc] genBatchID: crypto/rand 读取失败（使用零值占位 ID）: %v", err)
+		logx.Warn(context.Background(), "[task-svc] genBatchID: crypto/rand 读取失败（使用零值占位 ID）",
+			"service", "task-svc", "error", err.Error())
 	}
 	return prefix + "-" + hex.EncodeToString(b[:])
 }

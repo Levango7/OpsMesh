@@ -17,9 +17,10 @@ package scheduler
 
 import (
 	"context"
-	"log"
 	"sync/atomic"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // Ticker 周期（与 controlplane 4 循环同值；A-1 阶段锁定不变，保证双轨行为一致）。
@@ -69,15 +70,16 @@ func New(ctx context.Context, reclaim ReclaimFunc, fire FireFunc, renew RenewFun
 func (s *Scheduler) Start() {
 	if s.fire != nil {
 		go s.scheduleLoop()
-		log.Printf("scheduler.scheduleLoop 启动 interval=%s", scheduleInterval.String())
+		logx.Info(s.ctx, "scheduler.scheduleLoop 启动", "service", "task-svc", "interval", scheduleInterval.String())
 	}
 	if s.reclaim != nil {
 		go s.reclaimLoop()
-		log.Printf("scheduler.reclaimLoop 启动 interval=%s", reclaimInterval.String())
+		logx.Info(s.ctx, "scheduler.reclaimLoop 启动", "service", "task-svc", "interval", reclaimInterval.String())
 	}
 	if s.renew != nil {
 		go s.leaderLoop()
-		log.Printf("scheduler.leaderLoop 启动 interval=%s ttl=%s", leaderInterval.String(), leaderTTL.String())
+		logx.Info(s.ctx, "scheduler.leaderLoop 启动", "service", "task-svc",
+			"interval", leaderInterval.String(), "ttl", leaderTTL.String())
 	}
 }
 
@@ -96,7 +98,7 @@ func (s *Scheduler) scheduleLoop() {
 			}
 			n := s.fire(s.ctx, time.Now())
 			if n > 0 {
-				log.Printf("定时任务派生 fired=%d", n)
+				logx.Info(s.ctx, "定时任务派生", "service", "task-svc", "fired", n)
 			}
 		}
 	}
@@ -120,7 +122,7 @@ func (s *Scheduler) reclaimLoop() {
 			}
 			n := s.reclaim(s.ctx, 0) // maxAge 由 store 内部 cfg.TaskLeaseSec 决定（0=使用默认）
 			if n > 0 {
-				log.Printf("任务租约回收 reclaimed=%d", n)
+				logx.Info(s.ctx, "任务租约回收", "service", "task-svc", "reclaimed", n)
 			}
 		}
 	}
@@ -141,9 +143,9 @@ func (s *Scheduler) leaderLoop() {
 			s.isLeader.Store(isLeader)
 			if isLeader != wasLeader {
 				if isLeader {
-					log.Printf("晋升为 leader，开始执行周期协调任务 ttl=%s", leaderTTL.String())
+					logx.Info(s.ctx, "晋升为 leader，开始执行周期协调任务", "service", "task-svc", "ttl", leaderTTL.String())
 				} else {
-					log.Printf("失去 leader 身份，暂停周期协调任务")
+					logx.Warn(s.ctx, "失去 leader 身份，暂停周期协调任务", "service", "task-svc")
 				}
 				wasLeader = isLeader
 			}

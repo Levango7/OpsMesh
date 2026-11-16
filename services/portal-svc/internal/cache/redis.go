@@ -3,11 +3,12 @@ package cache
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 const (
@@ -56,7 +57,7 @@ func New(prefix string) *Cache {
 
 	enabled := true
 	if err := client.Ping(ctx).Err(); err != nil {
-		log.Printf("[cache] Redis unreachable (graceful fallback active): %v", err)
+		logx.Warn(ctx, "[cache] Redis unreachable (graceful fallback active)", "service", "portal-svc", "prefix", prefix, "error", err)
 		enabled = false
 	}
 
@@ -95,13 +96,13 @@ func (c *Cache) Get(key string, dest interface{}) bool {
 	data, err := c.client.Get(ctx, c.key(key)).Bytes()
 	if err != nil {
 		if err != redis.Nil {
-			log.Printf("[cache] Get %s failed (fallback to DB): %v", key, err)
+			logx.Warn(ctx, "[cache] Get failed (fallback to DB)", "service", "portal-svc", "key", key, "error", err)
 		}
 		return false
 	}
 
 	if err := json.Unmarshal(data, dest); err != nil {
-		log.Printf("[cache] Get %s unmarshal error: %v", key, err)
+		logx.Warn(ctx, "[cache] Get unmarshal error", "service", "portal-svc", "key", key, "error", err)
 		return false
 	}
 	return true
@@ -123,7 +124,7 @@ func (c *Cache) SetWithTTL(key string, value interface{}, ttl time.Duration) {
 
 	data, err := json.Marshal(value)
 	if err != nil {
-		log.Printf("[cache] Set %s marshal error: %v", key, err)
+		logx.Warn(context.Background(), "[cache] Set marshal error", "service", "portal-svc", "key", key, "error", err)
 		return
 	}
 
@@ -131,7 +132,7 @@ func (c *Cache) SetWithTTL(key string, value interface{}, ttl time.Duration) {
 	defer cancel()
 
 	if err := c.client.Set(ctx, c.key(key), data, ttl).Err(); err != nil {
-		log.Printf("[cache] Set %s failed: %v", key, err)
+		logx.Warn(ctx, "[cache] Set failed", "service", "portal-svc", "key", key, "error", err)
 	}
 }
 
@@ -147,7 +148,7 @@ func (c *Cache) Delete(key string) {
 	defer cancel()
 
 	if err := c.client.Del(ctx, c.key(key)).Err(); err != nil {
-		log.Printf("[cache] Delete %s failed: %v", key, err)
+		logx.Warn(ctx, "[cache] Delete failed", "service", "portal-svc", "key", key, "error", err)
 	}
 }
 
@@ -164,7 +165,7 @@ func (c *Cache) Exists(key string) bool {
 
 	n, err := c.client.Exists(ctx, c.key(key)).Result()
 	if err != nil {
-		log.Printf("[cache] Exists %s failed: %v", key, err)
+		logx.Warn(ctx, "[cache] Exists failed", "service", "portal-svc", "key", key, "error", err)
 		return false
 	}
 	return n > 0
@@ -198,11 +199,11 @@ func (c *Cache) GetOrDefault(key string, dest interface{}, fetchFn func() (inter
 	// Re-marshal and unmarshal to populate dest (avoids reflection complexity).
 	data, err := json.Marshal(val)
 	if err != nil {
-		log.Printf("[cache] GetOrDefault %s marshal error: %v", key, err)
+		logx.Warn(context.Background(), "[cache] GetOrDefault marshal error", "service", "portal-svc", "key", key, "error", err)
 		return false
 	}
 	if err := json.Unmarshal(data, dest); err != nil {
-		log.Printf("[cache] GetOrDefault %s unmarshal error: %v", key, err)
+		logx.Warn(context.Background(), "[cache] GetOrDefault unmarshal error", "service", "portal-svc", "key", key, "error", err)
 		return false
 	}
 	return false

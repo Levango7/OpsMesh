@@ -21,9 +21,10 @@ package leader
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // LeaderElector 选主接口。
@@ -150,13 +151,13 @@ func (e *K8sLeaseElector) Renew(ctx context.Context, ttl time.Duration) bool {
 
 	if ok {
 		if !e.isLeader {
-			log.Printf("[leader] 晋升为 leader lease=%s holder=%s", e.leaseName, e.holder)
+			logx.Info(ctx, "[leader] 晋升为 leader", "service", "task-svc", "lease", e.leaseName, "holder", e.holder)
 		}
 		e.isLeader = true
 		e.lastRenewAt = time.Now()
 	} else {
 		if e.isLeader {
-			log.Printf("[leader] 失去 leader 身份 lease=%s holder=%s", e.leaseName, e.holder)
+			logx.Warn(ctx, "[leader] 失去 leader 身份", "service", "task-svc", "lease", e.leaseName, "holder", e.holder)
 		}
 		e.isLeader = false
 	}
@@ -172,7 +173,8 @@ func (e *K8sLeaseElector) Close() error {
 	defer e.mu.Unlock()
 	if e.isLeader {
 		if err := e.ops.Release(context.Background(), e.leaseName, e.holder); err != nil {
-			log.Printf("[leader] 释放租约失败 lease=%s: %v", e.leaseName, err)
+			logx.Error(context.Background(), "[leader] 释放租约失败", err,
+				"service", "task-svc", "lease", e.leaseName, "holder", e.holder)
 			return err
 		}
 		e.isLeader = false

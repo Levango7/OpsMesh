@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/evaluator"
@@ -58,10 +58,11 @@ func main() {
 		lgr.Fatalf("扩缩容执行器装配失败: %v", err)
 	}
 	if k8s.IsSimulated(scaler.Executor()) {
-		log.Printf("WARN｜扩缩容执行器=memory-simulated：scale 动作只改本进程内存，**不会改动任何集群**，重启即丢。" +
-			"需要真实执行请设 AUTOSCALER_K8S_EXECUTOR=in-cluster（Pod 内）或 kubeconfig + AUTOSCALER_KUBECONFIG")
+		logx.Warn(context.Background(), "扩缩容执行器=memory-simulated：scale 动作只改本进程内存，**不会改动任何集群**，重启即丢。"+
+			"需要真实执行请设 AUTOSCALER_K8S_EXECUTOR=in-cluster（Pod 内）或 kubeconfig + AUTOSCALER_KUBECONFIG",
+			"service", "autoscaler-svc", "executor", scaler.Executor())
 	} else {
-		log.Printf("扩缩容执行器=%s（会真实改动集群副本数）", scaler.Executor())
+		logx.Info(context.Background(), "扩缩容执行器已启用（会真实改动集群副本数）", "service", "autoscaler-svc", "executor", scaler.Executor())
 	}
 	svc := service.NewService(eng, reader, scaler)
 	h := handler.NewHandler(svc)
@@ -77,7 +78,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Starting autoscaler-svc HTTP server on :%d", cfg.HTTPPort)
+		logx.Info(context.Background(), "Starting autoscaler-svc HTTP server", "service", "autoscaler-svc", "port", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			lgr.Fatalf("HTTP server failed: %v", err)
 		}
@@ -86,14 +87,14 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down...")
+	logx.Info(context.Background(), "Shutting down...", "service", "autoscaler-svc")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		logx.Error(shutdownCtx, "HTTP server shutdown error", err, "service", "autoscaler-svc")
 	}
 
-	log.Println("Server stopped")
+	logx.Info(context.Background(), "Server stopped", "service", "autoscaler-svc")
 }

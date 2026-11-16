@@ -14,9 +14,9 @@ package events
 
 import (
 	"context"
-	"log"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/pkg/trace"
 )
 
@@ -67,8 +67,9 @@ type LogBus struct{}
 
 func (LogBus) Publish(ctx context.Context, e Event) error {
 	e = stamp(e)
-	log.Printf("[event] action=%s target=%s tenant=%s user=%s level=%s detail=%s version=%s",
-		e.Action, e.Target, e.TenantID, e.UserID, e.Level, e.Detail, e.Version)
+	logx.Info(ctx, "[event] 发布事件", "service", "task-svc",
+		"action", e.Action, "target", e.Target, "tenantID", e.TenantID,
+		"userID", e.UserID, "level", string(e.Level), "detail", e.Detail, "version", e.Version)
 	return nil
 }
 
@@ -101,8 +102,9 @@ func (LogAuditSink) Audit(e AuditEvent) {
 	if e.CreatedAt.IsZero() {
 		e.CreatedAt = time.Now()
 	}
-	log.Printf("[audit] tenant=%s user=%s action=%s target=%s detail=%s trace=%s",
-		e.TenantID, e.UserID, e.Action, e.Target, e.Detail, e.TraceID)
+	logx.Info(context.Background(), "[audit] 审计事件", "service", "task-svc",
+		"tenantID", e.TenantID, "userID", e.UserID, "action", e.Action,
+		"target", e.Target, "detail", e.Detail, "traceID", e.TraceID)
 }
 
 // NewAuditEvent 从 ctx 提取 trace_id 构造 AuditEvent（对齐 controlplane s.audit helper）。
