@@ -32,7 +32,7 @@ COPY . .
 ARG VERSION=dev
 ARG COMMIT=dev
 ARG BUILD_DATE=unknown
-RUN cd services/task-svc && CGO_ENABLED=0 GOOS=linux go build -trimpath \
+RUN cd services/task-svc && CGO_ENABLED=0 GOOS=linux go build -tags kafka -trimpath \
     -ldflags="-s -w -X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION} -X github.com/Levango7/OpsMesh/internal/version.Commit=${COMMIT} -X github.com/Levango7/OpsMesh/internal/version.Date=${BUILD_DATE}" \
     -o /opsmesh-task-svc ./cmd/task-svc
 

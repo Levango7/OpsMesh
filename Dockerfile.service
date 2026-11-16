@@ -65,7 +65,7 @@ RUN if [ "${SERVICE}" = "log-svc" ]; then \
     else \
       VERSION_LDFLAGS="-X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION}"; \
     fi; \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    CGO_ENABLED=0 GOOS=linux go build -tags kafka -trimpath \
     -ldflags="-s -w ${VERSION_LDFLAGS}" \
     -o /svc ./cmd/${SERVICE}
 

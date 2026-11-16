@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	eventspkg "github.com/Levango7/OpsMesh/internal/events"
 	authpkg "github.com/Levango7/OpsMesh/pkg/auth"
 )
 
@@ -1489,10 +1490,14 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("非法 --log-push-backend=%q（应为 loki | es）", c.LogPushBackend)
 		}
 	}
+	// 事件总线 Kafka 支持校验：配置 event-bus=kafka 但二进制未以 -tags kafka 编译时，
+	// 运行期会静默降级为 NoopBus，启动期 fail-fast 提示。
+	if c.EventBus == "kafka" && !eventspkg.KafkaSupported() {
+		return fmt.Errorf("event-bus=kafka requires binary built with -tags kafka")
+	}
 	return nil
 }
 
-// ============================================================================
 // 通知渠道配置
 // ============================================================================
 

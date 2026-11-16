@@ -280,7 +280,8 @@ const routes = [
   { path: '/helm-catalog', name: 'helm-catalog', component: () => import('@/views/HelmCatalogView.vue'), meta: { title: 'nav.helmCatalog', group: '交付中心', icon: 'cmdb', requirePerm: '' } },
 
   // Helm Release 管理（交付中心）：列表 + 安装 + 升级 + 卸载 + 回滚 + 历史
-  { path: '/helm-releases', name: 'helm-releases', component: () => import('@/views/HelmReleasesView.vue'), meta: { title: 'nav.helmReleases', group: '交付中心', icon: 'deploy', requirePerm: '' } }
+  { path: '/helm-releases', name: 'helm-releases', component: () => import('@/views/HelmReleasesView.vue'), meta: { title: 'nav.helmReleases', group: '交付中心', icon: 'deploy', requirePerm: '' } },
+  { path: '/:pathMatch(.*)*', name: 'NotFound', component: () => import('@/views/NotFoundView.vue') }
 ]
 
 const router = createRouter({
