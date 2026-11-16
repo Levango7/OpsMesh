@@ -1,5 +1,6 @@
 <template>
   <PageShell :title="$t('devices.title')" :desc="$t('devices.subtitle')" testid="devices" :error="store.error">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div v-if="store.loading && !segments.length" class="muted">{{ $t('common.loading') }}</div>
     <div v-else-if="!segments.length" class="muted" data-testid="devices-empty">
       {{ $t('devices.empty') }}
@@ -41,7 +42,8 @@
               variant="ghost"
               size="sm"
               @click="dispatchTask(row.deviceID)"
-              :title="$t('devices.dispatch_task')"
+              :disabled="!canWrite"
+              :title="canWrite ? $t('devices.dispatch_task') : $t('common.write_denied')"
               data-testid="device-dispatch-btn"
             >
               {{ $t('devices.dispatch_task') }}
@@ -79,6 +81,8 @@
             variant="primary"
             size="sm"
             @click="provision"
+            :disabled="!canProvision"
+            :title="canProvision ? '' : $t('common.write_denied')"
             data-testid="device-provision-btn"
           >
             {{ $t('devices.provision') }}
@@ -94,6 +98,8 @@
             variant="ghost"
             size="sm"
             @click="dispatchTask(dev.deviceID)"
+            :disabled="!canWrite"
+            :title="canWrite ? '' : $t('common.write_denied')"
           >
             {{ $t('devices.dispatch_task') }}
           </Button>
@@ -137,10 +143,15 @@ import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { Button, Drawer } from '@/components/ui'
 import { fmtTime } from '@/composables/useFormatTime'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const store = useDeviceStore()
 
+// 写操作门：下发任务 / 纳管 provisioning 均需写权限（与台账 hasPerm 判据一致）。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('device:delete/provision:execute'))
+const canProvision = canWrite
 const drawerOpen = computed({
   get: () => !!store.current,
   set: (val) => { if (!val) store.closeDrawer() }
