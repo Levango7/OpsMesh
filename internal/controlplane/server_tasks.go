@@ -308,8 +308,14 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	// 审计整改批次26：全量模式加硬上限 2000，防单请求拉全表；
 	// 截断时用 X-Truncated / X-Total-Count 响应头如实告知。
 	const maxUnpagedTasks = 2000
-	page, pageSize := paginate.ParsePagination(r.URL.Query())
+	q := r.URL.Query()
+	page, pageSize := paginate.ParsePagination(q)
 	if page == 0 {
+		// 契约 v2（opt-in）：?envelope=v2 时即便不传 page 也返回统一五字段信封。
+		if paginate.WantEnvelopeV2(q) {
+			paginate.WriteListV2(w, http.StatusOK, out, 1, len(out))
+			return
+		}
 		if len(out) > maxUnpagedTasks {
 			w.Header().Set("X-Truncated", "true")
 			w.Header().Set("X-Total-Count", strconv.Itoa(len(out)))

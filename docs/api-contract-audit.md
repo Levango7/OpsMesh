@@ -636,3 +636,22 @@
 ---
 
 *本报告由 API 契约审计脚本自动生成于 2026-09-03 06:44:19，不修改任何代码，仅做静态分析。*
+
+
+## V2 列表信封（2026-11-17 冻结，BB-01/BB-02/BB-04 裁决落地）
+
+**唯一 v2 列表信封**：`{ "data": [...], "total": int, "page": int, "pageSize": int, "hasMore": bool }`
+
+- 字段语义：`data` 当前页数据（中性键，不绑定领域名）；`total` 全量条数；`page` 当前页码（从 1 起）；`pageSize` 每页条数（回显实际生效值，上限 200）；`hasMore = 是否还有下一页`。
+- 选定依据：与仓内已运行的高频端点 `/tasks`、`/alerts` 的 `PaginateResult` 完全一致——规则相对统一、字段互相能对上；`data` 中性键避免每个端点换领域名。
+
+**启用方式（opt-in，向后兼容）**：客户端显式传 `?envelope=v2`。任何其它值（含缺省、`v1`）保持各端点旧形状，现场已部署客户端不受影响。
+
+**分页参数**：v2 只认 `page`（从 1 起）+ `pageSize`（默认 20，上限 200）；其它词汇（`offset/limit/top/limit(1000)`）在 v2 下不再接受，传错不再静默忽略（helper 回显实际生效参数，便于对账）。
+
+**已落地端点**（范本）：
+- `GET /api/v1/audit/export`：默认裸数组；`?envelope=v2` → 五字段信封（该端点走 limit 上限，v2 里 page=1/pageSize=len/hasMore=false）。
+- `GET /api/v1/tasks`：默认不传 page 仍返回全量数组；`?envelope=v2` → 五字段信封。
+
+**实现**：`internal/controlplane/paginate/envelope_v2.go`（`WantEnvelopeV2` + `WriteListV2`），新端点一律直接用 `WriteListV2`。
+

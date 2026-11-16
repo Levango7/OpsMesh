@@ -170,6 +170,13 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		until = t
 	}
 	events := s.store.QueryAudits(tenant, action, since, until, limit)
+	// 契约 v2（opt-in）：?envelope=v2 时返回统一五字段信封；默认保持裸数组（向后兼容）。
+	// 注意：审计导出走 limit 上限（exportMaxLimit）而非 page/pageSize，故 v2 信封里
+	// page=1/pageSize=len(events)，total=len(events)，hasMore=false（已按 limit 截断）。
+	if paginate.WantEnvelopeV2(q) {
+		paginate.WriteListV2(w, http.StatusOK, events, 1, len(events))
+		return
+	}
 	paginate.WriteJSON(w, http.StatusOK, events)
 }
 
