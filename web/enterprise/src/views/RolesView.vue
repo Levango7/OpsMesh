@@ -1,7 +1,8 @@
 <template>
   <PageShell :title="$t('roles.title')" :desc="$t('roles.subtitle')" testid="roles" :error="loadErr">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate">
+      <Button variant="primary" size="md" @click="openCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <Icon name="add" :size="14" />
         {{ $t('roles.add') }}
       </Button>
@@ -21,8 +22,8 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <Button variant="ghost" size="sm" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
-            <Button variant="danger" size="sm" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openEdit(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -54,7 +55,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit" :disabled="saving"><Icon name="success" :size="14" /> {{ $t('roles.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="!canWrite || saving" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('roles.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('roles.cancel') }}</Button>
         </div>
       </form>
@@ -90,6 +91,11 @@ import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+
+// 写操作门：与后端 requirePermission('role:write') 同源；只读者显式禁用写按钮。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('role:write'))
+import { useAuthStore } from '@/stores/auth'
 import Button from "@/components/ui/Button.vue"
 
 const roles = ref([])
