@@ -1385,3 +1385,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-17T17:30:00Z from=kilo scope=internal/controlplane/abac_enforce.go,internal/config/config.go,internal/metrics/,docs/projects/ note=批次53 收口（ABAC 定向强制 + 高风险预置 + 离线引擎立项 M1 规格）
 
 [CLAIM] 2026-11-17T18:00:00Z from=kilo ttl=8h scope=pkg/abacbundle/,internal/controlplane/abac_bundle_endpoint.go,internal/controlplane/abac_bundle_endpoint_test.go,internal/controlplane/server_lifecycle.go,internal/config/config.go,internal/agent/abac_bundle_client.go,internal/agent/abac_bundle_client_test.go,internal/agent/agent.go,docs/projects/abac-device-engine-charter.md note=批次54 M1 实施：bundle 结构/确定性序列化/Ed25519 签名验签 + 控制面签发端点（ETag/304）+ agent 拉取与 LKG 缓存/能力上报（M2 评估器不在本批）
+
+[DONE] 2026-11-17T19:30:00Z from=kilo scope=pkg/abacbundle/,internal/controlplane/abac_bundle_endpoint.go,internal/agent/abac_bundle_client.go,internal/config/config.go,internal/grpcx/service.go,docs/projects/ note=批次54 收口（ABAC bundle M1 完成：签名库/端点/Agent LKG/能力协商）
