@@ -301,6 +301,22 @@ var DeviceExtras = []Rule{
 		},
 	},
 	{
+		// 自动纳管：device-svc 的 POST /api/v1/provision/auto 与本地同名端点
+		// 同语义（provision:execute）。此前双轨前缀只覆盖 devices/agents/cmdb/
+		// discovery，`/api/v1/device-svc/provision/auto` 无规则可达 ⇒ 404；
+		// 前端曾因此退回本地路径（docs/CLAIMS.md 2026-11-02 条），双轨对比/
+		// 切流仍缺这一条。PublicPrefix 精确到 /auto 而非 /provision，避免把
+		// agent 自举的 /api/v1/provision/register（无 JWT、token 自证）卷进
+		// 需要租户上下文的代理鉴权面。
+		Domain:         "device",
+		PublicPrefix:   "/api/v1/device-svc/provision/auto",
+		UpstreamPrefix: "/api/v1/provision/auto",
+		DomainPrefix:   "/api/v1/device-svc/provision/auto",
+		EnvKey:         "DEVICE_SVC_URL",
+		DefaultURL:     "http://127.0.0.1:8081",
+		Perm:           "provision:execute",
+	},
+	{
 		// TD-60 device 域下沉：netsec 六端点（ips/siem/honeypot/traffic/vpn/zerotrust）。
 		// 上游 device-svc 用 pkg/netsec 同一份脚本构建逻辑；任务下发经 task-svc。
 		// 权限对齐本地 netsec 语义（网络安全写操作）：统一 network:write。

@@ -168,3 +168,25 @@
 ---
 
 *起草：2026-11-17。只读核对基准 `main@9c828b8f`；未改代码、未提交。*
+
+---
+
+## 进展记录（2026-11-17）
+
+批次43 修复两处残余缺陷；证据为当前工作树 file:line（与提交无关）：
+
+- **reload 漏装熔断器（已修）**：缓存重载路径原先内联构造 `gatewayRouteEntry`，重建后 `breaker == nil` ⇒ 熔断静默失效。
+  现统一经 `newGatewayRouteEntry`（`internal/controlplane/gateway.go:90`）单一构造；`loadTenantRoutesLocked`
+  与 `buildGatewayRouteEntries` 均走同一工厂（`internal/controlplane/gateway_persistence.go:71,128`），
+  `handleListGatewayRoutes` 的内联加载也改为调用它（`gateway.go:164`）。
+  守卫：`TestGatewayReloadWiresCircuitBreaker`（`internal/controlplane/gateway_refresh_test.go:38`）。
+- **多副本缓存不失效（已修）**：新增周期指纹刷新 `startGatewayRouteRefresh`（`gateway_persistence.go:173`，
+  5s 常量 `gateway.go:132`，接线 `internal/controlplane/server_lifecycle.go:593`）；`refreshGatewayRoutes`
+  （`gateway_persistence.go:199`）锁外读 store、应用前校验本地写世代 `revision`（本地写即放弃本轮、下轮重试），
+  指纹含 UpdatedAt + 内容（`gatewayRoutesSignature`，`:87`），未变则不重建，限流器/熔断器运行期状态保留。
+  守卫：`TestGatewayRoutePropagatesAcrossReplicas` / `TestGatewayRouteConcurrentReadersDuringReload`
+  （`gateway_refresh_test.go:97,157`）。
+- **启停写时复制（顺带修复）**：`handleGatewayRouteToggle` 不再原地改已发布的 `rule` 指针
+  （`gateway.go:412-448`），避免数据面锁外读取与写路径的数据竞争。
+
+结论：§10 第 13 项「多副本缓存待修（M1）」与熔断器缺装项均已闭环；统计跨副本聚合仍按 T3 不自建。

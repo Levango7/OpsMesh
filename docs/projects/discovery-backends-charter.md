@@ -219,3 +219,21 @@ go test ./internal/config/... -count=1
 
 > 本项不改变 ADR-4 的结论：etcd / Consul 是 opt-in 的可选后端，默认仍是 InMemory；
 > 若未来要让动态发现成为生产默认，需要追加新 ADR，而不是在本立项书里悄悄改默认。
+
+---
+
+## 进展记录（2026-11-17）
+
+批次43 落地后端开关与 file 后端（M0），证据为当前工作树 file:line（与提交无关）：
+
+- **后端开关**：`--discovery-backend=memory|static|file`（env `OPSMESH_DISCOVERY_BACKEND`），
+  非法值在 Validate 中 fail-fast（`internal/config/config.go:527`、`:1330-1337`）；
+  `--discovery-file` 在 file 后端必填，空值拒绝启动；默认 `memory`，向后兼容。
+  测试：`internal/config/config_discovery_test.go:9-49`。
+- **file 后端**：`FileDiscovery`（`internal/discovery/file.go:51`）实现 `ServiceDiscovery`——
+  JSON 文档读写（`:214`、`:230`）、Register/Deregister/List/MarkHealthy（`:96,128,152,195`）、
+  基于快照指纹的 Watch 轮询与 ctx 取消（`:160,323`）、损坏文件容忍不崩溃。
+  测试：`internal/discovery/file_test.go:38-204`（注册/列举/注销、健康过滤、Watch 变更与取消、坏文件）。
+- **未落地**：etcd v3 / Consul 后端、TTL 清理、Watch 重连退避仍按 §5 M1–M3 待批准。
+  `NewInMemoryDiscoveryFromAddrs`（`internal/discovery/inmemory.go:48`）为 agent 侧地址装配构造器，
+  其调用方 `internal/agent/agent.go` 属另一线未提交改动，故未随本批落库。

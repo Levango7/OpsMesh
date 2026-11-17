@@ -248,3 +248,24 @@ bash deploy/scripts/smoke-cutover.sh
 | 2026-10-15 | task 域 R6 收口：批次 / 灰度落库；共享库表形状补列；真库用例钉住 | `docs/tech-debt.md:149` |
 | 2026-11-16 | 阶段 2 进度约 60%；cascade cleanup 18 域完成 | `docs/tech-debt.md:149` 末段 |
 | 待定 | 批次名单、观察窗、口令交付、task leader 切换形态 | 本文 §7 |
+
+---
+
+## 进展记录（2026-11-17）
+
+阶段 2（task / device / auth）M1 补测完成一轮静态一致性审计，全文见
+`docs/td60-consistency-2026-11-17.md`（基线 `main@89012346`；只读审计 + 两处 P0 最小修复，
+未启动双栈、未切流、未迁移；审计数与旧报告 v1.2「路径对齐 100%」的口径差异见该文 §2）。
+
+- **口径**：方法 × 路径操作 + 响应字段 + 状态词表 + 错误信封，共 75（controlplane）× 85（微服务）
+  操作，共有 67。严重度：P0 5（已修 2）/ P1 10 / P2 8。
+- **P0 修复 1（task 代理权限分级）**：`taskProxyPermission`（`internal/controlplane/server_lifecycle.go:810`）
+  替换代理层一律 `task:read`——`GET→task:read`、创建/retry/DELETE→`task:write`、
+  cancel→`task:cancel`、approve/reject→`task:approve`；调用点 `:835`。
+  守卫：`TestTaskProxyPermissionMatrix`（`internal/controlplane/td60_task_proxy_perm_test.go:13`）。
+- **P0 修复 2（device 自动纳管双轨规则）**：`DeviceExtras` 新增
+  `/api/v1/device-svc/provision/auto → /api/v1/provision/auto`（`internal/controlplane/svcproxy/proxy.go:303-318`，
+  权限 `provision:execute`）；精确到 `/auto` 以免把无 JWT 的 `/provision/register` 卷入代理鉴权面。
+  守卫：`internal/controlplane/service_proxy_test.go:341,379`。
+- **剩余 P0（切流前必须闭合）**：device 列表/详情字段契约（D-1/D-2）与 `GET /devices/{id}/system`（D-3），
+  见审计 §6；下一里程碑建议 M1.5「服务侧契约补齐 + 静态门禁」（审计 §7）。

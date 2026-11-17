@@ -588,8 +588,9 @@ func (s *Server) Start() error {
 	if s.cmdbCollector != nil {
 		go s.cmdbCollector.Run(ctx) // CMDB 定时采集：周期从设备指标更新 CMDB CI（仅 leader）
 	}
-	s.startPipelineExecutor(ctx, 10*time.Second)                // pipeline 执行器：推进 pending→running→succeeded
-	go s.startAutomationEvalLoop(ctx, s.automationEvalInterval) // 自动化引擎评估循环：周期评估 enabled 规则并执行命中动作
+	s.startPipelineExecutor(ctx, 10*time.Second)                 // pipeline 执行器：推进 pending→running→succeeded
+	go s.startAutomationEvalLoop(ctx, s.automationEvalInterval)  // 自动化引擎评估循环：周期评估 enabled 规则并执行命中动作
+	s.startGatewayRouteRefresh(ctx, gatewayRouteRefreshInterval) // API 网关路由缓存：多副本周期回读 store 收敛（单 goroutine，ctx 取消即退出）
 
 	errCh := make(chan error, 3)
 	go func() {
@@ -799,6 +800,31 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// taskProxyPermission 返回 task 域 HTTP 代理所需的权限点。
+//
+// 必须与本地 handler 逐条对齐（server_tasks.go）：GET → task:read；
+// POST 创建/重试 → task:write；POST cancel → task:cancel；POST approve/reject
+// → task:approve；DELETE 死信清除 → task:write。此前代理层对**所有**方法统一
+// 要求 task:read，既让只读凭证可经代理建任务/取消/审批（权限放大），又让
+// 仅持写权限的调用方被 403（与本地行为相反）。
+func taskProxyPermission(method, path string) string {
+	switch method {
+	case http.MethodGet:
+		return "task:read"
+	case http.MethodPost:
+		switch {
+		case strings.HasSuffix(path, "/cancel"):
+			return "task:cancel"
+		case strings.HasSuffix(path, "/approve"), strings.HasSuffix(path, "/reject"):
+			return "task:approve"
+		default:
+			return "task:write"
+		}
+	default:
+		return "task:write"
+	}
+}
+
 // handleTaskProxy 代理任务 HTTP 请求到 task-svc gRPC 服务（TD-60 任务域 HTTP 切流）。
 func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 	// 检查租户上下文
@@ -806,7 +832,7 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := s.requireProd(w, r, "task:read"); !ok {
+	if _, ok := s.requireProd(w, r, taskProxyPermission(r.Method, r.URL.Path)); !ok {
 		return
 	}
 

@@ -60,6 +60,12 @@ type Config struct {
 	// agent 通过 balancer 选择控制面实例，连接失败时自动 failover 到下一个。
 	// 为空时回退到 ControlAddrs / ControlAddr（向后兼容）。
 	ControlplaneEndpoints string
+	// 服务发现后端：memory（默认，进程内注册表）| static（--controlplane-endpoints 静态地址）|
+	// file（JSON 文件，--discovery-file）。非法值在 Validate 中拒绝启动。
+	DiscoveryBackend string
+	// DiscoveryFile 是 file 后端的 JSON 持久化路径（--discovery-file）；
+	// --discovery-backend=file 时必填，Validate 中 fail-fast。
+	DiscoveryFile string
 	// 负载均衡策略：round-robin（轮询）| failover（主备切换，默认）。
 	// 单控制面地址时退化为始终用该地址（不破坏现有行为）。
 	LBStrategy      string
@@ -517,6 +523,9 @@ func Load() *Config {
 	// 优先级：--controlplane-endpoints > --control-addrs > --control-addr。
 	// 显式设置 --controlplane-endpoints 时覆盖 --control-addrs；或 env OPSMESH_CONTROLPLANE_ENDPOINTS。
 	controlplaneEndpoints := flag.String("controlplane-endpoints", "", "服务发现：多控制面地址（逗号分隔，如 cp1:9090,cp2:9090）；与 --control-addrs 同义，作为服务发现入口；优先级高于 --control-addrs；空则回退 --control-addrs/--control-addr；或 env OPSMESH_CONTROLPLANE_ENDPOINTS")
+	// 服务发现后端选择：memory（默认，进程内注册表）| static（静态地址）| file（JSON 文件）。
+	discoveryBackend := flag.String("discovery-backend", "memory", "服务发现后端: memory（默认，进程内） | static（--controlplane-endpoints 静态地址） | file（JSON 文件）；非法值启动失败；或 env OPSMESH_DISCOVERY_BACKEND")
+	discoveryFile := flag.String("discovery-file", "", "服务发现 file 后端的 JSON 文件路径（--discovery-backend=file 时必填）；或 env OPSMESH_DISCOVERY_FILE")
 	// 负载均衡策略：round-robin | failover（默认 failover，向后兼容现有 多控制面依次重试行为）。
 	lbStrategy := flag.String("lb-strategy", "failover", "负载均衡策略：round-robin（轮询）| failover（主备切换，默认）；单控制面地址时退化为始终用该地址；或 env OPSMESH_LB_STRATEGY")
 	segment := flag.String("segment", "default", "agent 所属网段")
@@ -770,6 +779,8 @@ func Load() *Config {
 		ControlAddr:              val("control-addr", *controlAddr, "OPSMESH_CONTROL_ADDR"),
 		ControlAddrs:             val("control-addrs", *controlAddrs, "OPSMESH_CONTROL_ADDRS"),
 		ControlplaneEndpoints:    val("controlplane-endpoints", *controlplaneEndpoints, "OPSMESH_CONTROLPLANE_ENDPOINTS"),
+		DiscoveryBackend:         strings.ToLower(strings.TrimSpace(val("discovery-backend", *discoveryBackend, "OPSMESH_DISCOVERY_BACKEND"))),
+		DiscoveryFile:            val("discovery-file", *discoveryFile, "OPSMESH_DISCOVERY_FILE"),
 		LBStrategy:               val("lb-strategy", *lbStrategy, "OPSMESH_LB_STRATEGY"),
 		Segment:                  val("segment", *segment, "OPSMESH_SEGMENT"),
 		HTTPPort:                 valInt("http-port", *httpPort, "OPSMESH_HTTP_PORT"),
@@ -1316,6 +1327,16 @@ func (c *Config) Validate() error {
 	// 密钥须为 base64 编码的 32 字节（AES-256）；非生产模式允许空（明文存储，保持 demo 兼容）。
 	if c.Production && c.EncryptionKey == "" {
 		return fmt.Errorf("生产模式（--production=true）必须配置 --encryption-key（或 OPSMESH_ENCRYPTION_KEY）：kubeconfig 明文存储不满足等保三级要求；建议 openssl rand 32 | base64 生成 32 字节 AES-256 密钥")
+	}
+	// 服务发现后端校验：未知值启动即失败（不静默回退到 memory）；
+	// file 后端必须提供 --discovery-file。
+	switch c.DiscoveryBackend {
+	case "", "memory", "static", "file":
+	default:
+		return fmt.Errorf("非法 --discovery-backend=%q（应为 memory | static | file）", c.DiscoveryBackend)
+	}
+	if c.DiscoveryBackend == "file" && strings.TrimSpace(c.DiscoveryFile) == "" {
+		return fmt.Errorf("--discovery-backend=file 但 --discovery-file 为空（需要 JSON 文件路径）")
 	}
 	// 日志检索后端校验：非法值或缺失必要 endpoint 直接 fail-fast。
 	switch c.LogBackend {
