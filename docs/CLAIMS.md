@@ -1370,6 +1370,9 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [DONE] 2026-11-17T13:30:00Z from=kilo scope=internal/controlplane/abac_shadow.go,internal/metrics/abac_shadow.go,internal/config/config.go,docs/projects/abac-device-engine-charter.md note=批次50 收口（ABAC shadow 模式 + 指标 + 强制闸门晋级判据） commit=d3d1533f
 
+[TAKEOVER] 2026-11-17T14:00:00Z from=kilo scope=cmd/device-sim/main.go,internal/controlplane/factory/server_factory.go,internal/discovery/inmemory.go,internal/logx/logx.go,internal/store/sqlstore/,internal/store/storefail/storefail.go,internal/store/storekit/crypto.go,pkg/log/log.go,plugins/hello/hello.go,plugins/remote-example/main.go reason=unclaimed-stale-wip note=用户明确交由 kilo 收口；该批为此前多线机械 lint/gosec 清扫（log→lg 别名、注释、#nosec G404），逐文件核对行为等价后入库
+[CLAIM] 2026-11-17T14:00:00Z from=kilo ttl=8h scope=cmd/device-sim/main.go,internal/controlplane/factory/server_factory.go,internal/discovery/inmemory.go,internal/logx/logx.go,internal/store/sqlstore/,internal/store/storefail/storefail.go,internal/store/storekit/crypto.go,pkg/log/log.go,plugins/hello/hello.go,plugins/remote-example/main.go note=批次51 剩余机械清扫收口（行为等价校验 + gosec HIGH 0 一致性）
+
 [RELEASE] 2026-11-17T10:15:01Z from=kilo scope=internal/controlplane/db_ops.go,internal/controlplane/b29_injection_test.go,internal/controlplane/b29_injection_test.go note=过期认领释放：ARCH 构造即校验模板工作已落 main，证据 cc0bc7d2（db_ops.go 全量迁 validated* + b29 守卫同型重写，origin/main 祖先校验通过）；按本板 append-only 规则仅追加本行，不删改原行。
 [RELEASE] 2026-11-17T10:15:01Z from=kilo scope=internal/controlplane/vector_ops.go,internal/controlplane/b31_injection_test.go note=过期认领释放：ARCH 构造即校验第二例工作已落 main，证据 361e4f91（vector_ops.go 7 builder 入参全改 validated* + b31 守卫同型重写，origin/main 祖先校验通过）；按本板 append-only 规则仅追加本行，不删改原行。
 

@@ -138,11 +138,7 @@ func (d *InMemoryDiscovery) Register(ctx context.Context, svc Service) error {
 
 	for _, ch := range chans {
 		func(ch chan []Service) {
-			defer func() {
-				if r := recover(); r != nil {
-					_ = r
-				}
-			}()
+			defer func() { recover() }()
 			select {
 			case ch <- snap:
 			default:
@@ -174,11 +170,7 @@ func (d *InMemoryDiscovery) Deregister(ctx context.Context, serviceName, address
 
 	for _, ch := range chans {
 		func(ch chan []Service) {
-			defer func() {
-				if r := recover(); r != nil {
-					_ = r
-				}
-			}()
+			defer func() { recover() }()
 			select {
 			case ch <- snap:
 			default:
@@ -251,11 +243,7 @@ func (d *InMemoryDiscovery) Watch(ctx context.Context, serviceName string) (<-ch
 		d.mu.Unlock()
 		// 避免重复关闭
 		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					_ = r
-				}
-			}()
+			defer func() { recover() }()
 			close(ch)
 		}()
 	}()
@@ -271,11 +259,7 @@ func (d *InMemoryDiscovery) Watch(ctx context.Context, serviceName string) (<-ch
 		}
 		d.mu.Unlock()
 		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					_ = r
-				}
-			}()
+			defer func() { recover() }()
 			close(ch)
 		}()
 	}
@@ -303,11 +287,7 @@ func (d *InMemoryDiscovery) MarkHealthy(ctx context.Context, serviceName, addres
 
 	for _, ch := range chans {
 		func(ch chan []Service) {
-			defer func() {
-				if r := recover(); r != nil {
-					_ = r
-				}
-			}()
+			defer func() { recover() }()
 			select {
 			case ch <- snap:
 			default:

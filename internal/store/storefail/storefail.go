@@ -34,7 +34,7 @@ package storefail
 
 import (
 	"fmt"
-	"log"
+	lg "log"
 	"sort"
 	"strings"
 	"sync"
@@ -50,7 +50,7 @@ import (
 // 因此这些日志不带 trace_id / tenant_id，无法与请求或 OTel span 关联。
 // 迁移到 logx 是一次独立的、可分批的改动，不应与本次安全补丁混做。
 func storeLogf(format string, args ...any) {
-	log.Printf(format, args...)
+	lg.Printf(format, args...)
 }
 
 // FailureRingSize 最近失败样本的保留条数。内存有界，避免长期运行后无上限增长。
