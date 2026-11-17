@@ -1370,3 +1370,6 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [DONE] 2026-11-17T13:30:00Z from=kilo scope=internal/controlplane/abac_shadow.go,internal/metrics/abac_shadow.go,internal/config/config.go,docs/projects/abac-device-engine-charter.md note=批次50 收口（ABAC shadow 模式 + 指标 + 强制闸门晋级判据） commit=d3d1533f
 
+[RELEASE] 2026-11-17T10:15:01Z from=kilo scope=internal/controlplane/db_ops.go,internal/controlplane/b29_injection_test.go,internal/controlplane/b29_injection_test.go note=过期认领释放：ARCH 构造即校验模板工作已落 main，证据 cc0bc7d2（db_ops.go 全量迁 validated* + b29 守卫同型重写，origin/main 祖先校验通过）；按本板 append-only 规则仅追加本行，不删改原行。
+[RELEASE] 2026-11-17T10:15:01Z from=kilo scope=internal/controlplane/vector_ops.go,internal/controlplane/b31_injection_test.go note=过期认领释放：ARCH 构造即校验第二例工作已落 main，证据 361e4f91（vector_ops.go 7 builder 入参全改 validated* + b31 守卫同型重写，origin/main 祖先校验通过）；按本板 append-only 规则仅追加本行，不删改原行。
+
