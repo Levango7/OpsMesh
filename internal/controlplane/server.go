@@ -684,23 +684,12 @@ func NewServer(cfg *config.Config) (*Server, error) {
 				return false, "approval engine not initialized"
 			}
 			if requestID != "" {
-				req, err := eng.GetRequest(requestID)
-				if err != nil || req == nil {
-					return false, "approval request not found: " + requestID
+				// 执行前二次校验统一走引擎：状态/租户/目标/版本一次判定，
+				// 防止"审批的是 A、执行的是 B"。与 ListRequests fallback 共用同一语义。
+				if err := eng.VerifyApproved(requestID, tenantID, clusterID, targetVersion); err != nil {
+					return false, err.Error()
 				}
-				if req.TenantID != tenantID {
-					return false, "approval request tenant mismatch"
-				}
-				if req.Status != approval.StatusApproved {
-					return false, "approval request not approved (status=" + string(req.Status) + ")"
-				}
-				if req.Target != clusterID {
-					return false, "approval request target mismatch (want " + clusterID + ", got " + req.Target + ")"
-				}
-				if req.Detail != targetVersion {
-					return false, "approval request version mismatch (want " + targetVersion + ", got " + req.Detail + ")"
-				}
-				return true, req.ID
+				return true, requestID
 			}
 			for _, req := range eng.ListRequests(tenantID, "") {
 				if req == nil {
