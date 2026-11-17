@@ -633,3 +633,27 @@ assert order(bundle) > order(current) # 除非 bundle 与 current 完全等价
 ---
 
 *规格起草：2026-11-17。只读核对基准 `main@88ff295c`；本文件为设计文档，未改代码、未提交。*
+
+## 实施回执（2026-11-17）
+
+M1 已按本规格落地（批次54），M2（设备端评估器）待启动。
+
+**落地文件**
+
+- `pkg/abacbundle/bundle.go`（+ `bundle_test.go`）：`CanonicalJSON`（字段/策略定序、类型白名单）、`Digest`（SHA-256）、`Sign`/`Verify`/`VerifyAt`（Ed25519，域分隔 `opsmesh-abac-bundle-v1\n`）、`Encode`/`Decode`、`KeySet`（按 `keyId` 精确选钥，未知键报 `ErrUnknownKey`）、`MaxPolicies=1000`、`MaxBundleBytes=1 MiB`、哨兵错误分类（`ErrExpired`/`ErrNotYetValid`/`ErrBadSignature`/`ErrUnsupportedSchema`/`ErrTooManyPolicies`/`ErrBundleTooLarge`/`ErrUnknownKey`/`ErrInvalidBundle`/`ErrInvalidKey`）。
+- `internal/controlplane/abac_bundle_endpoint.go`（+ `abac_bundle_endpoint_test.go`）：`GET /api/v1/agent/abac-bundle`，per-agent HMAC（`X-OpsMesh-Agent-ID/Timestamp/Signature`，±5m 时钟窗；未知 agent 与错签同形 401，退役/禁用 403），租户只取已认证 agent 身份，按租户策略快照缓存已签名 artifact 以稳定 ETag，`If-None-Match` 命中返回 304，响应头 `X-OpsMesh-Bundle-Key-Id` / `X-OpsMesh-Bundle-Digest` / `Cache-Control: no-cache`；未配置或非法签发密钥时 503（配置闸先于认证，不阻断启动）。接线：`internal/controlplane/server_lifecycle.go`（路由注册）、`server_middleware.go`（放行到 handler 内强制认证）、`server.go`（artifact 缓存字段）。
+- `internal/agent/abac_bundle_client.go`（+ `abac_bundle_client_test.go`）：HMAC 拉取、验签 + 租户/单调性校验、原子 LKG 缓存（同目录临时文件 → fsync → rename，0600；目录 0700）、启动先加载缓存再轮询、304 保留现有 bundle、被篡改/跨租户/降级响应丢弃；`Capabilities()` 上报 `abac_bundle=v1`。
+- `internal/config/config.go`：`--abac-bundle-signing-key` / `--abac-bundle-key-id` / `--abac-bundle-ttl`（控制面）与 `--abac-bundle-enabled` / `--abac-bundle-public-keys` / `--abac-bundle-cache-path` / `--abac-bundle-refresh-interval`（agent），env 同名 `OPSMESH_ABAC_BUNDLE_*`。
+- `internal/grpcx/service.go`：`HeartbeatReq.Capabilities []string`（追加式可选字段）。
+- `internal/agent/agent.go`：注册后保存 per-agent 密钥、构造/启动客户端、心跳附带能力声明（默认关闭时零行为差异）。
+
+**与规格的偏差（M1 实测口径）**
+
+1. **认证方式**：agent 通道未用 mTLS，改为 per-agent HMAC over HTTP（头三件套），与 gRPC 请求签名共用同一 per-agent 密钥，不新增凭证体系；签名域分隔为 `"abac-bundle\n"+agentID+"\n"+timestamp`。
+2. **能力协商**：`abac_bundle=v1` 落在 `grpcx.HeartbeatReq.Capabilities`（而非独立 proto 消息）；M1 服务端**不**执行 409 `agent_not_capable` 门（端点对任何已认证 agent 下发），能力仅作为声明上报，服务端能力注册表/TTL 留到 M2/M4。
+3. **ETag 格式**：实现为强验证器 `"<sha256-hex>"`（引号内无 `sha256:` 前缀），与附录 B 伪代码的字面量有差异；`X-OpsMesh-Bundle-Digest` 单独携带 hex digest。
+4. **轮询间隔**：默认 10m（规格建议 5m ±20% 抖动）；未实现抖动。
+5. **过期模式**：`split`/`closed`/`open` 的读写分类降级属 M2 评估器；M1 客户端只保留过期 LKG（`Expired()` 可查询），不据此拒绝任何请求。
+6. **限流**：端点未实现 429；签名/配置闸与租户隔离已覆盖。
+7. **密钥轮换**：库与 agent 配置支持多公钥（`keyID:base64`，可 2 把以上），控制面 M1 只持单把签发密钥（`--abac-bundle-key-id` 默认 `k1`）；轮换编排/吊销流程仍待 D3。
+8. **缓存路径**：agent 未显式配置时默认 `<data-dir>/abac-bundle.json`（与 `agent.id`/`agent.key` 同目录），未设 data-dir 时需显式 `--abac-bundle-cache-path`。

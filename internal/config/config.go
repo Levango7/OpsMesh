@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -508,6 +509,27 @@ type Config struct {
 	// 非法预置名由 Validate 拒绝（启动 fail-fast）。
 	ABACEnforcePreset string // --abac-enforce-preset / env OPSMESH_ABAC_ENFORCE_PRESET
 
+	// ABACBundleSigningKey：ABAC 策略包（GET /api/v1/agent/abac-bundle）的 Ed25519
+	// 签发私钥，base64 标准编码的 64 字节。空=端点返回 503（不阻断启动，便于先部署后配钥）；
+	// 非法值同样 503（启动期不回显密钥内容）。
+	ABACBundleSigningKey string // --abac-bundle-signing-key / env OPSMESH_ABAC_BUNDLE_SIGNING_KEY
+	// ABACBundleKeyID：写入每个 bundle 的 keyId（agent 据此选公钥，支持双钥轮换）。
+	ABACBundleKeyID string // --abac-bundle-key-id（默认 k1）/ env OPSMESH_ABAC_BUNDLE_KEY_ID
+	// ABACBundleTTL：策略包有效期（IssuedAt + TTL = ExpiresAt）。默认 24h。
+	ABACBundleTTL time.Duration // --abac-bundle-ttl / env OPSMESH_ABAC_BUNDLE_TTL
+
+	// agent 侧 ABAC 策略包拉取（M1，见 internal/agent/abac_bundle_client.go）：
+	//   - ABACBundleEnabled：是否启用 agent 拉取/缓存策略包。默认 false（零行为差异）。
+	//   - ABACBundlePublicKeys：验签公钥条目 `keyID:base64(32字节 Ed25519 公钥)`，
+	//     逗号分隔；允许 2 把以上并存以支持 keyId 轮换（旧钥验旧包、新钥验新包）。
+	//   - ABACBundleCachePath：last-known-good 缓存文件路径（0600）；空=见 Load 中默认
+	//     `<data-dir>/abac-bundle.json`（与 agent.id/agent.key 同目录）。
+	//   - ABACBundleRefreshInterval：轮询间隔，默认 10m（<=0 时由客户端回退默认值）。
+	ABACBundleEnabled         bool          // --abac-bundle-enabled / env OPSMESH_ABAC_BUNDLE_ENABLED
+	ABACBundlePublicKeys      []string      // --abac-bundle-public-keys / env OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS
+	ABACBundleCachePath       string        // --abac-bundle-cache-path / env OPSMESH_ABAC_BUNDLE_CACHE_PATH
+	ABACBundleRefreshInterval time.Duration // --abac-bundle-refresh-interval / env OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL
+
 	// H2/H3 配套开关：是否允许 SQL 后端继续使用 P1-P6 桩存储。
 	// 背景：SQLStore 对 15 个领域（见 stubStoreDomains 清单）曾为桩实现，写入不持久化；
 	// 生产模式（--production=true）+ --store=mysql 时默认拒绝启动（fail-fast），
@@ -748,6 +770,15 @@ func Load() *Config {
 	// ABAC 定向强制（批次53）：只对显式列出的高风险路由强制，默认空 = kill switch。
 	abacEnforce := flag.String("abac-enforce", "", "ABAC 定向强制白名单：逗号分隔的 \"METHOD /path/pattern\"（如 \"DELETE /api/v1/devices/{id}\"）；空=不强制（kill switch）；或 env OPSMESH_ABAC_ENFORCE")
 	abacEnforcePreset := flag.String("abac-enforce-preset", "", "ABAC 定向强制命名预置：high-risk（展开为仓库真实高风险路由）；非法值启动失败；或 env OPSMESH_ABAC_ENFORCE_PRESET")
+	// ABAC 策略包签发（M1）：空私钥=端点 503（不阻断启动）。
+	abacBundleSigningKey := flag.String("abac-bundle-signing-key", "", "ABAC 策略包 Ed25519 签发私钥（base64 标准编码，64 字节）；空=端点返回 503；或 env OPSMESH_ABAC_BUNDLE_SIGNING_KEY")
+	abacBundleKeyID := flag.String("abac-bundle-key-id", "k1", "ABAC 策略包签名密钥 ID（写入 bundle.keyId，供 agent 选公钥）；或 env OPSMESH_ABAC_BUNDLE_KEY_ID")
+	abacBundleTTL := flag.Duration("abac-bundle-ttl", 24*time.Hour, "ABAC 策略包有效期（IssuedAt+TTL=ExpiresAt，默认 24h）；或 env OPSMESH_ABAC_BUNDLE_TTL")
+	// agent 侧 ABAC 策略包拉取（M1）：默认关闭，启用后 agent 先加载本地 LKG 再周期拉取。
+	abacBundleEnabled := flag.Bool("abac-bundle-enabled", false, "agent 侧 ABAC 策略包拉取/缓存（M1）；默认 false（零行为差异）；或 env OPSMESH_ABAC_BUNDLE_ENABLED")
+	abacBundlePublicKeys := flag.String("abac-bundle-public-keys", "", "ABAC 策略包验签公钥：逗号分隔的 keyID:base64pubkey（Ed25519 公钥 32 字节），可配置 2 把以上支持 keyId 轮换；或 env OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS")
+	abacBundleCachePath := flag.String("abac-bundle-cache-path", "", "agent 侧 ABAC 策略包 LKG 缓存路径（写入权限 0600）；空=<data-dir>/abac-bundle.json；或 env OPSMESH_ABAC_BUNDLE_CACHE_PATH")
+	abacBundleRefreshInterval := flag.Duration("abac-bundle-refresh-interval", 10*time.Minute, "agent 侧 ABAC 策略包轮询间隔（默认 10m；<=0 回退默认）；或 env OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL")
 	// 自动化引擎评估周期。
 	automationEvalInterval := flag.Duration("automation-eval-interval", 30*time.Second, "自动化引擎评估周期：周期评估 enabled 自动化规则并执行命中动作（默认 30s；或 env OPSMESH_AUTOMATION_EVAL_INTERVAL）")
 	flag.Parse()
@@ -970,6 +1001,14 @@ func Load() *Config {
 		ABACShadow:             valBool("abac-shadow", *abacShadow, "OPSMESH_ABAC_SHADOW"),
 		ABACEnforce:            parseABACEnforceEntries(val("abac-enforce", *abacEnforce, "OPSMESH_ABAC_ENFORCE"), abacEnforcePresetName),
 		ABACEnforcePreset:      abacEnforcePresetName,
+		ABACBundleSigningKey:   val("abac-bundle-signing-key", *abacBundleSigningKey, "OPSMESH_ABAC_BUNDLE_SIGNING_KEY"),
+		ABACBundleKeyID:        val("abac-bundle-key-id", *abacBundleKeyID, "OPSMESH_ABAC_BUNDLE_KEY_ID"),
+		ABACBundleTTL:          valDur("abac-bundle-ttl", *abacBundleTTL, "OPSMESH_ABAC_BUNDLE_TTL"),
+		ABACBundleEnabled:      valBool("abac-bundle-enabled", *abacBundleEnabled, "OPSMESH_ABAC_BUNDLE_ENABLED"),
+		ABACBundlePublicKeys:   parseABACBundlePublicKeys(val("abac-bundle-public-keys", *abacBundlePublicKeys, "OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS")),
+		ABACBundleCachePath:    val("abac-bundle-cache-path", *abacBundleCachePath, "OPSMESH_ABAC_BUNDLE_CACHE_PATH"),
+		ABACBundleRefreshInterval: valDur("abac-bundle-refresh-interval", *abacBundleRefreshInterval,
+			"OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL"),
 	}
 	// --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
@@ -987,6 +1026,11 @@ func Load() *Config {
 		cfg.ControlAddrs = cfg.ControlplaneEndpoints
 	}
 	cfg.ControlplaneEndpoints = cfg.ControlAddrs
+	// agent 侧 ABAC 策略包 LKG 缓存（M1）：未显式配置路径时默认落到
+	// <data-dir>/abac-bundle.json——与 agent.id/agent.key 同一受控目录（0600）。
+	if strings.TrimSpace(cfg.ABACBundleCachePath) == "" && strings.TrimSpace(cfg.DataDir) != "" {
+		cfg.ABACBundleCachePath = filepath.Join(cfg.DataDir, "abac-bundle.json")
+	}
 	// 负载均衡策略校验：非法值回退到默认 failover（不 fail-fast，保持启动友好）。
 	switch cfg.LBStrategy {
 	case "round-robin", "roundrobin", "rr", "failover", "fo", "":
@@ -1651,6 +1695,28 @@ func ParseABACEnforceEntry(entry string) (method, path string, err error) {
 
 // parseABACEnforceEntries 合并预置与显式条目，去重并保持出现顺序。
 // 未知预置名不在此处报错（Load 不能返回 error）；Validate 会独立拒绝。
+// parseABACBundlePublicKeys 解析 agent 侧验签公钥列表
+// （逗号分隔的 `keyID:base64pubkey` 条目）。只做形态拆分与去空白，
+// base64/长度校验在 internal/agent 构造客户端时进行（非法条目告警跳过，
+// 不阻断 agent 启动——先部署后配钥是 M1 的明确运维路径）。
+func parseABACBundlePublicKeys(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func parseABACEnforceEntries(raw, preset string) []string {
 	var out []string
 	seen := map[string]struct{}{}

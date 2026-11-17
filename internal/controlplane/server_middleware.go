@@ -166,6 +166,11 @@ func isPublicAPIPath(p string) bool {
 	if strings.HasPrefix(p, "/api/v1/federation/") {
 		return true
 	}
+	// ABAC 策略包（M1）：agent 通道用 per-agent HMAC（X-OpsMesh-Agent-*），无 JWT；
+	// 认证在 handleAgentABACBundle 内强制（缺头/错签一律 401），此处只放行到 handler。
+	if p == abacBundleRoute {
+		return true
+	}
 	// agent 引导注册：install token 在设备域/下游校验。
 	if strings.HasPrefix(p, "/api/v1/device-svc/provision/") {
 		return true

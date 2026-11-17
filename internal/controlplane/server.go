@@ -257,6 +257,13 @@ type Server struct {
 	abacTenants  map[string]struct{}
 	abacRev      uint64
 
+	// abacBundle 策略包签发缓存（M1，见 abac_bundle_endpoint.go）。
+	// 同一租户、同一策略快照复用同一份已签名 artifact，使 ETag 在策略未变期间保持稳定
+	// （bundleID/IssuedAt 不随每次请求抖动）。abacBundleNow 供测试注入固定时钟，nil=time.Now。
+	abacBundleMu    sync.Mutex
+	abacBundleCache map[string]abacBundleArtifact
+	abacBundleNow   func() time.Time
+
 	// M6 集成：网络拓扑缓存。
 	// networkTopologyCache 持有最近一次探测的拓扑数据 + 5 分钟过期时间，
 	// 由 handleNetworkTopology 在 ?refresh=true 时刷新，handleNetworkTopologyCache 读取。

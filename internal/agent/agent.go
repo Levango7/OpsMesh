@@ -94,6 +94,13 @@ type Agent struct {
 	// TD-60 任务域切流：任务服务 gRPC 客户端（连接 task-svc TaskService）。
 	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc TaskService。
 	taskServiceClient TaskServiceClient
+	// agentSecret 是本次运行的 per-agent HMAC 签名密钥（resolveAgentKey 解析结果）。
+	// 与 gRPC 请求签名共用同一密钥；M1 的 ABAC 策略包 HTTP 通道复用该密钥，
+	// 不新增凭证体系（服务端同样取 store.AgentSecret(agentID) 验签）。
+	agentSecret string
+	// ABAC 策略包拉取客户端（M1）：cfg.ABACBundleEnabled=true 时在注册成功、拿到
+	// per-agent 密钥后构造并启动；nil=未启用。心跳能力声明据此上报 abac_bundle=v1。
+	abacBundleClient *ABACBundleClient
 }
 
 // New 构造 agent（读取 hostname，作为注册信息）。
@@ -526,6 +533,14 @@ func (a *Agent) Run() error {
 	safeGo(ctx, "heartbeatLoop", a.heartbeatLoop)
 	safeGo(ctx, "dispatchLoop", a.dispatchLoop)
 	safeGo(ctx, "cancelLoop", a.cancelLoop) // F3 取消信号：轮询控制面，中止已下发取消的正在执行任务
+	// ABAC 策略包（M1）：注册成功并解析出 per-agent 密钥后启动拉取循环。
+	// 先加载本地 LKG（离线可用），Start 立即拉取一轮后按 ABACBundleRefreshInterval 轮询；
+	// 未启用（默认）时完全不构造客户端，心跳不带能力声明——与引入前逐字一致。
+	if a.cfg.ABACBundleEnabled {
+		a.abacBundleClient = NewABACBundleClient(a.cfg, a.agentID, a.agentSecret, a.cfg.ControlAddr, nil)
+		a.abacBundleClient.LoadFromCache()
+		safeGo(ctx, "abacBundleClient", a.abacBundleClient.Start)
+	}
 	// 日志采集：定时读取指定日志文件增量并上报控制面。
 	// 未配置采集路径时不启动——此时 logCollectLoop 会立即 return，而无条件启动会让
 	// safeGo 每 5s 重启一个空循环并打印「循环提前退出」（实机观测：默认配置下每分钟 12 条）。
@@ -721,6 +736,9 @@ func (a *Agent) register() error {
 			if key != "" {
 				a.grpc.SetSecret(key)
 			}
+			// 保存同一密钥供 ABAC 策略包 HTTP 通道复用（M1）：签名算法域分隔不同
+			// （"abac-bundle\n..." vs gRPC 的 v2 载荷签名），但密钥来源与优先级完全一致。
+			a.agentSecret = key
 			signed := key != ""
 			if !signed && a.cfg.GRPCRequireSignature {
 				// 控制面要求签名但 agent 三处都拿不到密钥：后续请求将被拒绝，提前告警。
@@ -742,6 +760,16 @@ func (a *Agent) register() error {
 	return fmt.Errorf("注册控制面失败，已重试 30 次")
 }
 
+// heartbeatRequest 构造心跳请求并附带 agent 协议能力（M1 能力协商，追加式可选字段）。
+// 未启用 ABAC 策略包时 Capabilities 为 nil（omitempty 不出现在 JSON），旧控制面无感知。
+func (a *Agent) heartbeatRequest() *grpcx.HeartbeatReq {
+	req := &grpcx.HeartbeatReq{AgentID: a.agentID, Status: "online", Load: 1}
+	if a.abacBundleClient != nil {
+		req.Capabilities = a.abacBundleClient.Capabilities()
+	}
+	return req
+}
+
 // heartbeatLoop 每 10s 经 gRPC Heartbeat 发送一次心跳（ctx 取消即退出）。
 // 监控指标采集频率独立：每 30s 采集一次（cpu.Percent 等需要采样间隔，频繁调用消耗 CPU）。
 // OTel：每次心跳创建 span（agent.heartbeat），trace_id 经 gRPC metadata 贯穿到控制面。
@@ -755,7 +783,7 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		case <-ticker.C:
 			// OTel：为每次心跳创建 span，trace_id 贯穿 agent→控制面。
 			spanCtx, span := otelx.StartSpan(ctx, "agent.heartbeat")
-			req := &grpcx.HeartbeatReq{AgentID: a.agentID, Status: "online", Load: 1}
+			req := a.heartbeatRequest()
 			// CMDB 增量上报：每 60 秒采集一次机器属性并附带在心跳中。
 			if report := a.collectCmdbReport(); report != nil {
 				req.CmdbReport = report

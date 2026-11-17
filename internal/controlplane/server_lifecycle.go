@@ -39,6 +39,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/enterprise/assets/", s.handleEnterpriseAsset)
 	mux.HandleFunc("/api/v1/devices", s.handleDevices)
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)
+	// ABAC 策略包（M1）：agent 经 HTTP 拉取已签名策略；认证复用 per-agent HMAC 密钥
+	// （X-OpsMesh-Agent-* 头，见 abac_bundle_endpoint.go），租户取自 agent 注册身份。
+	mux.HandleFunc(abacBundleRoute, s.handleAgentABACBundle)
 	mux.HandleFunc("/api/v1/me", s.handleMe)
 	// 商业授权状态（Open-Core）：社区版与授权版都能查，但需登录——
 	// 授权态含客户名与设备上限，属商务信息。端点本身不受 requireEnterpriseGate 约束，
