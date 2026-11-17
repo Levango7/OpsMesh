@@ -1358,3 +1358,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-17T09:00:00Z from=kilo scope=internal/store/memory/,internal/store/sqlstore/,internal/store/store.go note=批次46 预算持久化入库（BudgetStore 双实现 + 迁移 034） commit=0ecad1ee
 
 [CLAIM] 2026-11-17T09:15:00Z from=kilo ttl=8h scope=internal/store/store.go,internal/store/model/contract.go,internal/store/memory/,internal/store/sqlstore/,internal/controlplane/abac_engine.go,internal/controlplane/abac_ops.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/abac_*_test.go note=批次47 ABAC 策略持久化：ABACPolicyStore 双实现 + 迁移 035 + 服务端写穿/启动加载/5s 版本刷新（多副本一致），租户隔离与 version 乐观锁
+[DONE] 2026-11-17T10:30:00Z from=kilo scope=internal/store/model/,internal/store/memory/,internal/store/sqlstore/,internal/store/multischema/,internal/store/store.go,internal/controlplane/abac_* note=批次47 收口（ABAC 策略持久化 + 启动加载 + 写穿 + 5s 版本刷新） commit=af7e92df
