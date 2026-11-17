@@ -287,28 +287,8 @@ func Verify(sb SignedBundle, pub ed25519.PublicKey) error {
 // 签名内容（bundleID/keyID/时间先后）→ 过期 → 尚未生效（允许 5m 时钟偏移）。
 // 时间判断放在签名之后：未验签的时间字段不可信。
 func VerifyAt(sb SignedBundle, pub ed25519.PublicKey, now time.Time) error {
-	if sb.Bundle.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("%w: got %d want %d", ErrUnsupportedSchema, sb.Bundle.SchemaVersion, SchemaVersion)
-	}
-	if len(sb.Bundle.Policies) > MaxPolicies {
-		return fmt.Errorf("%w: %d > %d", ErrTooManyPolicies, len(sb.Bundle.Policies), MaxPolicies)
-	}
-	raw, err := CanonicalJSON(sb.Bundle)
-	if err != nil {
+	if _, err := verifySignature(sb, pub); err != nil {
 		return err
-	}
-	if len(raw) > MaxBundleBytes {
-		return fmt.Errorf("%w: canonical %d > %d", ErrBundleTooLarge, len(raw), MaxBundleBytes)
-	}
-	if len(pub) != ed25519.PublicKeySize {
-		return fmt.Errorf("%w: public key length %d", ErrBadSignature, len(pub))
-	}
-	sig, err := base64.StdEncoding.DecodeString(sb.Signature)
-	if err != nil || len(sig) != ed25519.SignatureSize {
-		return fmt.Errorf("%w: malformed signature", ErrBadSignature)
-	}
-	if !ed25519.Verify(pub, raw, sig) {
-		return ErrBadSignature
 	}
 	if err := validate(sb.Bundle); err != nil {
 		return err
@@ -321,6 +301,34 @@ func VerifyAt(sb SignedBundle, pub ed25519.PublicKey, now time.Time) error {
 		return fmt.Errorf("%w: issued at %s", ErrNotYetValid, sb.Bundle.IssuedAt.UTC().Format(time.RFC3339Nano))
 	}
 	return nil
+}
+
+// verifySignature 做「结构上限 + 签名」校验，不含任何时间窗口判断。
+func verifySignature(sb SignedBundle, pub ed25519.PublicKey) ([]byte, error) {
+	if sb.Bundle.SchemaVersion != SchemaVersion {
+		return nil, fmt.Errorf("%w: got %d want %d", ErrUnsupportedSchema, sb.Bundle.SchemaVersion, SchemaVersion)
+	}
+	if len(sb.Bundle.Policies) > MaxPolicies {
+		return nil, fmt.Errorf("%w: %d > %d", ErrTooManyPolicies, len(sb.Bundle.Policies), MaxPolicies)
+	}
+	raw, err := CanonicalJSON(sb.Bundle)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > MaxBundleBytes {
+		return nil, fmt.Errorf("%w: canonical %d > %d", ErrBundleTooLarge, len(raw), MaxBundleBytes)
+	}
+	if len(pub) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("%w: public key length %d", ErrBadSignature, len(pub))
+	}
+	sig, err := base64.StdEncoding.DecodeString(sb.Signature)
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return nil, fmt.Errorf("%w: malformed signature", ErrBadSignature)
+	}
+	if !ed25519.Verify(pub, raw, sig) {
+		return nil, ErrBadSignature
+	}
+	return raw, nil
 }
 
 // Encode 序列化为 JSON 并强制 MaxBundleBytes 上限。
@@ -396,4 +404,20 @@ func (ks *KeySet) Verify(sb SignedBundle, now time.Time) error {
 		return fmt.Errorf("%w: %q", ErrUnknownKey, sb.Bundle.KeyID)
 	}
 	return VerifyAt(sb, pub, now)
+}
+
+// VerifySignature 按 keyId 选钥，只校验签名与结构（schema/条数/体积/ID 非空/时间先后），
+// 不做过期与「尚未生效」判断。用于设备侧每次评估前的纵深防御复验：
+// 过期包仍需可评估（由调用方读取 ExpiresAt 决定 fail-open/closed）。
+func (ks *KeySet) VerifySignature(sb SignedBundle) error {
+	ks.mu.RLock()
+	pub, ok := ks.keys[sb.Bundle.KeyID]
+	ks.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("%w: %q", ErrUnknownKey, sb.Bundle.KeyID)
+	}
+	if _, err := verifySignature(sb, pub); err != nil {
+		return err
+	}
+	return validate(sb.Bundle)
 }

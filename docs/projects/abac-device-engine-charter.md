@@ -1,6 +1,6 @@
 ﻿# ABAC 设备侧决策引擎 项目章程
 
-> **状态：已立项（2026-11-17，owner 批准；M1 已完成（2026-11-17），M2 待启动）**
+> **状态：已立项（2026-11-17，owner 批准；M1 已完成（2026-11-17），M2 已完成（2026-11-17），M3 待启动）**
 > **负责人：待定**
 > **日期：2026-11-17**
 > **依据**：`internal/controlplane/abac_ops.go`、`internal/controlplane/abac_engine.go`、`docs/opsmesh-authz-audit-2026-11-04.md`、`docs/projects-2026-11-05.md`
@@ -81,7 +81,7 @@
 | 里程碑 | 状态 | 入口/说明 |
 |---|---|---|
 | **M1** 策略包格式与签名 | **已完成（2026-11-17）** | 规格：[`abac-device-engine-m1-bundle-spec.md`](./abac-device-engine-m1-bundle-spec.md)。证据：`pkg/abacbundle/`（`CanonicalJSON`/`Digest`/`Sign`/`Verify`/`KeySet`，限额与哨兵错误；`go test ./pkg/abacbundle/`）、`internal/controlplane/abac_bundle_endpoint.go`（`GET /api/v1/agent/abac-bundle`，per-agent HMAC、ETag/304、租户隔离、无钥 503；`abac_bundle_endpoint_test.go`）、`internal/agent/abac_bundle_client.go`（HMAC 拉取 + 验签 + 原子 LKG 缓存 0600 + `abac_bundle=v1` 能力上报；`abac_bundle_client_test.go`） |
-| **M2** 设备端评估器 | 待启动 | 依赖 M1 的 bundle v1 冻结；共享 fixture 一致性门 |
+| **M2** 设备端评估器 | **已完成（2026-11-17）** | 证据：`pkg/abacbundle/eval.go`（`Evaluate`/`EvaluateBundle`，deny-overrides + default-deny + 条件等值 + 通配/前缀 + 按 ID 字典序 tie-break）、共享 fixture `pkg/abacbundle/testdata/eval_fixtures.json`（**32 条**）由 `pkg/abacbundle/eval_test.go` 与 `internal/controlplane/abac_eval_parity_test.go` 逐例断言两端一致；`internal/agent/abac_local_eval.go` 的 `EvaluateLocal` 每次调用以当前 `KeySet` 重新验签、过期仅标记 `BundleExpired`；不接入请求闸门 |
 | **M3** 决策审计回传 | 待启动 | 依赖 M2 的决策结构与 `evaluatedBy` 标记 |
 | **M4** 灰度与回滚 | 待启动 | 依赖 M3 的审计连续性；回滚指令格式另行评审 |
 
@@ -120,7 +120,7 @@
 
 | 风险 | 影响 | 缓解 | 回滚 |
 |---|---|---|---|
-| 服务端/设备端语义漂移 | 同一请求两套结论，审计不可信 | 共享 fixture + 属性测试 + CI 一致性门；语义变更必须同批更新向量 | 停用设备评估，回退服务端决策 |
+| 服务端/设备端语义漂移 | 同一请求两套结论，审计不可信 | 共享 fixture + 属性测试 + CI 一致性门；语义变更必须同批更新向量。**现状记录**：服务端 `Effect` 非 `"deny"` 一律视为允许候选（含空串/未知值，历史口径），设备端为保持一致照此实现；若未来收紧为仅 `"allow"`，必须同步两端评估器并更新 `eval_fixtures.json` | 停用设备评估，回退服务端决策 |
 | 策略包供应链攻击 | 设备执行伪造策略 | Ed25519 验签、版本单调、摘要钉定、拒绝未签名包；私钥隔离 | 回滚到上一已签名 bundle；吊销密钥并重签 |
 | 离线策略过期 | 设备按旧策略放行/拒绝 | last-known-good + TTL + `offline=true` 显式标记；高风险变更要求在线确认（D2） | 强制上线刷新；必要时禁用设备评估 |
 | 设备资源受限 | 评估拖慢 agent | bundle 大小/策略条数/评估时延预算；基准门禁；超限拒绝加载 | 回退上一 bundle 或服务端评估 |
@@ -145,7 +145,7 @@
 
 ## 10. 状态与决策记录
 
-- **当前状态：已立项**（2026-11-17，owner 批准）；**负责人：待定**；**M1 已完成（2026-11-17），M2 待启动**。
+- **当前状态：已立项**（2026-11-17，owner 批准）；**负责人：待定**；**M1 已完成（2026-11-17），M2 已完成（2026-11-17），M3 待启动**。
 - **owner 决策原文（2026-11-17，逐字记录）**：
 
   > 2026-11-17 用户批准立项，撤销“设备端不实现”的 501 立场；501 仅保留为“禁止脚本路径伪造判定”的函数级守卫。
@@ -163,8 +163,8 @@
 | 里程碑 | 状态 | 说明 |
 |---|---|---|
 | **M1** 策略包格式与签名 | **已完成（2026-11-17）** | 规格 `docs/projects/abac-device-engine-m1-bundle-spec.md`（bundle v1）；实现 `pkg/abacbundle/` + `internal/controlplane/abac_bundle_endpoint.go` + `internal/agent/abac_bundle_client.go`；M2 待启动 |
-| **M2** 设备端评估器 | 待启动 | 等待 M1 wire 格式冻结 |
-| **M3** 决策审计回传 | 待启动 | 等待 M2 决策结构 |
+| **M2** 设备端评估器 | **已完成（2026-11-17）** | 设备侧 `pkg/abacbundle.Evaluate` 与服务端 `evaluateABAC` 同语义；32 条共享 fixture 两端逐例一致（`eval_test.go` + `abac_eval_parity_test.go`）；`EvaluateLocal` 每次调用重新验签、过期仅标记；未接入请求闸门 |
+| **M3** 决策审计回传 | 待启动 | 等待 M2 决策结构（已就绪） |
 | **M4** 灰度与回滚 | 待启动 | 等待 M3 审计连续性 |
 
 ### 10.2 决策日志
@@ -177,6 +177,7 @@
 | 2026-11-14 | 审计整改批次 15–19 DONE；其中批次 17 落地 ABAC 真实评估引擎 | `docs/CLAIMS.md:1228` |
 | 2026-11-17 | 本草程起草：设备侧引擎待批准；启动需先反转 501 | 本文件（初稿） |
 | **2026-11-17** | **owner 批准立项：撤销“设备端不实现”的 501 立场；501 仅保留为“禁止脚本路径伪造判定”的函数级守卫** | 本节逐字记录；状态改为“已立项”，M1 启动 |
+| **2026-11-17** | **M1 完成（bundle v1 签名库/签发端点/Agent LKG）；M2 完成（设备端评估器 + 32 条共享 fixture 两端逐例一致）** | §5.1 / §10.1 状态表；`CHANGELOG.md` 批次54/55 |
 
 ---
 
@@ -184,7 +185,7 @@
 
 ## 进展记录（2026-11-17）
 
-本节记录设备脚本路径 `evaluate` 501 口径复核后的落地进展。**D1 已于 2026-11-17 批准（见 §10），本草程状态为“已立项（M1 已完成（2026-11-17），M2 待启动）”；D2/D3 仍待定。**
+本节记录设备脚本路径 `evaluate` 501 口径复核后的落地进展。**D1 已于 2026-11-17 批准（见 §10），本草程状态为“已立项（M1 已完成（2026-11-17），M2 已完成（2026-11-17），M3 待启动）”；D2/D3 仍待定。**
 
 - **501 守卫保留（不反转）**：`buildABACScript` 的 `evaluate` 分支继续显式返回 501（`internal/controlplane/abac_ops.go:40-52`）。理由：该分支是**函数级守卫**，用于阻止设备脚本路径伪造 ALLOWED 判定；HTTP `POST /api/v1/abac action=evaluate` 早已由服务端真实引擎决策（200），守卫只覆盖不可能产出判定的脚本通道。文案改述为 “device-script evaluation is intentionally disabled; the HTTP evaluate path is served by the server-side engine with device-context enrichment”，由 `TestBuildABACScript_EvaluateIsExplicit501`（`internal/controlplane/abac_ops_security_test.go:91`）钉住 501 与关键措辞。
 - **设备上下文增强已落地**：HTTP evaluate 带 `deviceID` 时，先查设备（不存在 404；跨租户 403，与不存在同形不泄露存在性），再把设备属性（`deviceID/hostname/segment/os/arch/state/taskState/agentID/managed`，空字符串跳过）注入策略上下文（`internal/controlplane/abac_ops.go:102-170`，属性展开见 `abac_ops.go:58-78`）。合并规则：**调用方自带键优先**，设备属性只补空缺，绝不覆盖调用方显式上下文；顶层扁平键供现有等值条件匹配，另附嵌套 `device` 对象副本（调用方已提供 `device` 时同样不覆盖）。响应新增 `evaluatedBy`（`server` / `server+device-context`）与 `deviceContext`（实际注入子集）供审计。用例：`abac_ops_security_test.go:163`（同租户注入并命中）、`:197`（跨租户 403 无决策字段）、`:214`（未知设备 404）、`:227`（调用方键不被覆盖）、`:256`（非法 context JSON 400）、`:266`（无 deviceID 时 `evaluatedBy=server`）。
@@ -204,6 +205,7 @@
   - **晋级 enforcement 的判据（重申，不变，仍需 D2 owner 决策）**：① 观察期 **2–4 周**且覆盖至少一个完整发布窗口；② 关键变更路径（`/api/v1/tasks`、`/api/v1/devices`、K8s/CMDB 写入口、自动化执行）would-deny 率 **< 1%**；③ **零无法解释的 deny**（每条 deny 要么命中显式 deny 策略，要么确认为 default-deny 且有补齐策略计划）；④ `decision="error"` 恒为 0；⑤ 灰度按域推进（先低风险只读邻近域，再核心变更域），enforce 首日保留 kill switch（关闭 `--abac-shadow` 回退 RBAC-only）。本次实测只满足 ④；在 default-deny 缺口收敛到 ② 之前不得进入 enforcement。
 - **立项与 M1 规格（2026-11-17，批次53）**：owner 批准立项（决策原文见 §10）：撤销“设备端不实现”的 501 立场，501 仅保留为“禁止脚本路径伪造判定”的函数级守卫；服务端评估仍是权威默认路径。章程状态改为“已立项（M1 进行中）”，里程碑状态见 §5.1。M1 规格已定稿：`docs/projects/abac-device-engine-m1-bundle-spec.md`（bundle v1：规范化 JSON + SHA-256、Ed25519 签名、`keyId` 与双公钥轮换、`GET /api/v1/agent/abac-bundle` + ETag、last-known-good 离线缓存、过期按模式处理、拒绝降级、heartbeat `abac_bundle=v1` 能力协商、1 MiB / 1000 条上限）。本批只改文档，未改代码。
 - **M1 已完成（2026-11-17，批次54）**：bundle v1 从规格落到代码。① `pkg/abacbundle/`：确定性 JSON（字段/策略定序、类型白名单）、SHA-256 digest、Ed25519 签名/验签（域分隔 `opsmesh-abac-bundle-v1\n`）、`KeySet` 按 `keyId` 选钥轮换、`MaxPolicies=1000`/`MaxBundleBytes=1 MiB`、哨兵错误分类（过期/未生效/坏签/版本/超限/未知键/非法结构/非法密钥），失败一律拒绝；测试 `bundle_test.go`（规范化黄金向量、重编码稳定、篡改必败、时间窗、schema/限额、轮换、随机包 fuzz 式签验）。② 控制面 `internal/controlplane/abac_bundle_endpoint.go`：`GET /api/v1/agent/abac-bundle`，per-agent HMAC（`X-OpsMesh-Agent-{ID,Timestamp,Signature}`，±5m 时钟窗；未知 agent 与错签同形 401，退役/禁用 403），租户只取已认证 agent 身份，按租户策略快照缓存签名 artifact 使 ETag 稳定（`If-None-Match` ⇒ 304），响应头 `X-OpsMesh-Bundle-Key-Id`/`X-OpsMesh-Bundle-Digest`，未配/非法签发密钥 503；测试 `abac_bundle_endpoint_test.go`（可验签下发、ETag/304、租户隔离、503、401、空策略仍签名、405、生产 default-deny 可达）。③ agent `internal/agent/abac_bundle_client.go`：HMAC 拉取、验签/租户/单调性校验、原子 LKG 缓存（临时文件+rename，0600）、启动先加载缓存再周期拉取（默认 10m）、304 保留现有包、被篡改/跨租户/降级包丢弃；心跳能力 `abac_bundle=v1`（`grpcx.HeartbeatReq.Capabilities`）；测试 `abac_bundle_client_test.go`（happy path、304、篡改丢弃、重启加载、过期缓存保留、能力上报、ctx 退出）。**M2（设备端评估器）待启动**。
+- **M2 已完成（2026-11-17，批次55）**：设备端评估器落地，语义与服务端逐条对齐。① `pkg/abacbundle/eval.go`：`Evaluate`/`EvaluateBundle` 实现字段匹配（`""`/`*` 恒匹配、`prefix*` 前缀、其余精确）、条件逐键等值（空 conditions 不解析 context；坏 JSON/非对象 context 有条件即不匹配；非字符串值按 `json.Marshal` 文本比较；缺键不匹配、多余键忽略）、deny-overrides（首个命中 deny 策略立即拒绝，`DenyOverride=true`）、default-deny 与 reason 文案逐字对齐；**排序 tie-break**：策略按 ID 字典序稳定排序，同一策略集在任意输入顺序下 `MatchedPolicyID` 稳定（服务端一致性测试按同序插入）。② 共享 fixture `pkg/abacbundle/testdata/eval_fixtures.json` **32 条**，覆盖 default-deny/allow/deny-overrides/条件命中与不命中/通配与前缀/租户视图/坏 context/Effect 口径；设备侧 `pkg/abacbundle/eval_test.go` 与服务端守卫 `internal/controlplane/abac_eval_parity_test.go` 读同一文件逐例断言 `Allowed`/`MatchedPolicyID`/`DenyOverride`。③ `internal/agent/abac_local_eval.go`：`ABACBundleClient.EvaluateLocal` 每次调用用当前 `KeySet` 重新验签（`KeySet.VerifySignature`：只验签+结构、不做时间窗），无包返回 `ErrNoBundle`，过期不阻止评估、仅置 `Decision.BundleExpired`；**不接入任何请求闸门**（服务端评估调用点与 agent 执行路径未改，设备 enforcement 属 M4）。④ 历史口径记录：服务端 `Effect` 非 `"deny"`（含空串/未知值）一律视为允许候选，设备端为一致性照此实现；若未来收紧为仅 `"allow"`，需同步两端评估器并更新 32 条 fixture。**M3（决策审计回传）待启动**。
 
 ## 定向强制（批次53，已落地）
 

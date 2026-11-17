@@ -11,7 +11,7 @@
 | **TD-60** 域收敛 | 用整域开关 + 按增量切换，把 task / device / auth 从 controlplane 双份实现收敛到微服务，不搬历史数据 | **已立项**（阶段 2 进行中，约 60%；2026-11-17 静态一致性审计完成（P0 5，已修 2）） | 待定 | 22–32 人日（日历 6–8 周） | [TD-60 域收敛立项书](./TD-60-domain-convergence-charter.md) |
 | **TD-66** API 网关数据面 | `/gw/` 最小反向代理升级为完整数据面（持久化、熔断、埋点、超时），或明确维持预览形态 | **待批准**（MVP 已落地；两处残余缺陷已修复（reload 漏装熔断器、多副本缓存不失效）） | 待定 | MVP 已交付（约 2.5 人日）；完整面待章程估算 | [TD-66 网关数据面立项书](./TD-66-gateway-dataplane-charter.md) |
 | **服务发现后端** | 在现有 `ServiceDiscovery` 接口后新增 etcd v3 / Consul 后端，补 TTL、健康语义、Watch 重连与后端开关 | **待批准**（M0/file 已落地（`--discovery-backend=memory\|static\|file`）；装配已入库（agent 按开关装配 memory/static/file，2026-11-17 批次44）；etcd/Consul 仍未立项） | 待定 | 11–18 人日 | [服务发现后端立项书](./discovery-backends-charter.md) |
-| **ABAC** 设备侧决策引擎 | 以服务端 ABAC 评估器为唯一权威语义源，为设备侧增加签名策略包 + 本地评估 + 决策审计回传；不替代 RBAC 强制层 | **已立项**（M1 已完成（2026-11-17）：bundle v1 签名库/签发端点/Agent LKG 与能力协商已落地；M2 待启动） | 待定 | 25–37 人日（M0 已完成，M1–M4 约 23–34 人日） | [立项书](./abac-device-engine-charter.md) / [M1 规格](./abac-device-engine-m1-bundle-spec.md) |
+| **ABAC** 设备侧决策引擎 | 以服务端 ABAC 评估器为唯一权威语义源，为设备侧增加签名策略包 + 本地评估 + 决策审计回传；不替代 RBAC 强制层 | **已立项**（M1 已完成（2026-11-17）：bundle v1 签名库/签发端点/Agent LKG；**M2 已完成（2026-11-17）**：设备端评估器 + 32 条共享 fixture 与服务端逐例一致；M3 待启动） | 待定 | 25–37 人日（M0 已完成，M1–M4 约 23–34 人日） | [立项书](./abac-device-engine-charter.md) / [M1 规格](./abac-device-engine-m1-bundle-spec.md) |
 
 > TD-66 立项书由另一条工作线交付；本索引只做登记与链接，不复制其正文。
 > 若文件名调整，只需同步本表，不改其他项目。
