@@ -1,5 +1,6 @@
 <template>
   <PageShell :title="$t('alerts.title')" :desc="$t('alerts.subtitle')" testid="alerts" :error="store.error">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div class="stats">
       <div class="stat rose">
         <div class="stat-v">{{ store.critical.length }}</div>
@@ -56,16 +57,16 @@
           <Button
             variant="primary"
             size="sm"
-            :disabled="isActing(a.alertID)"
-            :title="isActing(a.alertID) ? $t('common.loading') : ''"
+            :disabled="!canWrite || (isActing(a.alertID))"
+            :title="!canWrite ? $t('common.write_denied') : (isActing(a.alertID) ? $t('common.loading') : '')"
             @click="onAck(a.alertID)"
             data-testid="alert-ack-btn"
           >{{ $t('alerts.ack') }}</Button>
           <Button
             variant="ghost"
             size="sm"
-            :disabled="isActing(a.alertID)"
-            :title="isActing(a.alertID) ? $t('common.loading') : ''"
+            :disabled="!canWrite || (isActing(a.alertID))"
+            :title="!canWrite ? $t('common.write_denied') : (isActing(a.alertID) ? $t('common.loading') : '')"
             @click="onSilence(a.alertID)"
             data-testid="alert-silence-btn"
           >{{ $t('alerts.silence') }}</Button>
@@ -117,6 +118,7 @@
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 import { computed, reactive, onMounted, defineAsyncComponent } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useAlertStore } from '@/stores/alert'
 import { useRouter } from 'vue-router'
 import { t } from '@/i18n'
@@ -132,6 +134,10 @@ const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.
 const store = useAlertStore()
 const router = useRouter()
 
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('alert:ack/alert:silence'))
 const ackedCount = computed(() =>
   store.list.filter((a) => (a.status || 'firing') !== 'firing').length
 )

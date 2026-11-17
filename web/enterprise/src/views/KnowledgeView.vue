@@ -5,6 +5,7 @@
     testid="knowledge"
     :error="store.error || loadErr"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 统计 -->
     <div class="metrics-row metrics-row--two" v-if="store.stats">
       <MetricsCard :title="$t('knowledge.total_docs')" icon="cmdb">
@@ -44,7 +45,7 @@
     <div class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('knowledge.sync_title') }}</h3>
-        <Button variant="primary" size="sm" @click="syncAll" :disabled="store.loading">{{ $t('knowledge.sync_all') }}</Button>
+        <Button variant="primary" size="sm" @click="syncAll" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (store.loading)">{{ $t('knowledge.sync_all') }}</Button>
       </div>
       <DataTable
         :loading="store.loading"
@@ -58,7 +59,7 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
-            <Button variant="ghost" size="sm" @click="syncSource(row.source)">{{ $t('knowledge.sync_one') }}</Button>
+            <Button variant="ghost" size="sm" @click="syncSource(row.source)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('knowledge.sync_one') }}</Button>
           </div>
         </template>
       </DataTable>
@@ -84,7 +85,7 @@
         <template #cell-source="{ value }"><span class="source-tag">{{ value }}</span></template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
-            <Button variant="danger" size="sm" @click="askDelete(row.id)">{{ $t('common.delete') }}</Button>
+            <Button variant="danger" size="sm" @click="askDelete(row.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
           </div>
         </template>
       </DataTable>
@@ -103,7 +104,8 @@
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, computed} from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -114,6 +116,10 @@ import { Button } from '@/components/ui'
 const store = useKnowledgeStore()
 
 // 检索/同步/文档增删此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('knowledge:write'))
 const loadErr = ref('')
 
 const searchQuery = ref('')
