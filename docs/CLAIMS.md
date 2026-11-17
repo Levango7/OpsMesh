@@ -1376,3 +1376,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [RELEASE] 2026-11-17T10:15:01Z from=kilo scope=internal/controlplane/db_ops.go,internal/controlplane/b29_injection_test.go,internal/controlplane/b29_injection_test.go note=过期认领释放：ARCH 构造即校验模板工作已落 main，证据 cc0bc7d2（db_ops.go 全量迁 validated* + b29 守卫同型重写，origin/main 祖先校验通过）；按本板 append-only 规则仅追加本行，不删改原行。
 [RELEASE] 2026-11-17T10:15:01Z from=kilo scope=internal/controlplane/vector_ops.go,internal/controlplane/b31_injection_test.go note=过期认领释放：ARCH 构造即校验第二例工作已落 main，证据 361e4f91（vector_ops.go 7 builder 入参全改 validated* + b31 守卫同型重写，origin/main 祖先校验通过）；按本板 append-only 规则仅追加本行，不删改原行。
 
+
+[DONE] 2026-11-17T14:40:00Z from=kilo scope=cmd/device-sim/,internal/controlplane/factory/,internal/discovery/,internal/logx/,internal/store/sqlstore/,internal/store/storefail/,internal/store/storekit/,pkg/log/,plugins/ note=批次51 收口（剩余机械清扫入库，行为等价，gosec HIGH 0） commit=f56ebb3f
