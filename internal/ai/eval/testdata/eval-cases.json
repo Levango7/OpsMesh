@@ -1,0 +1,417 @@
+{
+  "version": "v1.0-synthetic-30",
+  "cases": [
+    {
+      "id": "alert-001",
+      "category": "alert",
+      "input": "告警：web-01 CPU 使用率 95% 持续 10 分钟，如何定位？",
+      "expect_tools": [
+        "query_metrics",
+        "query_device"
+      ],
+      "expect_points": [
+        "CPU",
+        "时序",
+        "进程"
+      ]
+    },
+    {
+      "id": "alert-002",
+      "category": "alert",
+      "input": "设备 db-02 磁盘空间告警，剩余 5%，需要做什么？",
+      "expect_tools": [
+        "query_metrics",
+        "query_device"
+      ],
+      "expect_points": [
+        "磁盘",
+        "清理",
+        "扩容"
+      ]
+    },
+    {
+      "id": "alert-003",
+      "category": "alert",
+      "input": "收到内存泄漏告警，pod api-gateway 内存持续增长，先查什么？",
+      "expect_tools": [
+        "query_metrics"
+      ],
+      "expect_points": [
+        "内存",
+        "趋势",
+        "OOM"
+      ]
+    },
+    {
+      "id": "alert-004",
+      "category": "alert",
+      "input": "网络丢包告警：switch-core 丢包率 8%，定位方向？",
+      "expect_tools": [
+        "query_metrics",
+        "query_device"
+      ],
+      "expect_points": [
+        "丢包",
+        "接口",
+        "带宽"
+      ]
+    },
+    {
+      "id": "alert-005",
+      "category": "alert",
+      "input": "告警风暴，10 分钟内 200 条同类告警，如何抑制？",
+      "expect_tools": [
+        "search_knowledge"
+      ],
+      "expect_points": [
+        "抑制",
+        "聚合",
+        "根因"
+      ]
+    },
+    {
+      "id": "alert-006",
+      "category": "alert",
+      "input": "device nginx-01 报 502 错误率升高，诊断步骤？",
+      "expect_tools": [
+        "query_metrics",
+        "query_device",
+        "search_knowledge"
+      ],
+      "expect_points": [
+        "502",
+        "上游",
+        "日志"
+      ]
+    },
+    {
+      "id": "rc-001",
+      "category": "rootcause",
+      "input": "网站响应慢，最近发布后开始，疑似什么根因？",
+      "expect_tools": [
+        "query_metrics",
+        "query_device",
+        "search_knowledge"
+      ],
+      "expect_points": [
+        "延迟",
+        "发布",
+        "回滚"
+      ]
+    },
+    {
+      "id": "rc-002",
+      "category": "rootcause",
+      "input": "数据库连接池耗尽，应用报 too many connections，原因？",
+      "expect_tools": [
+        "query_metrics",
+        "search_knowledge"
+      ],
+      "expect_points": [
+        "连接池",
+        "连接数",
+        "泄漏"
+      ]
+    },
+    {
+      "id": "rc-003",
+      "category": "rootcause",
+      "input": "集群节点频繁 NotReady，kubelet 日志报 PLEG 超时？",
+      "expect_tools": [
+        "search_knowledge",
+        "query_device"
+      ],
+      "expect_points": [
+        "PLEG",
+        "kubelet",
+        "节点"
+      ]
+    },
+    {
+      "id": "rc-004",
+      "category": "rootcause",
+      "input": "定时任务凌晨 3 点批量失败，其它时间正常，可能原因？",
+      "expect_tools": [
+        "query_metrics",
+        "search_knowledge"
+      ],
+      "expect_points": [
+        "定时",
+        "资源",
+        "竞争"
+      ]
+    },
+    {
+      "id": "rc-005",
+      "category": "rootcause",
+      "input": "服务 A 调用服务 B 超时，B 自身指标正常，问题在哪？",
+      "expect_tools": [
+        "query_metrics",
+        "query_device"
+      ],
+      "expect_points": [
+        "网络",
+        "超时",
+        "依赖"
+      ]
+    },
+    {
+      "id": "rc-006",
+      "category": "rootcause",
+      "input": "新版本上线后 CPU 飙高但 QPS 未变，怎么排查？",
+      "expect_tools": [
+        "query_metrics",
+        "search_knowledge"
+      ],
+      "expect_points": [
+        "代码",
+        "热点",
+        "profiling"
+      ]
+    },
+    {
+      "id": "rem-001",
+      "category": "remediation",
+      "input": "web-01 磁盘满导致无法写日志，如何应急处置？",
+      "expect_tools": [
+        "execute_command",
+        "create_ticket"
+      ],
+      "expect_points": [
+        "清理",
+        "日志",
+        "工单"
+      ]
+    },
+    {
+      "id": "rem-002",
+      "category": "remediation",
+      "input": "需要重启 card payment 服务，请给出安全操作序列。",
+      "expect_tools": [
+        "query_device",
+        "execute_command"
+      ],
+      "expect_points": [
+        "摘流量",
+        "重启",
+        "验证"
+      ]
+    },
+    {
+      "id": "rem-003",
+      "category": "remediation",
+      "input": "证书 3 天后过期，如何批量更新？",
+      "expect_tools": [
+        "search_knowledge",
+        "create_ticket"
+      ],
+      "expect_points": [
+        "证书",
+        "更新",
+        "工单"
+      ]
+    },
+    {
+      "id": "rem-004",
+      "category": "remediation",
+      "input": "发现 CVE-2024-1234，受影响主机如何修复？",
+      "expect_tools": [
+        "web_search",
+        "query_device",
+        "create_ticket"
+      ],
+      "expect_points": [
+        "CVE",
+        "补丁",
+        "工单"
+      ]
+    },
+    {
+      "id": "rem-005",
+      "category": "remediation",
+      "input": "主库故障需切到备库，给出切换步骤。",
+      "expect_tools": [
+        "query_device",
+        "search_knowledge"
+      ],
+      "expect_points": [
+        "主备",
+        "切换",
+        "验证"
+      ]
+    },
+    {
+      "id": "rem-006",
+      "category": "remediation",
+      "input": "某 Pod OOM 反复重启，临时处置+长期方案？",
+      "expect_tools": [
+        "query_metrics",
+        "search_knowledge",
+        "create_ticket"
+      ],
+      "expect_points": [
+        "limit",
+        "内存",
+        "工单"
+      ]
+    },
+    {
+      "id": "cap-001",
+      "category": "capacity",
+      "input": "过去一周 CPU 峰值 80%，是否需要扩容？",
+      "expect_tools": [
+        "query_metrics"
+      ],
+      "expect_points": [
+        "峰值",
+        "趋势",
+        "扩容"
+      ]
+    },
+    {
+      "id": "cap-002",
+      "category": "capacity",
+      "input": "评估下季度存储容量，当前日增 200GB。",
+      "expect_tools": [
+        "query_metrics"
+      ],
+      "expect_points": [
+        "增长",
+        "容量",
+        "预测"
+      ]
+    },
+    {
+      "id": "cap-003",
+      "category": "capacity",
+      "input": "大促前是否需要增加集群节点，依据是什么？",
+      "expect_tools": [
+        "query_metrics",
+        "query_device"
+      ],
+      "expect_points": [
+        "QPS",
+        "容量",
+        "节点"
+      ]
+    },
+    {
+      "id": "cap-004",
+      "category": "capacity",
+      "input": "数据库连接数常年 90%，何时需要调整？",
+      "expect_tools": [
+        "query_metrics"
+      ],
+      "expect_points": [
+        "连接数",
+        "上限",
+        "调整"
+      ]
+    },
+    {
+      "id": "cap-005",
+      "category": "capacity",
+      "input": "带宽利用率 70%，是否需要升级链路？",
+      "expect_tools": [
+        "query_metrics",
+        "query_device"
+      ],
+      "expect_points": [
+        "带宽",
+        "峰值",
+        "升级"
+      ]
+    },
+    {
+      "id": "cap-006",
+      "category": "capacity",
+      "input": "给 capacity 报告补充近 30 天内存使用趋势。",
+      "expect_tools": [
+        "query_metrics"
+      ],
+      "expect_points": [
+        "内存",
+        "30天",
+        "趋势"
+      ]
+    },
+    {
+      "id": "nlq-001",
+      "category": "nlquery",
+      "input": "帮我查一下 web-01 的详细信息。",
+      "expect_tools": [
+        "query_device"
+      ],
+      "expect_points": [
+        "IP",
+        "CPU",
+        "状态"
+      ]
+    },
+    {
+      "id": "nlq-002",
+      "category": "nlquery",
+      "input": "查看集群 cpu 使用率最近一小时的数据。",
+      "expect_tools": [
+        "query_metrics"
+      ],
+      "expect_points": [
+        "CPU",
+        "时序",
+        "一小时"
+      ]
+    },
+    {
+      "id": "nlq-003",
+      "category": "nlquery",
+      "input": "搜索知识库里关于 K8s 升级的 Runbook。",
+      "expect_tools": [
+        "search_knowledge"
+      ],
+      "expect_points": [
+        "Runbook",
+        "升级",
+        "K8s"
+      ]
+    },
+    {
+      "id": "nlq-004",
+      "category": "nlquery",
+      "input": "查最新的 Redis 安全公告。",
+      "expect_tools": [
+        "web_search"
+      ],
+      "expect_points": [
+        "Redis",
+        "公告",
+        " CVE"
+      ]
+    },
+    {
+      "id": "nlq-005",
+      "category": "nlquery",
+      "input": "给运维团队创建一个巡检工单。",
+      "expect_tools": [
+        "create_ticket"
+      ],
+      "expect_points": [
+        "巡检",
+        "工单",
+        "创建"
+      ]
+    },
+    {
+      "id": "nlq-006",
+      "category": "nlquery",
+      "input": "查询 db-01 的磁盘和内存指标。",
+      "expect_tools": [
+        "query_metrics"
+      ],
+      "expect_points": [
+        "磁盘",
+        "内存",
+        "指标"
+      ]
+    }
+  ]
+}
