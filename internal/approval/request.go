@@ -68,20 +68,24 @@ func (rs *RequestStep) HasDecided(userID string) bool {
 // 状态机：Status 从 pending 出发，经审批步骤推进后转为 approved/rejected/timeout/cancelled。
 // CurrentStep 指向当前进行中的步骤 Order（1-based）；已完成最后一步时 CurrentStep = LastOrder + 1。
 type ApprovalRequest struct {
-	ID          string        // 全局唯一 ID
-	FlowID      string        // 关联审批流 ID
-	TenantID    string        // 租户 ID
-	TriggerType string        // 触发类型
-	Operator    string        // 发起人 userID
-	Target      string        // 操作目标描述
-	Detail      string        // 操作详情
-	Risk        string        // 风险等级 high/medium/low
-	Status      RequestStatus // 整体状态
-	CurrentStep int           // 当前审批步骤 Order
-	Steps       []RequestStep // 各步骤状态快照
-	CreatedAt   time.Time     // 创建时间
-	UpdatedAt   time.Time     // 最近更新时间
-	ExpireAt    time.Time     // 整体过期时间（<=0 值表示不过期）
+	ID          string // 全局唯一 ID
+	FlowID      string // 关联审批流 ID
+	TenantID    string // 租户 ID
+	TriggerType string // 触发类型
+	Operator    string // 发起人 userID
+	Target      string // 操作目标描述
+	Detail      string // 操作详情
+	Risk        string // 风险等级 high/medium/low
+	// IdempotencyKey 客户端提供的幂等键（可选）。同一租户内相同键的重复提交返回
+	// 首次创建的请求，不会新建第二个请求——防止网络重试/双击造成重复审批。
+	// 留空时行为与旧版一致（仅按 ID 去重）。
+	IdempotencyKey string        `json:"idempotency_key,omitempty"`
+	Status         RequestStatus // 整体状态
+	CurrentStep    int           // 当前审批步骤 Order
+	Steps          []RequestStep // 各步骤状态快照
+	CreatedAt      time.Time     // 创建时间
+	UpdatedAt      time.Time     // 最近更新时间
+	ExpireAt       time.Time     // 整体过期时间（<=0 值表示不过期）
 }
 
 // Validate 校验请求字段合法性（不校验业务推进规则，那由状态机负责）。
