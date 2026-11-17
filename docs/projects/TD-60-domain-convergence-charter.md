@@ -269,3 +269,9 @@ bash deploy/scripts/smoke-cutover.sh
   守卫：`internal/controlplane/service_proxy_test.go:341,379`。
 - **剩余 P0（切流前必须闭合）**：device 列表/详情字段契约（D-1/D-2）与 `GET /devices/{id}/system`（D-3），
   见审计 §6；下一里程碑建议 M1.5「服务侧契约补齐 + 静态门禁」（审计 §7）。
+- **M1 自动化门禁已落地（批次52）**：静态审计固化为 `scripts/td60-consistency.py`——grep 式 Go 源码扫描
+  （不执行代码），按域比对 controlplane 与 `services/{task,device,auth}-svc` 的「方法×路径 + 分页信封 +
+  状态词表」，现有 **31 条**已知差异登记在 `scripts/td60-consistency-baseline.json`（按 domain + method +
+  规范化路径匹配），**新增未登记 P0 即退出 1**；`TD60_TEST_FAIL=1` 可注入合成 P0 自测退出码契约，
+  已收敛条目以 stale 警告提示、可按批从基线删除。入口 `make td60-consistency`（`PYTHON ?= python3`）。
+  该门禁即 M1 一致性报告的自动化形态；M1.5「服务侧契约补齐」仍待剩余 P0（D-1/D-2/D-3）闭合。

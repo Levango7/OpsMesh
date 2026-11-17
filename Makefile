@@ -69,6 +69,14 @@ services-test:
 	done
 	@echo "✓ services test complete (18 modules)"
 
+# TD-60 三域（task/device/auth）双轨一致性静态门禁：
+# 对比 internal/controlplane 与 services/*-svc 的路由/信封/状态词表；
+# 现有已知差异在 scripts/td60-consistency-baseline.json，新增 P0 时返回非 0。
+PYTHON ?= python3
+.PHONY: td60-consistency
+td60-consistency:
+	$(PYTHON) scripts/td60-consistency.py --baseline scripts/td60-consistency-baseline.json
+
 # 构建 + 测试 + vet
 .PHONY: ci
 ci: vet test build
@@ -122,6 +130,7 @@ help:
 	@echo "  make vet        - 运行 vet"
 	@echo "  make services-build - 构建 services/ 全部 18 个子模块"
 	@echo "  make services-test  - 测试 services/ 全部 18 个子模块"
+	@echo "  make td60-consistency - TD-60 三域双轨一致性静态门禁（新增 P0 时失败）"
 	@echo "  make ci         - vet + test + build"
 	@echo "  make run        - 构建并启动控制面"
 	@echo "  make run-agent  - 构建并启动 agent"

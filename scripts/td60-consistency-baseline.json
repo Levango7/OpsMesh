@@ -1,0 +1,317 @@
+{
+  "note": "TD-60 static consistency baseline. Entries are known divergences accepted for the current cutover stage. The gate is green while every current divergence is listed here; a NEW P0 fails the gate. Sources: docs/td60-consistency-2026-11-17.md (audit IDs) plus service-only agent/bootstrap channels already documented in the audit notes. doc_severity is the audit-doc severity; gate_severity is what scripts/td60-consistency.py computes (route presence + pagination envelope + status vocabulary).",
+  "generated_from": "docs/td60-consistency-2026-11-17.md",
+  "gate": "scripts/td60-consistency.py",
+  "divergences": [
+    {
+      "id": "T-8",
+      "domain": "task",
+      "surface": "GET /api/v1/canary/*/metrics",
+      "doc_severity": "P1",
+      "gate_severity": "P1",
+      "note": "legacy /api/v1/canary/{id}/metrics alias; task-svc has no /canary family"
+    },
+    {
+      "id": "T-8",
+      "domain": "task",
+      "surface": "GET /api/v1/canary/*/traffic-split",
+      "doc_severity": "P1",
+      "gate_severity": "P1",
+      "note": "legacy /api/v1/canary/{id}/traffic-split alias; task-svc has no /canary family"
+    },
+    {
+      "id": "T-8",
+      "domain": "task",
+      "surface": "POST /api/v1/canary/*/traffic-split",
+      "doc_severity": "P1",
+      "gate_severity": "P0",
+      "note": "legacy canary traffic-split is controlplane-only"
+    },
+    {
+      "id": "T-5",
+      "domain": "task",
+      "surface": "GET /api/v1/tasks",
+      "doc_severity": "P1",
+      "gate_severity": "P0",
+      "note": "controlplane pagination envelope {data,total,page,pageSize,hasMore}; task-svc returns a bare array"
+    },
+    {
+      "id": "T-3",
+      "domain": "task",
+      "surface": "DELETE /api/v1/tasks/*/dead-letter",
+      "doc_severity": "P1",
+      "gate_severity": "P0",
+      "note": "DLQ purge is controlplane-only; task-svc has no purge endpoint"
+    },
+    {
+      "id": "T-3",
+      "domain": "task",
+      "surface": "POST /api/v1/tasks/*/retry",
+      "doc_severity": "P1",
+      "gate_severity": "P0",
+      "note": "DLQ retry is controlplane-only; task-svc has no retry endpoint"
+    },
+    {
+      "id": "T-2",
+      "domain": "task",
+      "surface": "GET /api/v1/tasks/batch",
+      "doc_severity": "P1",
+      "gate_severity": "P1",
+      "note": "batch ownership between controlplane and task-svc is not finalized"
+    },
+    {
+      "id": "T-7",
+      "domain": "task",
+      "surface": "POST /api/v1/tasks/batch",
+      "doc_severity": "P2",
+      "gate_severity": "P0",
+      "note": "controlplane multi-agent batch route is dead code for the frontend; task-svc has no equivalent"
+    },
+    {
+      "id": "T-2",
+      "domain": "task",
+      "surface": "GET /api/v1/tasks/batch-exec",
+      "doc_severity": "P1",
+      "gate_severity": "P1",
+      "note": "controlplane registers GET only to return 405; task-svc registers a method-checked handler"
+    },
+    {
+      "id": "T-4",
+      "domain": "task",
+      "surface": "GET /api/v1/tasks/batch/*",
+      "doc_severity": "P1",
+      "gate_severity": "P0",
+      "note": "batch aggregate status vocabulary differs (completed/partial vs succeeded/pending)"
+    },
+    {
+      "id": "T-2",
+      "domain": "task",
+      "surface": "GET /api/v1/tasks/canary",
+      "doc_severity": "P1",
+      "gate_severity": "P1",
+      "note": "canary exact path registered by controlplane (GET yields 405) but not by task-svc"
+    },
+    {
+      "id": "T-2",
+      "domain": "task",
+      "surface": "POST /api/v1/tasks/canary/*/advance",
+      "doc_severity": "P1",
+      "gate_severity": "P0",
+      "note": "canary advance status vocabulary differs (cp=pending, svc=running)"
+    },
+    {
+      "id": "T-8",
+      "domain": "task",
+      "surface": "GET /api/v1/tasks/canary/*/metrics",
+      "doc_severity": "P1",
+      "gate_severity": "P1",
+      "note": "canary traffic metrics are controlplane-only"
+    },
+    {
+      "id": "T-8",
+      "domain": "task",
+      "surface": "POST /api/v1/tasks/canary/*/traffic-split",
+      "doc_severity": "P1",
+      "gate_severity": "P0",
+      "note": "canary traffic split is controlplane-only"
+    },
+    {
+      "id": "T-2",
+      "domain": "task",
+      "surface": "GET /api/v1/tasks/dead-letter",
+      "doc_severity": "P1",
+      "gate_severity": "P1",
+      "note": "DLQ list is controlplane-only"
+    },
+    {
+      "id": "D-6",
+      "domain": "device",
+      "surface": "GET /api/v1/agents",
+      "doc_severity": "P1",
+      "gate_severity": "P0",
+      "note": "controlplane agents list has opt-in pagination envelope; device-svc truncates by limit"
+    },
+    {
+      "id": "D-extra",
+      "domain": "device",
+      "surface": "POST /api/v1/agents",
+      "doc_severity": "P2",
+      "gate_severity": "P0",
+      "note": "agent registration channel exists only in device-svc"
+    },
+    {
+      "id": "D-extra",
+      "domain": "device",
+      "surface": "GET /api/v1/agents/*",
+      "doc_severity": "P2",
+      "gate_severity": "P2",
+      "note": "agent detail exists only in device-svc"
+    },
+    {
+      "id": "D-extra",
+      "domain": "device",
+      "surface": "POST /api/v1/agents/*/heartbeat",
+      "doc_severity": "P2",
+      "gate_severity": "P0",
+      "note": "agent heartbeat channel exists only in device-svc"
+    },
+    {
+      "id": "D-5",
+      "domain": "device",
+      "surface": "GET /api/v1/devices",
+      "doc_severity": "P1",
+      "gate_severity": "P0",
+      "note": "pagination envelope differs; field contract D-1 is also unresolved but not compared statically"
+    },
+    {
+      "id": "D-extra",
+      "domain": "device",
+      "surface": "POST /api/v1/devices",
+      "doc_severity": "P2",
+      "gate_severity": "P0",
+      "note": "device registration/creation exists only in device-svc"
+    },
+    {
+      "id": "D-extra",
+      "domain": "device",
+      "surface": "PUT /api/v1/devices/*",
+      "doc_severity": "P2",
+      "gate_severity": "P0",
+      "note": "device update exists only in device-svc"
+    },
+    {
+      "id": "D-extra",
+      "domain": "device",
+      "surface": "POST /api/v1/devices/*/heartbeat",
+      "doc_severity": "P2",
+      "gate_severity": "P0",
+      "note": "device heartbeat exists only in device-svc"
+    },
+    {
+      "id": "D-extra",
+      "domain": "device",
+      "surface": "GET /api/v1/devices/*/status",
+      "doc_severity": "P2",
+      "gate_severity": "P2",
+      "note": "device status sub-resource exists only in device-svc"
+    },
+    {
+      "id": "D-3",
+      "domain": "device",
+      "surface": "GET /api/v1/devices/*/system",
+      "doc_severity": "P0",
+      "gate_severity": "P1",
+      "note": "device system inventory endpoint is controlplane-only; read-only under gate severity rules"
+    },
+    {
+      "id": "D-extra",
+      "domain": "device",
+      "surface": "POST /api/v1/provision/register",
+      "doc_severity": "P2",
+      "gate_severity": "P0",
+      "note": "agent bootstrap registration exists only in device-svc"
+    },
+    {
+      "id": "D-extra",
+      "domain": "device",
+      "surface": "GET /bin/opsmesh-agent",
+      "doc_severity": "P2",
+      "gate_severity": "P2",
+      "note": "agent binary distribution exists only in device-svc"
+    },
+    {
+      "id": "D-extra",
+      "domain": "device",
+      "surface": "GET /install.sh",
+      "doc_severity": "P2",
+      "gate_severity": "P2",
+      "note": "bootstrap script distribution exists only in device-svc"
+    },
+    {
+      "id": "A-7",
+      "domain": "auth",
+      "surface": "GET /api/v1/roles/*",
+      "doc_severity": "P2",
+      "gate_severity": "P2",
+      "note": "auth-svc role detail is an intentional capability enhancement"
+    },
+    {
+      "id": "A-3",
+      "domain": "auth",
+      "surface": "GET /api/v1/users",
+      "doc_severity": "P1",
+      "gate_severity": "P0",
+      "note": "controlplane users list supports {users,total,page,pageSize,hasMore}; auth-svc returns {users}"
+    },
+    {
+      "id": "A-extra",
+      "domain": "auth",
+      "surface": "POST /api/v1/users/*/revoke-sessions",
+      "doc_severity": "P2",
+      "gate_severity": "P0",
+      "note": "auth-svc rollback support: revoke all refresh tokens for a user"
+    }
+  ],
+  "documented_not_statically_compared": [
+    {
+      "id": "T-1",
+      "status": "fixed",
+      "note": "proxy permission grading is enforced by TestTaskProxyPermissionMatrix"
+    },
+    {
+      "id": "T-6",
+      "status": "open",
+      "note": "task status vocabulary blocked/dead_letter (field-level, not route-level)"
+    },
+    {
+      "id": "D-1",
+      "status": "open",
+      "note": "device list field names DeviceInfo vs models.Device (field-level)"
+    },
+    {
+      "id": "D-2",
+      "status": "open",
+      "note": "device detail field names (field-level)"
+    },
+    {
+      "id": "D-4",
+      "status": "fixed",
+      "note": "device-svc provision/auto proxy rule present"
+    },
+    {
+      "id": "D-7",
+      "status": "open",
+      "note": "DELETE device response omits deviceID (field-level)"
+    },
+    {
+      "id": "D-8",
+      "status": "open",
+      "note": "device metrics no-data semantics 404 vs 200+empty"
+    },
+    {
+      "id": "A-1",
+      "status": "open",
+      "note": "auth management endpoints are not reachable through /api/v1/auth-svc rewrite"
+    },
+    {
+      "id": "A-2",
+      "status": "open",
+      "note": "non-active login returns 403 vs 401 (HTTP status, not route presence)"
+    },
+    {
+      "id": "A-4",
+      "status": "open",
+      "note": "login response body token vs Cookie-only (field-level)"
+    },
+    {
+      "id": "A-5",
+      "status": "open",
+      "note": "logout/refresh response bodies differ (field-level)"
+    },
+    {
+      "id": "A-6",
+      "status": "open",
+      "note": "password strength policy differs (behavioral)"
+    }
+  ]
+}
