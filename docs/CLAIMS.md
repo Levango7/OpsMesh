@@ -1362,3 +1362,6 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [CLAIM] 2026-11-17T11:00:00Z from=kilo ttl=8h scope=web/enterprise/src/views/,web/enterprise/src/views/__tests__/,web/enterprise/src/App.vue,web/enterprise/src/i18n/ note=批次48 前端写权限门对账：保留逐动作写门与台账，回退 App.vue/i18n 过期副本（避免回退上游导航搜索/折叠与 not_found 键），修回 DevicesView 派发按钮 disabled 门
 [DONE] 2026-11-17T11:40:00Z from=kilo scope=web/enterprise/src/views/,web/enterprise/src/views/__tests__/,web/enterprise/src/i18n/locales/*/ops.json note=批次48 收口（写权限门对账、CMDB 补门、i18n、回归修回） commit=28bec211
+
+[CLAIM] 2026-11-17T12:00:00Z from=kilo ttl=8h scope=internal/knowledge/ note=批次49 knowledge 租户隔离收尾：校验 KnowledgeDoc.TenantID 过滤在 Upsert/Search/Delete/Count/ListBySource 全路径生效，补跨租户隔离测试后入库
+[DONE] 2026-11-17T12:30:00Z from=kilo scope=internal/knowledge/ note=批次49 收口（KnowledgeDoc 租户隔离 + 跨租户测试） commit=fd4cfea3
