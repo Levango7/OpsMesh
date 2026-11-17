@@ -23,7 +23,7 @@
         <template #cell-actions="{ row }">
           <div class="row-actions">
             <Button variant="ghost" size="sm" @click="openEdit(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
-            <Button variant="danger" size="sm" @click="onDelete(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)" :disabled="!canDelete" :title="canDelete ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -93,8 +93,10 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
 
 // 写操作门：与后端 requirePermission('role:write') 同源；只读者显式禁用写按钮。
+// 删除角色走后端独立权限点 role:delete（controlplane/auth_roles.go）。
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPerm('role:write'))
+const canDelete = computed(() => auth.hasPerm('role:delete'))
 import { useAuthStore } from '@/stores/auth'
 import Button from "@/components/ui/Button.vue"
 

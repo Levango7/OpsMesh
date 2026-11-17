@@ -1359,3 +1359,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [CLAIM] 2026-11-17T09:15:00Z from=kilo ttl=8h scope=internal/store/store.go,internal/store/model/contract.go,internal/store/memory/,internal/store/sqlstore/,internal/controlplane/abac_engine.go,internal/controlplane/abac_ops.go,internal/controlplane/server.go,internal/controlplane/server_lifecycle.go,internal/controlplane/abac_*_test.go note=批次47 ABAC 策略持久化：ABACPolicyStore 双实现 + 迁移 035 + 服务端写穿/启动加载/5s 版本刷新（多副本一致），租户隔离与 version 乐观锁
 [DONE] 2026-11-17T10:30:00Z from=kilo scope=internal/store/model/,internal/store/memory/,internal/store/sqlstore/,internal/store/multischema/,internal/store/store.go,internal/controlplane/abac_* note=批次47 收口（ABAC 策略持久化 + 启动加载 + 写穿 + 5s 版本刷新） commit=af7e92df
+
+[CLAIM] 2026-11-17T11:00:00Z from=kilo ttl=8h scope=web/enterprise/src/views/,web/enterprise/src/views/__tests__/,web/enterprise/src/App.vue,web/enterprise/src/i18n/ note=批次48 前端写权限门对账：保留逐动作写门与台账，回退 App.vue/i18n 过期副本（避免回退上游导航搜索/折叠与 not_found 键），修回 DevicesView 派发按钮 disabled 门

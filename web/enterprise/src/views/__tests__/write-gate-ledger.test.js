@@ -6,7 +6,9 @@
 // **只许减不许增**的欠账表：已挂门的不许掉，未挂门的必须先改台账再动视图。
 //
 // 判据（与 api-usage 双向棘轮同思路）：
-//   1. GATED 里的视图：必须含 hasPerm('<perm>') 与常驻提示 data-testid="write-denied-hint"；
+//   1. GATED 里的视图：必须含每个声明的 hasPerm('<perm>') 与常驻提示 data-testid="write-denied-hint"；
+//      GATED 条目形如 [view, perm1, perm2, ...]——同一视图多个动作权限点不同（如用户页建号/删号/审批）
+//      必须逐一声明，少一个即判红；
 //   2. PENDING 里的视图：必须**仍**未挂门（含 hasPerm 即判红）——写成"已挂门就要挪出 PENDING"，
 //      避免"悄悄挂了一半、台账没人更新"；
 //   3. 台账里的文件必须存在（改名/删除要同步台账）；
@@ -19,6 +21,7 @@ const VIEWS = path.resolve(__dirname, '..')
 const LOCALES = path.resolve(__dirname, '../../i18n/locales')
 
 // —— 已挂门（本批 2026-11-06 落地，范式：auth.hasPerm(perm) → canWrite → 写按钮 :disabled + title + 常驻提示）
+// 2026-11-16 高风险管理页批：用户/角色/设备纳管/CMDB/AIOps 按后端路由权限点逐动作挂门。
 const GATED = [
   ['APIKeysView.vue', 'apikey:write'],
   ['AutomationView.vue', 'automation:write'],
@@ -40,22 +43,36 @@ const GATED = [
   // 先行批（留档，勿删）
   ['FluxView.vue', 'flux:write'],
   ['InfraConsoleView.vue', 'task:write'],
-  ['UsersView.vue', 'user:write'],
-  ['RolesView.vue', 'role:write'],
-  ['CMDBChangesView.vue', 'cmdb:write'],
-  ['CMDBView.vue', 'cmdb:write'],
-  ['AIOpsView.vue', 'aiops:write'],
+  // 批 3：高风险管理页（权限点对齐后端路由）
+  //   UsersView：POST/PUT user:write、DELETE user:delete、approve/reject user:approve
+  //   （controlplane/auth_users.go:110/401/491/293/326）
+  ['UsersView.vue', 'user:write', 'user:delete', 'user:approve'],
+  //   RolesView：POST/PUT role:write、DELETE role:delete（controlplane/auth_roles.go:50/110）
+  ['RolesView.vue', 'role:write', 'role:delete'],
+  //   DevicesView：下发任务/纳管门为 device:delete 或 provision:execute（hasPerm 复合串 OR 语义），
+  //   复合串必须整体登记——拆成两条会要求视图同时含两次独立 hasPerm 调用（server_devices.go:292-297）
   ['DevicesView.vue', 'device:delete/provision:execute'],
+  //   CMDB 四页：CI CRUD/审批/采集/导入/属性模板统一 cmdb:write
+  //   （internal/cmdb/handler.go:66-78、cmdb_approval.go:432、cmdb_collector.go:34）
+  ['CMDBView.vue', 'cmdb:write'],
+  ['CMDBChangesView.vue', 'cmdb:write'],
+  ['CMDBCollectView.vue', 'cmdb:write'],
+  ['CMDBAttrTemplatesView.vue', 'cmdb:write'],
+  //   AIOpsView：POST analyze/remediate/remediate-nl/execute 门为 aiops:write（internal/aiops/handler.go:38-42）
+  ['AIOpsView.vue', 'aiops:write'],
+  // 批 2 已挂门（不许降级回 PENDING）：视图内已含 hasPerm + write-denied-hint
   ['AlertsView.vue', 'alert:ack/alert:silence'],
   ['K8sClustersView.vue', 'k8s:write/delete'],
-  ['NetworkDevicesView.vue', 'network:write'],
-  ['MiddlewareDeployView.vue', 'middleware:write/execute'],
   ['KnowledgeView.vue', 'knowledge:write'],
+  ['MiddlewareDeployView.vue', 'middleware:write/execute'],
+  ['NetworkDevicesView.vue', 'network:write'],
   ['WorkflowsView.vue', 'workflow:write']
 ]
 
 // —— 欠账（matrix 实测：调用写端点但视图内无对应 hasPerm）。每挂完一个视图，把它从这里挪到 GATED。
 // 顺序按 matrix 输出；括号内是该视图缺的权限点（供下一批直接用）。
+// 注：PermissionsView 与 DeviceDetailView 经核对为纯只读页（仅 GET listPermissions / fetchMetrics），
+// 无任何可变控件，故保留在 PENDING，不为了台账好看而添加无意义的 hasPerm。
 const PENDING = [
   ['AIPromptsView.vue', 'ai:write'],
   ['AIRagView.vue', 'ai:write'],
@@ -64,8 +81,6 @@ const PENDING = [
   ['AutoscalerView.vue', 'autoscaler:write'],
   ['BatchView.vue', 'task:write'],
   ['BotView.vue', 'bot:write'],
-  ['CMDBAttrTemplatesView.vue', 'cmdb:write'],
-  ['CMDBCollectView.vue', 'cmdb:write'],
   ['CanaryView.vue', 'task:write'],
   ['ConfigHotpushView.vue', 'cmdb:write'],
   ['CostView.vue', 'cost:write'],
@@ -82,7 +97,7 @@ const PENDING = [
   ['PermissionsView.vue', 'role:write/user:write'],
   ['PlatformConfigView.vue', 'platform:write'],
   ['PluginView.vue', 'plugin:write'],
-  ['PortalView.vue', 'portal:write'],
+  ['PortalView.vue', 'portal:write']
 ]
 
 // 先行两批用的是自有 testid（历史形态，保留）
@@ -96,11 +111,24 @@ const read = (p) => fs.readFileSync(path.join(VIEWS, p), 'utf8')
 describe('写按钮权限门台账（棘轮）', () => {
   it('GATED：已挂门的视图仍带 hasPerm + 常驻提示', () => {
     const bad = []
-    for (const [view, perm] of GATED) {
+    for (const [view, ...perms] of GATED) {
       const src = read(view)
-      if (!src.includes(`hasPerm('${perm}')`)) bad.push(`${view} 丢了 hasPerm('${perm}')`)
+      for (const perm of perms) {
+        if (!src.includes(`hasPerm('${perm}')`)) bad.push(`${view} 丢了 hasPerm('${perm}')`)
+      }
       const hint = HINT_TESTID[view] || 'write-denied-hint'
       if (!src.includes(`data-testid="${hint}"`)) bad.push(`${view} 丢了常驻提示（${hint}）`)
+    }
+    expect(bad).toEqual([])
+  })
+
+  it('GATED：每个视图只登记一条，且至少声明一个权限点', () => {
+    const seen = new Set()
+    const bad = []
+    for (const [view, ...perms] of GATED) {
+      if (seen.has(view)) bad.push(`${view} 在 GATED 中重复登记`)
+      seen.add(view)
+      if (perms.length === 0) bad.push(`${view} 未声明任何权限点`)
     }
     expect(bad).toEqual([])
   })
