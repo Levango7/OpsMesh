@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
@@ -77,6 +76,13 @@ func abacDeviceAttributes(dev *proto.DeviceInfo) map[string]interface{} {
 	return attrs
 }
 
+// abacPolicyID 策略镜像键：tenantID|action|subject|resource。
+// 租户分量不可省——相同三元组在不同租户是各自独立的策略，旧键
+// action|subject|resource 会让后创建者覆盖先创建者、让删除跨租户误伤。
+func abacPolicyID(tenantID, actionAttr, subject, resource string) string {
+	return tenantID + "|" + actionAttr + "|" + subject + "|" + resource
+}
+
 // handleABAC 处理 POST /api/v1/abac
 func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -97,6 +103,27 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 入口鉴权（与兄弟 handler 同口径：requireTenantContext + requireProd）。
+	// 此前本路由只在生产模式被 defaultDenyMiddleware 兜底校验，而该中间件**只校验不注入**：
+	// requireTenantContext 返回 actx 但不写回 r.Context()，handler 从
+	// authctx.FromContext(r.Context()) 取到的 TenantID 恒为空 ⇒ 设备租户守卫
+	// (dev.TenantID != actx.TenantID) 把一切带 deviceID 的正常请求判 403，且 policy-create
+	// 落镜像的 TenantID 为空，被 abac_engine 当作全局策略给所有租户放行。
+	// 这里让租户真值唯一来自已验签身份（header/JWT 交叉校验后的 actx.TenantID）。
+	//
+	// 权限点选型：abac 族（internal/store/model/perm.go）。evaluate/policy-list 是咨询面
+	// （只读决策，不改变授权）→ abac:read，operator/viewer 均持有；policy-create/delete
+	// 改变策略决策面 → abac:write，仅 admin。
+	perm := "abac:read"
+	switch req.Action {
+	case "policy-create", "policy-delete":
+		perm = "abac:write"
+	}
+	actx, ok := s.subsystemAuthorize(w, r, perm)
+	if !ok {
+		return
+	}
+
 	// 审计整改批次17：evaluate / policy-list(无 deviceID) 走服务端真实引擎；
 	// 其余动作（policy-create/policy-delete/带 deviceID 的 policy-list）保持设备下发。
 	if req.Action == "evaluate" {
@@ -104,7 +131,6 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject, resource, and actionAttr are required"})
 			return
 		}
-		actx := authctx.FromContext(r.Context())
 		contextJSON := req.Context
 		evaluatedBy := "server"
 		var deviceContext map[string]interface{}
@@ -170,13 +196,15 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Action == "policy-list" && req.DeviceID == "" {
 		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
-			"policies": s.listABACPolicies(authctx.FromContext(r.Context()).TenantID),
+			"policies": s.listABACPolicies(actx.TenantID),
 			"note":     "控制面策略镜像（设备侧文件仍由 policy-create 下发）",
 		})
 		return
 	}
 	if req.Action == "policy-delete" {
-		s.removeABACPolicy(req.ActionAttr + "|" + req.Subject + "|" + req.Resource)
+		// 镜像键必须带租户：同三元组在不同租户各有一条策略，缺租户分量会让
+		// A 的删除命中 B 的镜像（add 同理，会互相覆盖）。
+		s.removeABACPolicy(abacPolicyID(actx.TenantID, req.ActionAttr, req.Subject, req.Resource))
 	}
 
 	script, status, errMsg := buildABACScript(req.Action, req.Subject, req.Resource, req.ActionAttr, req.Context)
@@ -188,8 +216,8 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 	// policy-create：同步登记控制面策略镜像（供 evaluate 使用）。
 	if req.Action == "policy-create" {
 		s.addABACPolicy(abacPolicy{
-			ID:       req.ActionAttr + "|" + req.Subject + "|" + req.Resource,
-			TenantID: authctx.FromContext(r.Context()).TenantID,
+			ID:       abacPolicyID(actx.TenantID, req.ActionAttr, req.Subject, req.Resource),
+			TenantID: actx.TenantID,
 			Subject:  req.Subject,
 			Resource: req.Resource,
 			Action:   req.ActionAttr,

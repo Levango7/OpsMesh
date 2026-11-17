@@ -21,7 +21,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
@@ -138,12 +137,13 @@ func abacTestServerWithDevice(t *testing.T, tenantID string) (*Server, *proto.De
 	return s, dev
 }
 
-// abacPostEvaluate 以指定租户身份调用 handleABAC（租户经 authctx 注入请求 context）。
+// abacPostEvaluate 以指定租户身份调用 handleABAC（租户经 X-Tenant-ID 头注入，
+// 与生产链路一致；demo 模式下要求链只校验头、requireProd 放行）。
 func abacPostEvaluate(t *testing.T, s *Server, tenantID, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/abac", strings.NewReader(body))
 	if tenantID != "" {
-		req = req.WithContext(authctx.NewContext(req.Context(), authctx.Context{TenantID: tenantID}))
+		req.Header.Set("X-Tenant-ID", tenantID)
 	}
 	w := httptest.NewRecorder()
 	s.handleABAC(w, req)

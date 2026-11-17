@@ -207,6 +207,13 @@ var PermSpecs = []PermSpec{
 	// deploy 组已在 operatorGroups 里，GitOps 同步与之同域，此处先按最小权限只授 read。
 	{"flux", "flux:read", "查看 Flux GitOps 应用与同步状态"},
 	{"flux", "flux:write", "创建/更新/删除 Flux 应用并触发同步"},
+	// ABAC 策略管理面（2026-11-17）：/api/v1/abac 此前复用 role:read/role:write，
+	// 而 operator 不持有 role:read ⇒ 值班角色失去 evaluate/policy-list（评估是咨询性质，
+	// 只返回决策不改变授权，operator 本应可用）。abac 族独立后：
+	//   - abac:read 进 operatorReadOnlyGroups（operator 与 viewer 都可 evaluate/list）；
+	//   - abac:write（创建/删除策略会改变决策面）仅 admin，与 approve/delete 同策。
+	{"abac", "abac:read", "查看 ABAC 策略与执行评估"},
+	{"abac", "abac:write", "创建/删除 ABAC 策略"},
 }
 
 // RolePermissions 返回预置角色名→权限集合映射，与 seedRBAC 的角色定义保持一致。
@@ -250,6 +257,9 @@ func RolePermissions() map[string][]string {
 		// aiops:write（自动执行修复）、knowledge:write（改文档库）、cost:write（改预算/路由）
 		// 是否下放属产品语义，未决前按最小权限留给 admin。
 		"aiops": true, "knowledge": true, "cost": true, "flux": true,
+		// abac 只给 read：评估/列举是咨询面（不改授权）；abac:write 能改策略决策面，
+		// 仅 admin。此前复用 role:* 时 operator 连 read 都没有（低于 viewer，层级倒挂）。
+		"abac": true,
 	}
 	// operatorGroupActions 是 operator 在 operatorGroups 各组内拿到的动作集。
 	// 2026-10-14 §3.12（用户裁定：RBAC 矩阵细化，不上基于归属的场景授权）：

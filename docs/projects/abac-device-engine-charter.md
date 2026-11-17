@@ -164,3 +164,4 @@
   - 真正的设备侧离线决策引擎（含与服务端共享 fixture 的一致性门）；
   - **强制门接线（enforcement gate）**：ABAC `allow` 目前不参与请求放行，接强制链需 owner 决策 D2 另行评审；
   - 策略包签名 / 版本化 / 回滚（M1，依赖 D1/D3）。
+- **路由鉴权缺口已发现并修复（2026-11-17，批次45）**：复核发现 `POST /api/v1/abac` 此前在**所有模式**都无入口鉴权——生产仅由 `defaultDenyMiddleware` 兜底“校验”且不回注请求 context，handler 内 `authctx.FromContext` 恒零值（`internal/controlplane/abac_ops.go:87` 为旧入口）；后果是同租户带 `deviceID` 的 evaluate 被误判 403、`policy-create` 落空租户镜像被当作全局策略、策略镜像键 `action|subject|resource` 跨租户互相覆盖、非生产模式匿名穿透。修复：① 入口统一走 `subsystemAuthorize`（`requireTenantContext` + `requireProd`，`abac_ops.go:122`；回调见 `internal/controlplane/auth.go:89`），租户真值只取已验签身份；② 新增 `abac:read`/`abac:write` 权限点（`internal/store/model/perm.go:216`），read 进 `operatorReadOnlyGroups`，write 仅 admin；③ 镜像键改 `tenantID|action|subject|resource`（`abacPolicyID`，`abac_ops.go:82`）；④ 链式回归 `internal/controlplane/abac_ops_chain_test.go`（匿名拒绝、跨租户 403、读写分离、镜像键租户隔离）。**其余未完成项不变**（见上一条列表：持久化 / 设备端引擎 / 强制门 / 策略包签名）。
