@@ -101,6 +101,9 @@ type Agent struct {
 	// ABAC 策略包拉取客户端（M1）：cfg.ABACBundleEnabled=true 时在注册成功、拿到
 	// per-agent 密钥后构造并启动；nil=未启用。心跳能力声明据此上报 abac_bundle=v1。
 	abacBundleClient *ABACBundleClient
+	// ABAC 决策审计回传（M3）：与策略包客户端同时启用（可用 --abac-decision-report 单独关闭）；
+	// nil=未启用。心跳能力声明据此追加 abac_decisions=v1。
+	abacDecisionReporter *ABACDecisionReporter
 }
 
 // New 构造 agent（读取 hostname，作为注册信息）。
@@ -540,6 +543,19 @@ func (a *Agent) Run() error {
 		a.abacBundleClient = NewABACBundleClient(a.cfg, a.agentID, a.agentSecret, a.cfg.ControlAddr, nil)
 		a.abacBundleClient.LoadFromCache()
 		safeGo(ctx, "abacBundleClient", a.abacBundleClient.Start)
+		// 决策审计回传（M3）：随策略包一起启用；cfg.ABACDecisionReport=false 可单独关闭。
+		// bundleId 取当前 LKG 包（评估与回传可能跨包换代，记录以评估时刻的包 ID 为准）。
+		if a.cfg.ABACDecisionReport {
+			a.abacDecisionReporter = NewABACDecisionReporter(a.cfg, a.agentID, a.agentSecret, a.cfg.ControlAddr, nil)
+			a.abacDecisionReporter.SetBundleIDProvider(func() string {
+				sb, _ := a.abacBundleClient.Current()
+				if sb == nil {
+					return ""
+				}
+				return sb.Bundle.BundleID
+			})
+			safeGo(ctx, "abacDecisionReporter", a.abacDecisionReporter.Start)
+		}
 	}
 	// 日志采集：定时读取指定日志文件增量并上报控制面。
 	// 未配置采集路径时不启动——此时 logCollectLoop 会立即 return，而无条件启动会让
@@ -760,13 +776,19 @@ func (a *Agent) register() error {
 	return fmt.Errorf("注册控制面失败，已重试 30 次")
 }
 
-// heartbeatRequest 构造心跳请求并附带 agent 协议能力（M1 能力协商，追加式可选字段）。
-// 未启用 ABAC 策略包时 Capabilities 为 nil（omitempty 不出现在 JSON），旧控制面无感知。
+// heartbeatRequest 构造心跳请求并附带 agent 协议能力（M1/M3 能力协商，追加式可选字段）。
+// 未启用 ABAC 策略包时 Capabilities 为 nil（omitempty 不出现在 JSON），旧控制面无感知；
+// 策略包与决策回传同时启用时合并去重上报（abac_bundle=v1 + abac_decisions=v1）。
 func (a *Agent) heartbeatRequest() *grpcx.HeartbeatReq {
 	req := &grpcx.HeartbeatReq{AgentID: a.agentID, Status: "online", Load: 1}
+	var groups [][]string
 	if a.abacBundleClient != nil {
-		req.Capabilities = a.abacBundleClient.Capabilities()
+		groups = append(groups, a.abacBundleClient.Capabilities())
 	}
+	if a.abacDecisionReporter != nil {
+		groups = append(groups, a.abacDecisionReporter.Capabilities())
+	}
+	req.Capabilities = mergeCapabilities(groups...)
 	return req
 }
 

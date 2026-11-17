@@ -42,6 +42,9 @@ func (s *Server) Start() error {
 	// ABAC 策略包（M1）：agent 经 HTTP 拉取已签名策略；认证复用 per-agent HMAC 密钥
 	// （X-OpsMesh-Agent-* 头，见 abac_bundle_endpoint.go），租户取自 agent 注册身份。
 	mux.HandleFunc(abacBundleRoute, s.handleAgentABACBundle)
+	// ABAC 决策审计回传（M3）：agent 批量回传在线/离线评估决策；认证同 bundle
+	// （per-agent HMAC + body digest），租户取自 agent 注册身份。
+	mux.HandleFunc(abacDecisionsRoute, s.handleAgentABACDecisions)
 	mux.HandleFunc("/api/v1/me", s.handleMe)
 	// 商业授权状态（Open-Core）：社区版与授权版都能查，但需登录——
 	// 授权态含客户名与设备上限，属商务信息。端点本身不受 requireEnterpriseGate 约束，
@@ -584,6 +587,7 @@ func (s *Server) Start() error {
 	go s.monitorTaskTimeouts(ctx)       // Wave 4-D：任务超时监控，超时 running 任务自动取消（仅 leader）
 	go s.archiveLoop(ctx)               // F5 离线超龄自动归档（仅 leader）
 	go s.auditMaintenanceLoop(ctx)      // P1-3 审计归档保留 + 哈希链自检（仅 leader）
+	go s.abacDecisionRetentionLoop(ctx) // M3 ABAC 决策审计保留期清理：每 24h 删除超期日志（幂等）
 	go s.notifyLoop(ctx)                // M7 告警 Webhook 推送：周期检查新 critical 告警并推送到 webhook URL
 	go s.alertEngineLoop(ctx)           // M2 告警评估循环：alertengine.Engine、Silencer、Aggregator、Notifier
 	go s.autoProvisionLoop(ctx)         // 自动纳管：--discover + --auto-provision 时周期扫描网段并推送 agent

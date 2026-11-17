@@ -518,6 +518,10 @@ type Config struct {
 	// ABACBundleTTL：策略包有效期（IssuedAt + TTL = ExpiresAt）。默认 24h。
 	ABACBundleTTL time.Duration // --abac-bundle-ttl / env OPSMESH_ABAC_BUNDLE_TTL
 
+	// ABACDecisionRetention：agent 回传的 ABAC 决策审计日志保留期（M3）。
+	// 控制面每 24h 删除 received_at 早于 now-retention 的记录；<=0 时回退默认 720h（30d）。
+	ABACDecisionRetention time.Duration // --abac-decision-retention / env OPSMESH_ABAC_DECISION_RETENTION
+
 	// agent 侧 ABAC 策略包拉取（M1，见 internal/agent/abac_bundle_client.go）：
 	//   - ABACBundleEnabled：是否启用 agent 拉取/缓存策略包。默认 false（零行为差异）。
 	//   - ABACBundlePublicKeys：验签公钥条目 `keyID:base64(32字节 Ed25519 公钥)`，
@@ -529,6 +533,9 @@ type Config struct {
 	ABACBundlePublicKeys      []string      // --abac-bundle-public-keys / env OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS
 	ABACBundleCachePath       string        // --abac-bundle-cache-path / env OPSMESH_ABAC_BUNDLE_CACHE_PATH
 	ABACBundleRefreshInterval time.Duration // --abac-bundle-refresh-interval / env OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL
+	// ABACDecisionReport：agent 侧决策审计回传开关（M3），默认 true；
+	// 仅当 ABACBundleEnabled=true 时生效（回传凭证与策略包共用）。
+	ABACDecisionReport bool // --abac-decision-report / env OPSMESH_ABAC_DECISION_REPORT
 
 	// H2/H3 配套开关：是否允许 SQL 后端继续使用 P1-P6 桩存储。
 	// 背景：SQLStore 对 15 个领域（见 stubStoreDomains 清单）曾为桩实现，写入不持久化；
@@ -774,11 +781,13 @@ func Load() *Config {
 	abacBundleSigningKey := flag.String("abac-bundle-signing-key", "", "ABAC 策略包 Ed25519 签发私钥（base64 标准编码，64 字节）；空=端点返回 503；或 env OPSMESH_ABAC_BUNDLE_SIGNING_KEY")
 	abacBundleKeyID := flag.String("abac-bundle-key-id", "k1", "ABAC 策略包签名密钥 ID（写入 bundle.keyId，供 agent 选公钥）；或 env OPSMESH_ABAC_BUNDLE_KEY_ID")
 	abacBundleTTL := flag.Duration("abac-bundle-ttl", 24*time.Hour, "ABAC 策略包有效期（IssuedAt+TTL=ExpiresAt，默认 24h）；或 env OPSMESH_ABAC_BUNDLE_TTL")
+	abacDecisionRetention := flag.Duration("abac-decision-retention", 720*time.Hour, "ABAC 决策审计日志保留期（控制面每 24h 清理 received_at 早于 now-retention 的记录，默认 720h=30d）；或 env OPSMESH_ABAC_DECISION_RETENTION")
 	// agent 侧 ABAC 策略包拉取（M1）：默认关闭，启用后 agent 先加载本地 LKG 再周期拉取。
 	abacBundleEnabled := flag.Bool("abac-bundle-enabled", false, "agent 侧 ABAC 策略包拉取/缓存（M1）；默认 false（零行为差异）；或 env OPSMESH_ABAC_BUNDLE_ENABLED")
 	abacBundlePublicKeys := flag.String("abac-bundle-public-keys", "", "ABAC 策略包验签公钥：逗号分隔的 keyID:base64pubkey（Ed25519 公钥 32 字节），可配置 2 把以上支持 keyId 轮换；或 env OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS")
 	abacBundleCachePath := flag.String("abac-bundle-cache-path", "", "agent 侧 ABAC 策略包 LKG 缓存路径（写入权限 0600）；空=<data-dir>/abac-bundle.json；或 env OPSMESH_ABAC_BUNDLE_CACHE_PATH")
 	abacBundleRefreshInterval := flag.Duration("abac-bundle-refresh-interval", 10*time.Minute, "agent 侧 ABAC 策略包轮询间隔（默认 10m；<=0 回退默认）；或 env OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL")
+	abacDecisionReport := flag.Bool("abac-decision-report", true, "agent 侧 ABAC 决策审计回传（M3）；默认 true，仅在 --abac-bundle-enabled 时生效；或 env OPSMESH_ABAC_DECISION_REPORT")
 	// 自动化引擎评估周期。
 	automationEvalInterval := flag.Duration("automation-eval-interval", 30*time.Second, "自动化引擎评估周期：周期评估 enabled 自动化规则并执行命中动作（默认 30s；或 env OPSMESH_AUTOMATION_EVAL_INTERVAL）")
 	flag.Parse()
@@ -1004,11 +1013,13 @@ func Load() *Config {
 		ABACBundleSigningKey:   val("abac-bundle-signing-key", *abacBundleSigningKey, "OPSMESH_ABAC_BUNDLE_SIGNING_KEY"),
 		ABACBundleKeyID:        val("abac-bundle-key-id", *abacBundleKeyID, "OPSMESH_ABAC_BUNDLE_KEY_ID"),
 		ABACBundleTTL:          valDur("abac-bundle-ttl", *abacBundleTTL, "OPSMESH_ABAC_BUNDLE_TTL"),
+		ABACDecisionRetention:  valDur("abac-decision-retention", *abacDecisionRetention, "OPSMESH_ABAC_DECISION_RETENTION"),
 		ABACBundleEnabled:      valBool("abac-bundle-enabled", *abacBundleEnabled, "OPSMESH_ABAC_BUNDLE_ENABLED"),
 		ABACBundlePublicKeys:   parseABACBundlePublicKeys(val("abac-bundle-public-keys", *abacBundlePublicKeys, "OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS")),
 		ABACBundleCachePath:    val("abac-bundle-cache-path", *abacBundleCachePath, "OPSMESH_ABAC_BUNDLE_CACHE_PATH"),
 		ABACBundleRefreshInterval: valDur("abac-bundle-refresh-interval", *abacBundleRefreshInterval,
 			"OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL"),
+		ABACDecisionReport: valBool("abac-decision-report", *abacDecisionReport, "OPSMESH_ABAC_DECISION_REPORT"),
 	}
 	// --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。

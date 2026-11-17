@@ -486,6 +486,23 @@ type ABACPolicyStore interface {
 	DeleteABACPolicyRecord(tenantID, id string) bool
 }
 
+// ABACDecisionStore ABAC 决策审计日志持久化（M3：agent 决策回传）。
+//
+// 与控制面 POST /api/v1/agent/abac-decisions 的关系：handler 完成 per-agent HMAC 认证后
+// 按身份回填 TenantID/AgentID，再经本接口批量落库（agent 自报租户一律忽略）。
+// tenantID=="" 仅用于平台级运维视图；保留期清理以 ReceivedAt 为准。
+type ABACDecisionStore interface {
+	// AppendABACDecisionLogs 批量追加决策日志，返回实际接收条数。
+	// 实现须对整批负责：返回 error 时调用方按未持久化处理（内存后端无 I/O 恒成功）。
+	AppendABACDecisionLogs(logs []ABACDecisionLog) (int, error)
+	// ListABACDecisionLogs 返回决策日志：tenantID=="" 返回全部租户；
+	// 按 ReceivedAt 倒序（最新在前），limit 上限 1000（<=0 时按 1000 处理）。
+	ListABACDecisionLogs(tenantID string, limit int) []ABACDecisionLog
+	// DeleteABACDecisionLogsBefore 删除 ReceivedAt 早于 cutoff 的记录（保留期清理），
+	// 返回删除条数。
+	DeleteABACDecisionLogsBefore(cutoff time.Time) (int, error)
+}
+
 // ConfigStore 配置中心领域：Get/Set/Delete/List + 版本历史 + 发布。
 // 按 (TenantID, Key) 唯一；每次 SetConfig 产生新版本并写入历史（ConfigHistory 查询）。
 // PublishConfig 用于配置变更的灰度/广播触发（MVP 仅标记版本，后续可联动事件总线）。
@@ -844,6 +861,7 @@ type Store interface {
 	GatewayRouteStore     // TD-66 P1：API 网关路由规则持久化（重启不丢）
 	TaskRecordStore       // TD-60 task 域 R6：批量/灰度记录持久化（重启不丢批次视图）
 	ABACPolicyStore       // 批次47：ABAC 策略持久化（重启不丢 + 多副本版本刷新）
+	ABACDecisionStore     // M3：ABAC 决策审计日志（agent 决策回传 + 保留期清理）
 	ConfigStore           // P0.3 配置中心：Get/Set/版本历史/发布
 	SecretStore           // P0.3 密钥管理：Get/Set/轮换/版本历史
 	TicketStore           // P1 工单管理：创建/查询/更新/关闭

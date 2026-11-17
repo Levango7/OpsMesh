@@ -15,7 +15,6 @@ package controlplane
 
 import (
 	"crypto/ed25519"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -23,7 +22,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -36,13 +34,11 @@ const (
 	// abacBundleRoute 路由路径（与 server_lifecycle.go 注册处保持一致）。
 	abacBundleRoute = "/api/v1/agent/abac-bundle"
 
-	// Web/REST 通道的 agent 认证头（契约见 docs/projects/abac-device-engine-m1-bundle-spec.md §6.2）。
-	abacBundleAgentIDHeader        = "X-OpsMesh-Agent-ID"
-	abacBundleAgentTimestampHeader = "X-OpsMesh-Agent-Timestamp"
-	abacBundleAgentSignatureHeader = "X-OpsMesh-Agent-Signature"
+	// Web/REST 通道的 agent 认证头（共用 agent_hmac_auth.go；保留原名供既有测试/调用方使用）。
+	abacBundleAgentIDHeader        = agentHMACAgentIDHeader
+	abacBundleAgentTimestampHeader = agentHMACAgentTimestampHeader
+	abacBundleAgentSignatureHeader = agentHMACAgentSignatureHeader
 
-	// abacBundleSignatureMaxSkew 允许的 agent 时钟偏移（与 gRPC agentSignatureMaxSkew 同值）。
-	abacBundleSignatureMaxSkew = 5 * time.Minute
 	// abacBundleSignaturePrefix 签名载荷域分隔前缀：HMAC(secret, prefix+"\n"+agentID+"\n"+ts)。
 	abacBundleSignaturePrefix = "abac-bundle"
 
@@ -173,57 +169,10 @@ func (s *Server) handleAgentABACBundle(w http.ResponseWriter, r *http.Request) {
 
 // authenticateABACBundleAgent 校验 HTTP 通道的 per-agent HMAC 签名，返回 (租户, agentID)。
 //
-// 与 gRPC verifyAgentSignature（internal/controlplane/grpc/grpc.go）同源：
-// 密钥取 store.AgentSecret(agentID)（注册时签发、agent 落盘 0600），不新增凭证。
-// 失败一律 401（未知 agent 与签名错同形，不泄露存在性）；退役/禁用 agent 403。
+// 验签细节见 agent_hmac_auth.go（与 gRPC verifyAgentSignature 同源）：密钥取
+// store.AgentSecret(agentID)，失败一律 401，退役/禁用 agent 403。
 func (s *Server) authenticateABACBundleAgent(w http.ResponseWriter, r *http.Request) (tenantID, agentID string, ok bool) {
-	unauthorized := func(reason string) (string, string, bool) {
-		logx.Warn(r.Context(), "ABAC 策略包认证失败", "reason", reason)
-		paginate.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return "", "", false
-	}
-
-	agentID = strings.TrimSpace(r.Header.Get(abacBundleAgentIDHeader))
-	tsStr := strings.TrimSpace(r.Header.Get(abacBundleAgentTimestampHeader))
-	provided := strings.TrimSpace(r.Header.Get(abacBundleAgentSignatureHeader))
-	if agentID == "" || tsStr == "" || provided == "" {
-		return unauthorized("missing agent identity headers")
-	}
-
-	tsSec, err := strconv.ParseInt(tsStr, 10, 64)
-	if err != nil {
-		return unauthorized("agent timestamp is not a valid unix second")
-	}
-	if skew := time.Since(time.Unix(tsSec, 0)); skew > abacBundleSignatureMaxSkew || skew < -abacBundleSignatureMaxSkew {
-		return unauthorized("agent timestamp out of skew")
-	}
-
-	if s.store == nil {
-		return unauthorized("agent store unavailable")
-	}
-	agent := s.store.Agent(agentID)
-	secret := s.store.AgentSecret(agentID)
-	if agent == nil || secret == "" {
-		return unauthorized("unknown agent or missing secret")
-	}
-
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(abacBundleSignaturePrefix + "\n" + agentID + "\n" + tsStr))
-	want := hex.EncodeToString(mac.Sum(nil))
-	if !hmac.Equal([]byte(provided), []byte(want)) {
-		return unauthorized("agent signature mismatch")
-	}
-
-	// 签名通过后再暴露状态差异：避免未认证请求探测 agent 状态。
-	if strings.EqualFold(agent.Status, "retired") || strings.EqualFold(agent.Status, "disabled") {
-		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
-		logx.Warn(r.Context(), "ABAC 策略包请求来自禁用/退役 agent", "agentID", agentID, "status", agent.Status)
-		return "", "", false
-	}
-	if strings.TrimSpace(agent.TenantID) == "" {
-		return unauthorized("agent has no tenant")
-	}
-	return agent.TenantID, agentID, true
+	return s.verifyAgentHMACRequest(w, r, abacBundleSignaturePrefix, "")
 }
 
 // abacBundlePolicies 把控制面策略镜像映射为 bundle 条目并做确定性排序。

@@ -86,6 +86,8 @@ type BudgetAlert = cost.BudgetAlert
 type BudgetStore = cost.BudgetStore
 type ABACPolicyRecord = model.ABACPolicyRecord
 type ABACPolicyStore = model.ABACPolicyStore
+type ABACDecisionLog = model.ABACDecisionLog
+type ABACDecisionStore = model.ABACDecisionStore
 
 // ---- 随契约下沉上提的类型（3，批次 3） ----
 
