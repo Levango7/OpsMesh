@@ -41,6 +41,15 @@ func bareID(key string) string {
 	return key
 }
 
+// ctxTenant 返回当前请求的规范化租户 ID（空归 default）。
+func ctxTenant(ctx context.Context) string {
+	tenant := authctx.FromContext(ctx).TenantID
+	if tenant == "" {
+		tenant = store.DefaultTenantID
+	}
+	return tenant
+}
+
 // HybridRetriever 混合检索器 (向量 + 关键词 + 图谱)
 type HybridRetriever struct {
 	store    KnowledgeStore
@@ -293,8 +302,10 @@ func NewInMemoryKnowledgeStore() *InMemoryKnowledgeStore {
 }
 
 func (s *InMemoryKnowledgeStore) Upsert(ctx context.Context, docs []KnowledgeDoc) error {
-	for _, d := range docs {
-		s.docs[tenantKey(ctx, d.ID)] = d
+	tenant := ctxTenant(ctx)
+	for i := range docs {
+		docs[i].TenantID = tenant
+		s.docs[tenantKey(ctx, docs[i].ID)] = docs[i]
 	}
 	return nil
 }
@@ -302,15 +313,27 @@ func (s *InMemoryKnowledgeStore) Upsert(ctx context.Context, docs []KnowledgeDoc
 func (s *InMemoryKnowledgeStore) Search(ctx context.Context, query string, topK int, filter map[string]interface{}) ([]KnowledgeDoc, error) {
 	var results []KnowledgeDoc
 	prefix := tenantPrefix(ctx)
+	currentTenant := ctxTenant(ctx)
 	for key, doc := range s.docs {
 		// TD-97 ②：只检索本租户的文档。
 		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		// 显式按 TenantID 过滤。
+		docTenant := doc.TenantID
+		if docTenant == "" {
+			docTenant = store.DefaultTenantID
+		}
+		if docTenant != currentTenant {
 			continue
 		}
 		if !matchKnowledgeFilter(doc.Metadata, filter) {
 			continue
 		}
 		doc.ID = bareID(key) // 出口还原裸 ID
+		if doc.TenantID == "" {
+			doc.TenantID = currentTenant
+		}
 		results = append(results, doc)
 	}
 	if topK > 0 && topK < len(results) {
@@ -320,19 +343,43 @@ func (s *InMemoryKnowledgeStore) Search(ctx context.Context, query string, topK 
 }
 
 func (s *InMemoryKnowledgeStore) Delete(ctx context.Context, ids []string) error {
+	currentTenant := ctxTenant(ctx)
+	idSet := make(map[string]bool, len(ids))
 	for _, id := range ids {
-		delete(s.docs, tenantKey(ctx, id))
+		idSet[id] = true
+	}
+	for key, doc := range s.docs {
+		if !idSet[bareID(key)] {
+			continue
+		}
+		docTenant := doc.TenantID
+		if docTenant == "" {
+			docTenant = store.DefaultTenantID
+		}
+		if docTenant != currentTenant {
+			continue
+		}
+		delete(s.docs, key)
 	}
 	return nil
 }
 
 func (s *InMemoryKnowledgeStore) Count(ctx context.Context) (int, error) {
 	prefix := tenantPrefix(ctx)
+	currentTenant := ctxTenant(ctx)
 	n := 0
-	for key := range s.docs {
-		if strings.HasPrefix(key, prefix) {
-			n++
+	for key, doc := range s.docs {
+		if !strings.HasPrefix(key, prefix) {
+			continue
 		}
+		docTenant := doc.TenantID
+		if docTenant == "" {
+			docTenant = store.DefaultTenantID
+		}
+		if docTenant != currentTenant {
+			continue
+		}
+		n++
 	}
 	return n, nil
 }
@@ -343,13 +390,25 @@ func (s *InMemoryKnowledgeStore) Count(ctx context.Context) (int, error) {
 func (s *InMemoryKnowledgeStore) ListBySource(ctx context.Context, source KnowledgeSource, limit int) ([]KnowledgeDoc, error) {
 	var results []KnowledgeDoc
 	prefix := tenantPrefix(ctx)
+	currentTenant := ctxTenant(ctx)
 	for key, doc := range s.docs {
 		// TD-97 ②：只列本租户的文档。
 		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
+		// 显式按 TenantID 过滤。
+		docTenant := doc.TenantID
+		if docTenant == "" {
+			docTenant = store.DefaultTenantID
+		}
+		if docTenant != currentTenant {
+			continue
+		}
 		if doc.Source == source {
 			doc.ID = bareID(key)
+			if doc.TenantID == "" {
+				doc.TenantID = currentTenant
+			}
 			results = append(results, doc)
 			if limit > 0 && len(results) >= limit {
 				break
