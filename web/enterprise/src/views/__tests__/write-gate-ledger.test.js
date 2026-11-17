@@ -45,7 +45,13 @@ const GATED = [
   ['CMDBChangesView.vue', 'cmdb:write'],
   ['CMDBView.vue', 'cmdb:write'],
   ['AIOpsView.vue', 'aiops:write'],
-  ['DevicesView.vue', 'device:delete/provision:execute']
+  ['DevicesView.vue', 'device:delete/provision:execute'],
+  ['AlertsView.vue', 'alert:ack/alert:silence'],
+  ['K8sClustersView.vue', 'k8s:write/delete'],
+  ['NetworkDevicesView.vue', 'network:write'],
+  ['MiddlewareDeployView.vue', 'middleware:write/execute'],
+  ['KnowledgeView.vue', 'knowledge:write'],
+  ['WorkflowsView.vue', 'workflow:write']
 ]
 
 // —— 欠账（matrix 实测：调用写端点但视图内无对应 hasPerm）。每挂完一个视图，把它从这里挪到 GATED。
@@ -54,7 +60,6 @@ const PENDING = [
   ['AIPromptsView.vue', 'ai:write'],
   ['AIRagView.vue', 'ai:write'],
   ['AgentView.vue', 'ai:write'],
-  ['AlertsView.vue', 'alert:ack/alert:silence'],
   ['AutoProvisionView.vue', 'provision:execute'],
   ['AutoscalerView.vue', 'autoscaler:write'],
   ['BatchView.vue', 'task:write'],
@@ -70,10 +75,6 @@ const PENDING = [
   ['FederationDeploysView.vue', 'deploy:write'],
   ['FederationView.vue', 'federation:write'],
   ['GitOpsDashboardView.vue', 'argocd:write/flux:write'],
-  ['K8sClustersView.vue', 'k8s:write/delete'],
-  ['KnowledgeView.vue', 'knowledge:write'],
-  ['MiddlewareDeployView.vue', 'middleware:write/execute'],
-  ['NetworkDevicesView.vue', 'network:write'],
   ['NetworkDiagnoseView.vue', 'network:write'],
   ['NetworkTopologyView.vue', 'network:write'],
   ['OSOptimizeView.vue', 'os:write/execute'],
@@ -82,7 +83,6 @@ const PENDING = [
   ['PlatformConfigView.vue', 'platform:write'],
   ['PluginView.vue', 'plugin:write'],
   ['PortalView.vue', 'portal:write'],
-  ['WorkflowsView.vue', 'workflow:write']
 ]
 
 // 先行两批用的是自有 testid（历史形态，保留）

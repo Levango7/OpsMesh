@@ -1,12 +1,13 @@
 <template>
   <PageShell :title="$t('k8s.clusters')" :desc="$t('k8s.clustersHint')" testid="k8s" :error="store.error">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 子页签：集群管理 / 资源管理（保留原位，位于骨架头部之下） -->
     <K8sSubNav />
 
     <div class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('k8s.clusters') }}</h3>
-        <Button variant="primary" size="sm" @click="openAddCluster" data-testid="k8s-add-cluster-btn">
+        <Button variant="primary" size="sm" @click="openAddCluster" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="k8s-add-cluster-btn">
           <Icon name="add" :size="13" /> {{ $t('k8s.addCluster') }}
         </Button>
         <Button variant="ghost" size="sm" @click="store.fetchClusters()">
@@ -37,7 +38,7 @@
             <Button variant="primary" size="sm" @click="onManage(row.id)" data-testid="k8s-manage-btn">
               {{ $t('k8s.resources') }}
             </Button>
-            <Button variant="danger" size="sm" @click="onDelete(row.id)" data-testid="k8s-delete-cluster-btn">
+            <Button variant="danger" size="sm" @click="onDelete(row.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="k8s-delete-cluster-btn">
               {{ $t('k8s.delete') }}
             </Button>
           </div>
@@ -66,7 +67,7 @@
             <textarea v-model="addForm.kubeconfig" rows="8" :placeholder="$t('k8s.kubeconfigHint')" data-testid="k8s-add-kubeconfig"></textarea>
           </div>
           <div class="btnbar btnbar--bottom">
-            <Button variant="primary" size="sm" @click="confirmAdd" :disabled="adding" data-testid="k8s-add-confirm">
+            <Button variant="primary" size="sm" @click="confirmAdd" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (adding)" data-testid="k8s-add-confirm">
               {{ $t('k8s.confirm') }}
             </Button>
             <Button variant="ghost" size="sm" @click="addOpen = false">{{ $t('k8s.cancel') }}</Button>
@@ -91,6 +92,7 @@ import PageShell from '@/components/PageShell.vue'
 
 // K8s 集群管理子页 — 集群注册 / 测试连接 / 删除 / 跳转到资源视图
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 import { useK8sStore } from '@/stores/k8s'
 import { t } from '@/i18n'
@@ -105,6 +107,10 @@ import { toast } from '@/utils/toast'
 const router = useRouter()
 const store = useK8sStore()
 
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('k8s:write/delete'))
 const clusterCols = computed(() => [
   { key: 'name', title: t('k8s.col.cluster'), slot: 'cell-name' },
   { key: 'server', title: t('k8s.col.server'), slot: 'cell-server' },
