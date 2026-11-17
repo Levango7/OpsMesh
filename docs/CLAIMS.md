@@ -1365,3 +1365,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [CLAIM] 2026-11-17T12:00:00Z from=kilo ttl=8h scope=internal/knowledge/ note=批次49 knowledge 租户隔离收尾：校验 KnowledgeDoc.TenantID 过滤在 Upsert/Search/Delete/Count/ListBySource 全路径生效，补跨租户隔离测试后入库
 [DONE] 2026-11-17T12:30:00Z from=kilo scope=internal/knowledge/ note=批次49 收口（KnowledgeDoc 租户隔离 + 跨租户测试） commit=fd4cfea3
+
+[CLAIM] 2026-11-17T12:45:00Z from=kilo ttl=8h scope=internal/controlplane/abac_shadow.go,internal/controlplane/abac_shadow_test.go,internal/controlplane/server_middleware.go,internal/config/config.go,internal/controlplane/abac_engine.go,docs/projects/abac-device-engine-charter.md note=批次50 ABAC shadow 模式：变更类请求旁路评估并记录 would-be 决策（不阻断），指标与配置开关，为强制闸门积累误杀率数据

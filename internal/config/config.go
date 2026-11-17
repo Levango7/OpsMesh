@@ -491,6 +491,12 @@ type Config struct {
 	// 默认 30s；<=0 时按 30s 兜底（startAutomationEvalLoop 内处理）。
 	AutomationEvalInterval time.Duration // --automation-eval-interval 自动化规则评估周期（默认 30s）
 
+	// ABACShadow：ABAC 影子模式（批次50）。开启后对 /api/v1/* 的变更方法
+	// （POST/PUT/DELETE/PATCH）内联调用服务端 ABAC 引擎做**观察**：只记录决策与
+	// 命中策略，绝不阻断/改写请求与响应。用于从不强制到强制的灰度评估。
+	// 默认 false（零开销：中间件构造时直接返回 next）。
+	ABACShadow bool // --abac-shadow / env OPSMESH_ABAC_SHADOW
+
 	// H2/H3 配套开关：是否允许 SQL 后端继续使用 P1-P6 桩存储。
 	// 背景：SQLStore 对 15 个领域（见 stubStoreDomains 清单）曾为桩实现，写入不持久化；
 	// 生产模式（--production=true）+ --store=mysql 时默认拒绝启动（fail-fast），
@@ -726,6 +732,8 @@ func Load() *Config {
 	aiopsTemperature := flag.Float64("aiops-temperature", 0.3, "AIOps LLM 采样温度（0.0~1.0，越低越确定性；默认 0.3；或 env OPSMESH_AIOPS_TEMPERATURE）")
 	aiopsMaxTokens := flag.Int("aiops-max-tokens", 4096, "AIOps LLM 最大输出 token 数（默认 4096；或 env OPSMESH_AIOPS_MAX_TOKENS）")
 	aiopsTimeout := flag.Int("aiops-timeout", 30, "AIOps LLM 调用超时秒（默认 30；或 env OPSMESH_AIOPS_TIMEOUT）")
+	// ABAC 影子模式（批次50）：只观察、不强制。
+	abacShadow := flag.Bool("abac-shadow", false, "ABAC 影子模式：对 /api/v1/* 变更请求内联评估 ABAC 策略并记录决策（不阻断、不改写响应）；默认 false；或 env OPSMESH_ABAC_SHADOW")
 	// 自动化引擎评估周期。
 	automationEvalInterval := flag.Duration("automation-eval-interval", 30*time.Second, "自动化引擎评估周期：周期评估 enabled 自动化规则并执行命中动作（默认 30s；或 env OPSMESH_AUTOMATION_EVAL_INTERVAL）")
 	flag.Parse()
@@ -943,6 +951,7 @@ func Load() *Config {
 		AIOpsMaxTokens:         valInt("aiops-max-tokens", *aiopsMaxTokens, "OPSMESH_AIOPS_MAX_TOKENS"),
 		AIOpsTimeout:           valInt("aiops-timeout", *aiopsTimeout, "OPSMESH_AIOPS_TIMEOUT"),
 		AutomationEvalInterval: valDur("automation-eval-interval", *automationEvalInterval, "OPSMESH_AUTOMATION_EVAL_INTERVAL"),
+		ABACShadow:             valBool("abac-shadow", *abacShadow, "OPSMESH_ABAC_SHADOW"),
 	}
 	// --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。

@@ -107,6 +107,10 @@ type M struct {
 	// （见 plugin.go）；pluginRemoteCount 为当前注册的独立进程插件数。
 	pluginRemoteCount int64
 	pluginHooks       map[string]uint64
+
+	// ABAC 影子模式决策计数（批次50）：键为 "decision|method"，标签均为固定小集合
+	// （见 abac_shadow.go）。只在 --abac-shadow 开启时增长。
+	abacShadow map[string]uint64
 }
 
 // 验签指标的固定标签取值。渲染时按这些取值全量输出（计数为 0 也输出），
@@ -127,6 +131,7 @@ func New() *M {
 		sigVerifs:   make(map[string]uint64),
 		sigKeySrc:   make(map[string]uint64),
 		pluginHooks: make(map[string]uint64),
+		abacShadow:  make(map[string]uint64),
 		gatewayReqs: make(map[string]int64),
 		gatewayLat:  make(map[string]float64),
 	}
@@ -366,6 +371,7 @@ func (m *M) Render() string {
 	b = m.appendAuditChainMetrics(b)
 	b = m.appendAgentSignatureMetrics(b)
 	b = m.appendPluginMetrics(b)
+	b = m.appendABACShadowMetrics(b)
 	b = m.appendGatewayMetrics(b)
 	b = m.appendAppGaugeMetrics(b)
 	b = m.appendRuntimeMetrics(b)
