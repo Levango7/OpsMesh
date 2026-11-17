@@ -88,6 +88,11 @@ type MemoryStore struct {
 	// 多租户资源配额：tenantID -> 配额配置。
 	// 由 m.mu 保护并发安全；未设置配额的租户在 QuotaManager 中回退到默认配额。
 	quotaConfigs map[string]*QuotaConfig
+	// TD-97 ① 预算持久化：tenantID -> TokenBudget。
+	// 由 m.mu 保护并发安全。
+	budgets map[string]*TokenBudget
+	// TD-97 ① 预算告警历史。
+	budgetAlerts []BudgetAlert
 	// agent 日志上报：已落库的 LogReport 批次列表。
 	// 按 tenantID + logName 分组检索（线性遍历，MVP 内存后端够用；
 	// 生产高频场景应由 logstore.SQLLogStore / Loki / ES 承担检索侧）。
@@ -341,6 +346,8 @@ func NewMemoryStore() *MemoryStore {
 		notifyChannels:        make(map[string]*NotifyChannel),
 		notifyTemplates:       make(map[string]*NotifyTemplate),
 		quotaConfigs:          make(map[string]*QuotaConfig),
+		budgets:               make(map[string]*TokenBudget),
+		budgetAlerts:          make([]BudgetAlert, 0),
 		services:              make(map[string]*ServiceInstance),
 		configs:               make(map[string]*ConfigItem),
 		configHistory:         make(map[string][]*ConfigItem),
