@@ -1389,3 +1389,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-17T19:30:00Z from=kilo scope=pkg/abacbundle/,internal/controlplane/abac_bundle_endpoint.go,internal/agent/abac_bundle_client.go,internal/config/config.go,internal/grpcx/service.go,docs/projects/ note=批次54 收口（ABAC bundle M1 完成：签名库/端点/Agent LKG/能力协商）
 
 [CLAIM] 2026-11-17T20:00:00Z from=kilo ttl=8h scope=pkg/abacbundle/eval.go,pkg/abacbundle/eval_test.go,pkg/abacbundle/testdata/,internal/controlplane/abac_eval_parity_test.go,internal/agent/abac_local_eval.go,internal/agent/abac_local_eval_test.go,docs/projects/abac-device-engine-charter.md note=批次55 M2 设备端评估器：与 evaluateABAC 同语义（deny-overrides + default-deny + 条件匹配），共享 fixture 逐例一致性；仅提供本地判定能力，不接入强制（M4 才灰度）
+
+[DONE] 2026-11-17T21:30:00Z from=kilo scope=pkg/abacbundle/,internal/agent/abac_local_eval.go,internal/controlplane/abac_eval_parity_test.go,docs/projects/ note=批次55 收口（ABAC M2 设备端评估器 + 32 条共享 fixture 逐例一致）
