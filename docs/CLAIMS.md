@@ -1381,3 +1381,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-17T15:30:00Z from=kilo scope=scripts/td60-consistency.py,scripts/td60-consistency-baseline.json,Makefile,docs/abac-shadow-simulation-2026-11-17.md,docs/projects/ note=批次52 收口（TD-60 一致性门禁 + ABAC shadow 模拟数据 + race 实测）
 
 [CLAIM] 2026-11-17T16:00:00Z from=kilo ttl=8h scope=internal/controlplane/abac_enforce.go,internal/controlplane/abac_enforce_test.go,internal/controlplane/server_lifecycle.go,internal/config/config.go,docs/projects/abac-device-engine-charter.md,docs/projects/abac-device-engine-m1-bundle-spec.md,docs/projects/README.md note=批次53 ABAC 定向强制（高风险动作 opt-in + 403 审计 + kill switch）与设备引擎立项激活（owner 批准，章程状态 + M1 策略包/签名规格）
+
+[DONE] 2026-11-17T17:30:00Z from=kilo scope=internal/controlplane/abac_enforce.go,internal/config/config.go,internal/metrics/,docs/projects/ note=批次53 收口（ABAC 定向强制 + 高风险预置 + 离线引擎立项 M1 规格）
