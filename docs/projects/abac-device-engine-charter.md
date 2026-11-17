@@ -1,4 +1,4 @@
-# ABAC 设备侧决策引擎 项目章程
+﻿# ABAC 设备侧决策引擎 项目章程
 
 > **状态：待批准（启动需 owner 明确反转当前 501 口径）**
 > **负责人：待定**
@@ -165,3 +165,5 @@
   - **强制门接线（enforcement gate）**：ABAC `allow` 目前不参与请求放行，接强制链需 owner 决策 D2 另行评审；
   - 策略包签名 / 版本化 / 回滚（M1，依赖 D1/D3）。
 - **路由鉴权缺口已发现并修复（2026-11-17，批次45）**：复核发现 `POST /api/v1/abac` 此前在**所有模式**都无入口鉴权——生产仅由 `defaultDenyMiddleware` 兜底“校验”且不回注请求 context，handler 内 `authctx.FromContext` 恒零值（`internal/controlplane/abac_ops.go:87` 为旧入口）；后果是同租户带 `deviceID` 的 evaluate 被误判 403、`policy-create` 落空租户镜像被当作全局策略、策略镜像键 `action|subject|resource` 跨租户互相覆盖、非生产模式匿名穿透。修复：① 入口统一走 `subsystemAuthorize`（`requireTenantContext` + `requireProd`，`abac_ops.go:122`；回调见 `internal/controlplane/auth.go:89`），租户真值只取已验签身份；② 新增 `abac:read`/`abac:write` 权限点（`internal/store/model/perm.go:216`），read 进 `operatorReadOnlyGroups`，write 仅 admin；③ 镜像键改 `tenantID|action|subject|resource`（`abacPolicyID`，`abac_ops.go:82`）；④ 链式回归 `internal/controlplane/abac_ops_chain_test.go`（匿名拒绝、跨租户 403、读写分离、镜像键租户隔离）。**其余未完成项不变**（见上一条列表：持久化 / 设备端引擎 / 强制门 / 策略包签名）。
+- **策略持久化已落地（2026-11-17，批次47，取代上一条“仍未完成”列表中的第一项）**：store 提为事实源、`abacPolicies` 降为评估缓存。新增 `model.ABACPolicyStore` / `ABACPolicyRecord`（`internal/store/model/abac_policy.go:14`）与 Memory / SQL / MultiSchema 三实现（`internal/store/memory/memory_abac_policy.go:15`、`internal/store/sqlstore/sql_abac_policy.go:31`、`internal/store/multischema/multi_schema_abac_policy.go:13`），迁移 `internal/store/sqlstore/migrations/035_abac_policies.sql`（主键 `(tenant_id, id)`，`version` 每次 upsert 自增）；启动全量装载 `initABACPoliciesFromStore`（`internal/controlplane/abac_persistence.go:85`，调用点 `internal/controlplane/server.go:538`）；policy-create/delete 写穿且落库失败即 500、不改缓存、不下发脚本（`internal/controlplane/abac_engine.go:118`、`:158`，handler 见 `abac_ops.go:208`、`:223`）；多副本 5s 按 `(tenant,id)->version` 比对刷新（`abac_persistence.go:118`，接线 `internal/controlplane/server_lifecycle.go:594`），未变即跳过、`abacRev` 防本地写覆盖；租户隔离贯穿键/查询/删除。回归 `internal/store/memory/memory_abac_policy_test.go`、`internal/controlplane/abac_persistence_test.go`。
+- **剩余待办（批次47 后口径）**：① shadow 模式（策略只观察不强制，需 owner 确认采样与审计口径）；② 强制闸门接线（enforcement gate，D2 owner 决策，ABAC allow 仍不等于 RBAC allow）；③ 设备侧离线决策引擎（M1/M2，签名策略包 + 本地评估 + 一致性门）；④ 策略包签名 / 版本化 / 回滚（M1，依赖 D1/D3）。

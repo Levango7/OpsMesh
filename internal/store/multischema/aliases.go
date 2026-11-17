@@ -76,6 +76,9 @@ type Invoice = model.Invoice
 type CloudAccount = model.CloudAccount
 type CloudResource = model.CloudResource
 
+// ABACPolicyRecord 批次47：ABAC 策略持久化记录。
+type ABACPolicyRecord = model.ABACPolicyRecord
+
 // ---- 随契约下沉上提的类型（3，批次 3） ----
 
 type QuotaConfig = model.QuotaConfig

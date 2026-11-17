@@ -591,6 +591,7 @@ func (s *Server) Start() error {
 	s.startPipelineExecutor(ctx, 10*time.Second)                 // pipeline 执行器：推进 pending→running→succeeded
 	go s.startAutomationEvalLoop(ctx, s.automationEvalInterval)  // 自动化引擎评估循环：周期评估 enabled 规则并执行命中动作
 	s.startGatewayRouteRefresh(ctx, gatewayRouteRefreshInterval) // API 网关路由缓存：多副本周期回读 store 收敛（单 goroutine，ctx 取消即退出）
+	s.startABACPolicyRefresh(ctx, abacPolicyRefreshInterval)     // ABAC 策略缓存：多副本 5s 按 version 对齐（单 goroutine，ctx 取消即退出）
 
 	errCh := make(chan error, 3)
 	go func() {

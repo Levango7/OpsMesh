@@ -82,6 +82,8 @@ type CloudResource = model.CloudResource
 type TokenBudget = cost.TokenBudget
 type BudgetAlert = cost.BudgetAlert
 type BudgetStore = cost.BudgetStore
+type ABACPolicyRecord = model.ABACPolicyRecord
+type ABACPolicyStore = model.ABACPolicyStore
 
 // ---- 随契约下沉上提的类型（3，批次 3） ----
 

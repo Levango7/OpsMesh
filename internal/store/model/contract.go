@@ -469,6 +469,23 @@ type TaskRecordStore interface {
 	ListTaskRecords(kind string) ([]*TaskRecord, error)
 }
 
+// ABACPolicyStore ABAC 策略持久化（批次47：策略镜像重启不丢 + 多副本一致）。
+//
+// 与控制面内存缓存的关系同 GatewayRouteStore：store 是事实源，abacPolicies 是评估缓存。
+// 记录按 (TenantID, ID) 唯一；ID 由控制面按 tenantID|action|subject|resource 生成。
+// Version 每次写穿自增，供多副本周期刷新只重建版本有变化的租户。
+type ABACPolicyStore interface {
+	// ListABACPolicyRecords 返回策略记录：tenantID=="" 返回全部租户；
+	// 排序确定性（tenant_id, id 升序），供启动装载与周期刷新做稳定比对。
+	ListABACPolicyRecords(tenantID string) []ABACPolicyRecord
+	// UpsertABACPolicyRecord 按 (TenantID, ID) 幂等写穿：已存在则 version+1（CreatedAt 保留），
+	// 不存在则 version=1。返回落库后的记录（含真实 Version/CreatedAt/UpdatedAt）与是否成功。
+	// bool=false 表示后端失败，调用方不得把策略当作已持久化（也不得更新缓存）。
+	UpsertABACPolicyRecord(p ABACPolicyRecord) (ABACPolicyRecord, bool)
+	// DeleteABACPolicyRecord 按 (tenantID, id) 删除。返回是否删除成功（不存在返回 false）。
+	DeleteABACPolicyRecord(tenantID, id string) bool
+}
+
 // ConfigStore 配置中心领域：Get/Set/Delete/List + 版本历史 + 发布。
 // 按 (TenantID, Key) 唯一；每次 SetConfig 产生新版本并写入历史（ConfigHistory 查询）。
 // PublishConfig 用于配置变更的灰度/广播触发（MVP 仅标记版本，后续可联动事件总线）。
@@ -826,6 +843,7 @@ type Store interface {
 	ServiceDiscoveryStore // P0.3 服务发现：注册/心跳/实例查询
 	GatewayRouteStore     // TD-66 P1：API 网关路由规则持久化（重启不丢）
 	TaskRecordStore       // TD-60 task 域 R6：批量/灰度记录持久化（重启不丢批次视图）
+	ABACPolicyStore       // 批次47：ABAC 策略持久化（重启不丢 + 多副本版本刷新）
 	ConfigStore           // P0.3 配置中心：Get/Set/版本历史/发布
 	SecretStore           // P0.3 密钥管理：Get/Set/轮换/版本历史
 	TicketStore           // P1 工单管理：创建/查询/更新/关闭

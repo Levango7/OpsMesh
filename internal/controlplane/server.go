@@ -247,8 +247,15 @@ type Server struct {
 	approvalEngine *approval.Engine
 
 	// abacPolicies ABAC 策略镜像（审计整改批次17：服务端评估用；policy-create 时同步登记）。
+	// 批次47：缓存旁路版本/租户索引支撑写穿 + 多副本 5s 刷新（见 abac_persistence.go）：
+	//   - abacVersions：(tenantID, policyID) -> store version，刷新时未变即跳过重建；
+	//   - abacTenants：本副本见过的租户，限定刷新回读范围；
+	//   - abacRev：缓存修订号，刷新应用前校验（期间有本地写则放弃本轮快照）。
 	abacMu       sync.RWMutex
 	abacPolicies []abacPolicy
+	abacVersions map[string]int64
+	abacTenants  map[string]struct{}
+	abacRev      uint64
 
 	// M6 集成：网络拓扑缓存。
 	// networkTopologyCache 持有最近一次探测的拓扑数据 + 5 分钟过期时间，
@@ -527,6 +534,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		// 灾备备份归档目录：data-dir/backups（与 CLI backup 子命令同源，便于运维统一备份数据目录）。
 		backupDir: filepath.Join(cfg.DataDir, "backups"),
 	}
+	// 批次47：启动时从 store 全量恢复 ABAC 策略镜像（重启不丢；store 为空则保持内存态语义）。
+	s.initABACPoliciesFromStore()
 	// 默认基础设施预警规则（CPU/内存/磁盘阈值），租户隔离用 "system"。
 	// 规则启用后，alertEngineLoop 会对设备指标周期评估并触发告警事件。
 	if s.alertEngine != nil {

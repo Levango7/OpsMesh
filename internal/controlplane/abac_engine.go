@@ -13,8 +13,13 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // abacPolicy 控制面侧策略镜像。
@@ -76,6 +81,8 @@ func abacConditionsMatch(cond map[string]string, contextJSON string) bool {
 // evaluateABAC 对单次请求做决策：deny-overrides + default-deny。
 // 返回 (allowed, matchedPolicyID, reason)。
 func (s *Server) evaluateABAC(tenantID, subject, resource, actionAttr, contextJSON string) (bool, string, string) {
+	// 记录本副本见过的租户：刷新循环只回读这些租户（见 abac_persistence.go）。
+	s.noteABACTenant(tenantID)
 	s.abacMu.RLock()
 	policies := append([]abacPolicy(nil), s.abacPolicies...)
 	s.abacMu.RUnlock()
@@ -105,22 +112,73 @@ func (s *Server) evaluateABAC(tenantID, subject, resource, actionAttr, contextJS
 }
 
 // addABACPolicy 注册/更新策略镜像（policy-create 时调用）。
-func (s *Server) addABACPolicy(p abacPolicy) {
+//
+// 写穿（批次47）：store 非空时先落库、成功后再改缓存；落库失败返回 error 且**不改缓存**
+// （handler 据此 500，避免"接口说创建成功、重启后策略消失"的静默假成功）。
+// store 为空时保持原内存态语义（MemoryStore 未配置的测试/开发场景）。
+func (s *Server) addABACPolicy(p abacPolicy) error {
+	var version int64
+	if s.store != nil {
+		stored, ok := s.store.UpsertABACPolicyRecord(model.ABACPolicyRecord{
+			TenantID: p.TenantID,
+			ID:       p.ID,
+			Subject:  p.Subject,
+			Resource: p.Resource,
+			Action:   p.Action,
+			Effect:   p.Effect,
+		})
+		if !ok {
+			err := fmt.Errorf("abac policy store upsert failed (tenant=%s id=%s)", p.TenantID, p.ID)
+			logx.Error(context.Background(), "ABAC 策略持久化失败，缓存未更新", err,
+				"tenant", p.TenantID, "policy", p.ID)
+			return err
+		}
+		version = stored.Version
+	}
 	s.abacMu.Lock()
 	defer s.abacMu.Unlock()
+	s.abacRev++
+	s.noteABACTenantLocked(p.TenantID)
 	for i := range s.abacPolicies {
 		if s.abacPolicies[i].ID == p.ID {
 			s.abacPolicies[i] = p
-			return
+			s.setABACVersionLocked(p.TenantID, p.ID, version)
+			return nil
 		}
 	}
 	s.abacPolicies = append(s.abacPolicies, p)
+	s.setABACVersionLocked(p.TenantID, p.ID, version)
+	return nil
 }
 
-// removeABACPolicy 删除策略镜像（policy-delete 时调用）。
-func (s *Server) removeABACPolicy(id string) {
+// removeABACPolicy 删除策略镜像（policy-delete 时调用）并同步删除持久层记录。
+//
+// 签名保持单参（既有调用方与用例不动）；租户先查缓存，缓存未命中再回读 store 定位
+// （删除可能发生在"本副本尚未加载该策略"的副本上）。
+func (s *Server) removeABACPolicy(id string) error {
+	var tenantID string
+	s.abacMu.RLock()
+	for _, p := range s.abacPolicies {
+		if p.ID == id {
+			tenantID = p.TenantID
+			break
+		}
+	}
+	s.abacMu.RUnlock()
+	if s.store != nil {
+		if tenantID == "" {
+			for _, rec := range s.store.ListABACPolicyRecords("") {
+				if rec.ID == id {
+					tenantID = rec.TenantID
+					break
+				}
+			}
+		}
+		s.store.DeleteABACPolicyRecord(tenantID, id)
+	}
 	s.abacMu.Lock()
 	defer s.abacMu.Unlock()
+	s.abacRev++
 	out := s.abacPolicies[:0]
 	for _, p := range s.abacPolicies {
 		if p.ID != id {
@@ -128,10 +186,17 @@ func (s *Server) removeABACPolicy(id string) {
 		}
 	}
 	s.abacPolicies = out
+	if s.abacVersions != nil {
+		delete(s.abacVersions, abacVersionKey(tenantID, id))
+	}
+	return nil
 }
 
 // listABACPolicies 返回策略镜像副本（policy-list 时调用）。
 func (s *Server) listABACPolicies(tenantID string) []abacPolicy {
+	if tenantID != "" {
+		s.noteABACTenant(tenantID)
+	}
 	s.abacMu.RLock()
 	defer s.abacMu.RUnlock()
 	out := make([]abacPolicy, 0, len(s.abacPolicies))

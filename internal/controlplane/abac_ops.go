@@ -204,7 +204,11 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 	if req.Action == "policy-delete" {
 		// 镜像键必须带租户：同三元组在不同租户各有一条策略，缺租户分量会让
 		// A 的删除命中 B 的镜像（add 同理，会互相覆盖）。
-		s.removeABACPolicy(abacPolicyID(actx.TenantID, req.ActionAttr, req.Subject, req.Resource))
+		// 批次47：删除同步写穿 store；失败不静默（handler 直接 500）。
+		if err := s.removeABACPolicy(abacPolicyID(actx.TenantID, req.ActionAttr, req.Subject, req.Resource)); err != nil {
+			writeInternalError(r.Context(), w, "handleABAC.policy-delete", err)
+			return
+		}
 	}
 
 	script, status, errMsg := buildABACScript(req.Action, req.Subject, req.Resource, req.ActionAttr, req.Context)
@@ -214,15 +218,19 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// policy-create：同步登记控制面策略镜像（供 evaluate 使用）。
+	// 批次47：写穿 store；落库失败返回 500 且不更新缓存，也不下发设备脚本。
 	if req.Action == "policy-create" {
-		s.addABACPolicy(abacPolicy{
+		if err := s.addABACPolicy(abacPolicy{
 			ID:       abacPolicyID(actx.TenantID, req.ActionAttr, req.Subject, req.Resource),
 			TenantID: actx.TenantID,
 			Subject:  req.Subject,
 			Resource: req.Resource,
 			Action:   req.ActionAttr,
 			Effect:   "allow",
-		})
+		}); err != nil {
+			writeInternalError(r.Context(), w, "handleABAC.policy-create", err)
+			return
+		}
 	}
 
 	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "abac_"+req.Action)
