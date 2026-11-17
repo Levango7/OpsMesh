@@ -4,6 +4,7 @@ package discovery
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -39,6 +40,31 @@ func NewInMemoryDiscovery() *InMemoryDiscovery {
 		services: make(map[string]map[instanceKey]Service),
 		watchers: make(map[string]map[int]chan []Service),
 	}
+}
+
+// NewInMemoryDiscoveryFromAddrs 从逗号分隔的地址列表构造 InMemoryDiscovery。
+// 地址解析规则与 NewStaticDiscoveryFromAddrs 一致（支持 host:port、带 scheme 与纯 host），
+// 实例 ID 保留原始地址串（balancer 据此还原控制面地址）。
+func NewInMemoryDiscoveryFromAddrs(serviceName, addrs string) *InMemoryDiscovery {
+	d := NewInMemoryDiscovery()
+	if addrs == "" {
+		return d
+	}
+	for _, raw := range strings.Split(addrs, ",") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		addr, port := parseAddrPort(raw)
+		_ = d.Register(context.Background(), Service{
+			ID:      raw,
+			Name:    serviceName,
+			Addr:    addr,
+			Port:    port,
+			Healthy: true,
+		})
+	}
+	return d
 }
 
 // cloneService 返回 svc 的深拷贝（Metadata map 克隆）。

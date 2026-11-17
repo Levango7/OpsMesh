@@ -152,3 +152,15 @@
 ---
 
 *起草：2026-11-17。只读核对基准 `main@9c828b8f`；未改代码、未提交。*
+
+## 进展记录（2026-11-17）
+
+本节记录设备脚本路径 `evaluate` 501 口径复核后的落地进展；本草程的“待批准”状态与 D1/D2/D3 决策项不变。
+
+- **501 守卫保留（不反转）**：`buildABACScript` 的 `evaluate` 分支继续显式返回 501（`internal/controlplane/abac_ops.go:40-52`）。理由：该分支是**函数级守卫**，用于阻止设备脚本路径伪造 ALLOWED 判定；HTTP `POST /api/v1/abac action=evaluate` 早已由服务端真实引擎决策（200），守卫只覆盖不可能产出判定的脚本通道。文案改述为 “device-script evaluation is intentionally disabled; the HTTP evaluate path is served by the server-side engine with device-context enrichment”，由 `TestBuildABACScript_EvaluateIsExplicit501`（`internal/controlplane/abac_ops_security_test.go:91`）钉住 501 与关键措辞。
+- **设备上下文增强已落地**：HTTP evaluate 带 `deviceID` 时，先查设备（不存在 404；跨租户 403，与不存在同形不泄露存在性），再把设备属性（`deviceID/hostname/segment/os/arch/state/taskState/agentID/managed`，空字符串跳过）注入策略上下文（`internal/controlplane/abac_ops.go:102-170`，属性展开见 `abac_ops.go:58-78`）。合并规则：**调用方自带键优先**，设备属性只补空缺，绝不覆盖调用方显式上下文；顶层扁平键供现有等值条件匹配，另附嵌套 `device` 对象副本（调用方已提供 `device` 时同样不覆盖）。响应新增 `evaluatedBy`（`server` / `server+device-context`）与 `deviceContext`（实际注入子集）供审计。用例：`abac_ops_security_test.go:163`（同租户注入并命中）、`:197`（跨租户 403 无决策字段）、`:214`（未知设备 404）、`:227`（调用方键不被覆盖）、`:256`（非法 context JSON 400）、`:266`（无 deviceID 时 `evaluatedBy=server`）。
+- **仍未完成（承接第 2.3 节缺口）**：
+  - 策略镜像跨重启持久化（当前仍为进程内 `abacPolicies`，重启即丢 → default-deny）；
+  - 真正的设备侧离线决策引擎（含与服务端共享 fixture 的一致性门）；
+  - **强制门接线（enforcement gate）**：ABAC `allow` 目前不参与请求放行，接强制链需 owner 决策 D2 另行评审；
+  - 策略包签名 / 版本化 / 回滚（M1，依赖 D1/D3）。

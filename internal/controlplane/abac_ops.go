@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // buildABACScript 把 action + 用户字段组装成下发脚本（纯函数，供变异反证测试直接调）。
@@ -45,10 +47,34 @@ func buildABACScript(action, subject, resource, actionAttr, context string) (str
 		// 注（审计整改批次17）：handleABAC 已在入口拦截 evaluate，改走服务端 abac_engine
 		// 真实决策（deny-overrides + default-deny）；本分支仅作为设备脚本路径的显式拒绝
 		// 守卫保留，由 abac_ops_security_test.go 钉住（防"假 ALLOWED"回归）。
-		return "", http.StatusNotImplemented, "ABAC evaluation is not implemented on the device-script path; use the server-side evaluator (POST /api/v1/abac action=evaluate)."
+		// 2026-11-17：设备属性注入落在 HTTP evaluate 分支（evaluate 带 deviceID 时补设备
+		// 上下文），本守卫不因此放松——设备脚本路径依旧不可能产出判定。
+		return "", http.StatusNotImplemented, "device-script evaluation is intentionally disabled; the HTTP evaluate path is served by the server-side engine with device-context enrichment"
 	default:
 		return "", http.StatusBadRequest, "unknown action: " + action
 	}
+}
+
+// abacDeviceAttributes 把设备静态属性展开成 ABAC 上下文字段。
+// 空字符串属性跳过（缺失不应伪装成空值条件）；managed 是布尔，恒带上（false 也有语义）。
+func abacDeviceAttributes(dev *proto.DeviceInfo) map[string]interface{} {
+	attrs := map[string]interface{}{}
+	for k, v := range map[string]string{
+		"deviceID":  dev.DeviceID,
+		"hostname":  dev.Hostname,
+		"segment":   dev.Segment,
+		"os":        dev.OS,
+		"arch":      dev.Arch,
+		"state":     dev.State,
+		"taskState": dev.TaskState,
+		"agentID":   dev.AgentID,
+	} {
+		if v != "" {
+			attrs[k] = v
+		}
+	}
+	attrs["managed"] = dev.Managed
+	return attrs
 }
 
 // handleABAC 处理 POST /api/v1/abac
@@ -78,18 +104,68 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "subject, resource, and actionAttr are required"})
 			return
 		}
-		tenantID := authctx.FromContext(r.Context()).TenantID
-		allowed, policyID, reason := s.evaluateABAC(tenantID, req.Subject, req.Resource, req.ActionAttr, req.Context)
+		actx := authctx.FromContext(r.Context())
+		contextJSON := req.Context
+		evaluatedBy := "server"
+		var deviceContext map[string]interface{}
+		if req.DeviceID != "" {
+			dev := s.store.Device(req.DeviceID)
+			if dev == nil {
+				paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+				return
+			}
+			// 租户守卫：跨租户与不存在同形（403 + 无细节），不泄露设备存在性。
+			if dev.TenantID != actx.TenantID {
+				paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+				return
+			}
+			ctxMap := map[string]interface{}{}
+			if strings.TrimSpace(req.Context) != "" {
+				if err := json.Unmarshal([]byte(req.Context), &ctxMap); err != nil {
+					paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid context JSON: " + err.Error()})
+					return
+				}
+			}
+			if ctxMap == nil { // context 为 JSON null：按空对象处理（不向 nil map 写入）
+				ctxMap = map[string]interface{}{}
+			}
+			attrs := abacDeviceAttributes(dev)
+			// 合并规则：调用方自带键优先，设备属性只补空缺——调用方显式声明不被设备元数据覆盖。
+			deviceContext = make(map[string]interface{}, len(attrs))
+			for k, v := range attrs {
+				if _, exists := ctxMap[k]; !exists {
+					ctxMap[k] = v
+					deviceContext[k] = v
+				}
+			}
+			// 顶层扁平键供现有等值条件匹配；另附嵌套 device 副本，给未来按对象取值的策略留位。
+			if _, exists := ctxMap["device"]; !exists {
+				ctxMap["device"] = attrs
+			}
+			merged, err := json.Marshal(ctxMap)
+			if err != nil {
+				paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "context must be a JSON object: " + err.Error()})
+				return
+			}
+			contextJSON = string(merged)
+			evaluatedBy = "server+device-context"
+		}
+		allowed, policyID, reason := s.evaluateABAC(actx.TenantID, req.Subject, req.Resource, req.ActionAttr, contextJSON)
 		decision := "deny"
 		if allowed {
 			decision = "allow"
 		}
-		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		resp := map[string]interface{}{
 			"decision":        decision,
 			"allowed":         allowed,
 			"matchedPolicyID": policyID,
 			"reason":          reason,
-		})
+			"evaluatedBy":     evaluatedBy,
+		}
+		if req.DeviceID != "" {
+			resp["deviceContext"] = deviceContext
+		}
+		paginate.WriteJSON(w, http.StatusOK, resp)
 		return
 	}
 	if req.Action == "policy-list" && req.DeviceID == "" {

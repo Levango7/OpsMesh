@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -450,7 +451,7 @@ func (a *Agent) Run() error {
 	// OTel 链路追踪初始化：endpoint 为空且 stdout=false 时 no-op（零开销）。
 	// 服务名默认 "opsmesh-agent"（未配置时由 otelx 回退 "opsmesh"）。
 	// 启用后 agent gRPC 调用 + 心跳 + 任务执行自动埋点，trace_id 贯穿 agent→控制面→store。
-	// 初始化失败时返回 error（由 main.go 统一处理），而非 log.Fatalf 强制退出。
+	// 初始化失败时返回 error（由 main.go 统一处理），而非 stdlib Fatalf 强制退出。
 	otelShutdown, otelErr := otelx.Init(otelx.Config{
 		Endpoint:    a.cfg.OTELEndpoint,
 		ServiceName: firstNonEmptyAgent(a.cfg.OTELServiceName, "opsmesh-agent"),
@@ -596,24 +597,29 @@ func (a *Agent) applyRlimits() {
 	setRlimits(a)
 }
 
-// setupDiscoveryBalancer 服务发现：用 StaticDiscovery 加载多控制面地址，
+// setupDiscoveryBalancer 服务发现：按 --discovery-backend 构造发现后端，
 // 按 --lb-strategy 构造 balancer 并注入 gRPC 客户端。
 //
 // 逻辑：
-//  1. 用 StaticDiscovery 从 addrs 构造控制面实例列表（服务名 "opsmesh-controlplane"）。
+//  1. 按 DiscoveryBackend 选择实现（memory 默认 / static / file），服务名 "opsmesh-controlplane"。
 //  2. 用 List 获取实例列表，按 cfg.LBStrategy 构造 balancer（round-robin/failover）。
 //  3. 通过 SetBalancer 注入 GRPCClient，invoke 后续优先走 balancer 路径。
 //
 // 单地址时 Failover 退化为始终用该地址（不破坏现有行为）。
 // addrs 为空时不注入 balancer（回退到 addrs failover，向后兼容）。
 func (a *Agent) setupDiscoveryBalancer(addrs []string) {
+	const serviceName = "opsmesh-controlplane"
 	if len(addrs) == 0 || a.grpc == nil {
 		return
 	}
-	// 用逗号拼接的地址列表构造 StaticDiscovery（与 NewStaticDiscoveryFromAddrs 签名匹配）。
+	// 用逗号拼接的地址列表供各后端构造实例（memory/static 语义一致）。
 	joined := strings.Join(addrs, ",")
-	disc := discovery.NewStaticDiscoveryFromAddrs("opsmesh-controlplane", joined)
-	instances, err := disc.List(context.Background(), "opsmesh-controlplane")
+	disc, err := newDiscoveryForConfig(a.cfg, serviceName, joined)
+	if err != nil {
+		// 构造失败已在 helper 内记录 WARN；不注入 balancer，回退到 addrs failover。
+		return
+	}
+	instances, err := disc.List(context.Background(), serviceName)
 	if err != nil || len(instances) == 0 {
 		// 静态实现不应出错，但防御性处理：不注入 balancer，回退到 addrs failover。
 		return
@@ -621,7 +627,32 @@ func (a *Agent) setupDiscoveryBalancer(addrs []string) {
 	balancer := discovery.NewBalancer(a.cfg.LBStrategy, instances)
 	a.grpc.SetBalancer(balancer)
 	logx.Info(context.Background(), "服务发现已启用",
-		"instances", len(instances), "lb-strategy", a.cfg.LBStrategy)
+		"backend", a.cfg.DiscoveryBackend, "instances", len(instances), "lb-strategy", a.cfg.LBStrategy)
+}
+
+// newDiscoveryForConfig 按 cfg.DiscoveryBackend 构造服务发现后端（服务名统一为 serviceName）。
+// joinedAddrs 为逗号分隔的初始地址，仅 memory/static 后端使用。
+// 返回 error 表示后端不可用（未知后端 / file 路径非法），调用方应回退 addrs failover；
+// 这两种情况均在返回前记录 WARN（与 setupDiscoveryBalancer 既有日志语义一致）。
+func newDiscoveryForConfig(cfg *config.Config, serviceName, joinedAddrs string) (discovery.ServiceDiscovery, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.DiscoveryBackend)) {
+	case "", "memory":
+		// 默认后端：进程内注册表，从静态地址初始化（零外部依赖）。
+		return discovery.NewInMemoryDiscoveryFromAddrs(serviceName, joinedAddrs), nil
+	case "static":
+		return discovery.NewStaticDiscoveryFromAddrs(serviceName, joinedAddrs), nil
+	case "file":
+		fd, err := discovery.NewFileDiscovery(cfg.DiscoveryFile)
+		if err != nil {
+			logx.Warn(context.Background(), "服务发现 file 后端初始化失败，回退 addrs failover", "error", err.Error())
+			return nil, err
+		}
+		return fd, nil
+	default:
+		// config.Validate 已拒绝未知值；此处防御程序化构造的配置。
+		logx.Warn(context.Background(), "未知服务发现后端，回退 addrs failover", "backend", cfg.DiscoveryBackend)
+		return nil, fmt.Errorf("未知服务发现后端 %q", cfg.DiscoveryBackend)
+	}
 }
 
 // capabilityNote 返回目标机能力矩阵提示（显式能力边界，避免“能注册但半数任务类型必挂”错觉）。
@@ -1644,15 +1675,29 @@ func (a *Agent) checkFileRootWhitelist(path string) error {
 	return fmt.Errorf("path %q not under any allowed root (whitelist: %s)", path, wl)
 }
 
+// clampExitCode 把退出码收敛到 int32 值域并返回，避免 int→int32 窄化溢出回绕
+// （Windows 退出码可能是完整 32 位 DWORD）。
+func clampExitCode(exitCode int) int32 {
+	if exitCode > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if exitCode < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(exitCode)
+}
+
 // reportResult 把执行结果经 gRPC ReportResult 上报控制面（TD-60 任务域切流：转发到 task-svc TaskService）。
 func (a *Agent) reportResult(ctx context.Context, t proto.Task, res proto.TaskResult) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	// ExitCode 来自子进程等待状态（int）：收敛到 int32 值域，避免窄化转换溢出回绕
+	// （Windows 退出码可能是完整 32 位 DWORD）。
 	req := &taskv1.ReportResultRequest{
 		Result: &taskv1.TaskResult{
 			TaskId:     res.TaskID,
 			AgentId:    res.AgentID,
-			ExitCode:   int32(res.ExitCode),
+			ExitCode:   clampExitCode(res.ExitCode),
 			Stdout:     res.Stdout,
 			Stderr:     res.Stderr,
 			DurationMs: res.DurationMs,
