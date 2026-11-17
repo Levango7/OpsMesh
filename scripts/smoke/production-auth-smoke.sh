@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329,SC2317,SC2034,SC2015
+# 上面的豁免均为 shellcheck 已知误报：cleanup/assert 等函数经 trap 或条件链间接调用
+# （SC2329/2317）；wait_health 的循环变量 i 仅用于计次（SC2034）；
+# `[ -n "$x" ] && cmd || true` 是有意的 best-effort 清理（SC2015）。
 # production-auth-smoke.sh — verifies the production auth baseline end to end.
 #
 # What it proves:
