@@ -80,7 +80,10 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener, error) {
 	//   - otelx.GRPCServerUnaryInterceptor 在内：从 metadata 提取 W3C trace context 并创建 server span，
 	//     使 agent→控制面 gRPC 调用的 trace_id 贯穿。panic 被 recovery 捕获后 span 仍能 End()。
 	otelInterceptor := otelx.GRPCServerUnaryInterceptor("opsmesh-controlplane")
-	opts = append(opts, grpc.ChainUnaryInterceptor(grpcRecoveryInterceptor, otelInterceptor))
+	// issue #103：统一调用审计拦截器——在每个 RPC 入口记录方法/结果码/耗时/对端，
+	// 补齐「不是每个 handler 都调了 g.Audit」导致的调用留痕缺口。不碰鉴权/限流/校验语义。
+	auditInterceptor := grpcserver.AuditUnaryInterceptor()
+	opts = append(opts, grpc.ChainUnaryInterceptor(grpcRecoveryInterceptor, otelInterceptor, auditInterceptor))
 	// 审计整改批次21：keepalive + 消息大小上限。
 	//   - Keepalive：NAT/LB 静默断链可被探测（默认 2h idle 太晚）。
 	//   - EnforcementPolicy：允许 agent 侧 30s 心跳，无活跃流也允许 ping。
