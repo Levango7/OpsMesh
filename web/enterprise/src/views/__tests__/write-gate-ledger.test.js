@@ -43,13 +43,14 @@ const GATED = [
   ['UsersView.vue', 'user:write'],
   ['RolesView.vue', 'role:write'],
   ['CMDBChangesView.vue', 'cmdb:write'],
-  ['CMDBView.vue', 'cmdb:write']
+  ['CMDBView.vue', 'cmdb:write'],
+  ['AIOpsView.vue', 'aiops:write'],
+  ['DevicesView.vue', 'device:delete/provision:execute']
 ]
 
 // —— 欠账（matrix 实测：调用写端点但视图内无对应 hasPerm）。每挂完一个视图，把它从这里挪到 GATED。
 // 顺序按 matrix 输出；括号内是该视图缺的权限点（供下一批直接用）。
 const PENDING = [
-  ['AIOpsView.vue', 'aiops:write'],
   ['AIPromptsView.vue', 'ai:write'],
   ['AIRagView.vue', 'ai:write'],
   ['AgentView.vue', 'ai:write'],
@@ -66,7 +67,6 @@ const PENDING = [
   ['DeploysView.vue', 'deploy:write'],
   ['DeviceDetailView.vue', 'device:delete/provision:execute'],
   ['DeviceDiscoveryView.vue', 'device:delete/provision:execute'],
-  ['DevicesView.vue', 'device:delete/provision:execute'],
   ['FederationDeploysView.vue', 'deploy:write'],
   ['FederationView.vue', 'federation:write'],
   ['GitOpsDashboardView.vue', 'argocd:write/flux:write'],

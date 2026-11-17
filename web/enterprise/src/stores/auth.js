@@ -37,6 +37,12 @@ export const useAuthStore = defineStore('auth', () => {
     if (!required) return true
     const ps = permissions.value
     if (ps.length === 0) return false
+    // 复合权限串用 '/' 分隔表示「任一满足」（OR）——多个后端权限点对应同一个前端操作
+    // （如设备下发任务 = provision:execute 或 device:delete）。
+    // 单一权限串保持原 includes 语义，对现有调用零影响。
+    if (required.includes('/')) {
+      return required.split('/').some((p) => ps.includes(p))
+    }
     return ps.includes(required)
   }
 

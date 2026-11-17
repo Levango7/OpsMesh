@@ -1,5 +1,6 @@
 <template>
   <PageShell :title="$t('aiops.title')" :desc="$t('aiops.desc')" testid="aiops" :error="status.error">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 引擎状态卡片 -->
     <div class="metrics-row metrics-row--four">
       <MetricsCard :title="$t('aiops.status_enabled')" icon="info" accent="--indigo">
@@ -29,7 +30,7 @@
     <div v-if="activeTab === 'analyze'" class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('aiops.analyze_title') }}</h3>
-        <Button variant="primary" size="sm" @click="runAnalyze" data-testid="aiops-analyze-btn">{{ $t('aiops.analyze_run') }}</Button>
+        <Button variant="primary" size="sm" @click="runAnalyze" data-testid="aiops-analyze-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('aiops.analyze_run') }}</Button>
         <Button variant="ghost" size="sm" @click="loadStatus">↻ {{ $t('common.refresh') }}</Button>
       </div>
 
@@ -73,7 +74,7 @@
         <div class="result-row"><span>{{ $t('aiops.description') }}:</span> {{ rootCause.description }}</div>
         <div class="result-row"><span>{{ $t('aiops.confidence') }}:</span> {{ (rootCause.confidence * 100).toFixed(0) }}%</div>
         <div class="result-row"><span>{{ $t('aiops.evidence') }}:</span> <ul><li v-for="(e, i) in rootCause.evidence" :key="i">{{ e }}</li></ul></div>
-        <Button variant="primary" size="sm" @click="useRootCause(rootCause)" data-testid="aiops-use-root-cause">{{ $t('aiops.use_for_remediation') }}</Button>
+        <Button variant="primary" size="sm" @click="useRootCause(rootCause)" data-testid="aiops-use-root-cause" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('aiops.use_for_remediation') }}</Button>
       </div>
     </div>
 
@@ -81,7 +82,7 @@
     <div v-if="activeTab === 'remediate'" class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('aiops.remediate_title') }}</h3>
-        <Button variant="primary" size="sm" @click="runRemediate" data-testid="aiops-remediate-btn">{{ $t('aiops.remediate_run') }}</Button>
+        <Button variant="primary" size="sm" @click="runRemediate" data-testid="aiops-remediate-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('aiops.remediate_run') }}</Button>
         <Button variant="ghost" size="sm" @click="loadStatus">↻ {{ $t('common.refresh') }}</Button>
       </div>
 
@@ -150,7 +151,7 @@
           </ul>
         </div>
 
-        <Button variant="primary" size="sm" @click="askExecute(remediationPlan)" :disabled="!remediationPlan.safety.requiresConfirm && !remediateReq.constraints.autoExecute" data-testid="aiops-execute-plan-btn">
+        <Button variant="primary" size="sm" @click="askExecute(remediationPlan)" :disabled="!canWrite || (!remediationPlan.safety.requiresConfirm && !remediateReq.constraints.autoExecute)" data-testid="aiops-execute-plan-btn" :title="canWrite ? '' : $t('common.write_denied')">
           {{ remediationPlan.safety.requiresConfirm ? $t('aiops.execute_with_confirm') : $t('aiops.execute_plan') }}
         </Button>
       </div>
@@ -160,7 +161,7 @@
     <div v-if="activeTab === 'nl'" class="card">
       <div class="flowbar">
         <h3 class="card__title">{{ $t('aiops.nl_title') }}</h3>
-        <Button variant="primary" size="sm" @click="runNL" data-testid="aiops-nl-btn">{{ $t('aiops.nl_run') }}</Button>
+        <Button variant="primary" size="sm" @click="runNL" data-testid="aiops-nl-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('aiops.nl_run') }}</Button>
       </div>
 
       <div class="form-field">
@@ -177,7 +178,7 @@
             <code>{{ c.command }}</code> <span class="muted">[agent={{ c.agentID }}]</span>
           </li>
         </ul>
-        <Button variant="primary" size="sm" @click="askExecute(nlPlan)" data-testid="aiops-execute-nl-btn">{{ $t('aiops.execute_plan') }}</Button>
+        <Button variant="primary" size="sm" @click="askExecute(nlPlan)" data-testid="aiops-execute-nl-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('aiops.execute_plan') }}</Button>
       </div>
     </div>
 
@@ -258,7 +259,8 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import PageShell from '@/components/PageShell.vue'
 import { getAIOpsStatus, analyzeAIOps, generateRemediation, generateRemediationNL, executeRemediation, getAIOpsExecutions } from '@/api/aiops'
 import { t } from '@/i18n'
@@ -276,6 +278,10 @@ const status = reactive({
 })
 
 const activeTab = ref('analyze')
+
+// 写操作门：分析/修复/执行均需 aiops:write。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('aiops:write'))
 
 // 分析状态
 const analyzeLoading = ref(false)
