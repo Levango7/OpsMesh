@@ -1,6 +1,6 @@
 ﻿# ABAC 设备侧决策引擎 项目章程
 
-> **状态：待批准（启动需 owner 明确反转当前 501 口径）**
+> **状态：已立项（2026-11-17，owner 批准；M1 进行中）**
 > **负责人：待定**
 > **日期：2026-11-17**
 > **依据**：`internal/controlplane/abac_ops.go`、`internal/controlplane/abac_engine.go`、`docs/opsmesh-authz-audit-2026-11-04.md`、`docs/projects-2026-11-05.md`
@@ -54,7 +54,7 @@
 | G3 | **本地缓存可回滚** | A/B 双槽 + last-known-good；切换原子化；可回退到上一版本 |
 | G4 | **决策可审计** | 每条决策带策略包版本、匹配策略、离线标记；离线缓冲、重连补传、幂等去重 |
 | G5 | **灰度可控** | 按设备标签选择；1%→10%→100% 分批；单项回滚 ≤5 分钟 |
-| G6 | **决策门先行** | 未获 owner 对“反转 501 口径”的书面批准前，不写实现代码 |
+| G6 | **决策门先行** | 立项决策已于 2026-11-17 获批（撤销“设备端不实现”立场，保留“禁止脚本路径伪造判定”的函数级 501 守卫）；后续里程碑按 §10 的状态表推进，语义/密钥范围变更仍需 owner 拍板 |
 
 ## 4. 非目标
 
@@ -74,7 +74,16 @@
 | **M3 决策审计回传** | 决策记录 schema、本地环形缓冲、批量上传、幂等键、保留策略、离线标记 | 断网 24h 后重连：决策不丢、重复上传可去重；审计记录含 bundle 版本与 `offline=true` | 5–8 人日 |
 | **M4 灰度（按设备标签）与回滚** | 标签选择器、1%→10%→100% 分批、版本钉定、一键回滚、漂移告警 | 单批回滚 ≤5 分钟；灰度期间决策差异率 0；回滚后设备回到上一 bundle 且审计连续 | 4–6 人日 |
 
-> **M0（前置，不单独计里程碑）**：owner 反转 501 口径；策略镜像持久化；`abac:read`/`abac:write` 权限点；评估 API 鉴权收口。未完成则 M1 不启动。
+> **M0（前置，不单独计里程碑，已收口）**：owner 已于 2026-11-17 批准立项（撤销“设备端不实现”立场）；策略镜像持久化（批次47，迁移 035）与 `abac:read`/`abac:write` 权限点、评估 API 鉴权收口（批次45）均已落地。剩余 M0 项不再阻塞 M1。
+
+### 5.1 里程碑状态
+
+| 里程碑 | 状态 | 入口/说明 |
+|---|---|---|
+| **M1** 策略包格式与签名 | **进行中**（2026-11-17 启动） | 规格：[`abac-device-engine-m1-bundle-spec.md`](./abac-device-engine-m1-bundle-spec.md)（bundle v1 wire 格式、规范化、Ed25519 签名、分发端点、离线/回滚/能力协商契约） |
+| **M2** 设备端评估器 | 待启动 | 依赖 M1 的 bundle v1 冻结；共享 fixture 一致性门 |
+| **M3** 决策审计回传 | 待启动 | 依赖 M2 的决策结构与 `evaluatedBy` 标记 |
+| **M4** 灰度与回滚 | 待启动 | 依赖 M3 的审计连续性；回滚指令格式另行评审 |
 
 ## 6. 验收标准（DoD）
 
@@ -95,12 +104,12 @@
 
 | 依赖/决策 | 状态 | 说明 |
 |---|---|---|
-| **owner 决策 D1：反转当前 501 口径** | **未批准（硬前置）** | 当前口径为“未实现=显式 501，不造假数据”（`abac_ops.go:43-48`）；不反转则本项目不启动 |
-| **owner 决策 D2：设备侧决策定位** | **待定** | 建议先做“咨询/审计”（advisory），不直接阻断设备操作；强制模式另行评审 |
-| **owner 决策 D3：签名私钥归属与轮换** | **待定** | 私钥存放、轮换周期、吊销流程需 owner 指定责任方 |
-| 服务端策略镜像持久化 | 待补 | `server.go:249-251` 当前仅内存；重启即丢，必须先落 store |
-| deny 策略创建能力 | 待补 | `policy-create` 只写 `allow`（`abac_ops.go:112-121`）；需支持显式 `effect` 并做权限校验 |
-| `abac:read` / `abac:write` 权限点 | 待补 | 当前 `evaluate` 无权限点、`policy-create` 仅 `task:write`（`abac_ops.go:76-93`；`kafka_ops.go:37-38`）；需先扩 RBAC 目录并接门 |
+| **owner 决策 D1：设备侧评估立项** | **已批准（2026-11-17）** | 决策原文：`2026-11-17 用户批准立项，撤销“设备端不实现”的 501 立场；501 仅保留为“禁止脚本路径伪造判定”的函数级守卫。` 范围：只撤销“设备端评估不实现”，**不撤销**“禁止造假判定”守卫；服务端评估仍是权威默认路径。 |
+| **owner 决策 D2：设备侧决策定位** | **待定** | 建议先做“咨询/审计”（advisory），不直接阻断设备操作；强制模式另行评审。注意：**服务端**定向强制（批次53 的 `--abac-enforce`，默认关闭、按路由白名单 opt-in）是独立开关，不属于 D2，也不改变设备侧定位。 |
+| **owner 决策 D3：签名私钥归属与轮换** | **待定** | 私钥存放、轮换周期、吊销流程需 owner 指定责任方；M1 先支持“配置提供密钥 + 双公钥轮换”，生产密钥托管仍依赖 D3 |
+| 服务端策略镜像持久化 | **已落地**（批次47） | 迁移 035 + 启动装载 + 跨副本刷新；`abacPolicies` 降为评估缓存 |
+| deny 策略创建能力 | 待补 | `policy-create` 仍把 `Effect` 硬编码为 `allow`（`abac_ops.go:229`）；需支持显式 `effect` 并做权限校验 |
+| `abac:read` / `abac:write` 权限点 | **已落地**（批次45） | 入口统一 `subsystemAuthorize`；`/api/v1/abac` 读写分离 |
 | 设备决策审计端点鉴权与租户隔离 | 待补 | 复用 `subsystemAuthorize`/租户隔离，不接受匿名或跨租户写入 |
 | agent 版本门控与发布通道 | 已有基础 | 设备侧评估器需最低 agent 版本；旧 agent 明确回退服务端评估 |
 | 策略包/审计存储 | 待定 | 需要迁移（编号落地时续）；bundle 与审计分表，带 tenant/device 索引 |
@@ -124,7 +133,7 @@
 
 | 范围 | 人日 |
 |---|---|
-| M0 前置（501 反转后的持久化/权限点/API 鉴权） | 2–3 |
+| M0 前置（持久化/权限点/API 鉴权） | 已完成（批次45/47，计入原估算 2–3） |
 | M1 策略包格式与签名 | 4–6 |
 | M2 设备端评估器 | 8–12 |
 | M3 决策审计回传 | 5–8 |
@@ -136,18 +145,38 @@
 
 ## 10. 状态与决策记录
 
-- **当前状态：待批准**。
-- **负责人：待定**。
-- **启动条件（硬）**：owner 必须以书面形式**反转当前“设备脚本路径 evaluate = 501”的口径**（`abac_ops.go:43-48`），并明确设备侧决策是 advisory 还是 enforcement（建议先 advisory）。未反转前，本项目保持关闭，现状（501 + 服务端评估器）即为正确行为。
-- **不启动的默认结果**：保留 501 守卫与服务端权威评估器；不产生设备侧策略包、不产生设备决策审计。
+- **当前状态：已立项**（2026-11-17，owner 批准）；**负责人：待定**；**M1 启动**。
+- **owner 决策原文（2026-11-17，逐字记录）**：
+
+  > 2026-11-17 用户批准立项，撤销“设备端不实现”的 501 立场；501 仅保留为“禁止脚本路径伪造判定”的函数级守卫。
+
+- **决策范围（解释，不扩大原文）**：
+  - **撤销**：设备侧评估“永不实现”（即“设备端不实现”的 501 立场）。设备侧签名策略包 + 本地评估自此进入实施范围，按 §5.1 里程碑推进。
+  - **不撤销**：`buildABACScript` 脚本通道的 501 守卫。它阻止通过设备脚本路径**伪造 ALLOWED 判定**，由 `TestBuildABACScript_EvaluateIsExplicit501` 钉住；守卫文案与断言保持不变。
+  - **权威路径不变**：服务端 ABAC 评估器（`POST /api/v1/abac`）仍是默认权威决策源；设备侧判定在 M2 落地前不产生，落地后仍按 D2 保持 advisory，直到另行批准 enforcement。
+  - **未获批准的部分**：D2（**设备侧** advisory → enforcement）与 D3（生产私钥托管/轮换责任方）仍待定；M1 只用配置提供的密钥打通格式与验签，不改变密钥归属。服务端定向强制（批次53，`--abac-enforce`，默认关闭）是独立 opt-in 开关，不属于 D2，也不等于全局闸门。
+
+- **回退路径**：任一阶段出问题 ⇒ 关闭设备侧评估，保留 501 函数级守卫与服务端权威评估器；不产生设备侧策略包、不产生设备决策审计。
+
+### 10.1 里程碑状态
+
+| 里程碑 | 状态 | 说明 |
+|---|---|---|
+| **M1** 策略包格式与签名 | **进行中** | 规格 `docs/projects/abac-device-engine-m1-bundle-spec.md`（bundle v1） |
+| **M2** 设备端评估器 | 待启动 | 等待 M1 wire 格式冻结 |
+| **M3** 决策审计回传 | 待启动 | 等待 M2 决策结构 |
+| **M4** 灰度与回滚 | 待启动 | 等待 M3 审计连续性 |
+
+### 10.2 决策日志
 
 | 日期 | 决策/事件 | 记录 |
 |---|---|---|
-| 未标注（现行口径） | 设备脚本路径 `evaluate` 显式 501；“未实现=显式 501，不造假数据” | `abac_ops.go:43-48`；守卫 `abac_ops_security_test.go:85` |
+| 未标注（历史口径） | 设备脚本路径 `evaluate` 显式 501；“未实现=显式 501，不造假数据” | `abac_ops.go:43-48`；守卫 `abac_ops_security_test.go:85` |
 | 2026-11-04 | 鉴权审计：42% 派发路由无权限校验；223 条路径收口 | `docs/opsmesh-authz-audit-2026-11-04.md:6`、`:27`、`:472-499` |
 | 2026-11-05 | 仓库裁定：角色矩阵是唯一授权模型，不引入 ABAC 授权 | `docs/projects-2026-11-05.md:49`；`perm.go:261-265` |
 | 2026-11-14 | 审计整改批次 15–19 DONE；其中批次 17 落地 ABAC 真实评估引擎 | `docs/CLAIMS.md:1228` |
-| 2026-11-17 | 本草程起草：设备侧引擎待批准；启动需先反转 501 | 本文件（待批准） |
+| 2026-11-17 | 本草程起草：设备侧引擎待批准；启动需先反转 501 | 本文件（初稿） |
+| **2026-11-17** | **owner 批准立项：撤销“设备端不实现”的 501 立场；501 仅保留为“禁止脚本路径伪造判定”的函数级守卫** | 本节逐字记录；状态改为“已立项”，M1 启动 |
 
 ---
 
@@ -155,7 +184,7 @@
 
 ## 进展记录（2026-11-17）
 
-本节记录设备脚本路径 `evaluate` 501 口径复核后的落地进展；本草程的“待批准”状态与 D1/D2/D3 决策项不变。
+本节记录设备脚本路径 `evaluate` 501 口径复核后的落地进展。**D1 已于 2026-11-17 批准（见 §10），本草程状态为“已立项（M1 进行中）”；D2/D3 仍待定。**
 
 - **501 守卫保留（不反转）**：`buildABACScript` 的 `evaluate` 分支继续显式返回 501（`internal/controlplane/abac_ops.go:40-52`）。理由：该分支是**函数级守卫**，用于阻止设备脚本路径伪造 ALLOWED 判定；HTTP `POST /api/v1/abac action=evaluate` 早已由服务端真实引擎决策（200），守卫只覆盖不可能产出判定的脚本通道。文案改述为 “device-script evaluation is intentionally disabled; the HTTP evaluate path is served by the server-side engine with device-context enrichment”，由 `TestBuildABACScript_EvaluateIsExplicit501`（`internal/controlplane/abac_ops_security_test.go:91`）钉住 501 与关键措辞。
 - **设备上下文增强已落地**：HTTP evaluate 带 `deviceID` 时，先查设备（不存在 404；跨租户 403，与不存在同形不泄露存在性），再把设备属性（`deviceID/hostname/segment/os/arch/state/taskState/agentID/managed`，空字符串跳过）注入策略上下文（`internal/controlplane/abac_ops.go:102-170`，属性展开见 `abac_ops.go:58-78`）。合并规则：**调用方自带键优先**，设备属性只补空缺，绝不覆盖调用方显式上下文；顶层扁平键供现有等值条件匹配，另附嵌套 `device` 对象副本（调用方已提供 `device` 时同样不覆盖）。响应新增 `evaluatedBy`（`server` / `server+device-context`）与 `deviceContext`（实际注入子集）供审计。用例：`abac_ops_security_test.go:163`（同租户注入并命中）、`:197`（跨租户 403 无决策字段）、`:214`（未知设备 404）、`:227`（调用方键不被覆盖）、`:256`（非法 context JSON 400）、`:266`（无 deviceID 时 `evaluatedBy=server`）。
@@ -163,13 +192,31 @@
   - 策略镜像跨重启持久化（当前仍为进程内 `abacPolicies`，重启即丢 → default-deny）；
   - 真正的设备侧离线决策引擎（含与服务端共享 fixture 的一致性门）；
   - **强制门接线（enforcement gate）**：ABAC `allow` 目前不参与请求放行，接强制链需 owner 决策 D2 另行评审；
-  - 策略包签名 / 版本化 / 回滚（M1，依赖 D1/D3）。
+  - 策略包签名 / 版本化 / 回滚（M1；D1 已批准，D3 密钥托管待定）。
 - **路由鉴权缺口已发现并修复（2026-11-17，批次45）**：复核发现 `POST /api/v1/abac` 此前在**所有模式**都无入口鉴权——生产仅由 `defaultDenyMiddleware` 兜底“校验”且不回注请求 context，handler 内 `authctx.FromContext` 恒零值（`internal/controlplane/abac_ops.go:87` 为旧入口）；后果是同租户带 `deviceID` 的 evaluate 被误判 403、`policy-create` 落空租户镜像被当作全局策略、策略镜像键 `action|subject|resource` 跨租户互相覆盖、非生产模式匿名穿透。修复：① 入口统一走 `subsystemAuthorize`（`requireTenantContext` + `requireProd`，`abac_ops.go:122`；回调见 `internal/controlplane/auth.go:89`），租户真值只取已验签身份；② 新增 `abac:read`/`abac:write` 权限点（`internal/store/model/perm.go:216`），read 进 `operatorReadOnlyGroups`，write 仅 admin；③ 镜像键改 `tenantID|action|subject|resource`（`abacPolicyID`，`abac_ops.go:82`）；④ 链式回归 `internal/controlplane/abac_ops_chain_test.go`（匿名拒绝、跨租户 403、读写分离、镜像键租户隔离）。**其余未完成项不变**（见上一条列表：持久化 / 设备端引擎 / 强制门 / 策略包签名）。
 - **策略持久化已落地（2026-11-17，批次47，取代上一条“仍未完成”列表中的第一项）**：store 提为事实源、`abacPolicies` 降为评估缓存。新增 `model.ABACPolicyStore` / `ABACPolicyRecord`（`internal/store/model/abac_policy.go:14`）与 Memory / SQL / MultiSchema 三实现（`internal/store/memory/memory_abac_policy.go:15`、`internal/store/sqlstore/sql_abac_policy.go:31`、`internal/store/multischema/multi_schema_abac_policy.go:13`），迁移 `internal/store/sqlstore/migrations/035_abac_policies.sql`（主键 `(tenant_id, id)`，`version` 每次 upsert 自增）；启动全量装载 `initABACPoliciesFromStore`（`internal/controlplane/abac_persistence.go:85`，调用点 `internal/controlplane/server.go:538`）；policy-create/delete 写穿且落库失败即 500、不改缓存、不下发脚本（`internal/controlplane/abac_engine.go:118`、`:158`，handler 见 `abac_ops.go:208`、`:223`）；多副本 5s 按 `(tenant,id)->version` 比对刷新（`abac_persistence.go:118`，接线 `internal/controlplane/server_lifecycle.go:594`），未变即跳过、`abacRev` 防本地写覆盖；租户隔离贯穿键/查询/删除。回归 `internal/store/memory/memory_abac_policy_test.go`、`internal/controlplane/abac_persistence_test.go`。
-- **剩余待办（批次47 后口径）**：① shadow 模式（策略只观察不强制，需 owner 确认采样与审计口径）；② 强制闸门接线（enforcement gate，D2 owner 决策，ABAC allow 仍不等于 RBAC allow）；③ 设备侧离线决策引擎（M1/M2，签名策略包 + 本地评估 + 一致性门）；④ 策略包签名 / 版本化 / 回滚（M1，依赖 D1/D3）。
+- **剩余待办（批次47 后口径）**：① shadow 模式（策略只观察不强制，需 owner 确认采样与审计口径）；② 强制闸门接线（enforcement gate，D2 owner 决策，ABAC allow 仍不等于 RBAC allow）；③ 设备侧离线决策引擎（M1/M2，签名策略包 + 本地评估 + 一致性门）；④ 策略包签名 / 版本化 / 回滚（M1；D1 已批准，D3 密钥托管待定）。
 - **ABAC 影子模式已落地（2026-11-17，批次50，取代上一条待办①）**：新增 `--abac-shadow` / env `OPSMESH_ABAC_SHADOW`（默认 false，`internal/config/config.go:494-498`、`internal/config/config.go:736`、装配 `internal/config/config.go:954`）。启用后 `abacShadowMiddleware`（`internal/controlplane/abac_shadow.go:80`）挂在 `defaultDenyMiddleware` 之内、`bodyLimitMiddleware`/mux 之外（`internal/controlplane/server_lifecycle.go:519`）：production 下身份已过「头 ↔ token」交叉校验，未认证请求不会污染 would-deny；限流/CSRF 已提前拒绝的请求不消耗评估；中间件不读响应、不写 ResponseWriter，结构上不可能改写状态码。观察面仅 POST/PUT/DELETE/PATCH 且路径以 `/api/v1/` 开头，显式跳过 `/api/v1/abac`（含子路径）、`/api/v1/federation/`、`/healthz`、`/readyz`、`/metrics`、`/api/v1/events/stream`（`abac_shadow.go:97`）。输入取自已建立身份：subject `{"userID","roles","tenantID"}`、resource `{"path","method"}`、actionAttr=method、context 仅 `{"remoteAddr","userAgent"}`（不采集 Cookie/Authorization 等秘密头）；身份无租户则 debug 跳过、不猜测（`abac_shadow.go:222`）。评估调用包在 `defer recover()`（`abac_shadow.go:205`），panic 记 `decision=error` 后照常进入 handler；决策经结构化日志 `abac shadow decision`（字段 shadow/decision/matchedPolicyID/reason/method/path/tenantID/userID/durationMs，`abac_shadow.go:119`）与 Prometheus 计数器 `opsmesh_abac_shadow_decisions_total{decision,method}`（`internal/metrics/abac_shadow.go:23`，注册表字段 `internal/metrics/metrics.go:113`）双路落盘。回归见 `internal/controlplane/abac_shadow_test.go:61`（default-deny 不阻断/响应逐字不变、关闭不评估、GET 与排除路径跳过、评估器 panic 不影响响应、缺租户跳过）。
   - **观测指标（晋升前必看）**：① would-deny 率 = `sum(rate(opsmesh_abac_shadow_decisions_total{decision="deny"}[1d])) / sum(rate(opsmesh_abac_shadow_decisions_total{decision=~"allow|deny"}[1d]))`（error 单列，不并入分母）；② top would-deny 路径：指标刻意不带 path 标签（路径基数由请求方控制），按结构化日志 `path` 字段聚合；③ 分歧（divergence）：shadow deny 与同一路径上实际 RBAC 403/审计 `authz_denied` 的差异——shadow deny 而 RBAC 放行 = ABAC 覆盖过严（需确认是否策略缺口），shadow allow 而 RBAC 拒绝 = 预期内（RBAC 仍是唯一强制层），不构成晋升阻塞；④ `decision="error"` 必须长期为 0（评估器 panic 属 ABAC 数据缺陷）。
   - **晋升为 enforcement 的门槛（建议，仍需 D2 owner 决策）**：观察期 **2–4 周**且覆盖至少一个完整发布窗口；关键变更路径（`/api/v1/tasks`、`/api/v1/devices`、K8s/CMDB 写入口、自动化执行）would-deny 率 **< 1%**；**零无法解释的 deny**（每条 deny 要么命中显式 deny 策略，要么确认为 default-deny 且有补齐策略计划）；`error` 计数为 0；灰度按域推进（先低风险只读邻近域，再核心变更域），enforce 首日保留 kill switch（关闭 `--abac-shadow` 并回滚 RBAC-only 行为）。
   - **日志量考量**：每次被观察的变更请求输出一条 info 决策日志（无采样）。高写入负载（如 >50 条/s）下建议先在采集侧按 `decision="deny"` 与 top path 聚合/降采样，再评估是否给 shadow 日志加采样开关；当前实现按需求保持逐决策可审计，不引入采样丢弃。
 - **影子模式实测数据（2026-11-17，批次52）**：全文 `docs/abac-shadow-simulation-2026-11-17.md`。demo 控制面（`--abac-shadow --store=memory`，无 MySQL/Redis/Kafka）75.9s 内 **690 次变更请求**，allow 300（**43.48%**）/ would-deny 390（**56.52%**）/ **error 0**；150 次 GET 未计数、零阻断。would-deny 全部来自未被策略覆盖的 PUT/DELETE/PATCH 路径与 `POST /api/v1/users`（default-deny 缺口），且因引擎是**字符串模式匹配**（非结构化 JSON 字段匹配），形如 `{"roles":["admin"]}` 的精确规则不会命中影子中间件序列化出的主体串。结论：采集链路、指标口径与日志字段可用；**当前策略覆盖率不足，模拟数据不构成晋级依据**。
   - **晋级 enforcement 的判据（重申，不变，仍需 D2 owner 决策）**：① 观察期 **2–4 周**且覆盖至少一个完整发布窗口；② 关键变更路径（`/api/v1/tasks`、`/api/v1/devices`、K8s/CMDB 写入口、自动化执行）would-deny 率 **< 1%**；③ **零无法解释的 deny**（每条 deny 要么命中显式 deny 策略，要么确认为 default-deny 且有补齐策略计划）；④ `decision="error"` 恒为 0；⑤ 灰度按域推进（先低风险只读邻近域，再核心变更域），enforce 首日保留 kill switch（关闭 `--abac-shadow` 回退 RBAC-only）。本次实测只满足 ④；在 default-deny 缺口收敛到 ② 之前不得进入 enforcement。
+- **立项与 M1 规格（2026-11-17，批次53）**：owner 批准立项（决策原文见 §10）：撤销“设备端不实现”的 501 立场，501 仅保留为“禁止脚本路径伪造判定”的函数级守卫；服务端评估仍是权威默认路径。章程状态改为“已立项（M1 进行中）”，里程碑状态见 §5.1。M1 规格已定稿：`docs/projects/abac-device-engine-m1-bundle-spec.md`（bundle v1：规范化 JSON + SHA-256、Ed25519 签名、`keyId` 与双公钥轮换、`GET /api/v1/agent/abac-bundle` + ETag、last-known-good 离线缓存、过期按模式处理、拒绝降级、heartbeat `abac_bundle=v1` 能力协商、1 MiB / 1000 条上限）。本批只改文档，未改代码。
+
+## 定向强制（批次53，已落地）
+
+在「不做全局闸门」的前提下，新增**按路由白名单的 ABAC 强制**：默认关闭，只对显式列出的高风险变更路由调用服务端评估器；未列出的路由完全保持 RBAC-only 行为。
+
+- **配置语法**：`--abac-enforce` / env `OPSMESH_ABAC_ENFORCE`，逗号分隔的 `METHOD /path/pattern`；方法仅限 `POST/PUT/PATCH/DELETE`，路径必须以 `/` 开头，`{id}` 表示匹配一个非空路径分段。非法条目在 `Config.Validate` 阶段直接拒绝启动（`internal/config/config.go`）。
+- **预置**：`--abac-enforce-preset=high-risk` / env `OPSMESH_ABAC_ENFORCE_PRESET`，展开为仓库中真实存在的高风险路由：
+  - `DELETE /api/v1/devices/{id}`（设备退役/删除，`server_lifecycle.go:76` → `server_devices.go:241`）
+  - `DELETE /api/v1/system/users`（`userdel -r`，`server_lifecycle.go:209` → `system_ops.go:153`）
+  - `POST /api/v1/system/firewall`（iptables/firewalld 规则添加，`server_lifecycle.go:211` → `system_ops.go:277`）
+  - `DELETE /api/v1/system/firewall`（防火墙规则删除，同上）
+  - `DELETE /api/v1/tenants/{id}`（租户删除 + 七域级联清理，`server_lifecycle.go:407` → `tenant.go:117`）
+  - `POST /api/v1/fileshare/mount`（NFS 挂载/卸载 `op=mount|umount`，`fileshare_ops.go:441` → `:454`）
+  - 未收录：设备 `reboot/poweroff`——仓库当前没有对应 HTTP 路由；`/api/v1/system/services` 的 action 白名单也不含主机重启。
+- **行为**：命中白名单且身份/租户已建立时评估一次；`allow` 放行且不改写响应，`deny`/default-deny 返回 403 JSON（`error/reason/matchedPolicyID/enforced`），同时写审计 `abac_enforce_denied`（target=path、detail=reason）并累加 `opsmesh_abac_enforce_decisions_total{decision,method}`。评估器 panic 由 `recover` 兜住并按 fail-closed 返回受控 403。强制面硬排除 `/api/v1/abac*`、`/api/v1/federation/*`、`/healthz`、`/readyz`、`/metrics` 与 `/api/v1/events/stream`。
+- **与 shadow 的关系**：强制中间件位于 `defaultDenyMiddleware` 之内、shadow 之外；shadow 在构造期编译同一份白名单并对命中路由直接让位，避免同一请求被评估两遍。未命中强制白名单的路由仍由 shadow 只观察。
+- **回滚**：清空 `--abac-enforce`（同时移除 preset）即回到 RBAC-only；空白名单在中间件构造期直接返回 `next`，热路径零开销。

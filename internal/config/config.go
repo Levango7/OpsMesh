@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -497,6 +498,16 @@ type Config struct {
 	// 默认 false（零开销：中间件构造时直接返回 next）。
 	ABACShadow bool // --abac-shadow / env OPSMESH_ABAC_SHADOW
 
+	// ABACEnforce：ABAC 定向强制白名单（批次53）。条目形如
+	// "METHOD /path/pattern"（如 "POST /api/v1/devices/{id}/reboot"），
+	// 只允许变更方法 POST/PUT/PATCH/DELETE；`{id}` 形式的分段按单段通配。
+	// 空列表 = kill switch：中间件在构造期直接返回 next，不做任何强制。
+	// 命中白名单的请求由 ABAC 引擎决策：allow 放行，deny/default-deny 403。
+	ABACEnforce []string // --abac-enforce / env OPSMESH_ABAC_ENFORCE（逗号分隔）
+	// ABACEnforcePreset：命名预置（当前仅 high-risk），展开后并入 ABACEnforce。
+	// 非法预置名由 Validate 拒绝（启动 fail-fast）。
+	ABACEnforcePreset string // --abac-enforce-preset / env OPSMESH_ABAC_ENFORCE_PRESET
+
 	// H2/H3 配套开关：是否允许 SQL 后端继续使用 P1-P6 桩存储。
 	// 背景：SQLStore 对 15 个领域（见 stubStoreDomains 清单）曾为桩实现，写入不持久化；
 	// 生产模式（--production=true）+ --store=mysql 时默认拒绝启动（fail-fast），
@@ -734,6 +745,9 @@ func Load() *Config {
 	aiopsTimeout := flag.Int("aiops-timeout", 30, "AIOps LLM 调用超时秒（默认 30；或 env OPSMESH_AIOPS_TIMEOUT）")
 	// ABAC 影子模式（批次50）：只观察、不强制。
 	abacShadow := flag.Bool("abac-shadow", false, "ABAC 影子模式：对 /api/v1/* 变更请求内联评估 ABAC 策略并记录决策（不阻断、不改写响应）；默认 false；或 env OPSMESH_ABAC_SHADOW")
+	// ABAC 定向强制（批次53）：只对显式列出的高风险路由强制，默认空 = kill switch。
+	abacEnforce := flag.String("abac-enforce", "", "ABAC 定向强制白名单：逗号分隔的 \"METHOD /path/pattern\"（如 \"DELETE /api/v1/devices/{id}\"）；空=不强制（kill switch）；或 env OPSMESH_ABAC_ENFORCE")
+	abacEnforcePreset := flag.String("abac-enforce-preset", "", "ABAC 定向强制命名预置：high-risk（展开为仓库真实高风险路由）；非法值启动失败；或 env OPSMESH_ABAC_ENFORCE_PRESET")
 	// 自动化引擎评估周期。
 	automationEvalInterval := flag.Duration("automation-eval-interval", 30*time.Second, "自动化引擎评估周期：周期评估 enabled 自动化规则并执行命中动作（默认 30s；或 env OPSMESH_AUTOMATION_EVAL_INTERVAL）")
 	flag.Parse()
@@ -780,6 +794,8 @@ func Load() *Config {
 		}
 		return float64Env(envKey, fv)
 	}
+
+	abacEnforcePresetName := strings.ToLower(strings.TrimSpace(val("abac-enforce-preset", *abacEnforcePreset, "OPSMESH_ABAC_ENFORCE_PRESET")))
 
 	cfg := &Config{
 		Mode:                     val("mode", *mode, "OPSMESH_MODE"),
@@ -952,6 +968,8 @@ func Load() *Config {
 		AIOpsTimeout:           valInt("aiops-timeout", *aiopsTimeout, "OPSMESH_AIOPS_TIMEOUT"),
 		AutomationEvalInterval: valDur("automation-eval-interval", *automationEvalInterval, "OPSMESH_AUTOMATION_EVAL_INTERVAL"),
 		ABACShadow:             valBool("abac-shadow", *abacShadow, "OPSMESH_ABAC_SHADOW"),
+		ABACEnforce:            parseABACEnforceEntries(val("abac-enforce", *abacEnforce, "OPSMESH_ABAC_ENFORCE"), abacEnforcePresetName),
+		ABACEnforcePreset:      abacEnforcePresetName,
 	}
 	// --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
@@ -1536,7 +1554,129 @@ func (c *Config) Validate() error {
 	if c.EventBus == "kafka" && !eventspkg.KafkaSupported() {
 		return fmt.Errorf("event-bus=kafka requires binary built with -tags kafka")
 	}
+	// ABAC 定向强制（批次53）：预置名与每条白名单都必须在启动期校验。
+	// 非法条目宁可拒绝启动，也不允许「配了但静默不生效」——高风险路由的强制
+	// 开关如果拼错而无人察觉，会长期停留在未强制状态。
+	if _, err := ExpandABACEnforcePreset(c.ABACEnforcePreset); err != nil {
+		return err
+	}
+	for i, entry := range c.ABACEnforce {
+		if _, _, err := ParseABACEnforceEntry(entry); err != nil {
+			return fmt.Errorf("非法 --abac-enforce 条目 #%d %q: %w", i+1, entry, err)
+		}
+	}
 	return nil
+}
+
+// ABACEnforcePresetHighRisk 是唯一受支持的 ABAC 定向强制预置名。
+const ABACEnforcePresetHighRisk = "high-risk"
+
+// abacEnforceHighRiskRoutes 是 high-risk 预置展开的真实路由白名单。
+//
+// 每条都在仓库内可核对（注册点 → 执行点）：
+//   - DELETE /api/v1/devices/{id}    设备退役/删除（server_lifecycle.go:76 → server_devices.go:241）
+//   - DELETE /api/v1/system/users    userdel -r（server_lifecycle.go:209 → system_ops.go:153）
+//   - POST   /api/v1/system/firewall iptables/firewalld 规则添加（server_lifecycle.go:211 → system_ops.go:277）
+//   - DELETE /api/v1/system/firewall 防火墙规则删除（同上）
+//   - DELETE /api/v1/tenants/{id}    租户删除（含七域级联清理）（server_lifecycle.go:407 → tenant.go:117）
+//   - POST   /api/v1/fileshare/mount NFS 挂载/卸载（op=mount|umount）（fileshare_ops.go:441 → :454）
+//
+// 刻意不含：设备 reboot/poweroff（仓库无此 HTTP 路由；host 重启未以 API 暴露）。
+var abacEnforceHighRiskRoutes = []string{
+	"DELETE /api/v1/devices/{id}",
+	"DELETE /api/v1/system/users",
+	"POST /api/v1/system/firewall",
+	"DELETE /api/v1/system/firewall",
+	"DELETE /api/v1/tenants/{id}",
+	"POST /api/v1/fileshare/mount",
+}
+
+// ExpandABACEnforcePreset 返回命名预置展开后的白名单条目副本。
+// 空名返回 (nil, nil)；未知名称返回 error（Validate 据此拒绝启动）。
+func ExpandABACEnforcePreset(name string) ([]string, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
+	case "":
+		return nil, nil
+	case ABACEnforcePresetHighRisk:
+		return append([]string(nil), abacEnforceHighRiskRoutes...), nil
+	default:
+		return nil, fmt.Errorf("非法 --abac-enforce-preset=%q（支持 high-risk）", name)
+	}
+}
+
+// ParseABACEnforceEntry 校验并拆分 "METHOD /path/pattern" 条目。
+//
+// 语法约束（与 middleware 的匹配实现一致，不使用任何正则）：
+//   - 恰好两个以空白分隔的字段：方法 + 路径；
+//   - 方法只能是 POST/PUT/PATCH/DELETE；
+//   - 路径以 "/" 开头，不含 query/fragment、空分段或 `*`；
+//   - `{name}` 只能作为完整分段出现（如 /devices/{id}），表示匹配一个非空分段。
+func ParseABACEnforceEntry(entry string) (method, path string, err error) {
+	fields := strings.Fields(entry)
+	if len(fields) != 2 {
+		return "", "", fmt.Errorf("应为 \"METHOD /path/pattern\" 两个字段，得到 %d 个", len(fields))
+	}
+	method, path = fields[0], fields[1]
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
+		return "", "", fmt.Errorf("非法方法 %q（只允许 POST/PUT/PATCH/DELETE）", method)
+	}
+	if !strings.HasPrefix(path, "/") {
+		return "", "", fmt.Errorf("路径 %q 必须以 / 开头", path)
+	}
+	if strings.ContainsAny(path, "?#") {
+		return "", "", fmt.Errorf("路径 %q 不得包含 query 或 fragment", path)
+	}
+	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for _, seg := range segments {
+		if seg == "" {
+			return "", "", fmt.Errorf("路径 %q 含空分段", path)
+		}
+		if strings.ContainsAny(seg, "*") {
+			return "", "", fmt.Errorf("路径 %q 含通配符 *（仅支持 {name} 单段占位）", path)
+		}
+		if strings.ContainsAny(seg, "{}") {
+			if !strings.HasPrefix(seg, "{") || !strings.HasSuffix(seg, "}") || len(seg) <= 2 {
+				return "", "", fmt.Errorf("路径分段 %q 的占位符格式非法（应为 {name}）", seg)
+			}
+			if strings.ContainsAny(seg[1:len(seg)-1], "{}") {
+				return "", "", fmt.Errorf("路径分段 %q 的占位符格式非法（应为 {name}）", seg)
+			}
+		}
+	}
+	return method, path, nil
+}
+
+// parseABACEnforceEntries 合并预置与显式条目，去重并保持出现顺序。
+// 未知预置名不在此处报错（Load 不能返回 error）；Validate 会独立拒绝。
+func parseABACEnforceEntries(raw, preset string) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(entry string) {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return
+		}
+		if _, ok := seen[entry]; ok {
+			return
+		}
+		seen[entry] = struct{}{}
+		out = append(out, entry)
+	}
+	if routes, err := ExpandABACEnforcePreset(preset); err == nil {
+		for _, route := range routes {
+			add(route)
+		}
+	}
+	for _, entry := range strings.Split(raw, ",") {
+		add(entry)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // StoreIsPersistent 报告 Store 是否指向持久化后端。

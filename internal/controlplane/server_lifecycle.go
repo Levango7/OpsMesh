@@ -516,9 +516,11 @@ func (s *Server) Start() error {
 							s.securityHeadersMiddleware( // 6 安全头
 								s.csrfOriginCheck( // 7 CSRF
 									s.defaultDenyMiddleware( // 8 默认拒绝（生产 /api/v1/* 统一要求身份）
-										s.abacShadowMiddleware( // 9 ABAC 影子模式（只观察不强制；--abac-shadow，默认 no-op）
-											bodyLimitMiddleware( // 10 请求体上限（413）
-												&paginate.JSONErrorMux{Inner: mux})))))))))), // 11 404/405 JSON → mux
+										s.abacEnforceMiddleware( // 9 ABAC 定向强制（仅 --abac-enforce 白名单；空=kill switch）
+											s.abacShadowMiddleware( // 10 ABAC 影子模式（对未强制路由只观察；命中强制白名单时让位）
+												bodyLimitMiddleware( // 11 请求体上限（413）
+													&paginate.JSONErrorMux{Inner: mux}))))))))))), // 12 404/405 JSON → mux
+
 		// 审计整改批次20：补全读写/空闲超时（此前只有 ReadHeaderTimeout，
 		// body 慢速上传与慢客户端会长期占用 goroutine/连接）。
 		// SSE 在 handler 内用 ResponseController 取消写超时（见 sse.go），不影响长连接。

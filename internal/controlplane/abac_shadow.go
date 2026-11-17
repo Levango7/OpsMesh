@@ -16,7 +16,6 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -82,7 +81,14 @@ func (s *Server) abacShadowMiddleware(next http.Handler) http.Handler {
 	if s.cfg == nil || !s.cfg.ABACShadow {
 		return next
 	}
+	// 定向强制白名单（批次53）在构造期编译一次：命中路由由 enforce 中间件决策，
+	// shadow 必须让位，避免同一请求被评估两遍（enforce 已在外层短路 deny/allow）。
+	enforceRules := compileABACEnforceRules(s.cfg)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if abacEnforceCovers(enforceRules, r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if abacShadowApplies(r) {
 			s.observeABACShadow(r)
 		}
@@ -126,23 +132,9 @@ func (s *Server) observeABACShadow(r *http.Request) {
 		return
 	}
 
-	subjectJSON, err := json.Marshal(abacShadowSubject{
-		UserID:   actx.UserID,
-		Roles:    actx.Roles,
-		TenantID: actx.TenantID,
-	})
+	subjectJSON, resourceJSON, actionAttr, contextJSON, err := buildABACPolicyInputs(r, actx)
 	if err != nil {
-		logx.Warn(r.Context(), "abac shadow skipped: subject marshal failed", "err", err)
-		return
-	}
-	resourceJSON, err := json.Marshal(abacShadowResource{Path: r.URL.Path, Method: r.Method})
-	if err != nil {
-		logx.Warn(r.Context(), "abac shadow skipped: resource marshal failed", "err", err)
-		return
-	}
-	contextJSON, err := json.Marshal(abacShadowContext{RemoteAddr: r.RemoteAddr, UserAgent: r.UserAgent()})
-	if err != nil {
-		logx.Warn(r.Context(), "abac shadow skipped: context marshal failed", "err", err)
+		logx.Warn(r.Context(), "abac shadow skipped: policy input build failed", "err", err)
 		return
 	}
 
@@ -154,7 +146,7 @@ func (s *Server) observeABACShadow(r *http.Request) {
 	}
 
 	start := time.Now()
-	allowed, policyID, reason, panicked := s.safeABACShadowEvaluate(evaluate, actx.TenantID, string(subjectJSON), string(resourceJSON), r.Method, string(contextJSON))
+	allowed, policyID, reason, panicked := s.safeABACShadowEvaluate(evaluate, actx.TenantID, subjectJSON, resourceJSON, actionAttr, contextJSON)
 	duration := time.Since(start)
 	if panicked {
 		ABACShadowPanicTotal.Add(1)
