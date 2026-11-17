@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -482,5 +483,126 @@ func TestRunMigrationWithoutForceChangeStaysPlain(t *testing.T) {
 	}
 	if !strings.Contains(readFile(t, roster), "alice") {
 		t.Error("普通账号也应进名册")
+	}
+}
+
+// ===== 断点续跑凭据即时落盘（issue #106）=====
+
+func TestCredentialsDurablePerUser(t *testing.T) {
+	f := newFarSide(t)
+	dir := t.TempDir()
+	roster := filepath.Join(dir, "roster.txt")
+	creds := filepath.Join(dir, "creds.txt")
+	lookup := fakeLookup(map[string]LocalUser{
+		"alice": {Email: "a@x.io", RoleIDs: []string{"role-admin"}},
+		"bob":   {Email: "b@x.io", RoleIDs: []string{"role-admin"}},
+	})
+	res, err := RunMigration(MigrateOptions{
+		Users: []string{"alice", "bob"}, AuthSvcURL: f.srv.URL,
+		RosterFile: roster, CredentialsFile: creds,
+		AdminUser: adminCreds0(), AdminPassword: adminCreds1(),
+	}, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Created) != 2 {
+		t.Fatalf("want 2 created, got %d", len(res.Created))
+	}
+	// 两个用户的口令都已在凭据文件里（逐用户即时落盘）。
+	content := readFile(t, creds)
+	if !strings.Contains(content, "alice\t") || !strings.Contains(content, "bob\t") {
+		t.Errorf("凭据文件缺用户: %q", content)
+	}
+	for _, u := range res.Created {
+		if !strings.Contains(content, u.Username+"\t"+u.OneTimePassword) {
+			t.Errorf("凭据文件缺 %s 的口令", u.Username)
+		}
+	}
+	// 权限 0600（Windows 用 ACL，Go 的 Mode().Perm() 恒返回 666，无法验证 Unix 位；跳过）。
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(creds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("凭据文件权限 = %o, want 600", perm)
+		}
+	}
+}
+
+func TestCredentialsSurviveMidBatchFailure(t *testing.T) {
+	// 模拟中途失败：carol 建号成功但登录验证必拒（凭证不可用）。
+	// 期望：alice/bob 已建号用户的口令此前已即时落盘，不因 carol 失败而丢失。
+	f := newFarSide(t)
+	f.loginReject["carol"] = true
+	dir := t.TempDir()
+	creds := filepath.Join(dir, "creds.txt")
+	lookup := fakeLookup(map[string]LocalUser{
+		"alice": {Email: "a@x.io"},
+		"bob":   {Email: "b@x.io"},
+		"carol": {Email: "c@x.io"},
+	})
+	res, err := RunMigration(MigrateOptions{
+		Users: []string{"alice", "bob", "carol"}, AuthSvcURL: f.srv.URL,
+		RosterFile: filepath.Join(dir, "roster.txt"), CredentialsFile: creds,
+		AdminUser: adminCreds0(), AdminPassword: adminCreds1(),
+	}, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Created) != 2 || len(res.Failed) != 1 {
+		t.Fatalf("want 2 created/1 failed, got %+v / %+v", res.Created, res.Failed)
+	}
+	content := readFile(t, creds)
+	if strings.Contains(content, "carol\t") {
+		t.Errorf("失败用户 carol 不应写口令: %q", content)
+	}
+	// 已成功的 alice/bob 口令仍在（断点处不丢）。
+	for _, u := range res.Created {
+		if !strings.Contains(content, u.Username+"\t"+u.OneTimePassword) {
+			t.Errorf("已建号用户 %s 的口令在失败后丢失: %q", u.Username, content)
+		}
+	}
+}
+
+func TestCredentialsDedupOnRerun(t *testing.T) {
+	f := newFarSide(t)
+	dir := t.TempDir()
+	roster := filepath.Join(dir, "roster.txt")
+	creds := filepath.Join(dir, "creds.txt")
+	lookup := fakeLookup(map[string]LocalUser{"alice": {Email: "a@x.io"}})
+	opts := MigrateOptions{
+		Users: []string{"alice"}, AuthSvcURL: f.srv.URL,
+		RosterFile: roster, CredentialsFile: creds,
+		AdminUser: adminCreds0(), AdminPassword: adminCreds1(),
+	}
+	if _, err := RunMigration(opts, lookup); err != nil {
+		t.Fatal(err)
+	}
+	// 重跑：alice 在名册中 ⇒ Skipped，不再生成/写入口令。
+	res2, err := RunMigration(opts, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res2.Skipped) != 1 {
+		t.Fatalf("rerun should skip alice: %+v", res2.Skipped)
+	}
+	content := readFile(t, creds)
+	if n := strings.Count(content, "alice\t"); n != 1 {
+		t.Errorf("重跑后口令条目应仍为 1, got %d: %q", n, content)
+	}
+}
+
+func TestAppendCredentialLineRejectsInjection(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.txt")
+	if err := appendCredentialLine(p, "bad\nuser", "pass", false); err == nil {
+		t.Error("用户名含换行应被拒绝")
+	}
+	if err := appendCredentialLine(p, "user", "pass\twithtab", false); err == nil {
+		t.Error("口令含制表符应被拒绝")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Errorf("注入被拒后不应创建文件, err=%v", err)
 	}
 }
