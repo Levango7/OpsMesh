@@ -97,3 +97,40 @@
 
 - **修复 #89 CI 双红**：(1) K8sClusterDeployView 误写 `\(` 导致 ESLint 解析失败 → `$t()`；(2) Kilo a940a924 同款 cost/tenant/discovery errcheck + monthReset typo（本次审计已多次遇到）折入本 PR。
 - 最终验证：vitest 78 文件 / 1416 用例全绿，eslint 0 error，go vet/golangci-lint 0 issue。
+
+
+---
+
+## 追加（2026-11-17 晚）：第三方 pkg.go.dev 报告的核验 → 整合 → 解决闭环
+
+本轮拿到一份基于 pkg.go.dev v0.18.0 包结构推断的第三方报告（作者明言 GitHub 页面拿不到、多为猜测）。
+先逐条核验（✅属实 / ❌已修复或误判 / ⚠️部分成立），再把经核验的**有效缺口**整合成结构化 issue
+（沿用仓库现有 GitHub Issues 问题事项体系），最后逐条解决。
+
+### 核验结论（报告断言 → 实测）
+| 报告断言 | 实测 | 判定 |
+|---|---|---|
+| License=UNKNOWN | 根目录已有 Apache 2.0 LICENSE + NOTICE（b33aa5e7 引入） | ❌ 已修复 |
+| 多 module 中间态最难受 | 15 个 go.mod + go.work(go 1.26) 统一编排 | ❌ 已解决 |
+| controlplane import 109 包 | 实测 67 个唯一内部 import | ⚠️ 夸大 |
+| 双前端必然分叉 | embed 仅一套源 + 一个 enterprise 产物目录 | ⚠️ 半成立 |
+| AI 评估集缺 | 全仓无 eval/golden 数据文件 | ✅ 命中 |
+| 审批无幂等/二次校验 | 有状态机防重+k8s 手写校验，但无幂等键、校验不通用 | ⚠️ 部分命中 |
+| cutover 无断点续跑 | 已有按用户幂等+名册 checkpoint；真实缺口=口令末次写 | ⚠️ 部分命中 |
+| gRPC 四件事散在 handler | 签名鉴权+g.Audit+微服务限流+proto 校验均已特化；缺统一调用留痕 | ⚠️ 部分命中 |
+| gRPC 入参校验/鉴权/限流/审计未在拦截器 | 限流拦截器已在 3 个微服务装配；控制面 agent 签名制不适用通用 limiter | ⚠️ 误判为主 |
+
+### 整合的 4 个问题事项（issue）与解决状态
+| issue | 有效缺口 | 解决 | PR / merge |
+|---|---|---|---|
+| #105 | 审批幂等键 + 执行前二次校验 | SubmitIdempotent（锁内幂等）+ VerifyApproved；两入口读 Idempotency-Key；主仓+task-svc 副本对称 | #107 / `c46990ef` |
+| #104 | AI 无评估集 | internal/ai/eval（F1+要点覆盖+分类准确率）+ 30 样本 + cmd/eval CLI | #108 / `3d8dd220` |
+| #106 | cutover 口令末次写、崩溃丢凭据 | CredentialsFile 逐用户即时落盘（0600/去重/fsync/原子） | #109 / `e2b22525` |
+| #103 | gRPC 调用留痕不统一 | AuditUnaryInterceptor（method/code/duration/peer），零误伤 | #110（本轮末） |
+
+### 关键纪律
+- **不为改而改**：报告中 4 条核心断言经核验多为误判/已修复，只解决真实缺口，
+  并如实回写 issue 结论，不硬造可能误伤 agent 高频链路的改动（如给签名制链路套 user limiter）。
+- **主仓 + task-svc 双副本对称**：approval 包两处副本都改；过程中发现 task-svc 的
+  RequestStep 多 Mode/Approvers/Timeout 字段，及时保留避免会签回归。
+- **Windows 权限位断言**：Go 在 Windows 用 ACL，Mode().Perm() 恒 666，0600 断言按 GOOS 跳过。
