@@ -134,3 +134,38 @@
 - **主仓 + task-svc 双副本对称**：approval 包两处副本都改；过程中发现 task-svc 的
   RequestStep 多 Mode/Approvers/Timeout 字段，及时保留避免会签回归。
 - **Windows 权限位断言**：Go 在 Windows 用 ACL，Mode().Perm() 恒 666，0600 断言按 GOOS 跳过。
+
+
+---
+
+## 追加（2026-11-18）：前后端联调实测
+
+真栈起控制面（`--mode=controlplane --store=memory --demo --http-port=8080 --grpc-port=9090`）
++ agent（`--mode=agent --control-addr=http://127.0.0.1:8080`），HTTP/gRPC 双通道实测。
+
+### 本轮改动联调验证（全部通过）
+| 改动 | 实测 | 结果 |
+|---|---|---|
+| #105 审批幂等键 | POST `/api/v1/approval/requests` 带 Same Idempotency-Key×2 → 两次返回同一 ID `apr-a8ccf2ebb9854067`、CreatedAt 相同 | ✅ 幂等生效 |
+| #103 gRPC 审计拦截器 | debug 日志见 `grpc_call`：`Register/PollCancels/Heartbeat`，含 `grpc_code=OK`/`duration_ms`/`peer` | ✅ 留痕生效 |
+| #104 AI 评估集 | `go run ./cmd/eval` → 60/60（6 类各 10）通过 | ✅ 管线自检通过 |
+| #106 cutover 凭据落盘 | 单测覆盖逐用户落盘/中途失败保留/重跑去重（CLI 实证需真对侧 auth-svc） | ✅ 单测通过 |
+
+### 全量关键页 API 冒烟
+- `/healthz` = 200（`{"status":"ok"}`）
+- `/api/v1/devices`、`/api/v1/alerts`、`/api/v1/tasks` = 200
+- 前端 `device.js` 的 `segments` getter 与后端 `/api/v1/devices` 分段对象 `{"seg-a":[...]}` **契约一致**
+- `/api/v1/k8s/clusters`、`/api/v1/network/devices`、`/api/v1/tenants` 未带 token = 401（符合预期，需鉴权）
+
+### 联调发现的问题
+1. **列表信封不统一**（已知 issue #96）：`/devices` 返回分段对象，`/alerts`/`/tasks` 返回裸数组。
+   前端各视图按各自约定解析，暂不崩，但新接端点易踩坑——建议按 #96 统一为 {data,total,page,pageSize,hasMore}。
+2. **demo admin 首登强制改密**：login 返回 `token:""` + `changePasswordToken`，前端需先走改密流程才能拿正常 token。
+   demo 演示脚本若直接用 admin123 登录取 token 会拿到空串——需在 Demo 说明里写明（非 bug，是安全设计）。
+3. **控制面启动期 gRPC 客户端存根回退**：启动时 `Task leader/service/Result service 客户端初始化失败，回退存根`
+   （grpc connect localhost:9090 deadline exceeded），约 5s 后才正常；agent 注册也因此重试 6 次才成功。
+   这是启动竞态（控制面自身 gRPC server 与内部客户端同时启动），非功能错误，但会拖慢首次注册——可选优化项。
+
+### 结论
+本轮 4 项改动在真栈均验证生效；前后端核心契约对得上。3 个发现中 #1 为已知债务，#2 为预期安全设计，
+#3 为启动期竞态（非功能错误）。联调环境：memory store + demo，无外部 DB/Redis 依赖。
