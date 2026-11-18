@@ -390,25 +390,72 @@ func newSharedCostHandler() *cost.CostHandler {
 	return cost.NewCostHandler(sharedBudgetManager(), cost.NewModelRouter(), cost.NewCostTracker())
 }
 
-// budgetedGateway 建一个挂了共享预算的 Gateway。
-func budgetedGateway() *aigateway.Gateway {
+// aiGatewayOptions 是 NewServer 启动期完成校验的 Provider 装配结果。
+// Provider 实例只持有配置与 http.Client，可安全共享给四个 Gateway；
+// 熔断/限流仍由各 Gateway 独立持有，预算继续共享。
+type aiGatewayOptions struct {
+	configs       []aigateway.ProviderConfig
+	providers     map[string]aigateway.LLMProvider
+	embedProvider string
+}
+
+func prepareAIGatewayOptions(cfg *config.Config) (aiGatewayOptions, error) {
+	opts := aiGatewayOptions{providers: make(map[string]aigateway.LLMProvider)}
+	configs, err := aigateway.ParseProviderConfigs(cfg.AIGatewayProviders)
+	if err != nil {
+		return opts, err
+	}
+	opts.configs = configs
+	opts.embedProvider = cfg.AIGatewayEmbedProvider
+	if opts.embedProvider == "" {
+		if len(configs) == 1 {
+			opts.embedProvider = configs[0].Name
+		} else {
+			opts.embedProvider = "openai"
+		}
+	}
+	if len(configs) == 0 && cfg.AIGatewayEmbedProvider != "" {
+		return opts, fmt.Errorf("ai-gateway-embed-provider requires at least one configured AI gateway provider")
+	}
+	for _, pc := range configs {
+		provider, err := aigateway.NewProvider(pc)
+		if err != nil {
+			return opts, fmt.Errorf("construct AI gateway provider %q: %w", pc.Name, err)
+		}
+		opts.providers[pc.Name] = provider
+	}
+	if len(configs) > 0 {
+		if _, ok := opts.providers[opts.embedProvider]; !ok {
+			return opts, fmt.Errorf("ai-gateway-embed-provider %q is not configured", opts.embedProvider)
+		}
+	}
+	return opts, nil
+}
+
+// budgetedGateway 建一个挂了共享预算与已装配 Provider 的 Gateway。
+func budgetedGateway(opts aiGatewayOptions) *aigateway.Gateway {
 	g := aigateway.NewGateway()
 	g.SetBudgets(sharedBudgetManager())
+	for _, pc := range opts.configs {
+		g.RegisterProvider(pc, opts.providers[pc.Name])
+	}
 	return g
 }
 
-func newBudgetedAIGatewayHandler() *aigateway.AIGatewayHandler {
-	return aigateway.NewAIGatewayHandler(budgetedGateway(), aigateway.NewInMemoryVectorStore(), 5)
+func newBudgetedAIGatewayHandler(opts aiGatewayOptions) *aigateway.AIGatewayHandler {
+	h := aigateway.NewAIGatewayHandler(budgetedGateway(opts), aigateway.NewInMemoryVectorStore(), 5)
+	h.SetEmbedProvider(opts.embedProvider)
+	return h
 }
 
-func newBudgetedAgentHandler() *agent.AgentHandler {
-	// agent 包有两处 Gateway（orchestrator + handler 直连），都挂共享预算。
-	o := agent.NewOrchestrator(budgetedGateway(), agent.DefaultToolRegistry(), agent.NewMemoryManager())
-	return agent.NewAgentHandler(o, budgetedGateway(), agent.NewMemoryManager())
+func newBudgetedAgentHandler(opts aiGatewayOptions) *agent.AgentHandler {
+	// agent 包有两处 Gateway（orchestrator + handler 直连），都挂共享预算与同一套 Provider。
+	o := agent.NewOrchestrator(budgetedGateway(opts), agent.DefaultToolRegistry(), agent.NewMemoryManager())
+	return agent.NewAgentHandler(o, budgetedGateway(opts), agent.NewMemoryManager())
 }
 
-func newBudgetedKnowledgeHandler() *knowledge.KnowledgeHandler {
-	return knowledge.NewKnowledgeHandler(knowledge.NewInMemoryKnowledgeStore(), budgetedGateway())
+func newBudgetedKnowledgeHandler(opts aiGatewayOptions) *knowledge.KnowledgeHandler {
+	return knowledge.NewKnowledgeHandler(knowledge.NewInMemoryKnowledgeStore(), budgetedGateway(opts))
 }
 
 // securityHeadersFromEnv 从环境变量装配安全响应头配置。
@@ -464,6 +511,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 	secHeaders := securityHeadersFromEnv()
+	aiGWOpts, err := prepareAIGatewayOptions(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("AI Gateway Provider 装配失败: %w", err)
+	}
 	s := &Server{
 		cfg:              cfg,
 		store:            st,
@@ -486,9 +537,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		aiopsHandler:     aiops.NewHandler(aiops.NewEngine(cfg, st)),
 		aiopsEngine:      aiops.NewEngine(cfg, st),
 		costHandler:      newSharedCostHandler(),
-		aiGatewayHandler: newBudgetedAIGatewayHandler(),
-		agentHandler:     newBudgetedAgentHandler(),
-		knowledgeHandler: newBudgetedKnowledgeHandler(),
+		aiGatewayHandler: newBudgetedAIGatewayHandler(aiGWOpts),
+		agentHandler:     newBudgetedAgentHandler(aiGWOpts),
+		knowledgeHandler: newBudgetedKnowledgeHandler(aiGWOpts),
 		k8sLifecycleHandler: func() *k8slifecycle.K8sLifecycleHandler {
 			if sqlStore, ok := st.(*sqlstore.SQLStore); ok {
 				return k8slifecycle.NewK8sLifecycleHandler(sqlStore)
