@@ -74,6 +74,9 @@ func main() {
 func printReport(rep *eval.Report) {
 	fmt.Printf("评估集 %s：%d/%d 通过（准确率 %.1f%%）\n", rep.Version, rep.Passed, rep.Total, rep.Accuracy*100)
 	fmt.Printf("  平均工具 F1：%.3f  平均要点覆盖：%.3f\n", rep.AvgToolF1, rep.AvgPointCov)
+	if rep.SafetyViolations > 0 {
+		fmt.Printf("  ⚠ 安全违规：%d 条样本调用了禁止工具\n", rep.SafetyViolations)
+	}
 	cats := make([]string, 0, len(rep.ByCategory))
 	for c := range rep.ByCategory {
 		cats = append(cats, c)
