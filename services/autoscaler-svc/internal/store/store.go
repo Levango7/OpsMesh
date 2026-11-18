@@ -17,6 +17,9 @@ type AutoscalerStore interface {
 	UpdateRule(rule *models.ScaleRule, tenantID string) error
 	DeleteRule(id, tenantID string) bool
 	ListRules(tenantID string) []*models.ScaleRule
+	// ListAllRules 跨租户返回**全部**规则（无租户过滤）。
+	// 用途：服务启动时把存量规则装载回内存（issue #48 裁决① 接线）。
+	ListAllRules() []*models.ScaleRule
 
 	// Scaling decision operations
 	CreateDecision(d *models.ScaleDecision) (*models.ScaleDecision, error)
@@ -111,6 +114,17 @@ func (m *MemoryStore) ListRules(tenantID string) []*models.ScaleRule {
 		if r.TenantID != tenantID {
 			continue
 		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// ListAllRules 返回全部规则（跨租户，启动时装载用；无租户过滤）。
+func (m *MemoryStore) ListAllRules() []*models.ScaleRule {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*models.ScaleRule, 0, len(m.rules))
+	for _, r := range m.rules {
 		out = append(out, r)
 	}
 	return out
