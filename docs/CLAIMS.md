@@ -1429,4 +1429,10 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [DONE] 2026-11-18T13:30:00Z from=kilo scope=docs/projects/,docs/api-versioning-policy.md,scripts/abac/ note=批次59 收口（M4 soak 计划 + TD-60 排期 + API 稳定性政策 + soak 报表工具 + 文档语义修正）
 
-[DONE] 2026-11-18T14:30:00Z from=kilo scope=docs/projects/delivery-schedule-2026-11-19.md,docs/projects/README.md note=批次60 收口（逐日交付日历 63 天 + 每日/每周门禁 + 6 签字点） commit=4b0ec8ec09d883510f9af5e3c5cca6bce923a144
+[DONE] 2026-11-18T14:30:00Z from=kilo scope=docs/projects/delivery-schedule-2026-11-19.md,docs/projects/README.md note=批次60 收口（逐日交付日历 63 天 + 每日/每周门禁 + 6 签字点） commit=4b0ec8ec
+
+[CLAIM] 2026-11-18T15:00:00Z from=kilo ttl=8h scope=services/auth-svc/,internal/controlplane/svcproxy/,internal/controlplane/service_proxy_test.go,internal/controlplane/auth_users.go,internal/controlplane/auth_login.go note=批次61 TD-60 auth 切流准备：A-3 users 分页对齐、A-2 非 active 登录语义对齐、A-1 管理面保持本地并显式不代理（防 404）
+[CLAIM] 2026-11-18T15:00:00Z from=kilo ttl=8h scope=internal/controlplane/contract_v1_test.go note=批次62 v1 默认形状契约测试（tasks/agents/users/tenants），落实 docs/api-versioning-policy.md 的冻结承诺
+
+[CLAIM] 2026-11-18T16:40:00Z from=kilo ttl=8h scope=internal/gates/tenant_store_verdict_gate_test.go,docs/CLAIMS.md note=批次63 修复 HEAD 红点：为 PR #125 新增的 MemoryBudgetStore 补租户存储裁决登记；并释放狗粮/race 文档的过期认领09d883510f9af5e3c5cca6bce923a144
+[RELEASE] 2026-11-18T14:59:30Z from=kilo scope=docs/abac-m1-m3-dogfood-2026-11-18.md,docs/race-sweep-2026-11-18.md note=批次57 两文档已落 main，证据 8a181a95（dogfood 验收 443 行 + race 报告 138 行同一提交）；按本板 append-only 规则仅追加本行，不删改原行。

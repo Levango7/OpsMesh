@@ -21,6 +21,14 @@ import (
 //   - 503：后端地址解析失败或连接被拒（服务未启动/端口不对）；
 //   - 401/403：由 requirePermission/requireTenantContext 写出。
 func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
+	// TD-60 A-1：管理面（users/roles/permissions）在 v1 保持 controlplane 本地。
+	// 双轨前缀下收到管理路径时给出明确 JSON 错误——此前 blanket 改写会把
+	// /api/v1/auth-svc/users 变成 /api/v1/auth/users，由 auth-svc 回裸 404，
+	// 客户端无法区分"产品裁决不代理"与"后端没这个路由"。
+	if svcproxy.AuthManagementPath(r.URL.Path) {
+		writeProxyErrorJSON(w, http.StatusNotFound, "management plane is local")
+		return
+	}
 	rule := svcproxy.Lookup(r.URL.Path)
 	if rule != nil && !rule.IsActive() {
 		// 双轨机制（TD-60 A-2 auth-svc）：AUTH_SVC_PROXY_ENABLED 默认 false →
@@ -52,6 +60,12 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	upstreamPath := rule.RewriteProxyPath(r.URL.Path)
+	if upstreamPath == "" {
+		// auth 域非会话/非管理子路径（RewriteProxyPath 的空串 = 不转发）。
+		writeProxyErrorJSON(w, http.StatusNotFound, "no service proxy route matches "+r.URL.Path)
+		return
+	}
 	target := rule.UpstreamBase()
 	if target == nil {
 		writeProxyErrorJSON(w, http.StatusServiceUnavailable, "service backend address invalid: "+rule.EnvKey)
@@ -81,7 +95,7 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 	director := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		director(req)
-		req.URL.Path = rule.RewriteProxyPath(r.URL.Path)
+		req.URL.Path = upstreamPath
 		req.URL.RawPath = ""
 		// 会话 Cookie 投递按域裁决（TD-60 §9.3 方向 A，2026-10-10）：
 		// 常规域剥除——下游不消费会话 Cookie（身份走注入头），剥除防凭证意外

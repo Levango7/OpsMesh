@@ -148,22 +148,33 @@ v1 与 v2 可同时注册；v2 上线不改变 v1 的默认响应。
 
 > 来源：`docs/api-pagination.md:64-87`、`docs/api-list-envelope.md:11-20`、
 > `internal/controlplane/server_devices.go:42-51,112-116`、`internal/controlplane/server_tasks.go:307-333`、
-> `internal/controlplane/auth_users.go:61-79`。下表是 **v1 冻结清单**；新增列表端点按 §2.2 追加。
+> `internal/controlplane/auth_users.go:61-79`、`internal/controlplane/contract_v1_test.go`。
+> 下表是 **v1 冻结清单**；新增列表端点按 §2.2 追加。
+>
+> **可执行事实源**：`internal/controlplane/contract_v1_test.go` 是本节形状的 executable source of truth——
+> 它直接调用真实 handler 断言顶层键集合与 opt-in 触发矩阵；文档与本表若与测试冲突，以测试为准并回写本节。
+> 三条容易凭直觉写错的事实：`tasks` 无分页参数时返回**裸数组**，只有 `page` 触发信封
+> （`pageSize` 单独存在仍是裸数组）；`users`/`tenants` 的 opt-in 形态是
+> `{users|tenants,total,page,pageSize,hasMore}`，**没有 `data` 键**，且 `pageSize` 单独存在不触发；
+> `devices`/`audits` 则任一参数（含 `pageSize` 单独存在）即触发统一信封。
 
 | # | 端点 | 默认形态（无分页参数） | 触发 opt-in 的参数 | opt-in 形态 | 现有契约门禁 | 缺口 |
 |---:|---|---|---|---|---|---|
-| 1 | `GET /api/v1/devices` | 按 segment 分组的对象：`{"seg-a":[DeviceInfo,...],"seg-b":[...]}` | `page` 或 `pageSize` | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/pagination_optin_test.go`（`TestPaginationOptInDevices` 含 `legacy_no_params`） | 无 |
-| 2 | `GET /api/v1/tasks` | 裸数组 `[...]`；未分页硬上限 2000，截断时 `X-Truncated: true` + `X-Total-Count` | `page`（`pageSize` 单独存在不触发） | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/list_envelope_contract_test.go`（仅 opt-in + 空集） | **默认裸数组未钉住**，需补 `TestTasksLegacyShape` |
+| 1 | `GET /api/v1/devices` | 按 segment 分组的对象：`{"seg-a":[DeviceInfo,...],"seg-b":[...]}` | `page` 或 `pageSize` | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/pagination_optin_test.go`（`TestPaginationOptInDevices` 含 `legacy_no_params`）；`internal/controlplane/contract_v1_test.go`（`devices_segment_map` / `devices_page_envelope` / `devices_page_size_only_envelope`） | 无 |
+| 2 | `GET /api/v1/tasks` | 裸数组 `[...]`；未分页硬上限 2000，截断时 `X-Truncated: true` + `X-Total-Count` | `page`（`pageSize` 单独存在不触发，仍返回裸数组） | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/list_envelope_contract_test.go`（仅 opt-in + 空集）；`internal/controlplane/contract_v1_test.go`（`tasks_bare_array` / `tasks_page_envelope` / `tasks_page_size_only_stays_array`） | 无 |
 | 3 | `GET /api/v1/alerts` | 裸数组 `[...]`（空列表 `[]`） | `page`（`pageSize` 单独存在不触发） | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/server_alerts_contract_test.go`；`internal/controlplane/coverage_extra_test.go:1146` | 无 |
-| 4 | `GET /api/v1/users` | `{"users":[...]}` | `page`（`pageSize` 单独存在不触发） | `{"users":[...],"total":...,"page":...,"pageSize":...,"hasMore":...}`（**无 `data`**） | `internal/controlplane/acceptance_hardening_test.go:291`（分页边界） | 默认 `{users}` 顶层键未单独钉住，建议补精确键集合断言 |
-| 5 | `GET /api/v1/tenants` | `{"tenants":[...]}` | `page`（`pageSize` 单独存在不触发） | `{"tenants":[...],"total":...,"page":...,"pageSize":...,"hasMore":...}`（**无 `data`**） | `internal/controlplane/acceptance_hardening_test.go:356` | 同上 |
-| 6 | `GET /api/v1/audits` | 裸数组 `[...]`；legacy `limit` 默认 100、上限 1000 | `page` 或 `pageSize` | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/pagination_optin_test.go`（`TestPaginationOptInAudits`） | 无 |
+| 4 | `GET /api/v1/users` | `{"users":[...]}` | `page`（`pageSize` 单独存在不触发） | `{"users":[...],"total":...,"page":...,"pageSize":...,"hasMore":...}`（**无 `data`**） | `internal/controlplane/acceptance_hardening_test.go:291`（分页边界）；`internal/controlplane/contract_v1_test.go`（`users_container_only` / `users_page_container_and_metadata` / `users_page_size_only_stays_container`） | 无 |
+| 5 | `GET /api/v1/tenants` | `{"tenants":[...]}` | `page`（`pageSize` 单独存在不触发） | `{"tenants":[...],"total":...,"page":...,"pageSize":...,"hasMore":...}`（**无 `data`**） | `internal/controlplane/acceptance_hardening_test.go:356`；`internal/controlplane/contract_v1_test.go`（`tenants_container_only` / `tenants_page_container_and_metadata` / `tenants_page_size_only_stays_container`） | 无 |
+| 6 | `GET /api/v1/audits` | 裸数组 `[...]`；legacy `limit` 默认 100、上限 1000 | `page` 或 `pageSize` | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/pagination_optin_test.go`（`TestPaginationOptInAudits`）；`internal/controlplane/contract_v1_test.go`（`audits_page_envelope` / `audits_page_size_only_envelope`） | 无 |
 | 7 | `GET /api/v1/webhooks` | `{"webhooks":[...]}` | `page` 或 `pageSize` | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/pagination_optin_test.go`（`TestPaginationOptInWebhooks`） | 无 |
 | 8 | `GET /api/v1/scripts` | `{"scripts":[...]}` | `page` 或 `pageSize` | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/pagination_optin_test.go`（`TestPaginationOptInScripts`） | 无 |
-| 9 | `GET /api/v1/agents` | 裸数组；元素含 `agentID/hostname/segment/status/lastSeen/live` | `page` | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/server_devices.go:112-116`（实现）；`internal/controlplane/handler_m4_test.go:267`（happy path） | **无默认/信封形状契约测试**，需补 |
+| 9 | `GET /api/v1/agents` | 裸数组；元素含 `agentID/hostname/segment/status/lastSeen/live` | `page` | `{data,total,page,pageSize,hasMore}` | `internal/controlplane/server_devices.go:112-116`（实现）；`internal/controlplane/handler_m4_test.go:267`（happy path）；`internal/controlplane/contract_v1_test.go`（`agents_bare_array_element_keys`） | opt-in 信封形状尚未钉住，待补 |
 
 ### 4.1 契约测试必须断言的项
 
+0. **事实源**：`internal/controlplane/contract_v1_test.go` 必须持续覆盖 §4 的默认形状与 opt-in 触发矩阵
+   （`tasks`/`devices`/`agents`/`users`/`tenants` 默认形状 + `page`/`pageSize` 单独出现的触发差异）；
+   新增或修改列表端点时先改测试再改文档，文档不得先于测试宣称形状。
 1. **默认形态的顶层键集合**完全等于上表（多余键、缺失键都判红）。
 2. 默认形态**不包含** `data` / `total` / `count` 等信封或控制键（可复用
    `pagination_optin_test.go` 的 `assertLegacyNoEnvelope`）。
