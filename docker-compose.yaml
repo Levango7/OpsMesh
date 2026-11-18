@@ -209,6 +209,8 @@ services:
     command:
       - --mode=agent
       - --control-addr=http://controlplane:9090
+      # ABAC HTTP 通道走 controlplane 的 HTTP 端口（--control-addr 是 gRPC 9090）。
+      - --abac-bundle-base-url=http://controlplane:8080
       - --segment=default
     depends_on:
       controlplane:

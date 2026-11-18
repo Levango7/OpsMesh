@@ -95,9 +95,12 @@ type Agent struct {
 	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc TaskService。
 	taskServiceClient TaskServiceClient
 	// agentSecret 是本次运行的 per-agent HMAC 签名密钥（resolveAgentKey 解析结果）。
-	// 与 gRPC 请求签名共用同一密钥；M1 的 ABAC 策略包 HTTP 通道复用该密钥，
-	// 不新增凭证体系（服务端同样取 store.AgentSecret(agentID) 验签）。
+	// 与 gRPC 请求签名共用同一密钥。
 	agentSecret string
+	// abacSecret 是 ABAC HTTP 通道（M1 bundle / M3 decisions）的 HMAC 密钥。
+	// 服务端 verifyAgentHMACRequest 只认 store.AgentSecret（注册时签发的 per-agent 密钥），
+	// 故优先取注册响应/本机 agent.key 中的 DB 密钥，--grpc-signature-key 仅作兜底。
+	abacSecret string
 	// ABAC 策略包拉取客户端（M1）：cfg.ABACBundleEnabled=true 时在注册成功、拿到
 	// per-agent 密钥后构造并启动；nil=未启用。心跳能力声明据此上报 abac_bundle=v1。
 	abacBundleClient *ABACBundleClient
@@ -540,13 +543,13 @@ func (a *Agent) Run() error {
 	// 先加载本地 LKG（离线可用），Start 立即拉取一轮后按 ABACBundleRefreshInterval 轮询；
 	// 未启用（默认）时完全不构造客户端，心跳不带能力声明——与引入前逐字一致。
 	if a.cfg.ABACBundleEnabled {
-		a.abacBundleClient = NewABACBundleClient(a.cfg, a.agentID, a.agentSecret, a.cfg.ControlAddr, nil)
+		a.abacBundleClient = a.newABACBundleClient()
 		a.abacBundleClient.LoadFromCache()
 		safeGo(ctx, "abacBundleClient", a.abacBundleClient.Start)
 		// 决策审计回传（M3）：随策略包一起启用；cfg.ABACDecisionReport=false 可单独关闭。
 		// bundleId 取当前 LKG 包（评估与回传可能跨包换代，记录以评估时刻的包 ID 为准）。
 		if a.cfg.ABACDecisionReport {
-			a.abacDecisionReporter = NewABACDecisionReporter(a.cfg, a.agentID, a.agentSecret, a.cfg.ControlAddr, nil)
+			a.abacDecisionReporter = NewABACDecisionReporter(a.cfg, a.agentID, a.abacSecret, a.abacHTTPBaseURL(), nil)
 			a.abacDecisionReporter.SetBundleIDProvider(func() string {
 				sb, _ := a.abacBundleClient.Current()
 				if sb == nil {
@@ -723,6 +726,47 @@ func (a *Agent) resolveAgentKey(ctx context.Context, respSecret string) (key, so
 	return "", ""
 }
 
+// resolveABACSecret 决定 ABAC HTTP 通道（M1 bundle / M3 decisions）的 HMAC 密钥。
+//
+// 服务端 verifyAgentHMACRequest 只认 store.AgentSecret(agentID) —— Register 时签发并
+// 落库的 per-agent 密钥，因此这里优先使用注册响应下发的密钥（并落盘），其次使用本机
+// <dataDir>/agent.key；只有注册从未提供 DB 密钥时才回退到 --grpc-signature-key 预共享密钥
+// （该回退仅适用于控制面同样接受预共享密钥的部署，否则 ABAC 仍会 401）。
+// gRPC 签名密钥的选择保持 resolveAgentKey 原有优先级不变。
+func (a *Agent) resolveABACSecret(ctx context.Context, respSecret string) (key, source string) {
+	if respSecret != "" {
+		if err := saveAgentKey(a.dataDir, respSecret); err != nil {
+			logx.Warn(ctx, "ABAC per-agent 密钥落盘失败，重启后将无法沿用该密钥",
+				"agentID", a.agentID, "error", err.Error())
+		}
+		return respSecret, "register-response"
+	}
+	if k := loadAgentKey(a.dataDir); k != "" {
+		return k, "agent.key"
+	}
+	if a.cfg.GRPCSignatureKey != "" {
+		return a.cfg.GRPCSignatureKey, "pre-shared"
+	}
+	return "", ""
+}
+
+// abacHTTPBaseURL 返回 ABAC HTTP 通道（M1 bundle / M3 decisions）的控制面基地址。
+// 优先使用 --abac-bundle-base-url / OPSMESH_ABAC_BUNDLE_BASE_URL：compose 中
+// --control-addr 指向 gRPC 端口（9090），HTTP API 在另一个端口（8080）。
+// 未配置时回退 --control-addr，保持既有单机部署行为不变。
+func (a *Agent) abacHTTPBaseURL() string {
+	if v := strings.TrimSpace(a.cfg.ABACBundleBaseURL); v != "" {
+		return v
+	}
+	return a.cfg.ControlAddr
+}
+
+// newABACBundleClient 用当前运行态密钥与 HTTP 基地址构造策略包客户端。
+// 单独抽方法便于测试密钥来源与 base URL 的优先级（Run 与测试共用同一接线）。
+func (a *Agent) newABACBundleClient() *ABACBundleClient {
+	return NewABACBundleClient(a.cfg, a.agentID, a.abacSecret, a.abacHTTPBaseURL(), nil)
+}
+
 // register 经 gRPC Register 注册自身，拿到 agentID。带有限重试，避免控制面未就绪即退出。
 func (a *Agent) register() error {
 	info := proto.AgentInfo{
@@ -752,17 +796,23 @@ func (a *Agent) register() error {
 			if key != "" {
 				a.grpc.SetSecret(key)
 			}
-			// 保存同一密钥供 ABAC 策略包 HTTP 通道复用（M1）：签名算法域分隔不同
-			// （"abac-bundle\n..." vs gRPC 的 v2 载荷签名），但密钥来源与优先级完全一致。
 			a.agentSecret = key
+			// ABAC HTTP HMAC 使用 DB 签发的注册密钥（服务端只认 store.AgentSecret）；
+			// 仅当注册从未提供密钥时才回退到 --grpc-signature-key。gRPC 密钥不受影响。
+			abacKey, abacKeySource := a.resolveABACSecret(ctx, resp.Secret)
+			a.abacSecret = abacKey
 			signed := key != ""
 			if !signed && a.cfg.GRPCRequireSignature {
 				// 控制面要求签名但 agent 三处都拿不到密钥：后续请求将被拒绝，提前告警。
 				logx.Warn(ctx, "控制面启用签名验证但 agent 无可用密钥（预共享 / 下发 / 本机 agent.key 均无），"+
 					"后续请求将被拒绝：请用 install token 重新纳管，或配置 --grpc-signature-key", "agentID", a.agentID)
 			}
+			if abacKeySource == "pre-shared" {
+				logx.Warn(ctx, "ABAC HTTP 通道回退到预共享密钥：若控制面按 store.AgentSecret 验签将返回 401，"+
+					"请用 install token 重新纳管或提供本机 agent.key", "agentID", a.agentID)
+			}
 			logx.Info(ctx, "注册成功", "agentID", a.agentID, "segment", a.cfg.Segment, "grpc", a.cfg.ControlAddr,
-				"signed", signed, "keySource", keySource)
+				"signed", signed, "keySource", keySource, "abacKeySource", abacKeySource)
 			return nil
 		}
 		// 安全：Unauthenticated（install token 无效/过期/已被消费）属不可重试错误，
@@ -878,6 +928,8 @@ func (a *Agent) drainTasks(ctx context.Context) {
 			logx.Error(ctx, "领取任务失败", err, "agentID", a.agentID)
 			return
 		}
+		// nil 或空 taskID = 当前无工作：本轮立即结束，由 dispatchLoop 的 ticker
+		// 按 TaskDispatchInterval 退避后再次领取（绝不执行合成任务，避免空转刷屏）。
 		if t == nil {
 			return
 		}
@@ -953,6 +1005,11 @@ func (a *Agent) claimTask(ctx context.Context) (*proto.Task, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	// 空响应/空 taskId 表示“当前无待领取任务”（存根客户端或 task-svc 空队列）。
+	// 必须按空闲处理并返回 nil，禁止把零值任务投递给 worker。
+	if resp == nil || strings.TrimSpace(resp.TaskId) == "" {
+		return nil, nil
 	}
 	// Convert taskv1.Task to proto.Task
 	return &proto.Task{
