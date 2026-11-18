@@ -8,7 +8,7 @@
 
 | 项目 | 一句话定义 | 状态 | 负责人 | 工作量 | 立项书 |
 |---|---|---|---|---|---|
-| **TD-60** 域收敛 | 用整域开关 + 按增量切换，把 task / device / auth 从 controlplane 双份实现收敛到微服务，不搬历史数据 | **已排期**（2026-11-19 起，auth → task → device；阶段 2 进行中；2026-11-17 静态一致性审计 P0 5，已修 2、余 3 在 device） | 待定 | 22–32 人日（日历 8–9 周，含串行观察窗） | [TD-60 域收敛立项书](./TD-60-domain-convergence-charter.md) / [切流排期](./TD-60-cutover-schedule.md) |
+| **TD-60** 域收敛 | 用整域开关 + 按增量切换，把 task / device / auth 从 controlplane 双份实现收敛到微服务，不搬历史数据 | **已排期**（2026-11-19 起，auth → task → device；阶段 2 进行中；2026-11-17 静态一致性审计 P0 5，已修 2、余 3 在 device） | 待定 | 22–32 人日（日历 8–9 周，含串行观察窗） | [TD-60 域收敛立项书](./TD-60-domain-convergence-charter.md) / [切流排期](./TD-60-cutover-schedule.md) / [交付日程](./delivery-schedule-2026-11-19.md) |
 | **TD-66** API 网关数据面 | `/gw/` 最小反向代理升级为完整数据面（持久化、熔断、埋点、超时），或明确维持预览形态 | **待批准**（MVP 已落地；两处残余缺陷已修复（reload 漏装熔断器、多副本缓存不失效）） | 待定 | MVP 已交付（约 2.5 人日）；完整面待章程估算 | [TD-66 网关数据面立项书](./TD-66-gateway-dataplane-charter.md) |
 | **服务发现后端** | 在现有 `ServiceDiscovery` 接口后新增 etcd v3 / Consul 后端，补 TTL、健康语义、Watch 重连与后端开关 | **待批准**（M0/file 已落地（`--discovery-backend=memory\|static\|file`）；装配已入库（agent 按开关装配 memory/static/file，2026-11-17 批次44）；etcd/Consul 仍未立项） | 待定 | 11–18 人日 | [服务发现后端立项书](./discovery-backends-charter.md) |
 | **ABAC** 设备侧决策引擎 | 以服务端 ABAC 评估器为唯一权威语义源，为设备侧增加签名策略包 + 本地评估 + 决策审计回传；不替代 RBAC 强制层 | **已立项**（M1–M3 已完成（2026-11-17）；**M4 机制已完成（2026-11-18，默认 off）**：设备侧 guard + 四道回滚杠杆；**7 天 soak + 选择器 shadow→enforce 放量计划已批准**，生产放量未开始；**全站 ABAC 强制暂不启用**（需 RBAC→ABAC 基线完成 + 关键路径 shadow would-deny <1%）） | 待定 | 25–37 人日（M0 已完成，M1–M4 约 23–34 人日） | [立项书](./abac-device-engine-charter.md) / [M1 规格](./abac-device-engine-m1-bundle-spec.md) / [M4 Soak 计划](./abac-m4-soak-plan.md) |
@@ -35,6 +35,7 @@
 ## 关联文档
 
 - `docs/tech-debt.md` —— 债务登记与状态行（TD-60 / TD-66 等）
+- `docs/projects/delivery-schedule-2026-11-19.md` —— 2026-11-19 → 2027-01-20 逐日交付日程（TD-60 三域切流 + ABAC M4 放量、每日/每周固定动作、缓冲日与 6 个签字点）
 - `docs/adr/2026-11-15-scale-decisions.md` —— 限流、SSE、分页、读写分离四项决策；新项目不得与之冲突
 - `docs/COORDINATION-BOARD.md` —— 多 agent 线协作协议；动文件前先按 `AGENTS.md` 在 `docs/CLAIMS.md` 认领
 - `docs/td60-*.md` —— TD-60 的切流决策单、runbook、一致性报告与契约对账
