@@ -1395,3 +1395,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [CLAIM] 2026-11-17T22:00:00Z from=kilo ttl=8h scope=internal/store/model/,internal/store/memory/,internal/store/sqlstore/,internal/store/store.go,internal/controlplane/abac_decisions_endpoint.go,internal/controlplane/abac_decisions_endpoint_test.go,internal/controlplane/server_lifecycle.go,internal/agent/abac_decision_reporter.go,internal/agent/abac_decision_reporter_test.go,internal/agent/agent.go,docs/projects/abac-device-engine-charter.md note=批次56 M3 决策审计回传：POST /api/v1/agent/abac-decisions（per-agent HMAC + body digest）、abac_decision_logs 表（迁移 036 + 保留期）、Agent 批量缓冲/重试/能力上报
 
 [DONE] 2026-11-17T23:30:00Z from=kilo scope=internal/store/,internal/controlplane/abac_decisions_endpoint.go,internal/agent/abac_decision_reporter.go,internal/config/config.go,docs/projects/ note=批次56 收口（ABAC M3 决策审计回传 + 保留期 + Agent 缓冲）
+
+[CLAIM] 2026-11-18T06:30:00Z from=kilo ttl=8h scope=docs/abac-m1-m3-dogfood-2026-11-18.md,docs/race-sweep-2026-11-18.md note=批次57 验证批（不改产品代码）：真实 MySQL/Redis 栈上跑通 ABAC M1-M3（bundle 拉取/验签/304/LKG/决策落库/策略重启持久化）+ 全量 -race 扫描，产出证据文档

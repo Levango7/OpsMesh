@@ -529,10 +529,14 @@ type Config struct {
 	//   - ABACBundleCachePath：last-known-good 缓存文件路径（0600）；空=见 Load 中默认
 	//     `<data-dir>/abac-bundle.json`（与 agent.id/agent.key 同目录）。
 	//   - ABACBundleRefreshInterval：轮询间隔，默认 10m（<=0 时由客户端回退默认值）。
+	//   - ABACBundleBaseURL：ABAC HTTP 通道（bundle/decisions）的控制面基地址；
+	//     空=从 ControlAddr 派生（旧行为）。compose 等 gRPC/HTTP 端口分离的部署用它
+	//     指向 controlplane 的 HTTP 端口（如 http://controlplane:8080）。
 	ABACBundleEnabled         bool          // --abac-bundle-enabled / env OPSMESH_ABAC_BUNDLE_ENABLED
 	ABACBundlePublicKeys      []string      // --abac-bundle-public-keys / env OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS
 	ABACBundleCachePath       string        // --abac-bundle-cache-path / env OPSMESH_ABAC_BUNDLE_CACHE_PATH
 	ABACBundleRefreshInterval time.Duration // --abac-bundle-refresh-interval / env OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL
+	ABACBundleBaseURL         string        // --abac-bundle-base-url / env OPSMESH_ABAC_BUNDLE_BASE_URL（空=用 ControlAddr）
 	// ABACDecisionReport：agent 侧决策审计回传开关（M3），默认 true；
 	// 仅当 ABACBundleEnabled=true 时生效（回传凭证与策略包共用）。
 	ABACDecisionReport bool // --abac-decision-report / env OPSMESH_ABAC_DECISION_REPORT
@@ -787,6 +791,7 @@ func Load() *Config {
 	abacBundlePublicKeys := flag.String("abac-bundle-public-keys", "", "ABAC 策略包验签公钥：逗号分隔的 keyID:base64pubkey（Ed25519 公钥 32 字节），可配置 2 把以上支持 keyId 轮换；或 env OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS")
 	abacBundleCachePath := flag.String("abac-bundle-cache-path", "", "agent 侧 ABAC 策略包 LKG 缓存路径（写入权限 0600）；空=<data-dir>/abac-bundle.json；或 env OPSMESH_ABAC_BUNDLE_CACHE_PATH")
 	abacBundleRefreshInterval := flag.Duration("abac-bundle-refresh-interval", 10*time.Minute, "agent 侧 ABAC 策略包轮询间隔（默认 10m；<=0 回退默认）；或 env OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL")
+	abacBundleBaseURL := flag.String("abac-bundle-base-url", "", "ABAC HTTP 通道（bundle/decisions）控制面基地址（如 http://controlplane:8080）；空=从 --control-addr 派生；或 env OPSMESH_ABAC_BUNDLE_BASE_URL")
 	abacDecisionReport := flag.Bool("abac-decision-report", true, "agent 侧 ABAC 决策审计回传（M3）；默认 true，仅在 --abac-bundle-enabled 时生效；或 env OPSMESH_ABAC_DECISION_REPORT")
 	// 自动化引擎评估周期。
 	automationEvalInterval := flag.Duration("automation-eval-interval", 30*time.Second, "自动化引擎评估周期：周期评估 enabled 自动化规则并执行命中动作（默认 30s；或 env OPSMESH_AUTOMATION_EVAL_INTERVAL）")
@@ -1019,6 +1024,7 @@ func Load() *Config {
 		ABACBundleCachePath:    val("abac-bundle-cache-path", *abacBundleCachePath, "OPSMESH_ABAC_BUNDLE_CACHE_PATH"),
 		ABACBundleRefreshInterval: valDur("abac-bundle-refresh-interval", *abacBundleRefreshInterval,
 			"OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL"),
+		ABACBundleBaseURL:  val("abac-bundle-base-url", *abacBundleBaseURL, "OPSMESH_ABAC_BUNDLE_BASE_URL"),
 		ABACDecisionReport: valBool("abac-decision-report", *abacDecisionReport, "OPSMESH_ABAC_DECISION_REPORT"),
 	}
 	// --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
