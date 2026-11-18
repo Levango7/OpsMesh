@@ -91,7 +91,7 @@ type LLMProvider interface {
 // ProviderConfig 提供商配置
 type ProviderConfig struct {
 	Name      string             `json:"name"`
-	Type      string             `json:"type"` // openai/anthropic/ollama/dashscope/deepseek
+	Type      string             `json:"type"` // openai/anthropic/ollama/dashscope
 	APIKey    string             `json:"apiKey"`
 	BaseURL   string             `json:"baseUrl"`
 	Models    []string           `json:"models"`

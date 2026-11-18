@@ -539,6 +539,12 @@ type Config struct {
 	// memory 后端与 demo/开发模式不受影响；运行期由 store 层 stub_guard 限频告警兜底。
 	AllowStubStores bool // --allow-stub-stores 允许 SQL 后端桩存储（生产默认 false=拒绝启动）
 
+	// AI Gateway（/ai/chat、/ai/embed、/ai/rag）与 AIOps 是两条独立 LLM 链路。
+	// Providers 为 JSON 数组，元素同 aigateway.ProviderConfig；密钥只应经环境变量传入。
+	// 空串=不注册 Provider（向后兼容）；非法配置在 NewServer 启动时 fail-fast。
+	AIGatewayProviders     string // --ai-gateway-providers / env OPSMESH_AI_GATEWAY_PROVIDERS
+	AIGatewayEmbedProvider string // --ai-gateway-embed-provider / env OPSMESH_AI_GATEWAY_EMBED_PROVIDER；空=openai，单 Provider 时取该 Provider
+
 	// AIOps（故障根因分析 + 智能修复生成 + 自然语言运维）。
 	// 默认关闭（向后兼容）；开启后控制面接入 LLM（Kilo Gateway / OpenAI 兼容接口）做 AIOps。
 	// 相关 API：POST /api/v1/aiops/analyze|remediate|remediate-nl，GET /api/v1/aiops/status。
@@ -756,6 +762,9 @@ func Load() *Config {
 	// 启动守卫豁免：持久化 store + 未开启 require-auth 时默认 fail-fast；
 	// 本开关显式确认「持久化 store 匿名读 API」的风险（仅限隔离 dev lab）。
 	allowInsecureStore := flag.Bool("allow-insecure-store", false, "显式接受持久化 store（--store=mysql 等）在未开启 require-auth 时的匿名读 API 风险（仅限隔离 dev lab）：默认 fail-fast，本开关降级为启动 WARN；或 env OPSMESH_ALLOW_INSECURE_STORE")
+	// AI Gateway Provider 装配：JSON 数组；与下方 AIOps 独立，互不复用开关。
+	aiGatewayProviders := flag.String("ai-gateway-providers", "", "AI Gateway Provider JSON 数组（openai/anthropic/ollama/dashscope；空=不装配，向后兼容）；推荐经 env OPSMESH_AI_GATEWAY_PROVIDERS 传入，避免命令行暴露 apiKey")
+	aiGatewayEmbedProvider := flag.String("ai-gateway-embed-provider", "", "Embed/RAG 默认 Provider 名（空=openai；仅装配一个 Provider 时自动取该 Provider）；或 env OPSMESH_AI_GATEWAY_EMBED_PROVIDER")
 	// AIOps（故障根因分析 + 智能修复生成 + 自然语言运维）：接入 Kilo Gateway / OpenAI 兼容接口。
 	aiopsEnabled := flag.Bool("aiops-enabled", false, "启用 AIOps 引擎（故障根因分析+智能修复+自然语言运维）；默认 false（向后兼容）；或 env OPSMESH_AIOPS_ENABLED")
 	aiopsProvider := flag.String("aiops-provider", "kilo", "AIOps LLM 提供商：kilo|openai|anthropic（默认 kilo，走 Kilo Gateway 路由免费模型）；或 env OPSMESH_AIOPS_PROVIDER")
@@ -989,6 +998,8 @@ func Load() *Config {
 		QuotaMaxAlerts:         valInt("quota-max-alerts", *quotaMaxAlerts, "OPSMESH_QUOTA_MAX_ALERTS"),
 		AllowStubStores:        valBool("allow-stub-stores", *allowStubStores, "OPSMESH_ALLOW_STUB_STORES"),
 		AllowInsecureStore:     valBool("allow-insecure-store", *allowInsecureStore, "OPSMESH_ALLOW_INSECURE_STORE"),
+		AIGatewayProviders:     val("ai-gateway-providers", *aiGatewayProviders, "OPSMESH_AI_GATEWAY_PROVIDERS"),
+		AIGatewayEmbedProvider: val("ai-gateway-embed-provider", *aiGatewayEmbedProvider, "OPSMESH_AI_GATEWAY_EMBED_PROVIDER"),
 		AIOpsEnabled:           valBool("aiops-enabled", *aiopsEnabled, "OPSMESH_AIOPS_ENABLED"),
 		AIOpsProvider:          val("aiops-provider", *aiopsProvider, "OPSMESH_AIOPS_PROVIDER"),
 		AIOpsModel:             val("aiops-model", *aiopsModel, "OPSMESH_AIOPS_MODEL"),
