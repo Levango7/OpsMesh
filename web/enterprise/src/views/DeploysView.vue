@@ -1,11 +1,12 @@
 <template>
   <PageShell :title="$t('deploys.title')" :desc="$t('deploys.subtitle')" testid="deploys" :error="store.error">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div class="row">
       <!-- 左：登记 -->
       <div class="col">
         <div class="card" data-testid="deploys-register-card">
           <h3>{{ $t('deploys.register_title') }}</h3>
-          <form @submit.prevent="onCreate" data-testid="deploys-register-form">
+          <form @submit.prevent="onCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="deploys-register-form">
             <div class="field">
               <label>{{ $t('deploys.name_label') }}</label>
               <input v-model="form.name" required data-testid="input-name" />
@@ -72,8 +73,8 @@
             </template>
             <template #cell-actions="{ row }">
               <div class="row-actions" :data-testid="'deploys-row-' + row.id">
-                <Button variant="primary" size="sm" :disabled="isActing(row.id)" :title="isActing(row.id) ? $t('common.loading') : ''" data-testid="btn-row-execute" @click.stop="onExec(row.id)">▶ {{ $t('deploys.execute') }}</Button>
-                <Button variant="ghost" size="sm" :disabled="isActing(row.id)" :title="isActing(row.id) ? $t('common.loading') : ''" data-testid="btn-row-rollback" @click.stop="onRollback(row.id)">↩ {{ $t('deploys.rollback') }}</Button>
+                <Button variant="primary" size="sm" :disabled="!canWrite || (isActing(row.id))" :title="!canWrite ? $t('common.write_denied') : (isActing(row.id) ? $t('common.loading') : '')" data-testid="btn-row-execute" @click.stop="onExec(row.id)">▶ {{ $t('deploys.execute') }}</Button>
+                <Button variant="ghost" size="sm" :disabled="!canWrite || (isActing(row.id))" :title="!canWrite ? $t('common.write_denied') : (isActing(row.id) ? $t('common.loading') : '')" data-testid="btn-row-rollback" @click.stop="onRollback(row.id)">↩ {{ $t('deploys.rollback') }}</Button>
                 <Button variant="ghost" size="sm" data-testid="btn-row-detail" @click.stop="onOpen(row.id)">{{ $t('deploys.detail_btn') }}</Button>
               </div>
             </template>
@@ -110,6 +111,7 @@
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useDeployStore } from '@/stores/deploy'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -120,6 +122,10 @@ import { fmtTime } from '@/composables/useFormatTime'
 import Button from "@/components/ui/Button.vue"
 
 const store = useDeployStore()
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('deploy:write'))
 const form = reactive({
   name: '', type: 'script', repo_url: '', content: '', path: '', target_ids: ''
 })
