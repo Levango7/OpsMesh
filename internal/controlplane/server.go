@@ -508,10 +508,11 @@ func NewServer(cfg *config.Config) (*Server, error) {
 			},
 		},
 		// M2 集成：初始化告警规则引擎 + 静默器 + 聚合器 + 通知管理器。
-		// 引擎使用 NoopMetricsProvider（无指标源时）；后续可注入基于 store.DeviceMetrics 的 Provider。
+		// 引擎注入基于 store 设备指标的真实 MetricsProvider（#101：此前传 nil ⇒ 降级 Noop
+		// ⇒ Query 恒不可用 ⇒ 任何告警规则都不可能触发）。
 		// 聚合器按 deviceID + severity 分组，每组最多 100 条。
 		// 通知管理器启用 5 分钟去重 + 默认重试策略。
-		alertEngine:     alertengine.NewEngine(nil, nil, nil),
+		alertEngine:     newAlertEngine(st),
 		alertSilencer:   alertengine.NewSilencer(nil),
 		alertAggregator: alertengine.NewAggregator([]string{"deviceID", "severity"}, 100),
 		// 此前两处生产构造都不传 WithChannels ⇒ channels 恒空 ⇒ M2/自动化的通知全部
