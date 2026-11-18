@@ -151,8 +151,8 @@
           </ul>
         </div>
 
-        <Button variant="primary" size="sm" @click="askExecute(remediationPlan)" :disabled="!canWrite || (!remediationPlan.safety.requiresConfirm && !remediateReq.constraints.autoExecute)" data-testid="aiops-execute-plan-btn" :title="canWrite ? '' : $t('common.write_denied')">
-          {{ remediationPlan.safety.requiresConfirm ? $t('aiops.execute_with_confirm') : $t('aiops.execute_plan') }}
+        <Button variant="primary" size="sm" @click="askExecute(remediationPlan)" :disabled="!canWrite || executing || (!remediationPlan.safety.requiresConfirm && !remediateReq.constraints.autoExecute)" data-testid="aiops-execute-plan-btn" :title="canWrite ? '' : $t('common.write_denied')">
+          {{ executing ? $t('aiops.executing') : (remediationPlan.safety.requiresConfirm ? $t('aiops.execute_with_confirm') : $t('aiops.execute_plan')) }}
         </Button>
       </div>
     </div>
@@ -178,7 +178,7 @@
             <code>{{ c.command }}</code> <span class="muted">[agent={{ c.agentID }}]</span>
           </li>
         </ul>
-        <Button variant="primary" size="sm" @click="askExecute(nlPlan)" data-testid="aiops-execute-nl-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('aiops.execute_plan') }}</Button>
+        <Button variant="primary" size="sm" @click="askExecute(nlPlan)" data-testid="aiops-execute-nl-btn" :disabled="!canWrite || executing" :title="canWrite ? '' : $t('common.write_denied')">{{ executing ? $t('aiops.executing') : $t('aiops.execute_plan') }}</Button>
       </div>
     </div>
 
@@ -310,6 +310,9 @@ const nlPlan = ref(null)
 // 执行状态
 const executeResults = reactive([])
 const executeStats = reactive({ dispatched: 0, total: 0 })
+// 执行会真实下发命令：请求未完成前禁用两个执行入口，并在函数入口防重入，
+// 覆盖确认框连点与程序化重复调用，不能只靠按钮 disabled。
+const executing = ref(false)
 
 // 执行确认（2026-11-06 五维排查批 3）：按钮文案自称「需确认」却零拦截（A1/B1 审计），
 // 修复命令 autoExecute 直达目标设备。改走 ConfirmModal；原生 alert 同步换 toast。
@@ -403,6 +406,8 @@ async function runNL() {
 }
 
 async function executePlan(plan) {
+  if (executing.value) return
+  executing.value = true
   const req = { plan, autoExecute: true }
   try {
     const resp = await executeRemediation(req)
@@ -410,8 +415,11 @@ async function executePlan(plan) {
     executeStats.dispatched = resp.dispatched
     executeStats.total = resp.total
     if (activeTab.value !== 'execute') activeTab.value = 'execute'
+    toast.success(t('aiops.execute_success'))
   } catch (e) {
     toast.error((e.j && e.j.error) || t('common.error'))
+  } finally {
+    executing.value = false
   }
 }
 

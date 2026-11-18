@@ -206,6 +206,14 @@ onMounted(() => {
   gap: var(--space-3, 12px);
   margin: var(--space-4, 16px) 0;
 }
+/* 1024 附近原 auto-fill 会排成 3+1：第四张 KPI 独占一行且被拉满。
+   中等宽度固定两列，四卡成 2×2；小屏继续走原自适应，不强行双列。 */
+@media (min-width: 768px) and (max-width: 1100px) {
+  .stats-grid,
+  .stats-skeleton {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .stats-skeleton-card { height: 76px; }
 .stat-card {
   display: flex;
