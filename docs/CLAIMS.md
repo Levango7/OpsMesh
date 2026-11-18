@@ -1436,3 +1436,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [CLAIM] 2026-11-18T16:40:00Z from=kilo ttl=8h scope=internal/gates/tenant_store_verdict_gate_test.go,docs/CLAIMS.md note=批次63 修复 HEAD 红点：为 PR #125 新增的 MemoryBudgetStore 补租户存储裁决登记；并释放狗粮/race 文档的过期认领09d883510f9af5e3c5cca6bce923a144
 [RELEASE] 2026-11-18T14:59:30Z from=kilo scope=docs/abac-m1-m3-dogfood-2026-11-18.md,docs/race-sweep-2026-11-18.md note=批次57 两文档已落 main，证据 8a181a95（dogfood 验收 443 行 + race 报告 138 行同一提交）；按本板 append-only 规则仅追加本行，不删改原行。
+[DONE] 2026-11-18T17:30:00Z from=kilo scope=services/auth-svc/,internal/controlplane/svcproxy/,internal/controlplane/contract_v1_test.go,internal/gates/,docs/api-versioning-policy.md note=批次61-63 收口（auth 切流准备 + v1 契约测试 + 门禁红点修复）
