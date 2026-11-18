@@ -52,6 +52,7 @@ var tenantStoreVerdicts = map[string]storeVerdict{
 	"internal/knowledge/retrieval.go::InMemoryKnowledgeStore": {kindTenantKey, "tenantKey", "internal/knowledge/retrieval.go", "TD-97：同上（知识库）"},
 
 	// —— B 类：对象租户字段 + 方法过滤 ——
+	"internal/cost/memory_budget_store.go::MemoryBudgetStore":      {kindTenantField, "Tenant", "internal/cost/memory_budget_store.go", "预算/告警按 TenantID 作 map key + 对象带 TenantID，GetBudget/ListAlerts 按租户取"},
 	"internal/cmdb/memory.go::MemoryCiStore":                       {kindTenantField, "Tenant", "internal/cmdb/memory.go", "handler 全量传 actx.TenantID；另有 idTakenByOtherTenant 防跨租户 ID 冲突"},
 	"internal/controlplane/flux.go::fluxAppStore":                  {kindTenantField, "Tenant", "internal/controlplane/flux.go", "requireTenantContext + 列表/读按 TenantID 过滤"},
 	"internal/controlplane/server_batch.go::batchStore":            {kindTenantField, "Tenant", "internal/controlplane/server_batch.go", "对象带 TenantID；handler 取 actx.TenantID"},
