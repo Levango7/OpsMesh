@@ -773,6 +773,7 @@
     "enabled": "启用",
     "interval": "间隔",
     "last_sync": "上次同步",
+    "never_synced": "未同步",
     "docs_title": "文档列表",
     "noDocs": "暂无文档。",
     "title_col": "标题",

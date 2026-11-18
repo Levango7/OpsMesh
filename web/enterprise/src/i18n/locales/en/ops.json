@@ -773,6 +773,7 @@
     "enabled": "Enabled",
     "interval": "Interval",
     "last_sync": "Last Sync",
+    "never_synced": "Never synced",
     "docs_title": "Documents",
     "noDocs": "No documents found.",
     "title_col": "Title",

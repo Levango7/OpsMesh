@@ -114,6 +114,8 @@
     "commands": "Commands",
     "safety_notes": "Safety Notes",
     "execute_plan": "Execute Plan",
+    "executing": "Executing…",
+    "execute_success": "Remediation plan executed",
     "execute_with_confirm": "Execute (with Confirmation)",
     "nl_title": "Natural Language to Task",
     "nl_run": "Generate",

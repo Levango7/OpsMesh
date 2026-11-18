@@ -57,6 +57,8 @@
         <template #cell-enabled="{ value }">
           <span :class="value ? 'status-on' : 'status-off'">{{ value ? $t('common.yes') : $t('common.no') }}</span>
         </template>
+        <template #cell-interval="{ value }">{{ formatInterval(value) }}</template>
+        <template #cell-lastSync="{ value }">{{ formatTime(value, $t('knowledge.never_synced')) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
             <Button variant="ghost" size="sm" @click="syncSource(row.source)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('knowledge.sync_one') }}</Button>
@@ -83,6 +85,7 @@
         row-key="id"
       >
         <template #cell-source="{ value }"><span class="source-tag">{{ value }}</span></template>
+        <template #cell-createdAt="{ value }">{{ formatTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
             <Button variant="danger" size="sm" @click="askDelete(row.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
@@ -130,8 +133,8 @@ const sources = ['cmdb', 'alert', 'runbook', 'git', 'confluence', 'manual']
 const syncColumns = [
   { key: 'source', title: t('knowledge.source') },
   { key: 'enabled', title: t('knowledge.enabled'), slot: 'cell-enabled' },
-  { key: 'interval', title: t('knowledge.interval') },
-  { key: 'lastSync', title: t('knowledge.last_sync') },
+  { key: 'interval', title: t('knowledge.interval'), slot: 'cell-interval' },
+  { key: 'lastSync', title: t('knowledge.last_sync'), slot: 'cell-lastSync' },
   { key: 'actions', title: t('knowledge.actions'), slot: 'cell-actions', width: '100px' }
 ]
 
@@ -139,9 +142,30 @@ const docColumns = [
   { key: 'id', title: 'ID' },
   { key: 'title', title: t('knowledge.title_col') },
   { key: 'source', title: t('knowledge.source'), slot: 'cell-source' },
-  { key: 'createdAt', title: t('knowledge.created_at') },
+  { key: 'createdAt', title: t('knowledge.created_at'), slot: 'cell-createdAt' },
   { key: 'actions', title: t('knowledge.actions'), slot: 'cell-actions', width: '100px' }
 ]
+
+// 后端 interval 是 Go Duration 纳秒整数，lastSync/createdAt 可能是 Go 零时间；
+// 原始值直接上表不可读。间隔最多保留一位小数，时间无效时由调用方给空态文案。
+function formatInterval(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  const ns = Number(value)
+  if (!Number.isFinite(ns) || ns < 0) return '—'
+  if (ns === 0) return '0s'
+  const units = [[3600000000000, 'h'], [60000000000, 'm'], [1000000000, 's']]
+  for (const [unitNs, suffix] of units) {
+    if (ns >= unitNs) return `${Math.round((ns / unitNs) * 10) / 10}${suffix}`
+  }
+  return `${Math.round(ns / 1000000)}ms`
+}
+
+function formatTime(value, emptyLabel = '—') {
+  if (!value) return emptyLabel
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() <= 1) return emptyLabel
+  return date.toLocaleString()
+}
 
 async function doSearch() {
   if (!searchQuery.value.trim()) return
