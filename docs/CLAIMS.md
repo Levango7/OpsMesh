@@ -1428,3 +1428,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-18T12:32:00Z from=kilo scope=docs/projects/TD-60-cutover-schedule.md,docs/api-versioning-policy.md,docs/projects/README.md note=TD-60 切流排期 + API 稳定性策略文档；按用户要求未提交、未改代码
 
 [DONE] 2026-11-18T13:30:00Z from=kilo scope=docs/projects/,docs/api-versioning-policy.md,scripts/abac/ note=批次59 收口（M4 soak 计划 + TD-60 排期 + API 稳定性政策 + soak 报表工具 + 文档语义修正）
+
+[DONE] 2026-11-18T14:30:00Z from=kilo scope=docs/projects/delivery-schedule-2026-11-19.md,docs/projects/README.md note=批次60 收口（逐日交付日历 63 天 + 每日/每周门禁 + 6 签字点） commit=4b0ec8ec09d883510f9af5e3c5cca6bce923a144
