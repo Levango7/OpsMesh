@@ -290,6 +290,7 @@ func appendToRoster(path string, names []string, now time.Time) (int, error) {
 	return added, nil
 }
 
+// #nosec G101 -- 这是凭据文件的表头说明，不是凭据；真正的口令仅由调用方参数传入。
 const credentialHeader = "# 一次性口令清单（cutover-migrate）——凭据，勿入库、勿进工单系统；经安全渠道交给用户本人。\n"
 
 // appendCredentialLine 把单个用户的 (用户名, 一次性口令) 立即追加到凭据文件（0600）。

@@ -16,7 +16,7 @@ export const mockUser = {
   permissions: [
     'device:read', 'device:write', 'device:delete', 'provision:execute',
     'task:read', 'task:write', 'task:cancel',
-    'alert:read', 'alert:write',
+    'alert:read', 'alert:write', 'alert:ack', 'alert:silence',
     'cmdb:read',
     'workflow:read',
     'deploy:read',

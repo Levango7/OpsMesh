@@ -408,8 +408,12 @@ func (c *ABACBundleClient) persist(raw []byte) error {
 	}
 	// 目录 fsync 保证 rename 持久（POSIX 有效；Windows 不支持目录 fsync，忽略错误）。
 	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
+		if syncErr := d.Sync(); syncErr != nil {
+			c.log.Debug(context.Background(), "ABAC 策略包目录 fsync 不可用（平台兼容策略忽略）", "err", syncErr.Error())
+		}
+		if closeErr := d.Close(); closeErr != nil {
+			c.log.Debug(context.Background(), "ABAC 策略包目录关闭失败", "err", closeErr.Error())
+		}
 	}
 	return nil
 }

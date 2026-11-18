@@ -115,7 +115,12 @@ func (s *Server) handleAgentABACDecisions(w http.ResponseWriter, r *http.Request
 	now := time.Now().UTC()
 	logs := make([]model.ABACDecisionLog, 0, len(items))
 	for _, d := range items {
-		occurredAt, _ := time.Parse(time.RFC3339, strings.TrimSpace(d.OccurredAt))
+		occurredAt, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(d.OccurredAt))
+		if parseErr != nil {
+			// ValidateBody 已拒绝非法时间；这里是防御分支，避免未来校验变化后写入零时间。
+			logx.Warn(r.Context(), "ABAC 决策时间格式无效，跳过该条", "agentID", agentID, "err", parseErr)
+			continue
+		}
 		logs = append(logs, model.ABACDecisionLog{
 			TenantID:   tenantID,
 			AgentID:    agentID,
