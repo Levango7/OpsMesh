@@ -380,7 +380,8 @@ var (
 // sharedBudgetManager 返回进程内唯一的 BudgetManager（惰性单例）。
 func sharedBudgetManager() *cost.BudgetManager {
 	sharedBudgetsOnce.Do(func() {
-		sharedBudgets = cost.NewBudgetManager()
+		// issue #98：接上 BudgetStore 实现，预算/告警走统一持久化接口而非裸 map。
+		sharedBudgets = cost.NewBudgetManager(cost.NewMemoryBudgetStore())
 	})
 	return sharedBudgets
 }
