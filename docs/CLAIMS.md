@@ -1418,3 +1418,11 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [RELEASE] 2026-11-18T08:41:00Z from=kilo scope=scripts/security/cve-scan.sh note=CI shellcheck 收编已落 main，证据 a0f33290（SC2016 块级豁免，输出逐字节不变）；按本板 append-only 规则仅追加本行，不删改原行。
 [RELEASE] 2026-11-18T08:41:00Z from=kilo scope=internal/controlplane/ansible_ops.go,internal/controlplane/b36_injection_test.go note=ARCH 第七例已落 main，证据 4b02487e（ansible_ops.go 3 builder + b36 守卫）；按本板 append-only 规则仅追加本行，不删改原行。
 [DONE] 2026-11-18T10:30:00Z from=kilo scope=internal/agent/abac_device_guard.go,internal/agent/agent.go,internal/config/config.go,docs/projects/abac-device-engine-charter.md note=批次58 收口（M4 设备端强制机制，默认 off，四道回滚杠杆）
+
+[CLAIM] 2026-11-18T12:15:00Z from=kilo ttl=8h scope=docs/projects/abac-m4-soak-plan.md,scripts/abac/,docs/projects/abac-device-engine-charter.md,docs/projects/README.md note=批次59 文档+工具（不改 Go 代码）：M4 7 天 soak 计划、soak-report 只读报表脚本、owner 决策 1/2 逐字入章程、项目索引状态行
+
+[CLAIM] 2026-11-18T12:12:00Z from=kilo ttl=4h scope=docs/projects/TD-60-cutover-schedule.md,docs/api-versioning-policy.md,docs/projects/README.md note=TD-60 切流排期 + API 稳定性策略文档；README 仅改 TD-60 状态行与「状态口径」表（与批次59 ABAC 行不重叠，已发 board INFO）
+
+[DONE] 2026-11-18T12:26:00Z from=kilo scope=docs/projects/abac-m4-soak-plan.md,scripts/abac/,docs/projects/abac-device-engine-charter.md,docs/projects/README.md note=批次59 收口（M4 soak 计划 + 只读报表脚本 + owner 决策 1/2 入章程；按用户要求未提交、未改 Go 代码）
+
+[DONE] 2026-11-18T12:32:00Z from=kilo scope=docs/projects/TD-60-cutover-schedule.md,docs/api-versioning-policy.md,docs/projects/README.md note=TD-60 切流排期 + API 稳定性策略文档；按用户要求未提交、未改代码

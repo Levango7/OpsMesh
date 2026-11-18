@@ -1,6 +1,6 @@
 # ABAC 设备侧决策引擎 项目章程
 
-> **状态：已立项（2026-11-17，owner 批准；M1 已完成（2026-11-17），M2 已完成（2026-11-17），M3 已完成（2026-11-17），M4 待启动）**
+> **状态：已立项（2026-11-17，owner 批准；M1–M3 已完成（2026-11-17）；M4 机制已完成（2026-11-18，默认 off），7 天 soak 与选择器放量计划已批准（2026-11-18）；全站 ABAC 强制暂不启用）**
 > **负责人：待定**
 > **日期：2026-11-17**
 > **依据**：`internal/controlplane/abac_ops.go`、`internal/controlplane/abac_engine.go`、`docs/opsmesh-authz-audit-2026-11-04.md`、`docs/projects-2026-11-05.md`
@@ -72,7 +72,7 @@
 | **M1 策略包格式与签名** | 版本化 JSON schema、规范化序列化、Ed25519 签名/验签、bundle 分发端点、密钥轮换与吊销 | 篡改 payload/签名/版本 ⇒ 设备整包拒绝；golden vectors 稳定；同一策略集签名可复现 | 4–6 人日 |
 | **M2 设备端评估器（最小 JSON 策略集）** | agent 侧只读评估器：精确/`*`/`prefix*`、条件等值、deny-overrides、default-deny；与服务端共享 fixture | 共享套件逐条一致；≥10,000 条属性测试 0 不一致；策略 ≤1,000 条时单次评估 P99 ≤10ms（参考设备实测，待复核） | 8–12 人日 |
 | **M3 决策审计回传** | 决策记录 schema、本地环形缓冲、批量上传、幂等键、保留策略、离线标记 | 断网 24h 后重连：决策不丢、重复上传可去重；审计记录含 bundle 版本与 `offline=true` | 5–8 人日 |
-| **M4 灰度（按设备标签）与回滚** | 标签选择器、1%→10%→100% 分批、版本钉定、一键回滚、漂移告警 | 单批回滚 ≤5 分钟；灰度期间决策差异率 0；回滚后设备回到上一 bundle 且审计连续 | 4–6 人日 |
+| **M4 灰度（按设备属性选择器）与回滚** | 属性选择器、分阶段 cohort（1 台→5%→25%→50%→100%）、kill switch/disabled-ids、漂移告警 | 单批回滚 ≤5 分钟；灰度期间 fixture 差异率 0；回滚后审计连续 | 4–6 人日 |
 
 > **M0（前置，不单独计里程碑，已收口）**：owner 已于 2026-11-17 批准立项（撤销“设备端不实现”立场）；策略镜像持久化（批次47，迁移 035）与 `abac:read`/`abac:write` 权限点、评估 API 鉴权收口（批次45）均已落地。剩余 M0 项不再阻塞 M1。
 
@@ -83,7 +83,7 @@
 | **M1** 策略包格式与签名 | **已完成（2026-11-17）** | 规格：[`abac-device-engine-m1-bundle-spec.md`](./abac-device-engine-m1-bundle-spec.md)。证据：`pkg/abacbundle/`（`CanonicalJSON`/`Digest`/`Sign`/`Verify`/`KeySet`，限额与哨兵错误；`go test ./pkg/abacbundle/`）、`internal/controlplane/abac_bundle_endpoint.go`（`GET /api/v1/agent/abac-bundle`，per-agent HMAC、ETag/304、租户隔离、无钥 503；`abac_bundle_endpoint_test.go`）、`internal/agent/abac_bundle_client.go`（HMAC 拉取 + 验签 + 原子 LKG 缓存 0600 + `abac_bundle=v1` 能力上报；`abac_bundle_client_test.go`） |
 | **M2** 设备端评估器 | **已完成（2026-11-17）** | 证据：`pkg/abacbundle/eval.go`（`Evaluate`/`EvaluateBundle`，deny-overrides + default-deny + 条件等值 + 通配/前缀 + 按 ID 字典序 tie-break）、共享 fixture `pkg/abacbundle/testdata/eval_fixtures.json`（**32 条**）由 `pkg/abacbundle/eval_test.go` 与 `internal/controlplane/abac_eval_parity_test.go` 逐例断言两端一致；`internal/agent/abac_local_eval.go` 的 `EvaluateLocal` 每次调用以当前 `KeySet` 重新验签、过期仅标记 `BundleExpired`；不接入请求闸门 |
 | **M3** 决策审计回传 | **已完成（2026-11-17）** | 证据：控制面 `POST /api/v1/agent/abac-decisions`（per-agent HMAC + body digest、≤500 条 / ≤1 MiB、租户取验签身份；`internal/controlplane/abac_decisions_endpoint.go` + `abac_decisions_endpoint_test.go`）、`abac_decision_logs`（迁移 036 + 租户/agent 时间索引 + 保留期清理）、`model.ABACDecisionStore` 三实现（Memory/SQL/MultiSchema）、agent `ABACDecisionReporter`（500 条环形缓冲 / 30s 刷新 / 5xx 重试 / 413 折半 / `abac_decisions=v1`）。保留期默认 **720h**，清理以 **received_at** 为准 |
-| **M4** 灰度与回滚 | 待启动 | 按设备标签灰度 + 回滚（1%→10%→100%，单批回滚 ≤5 分钟）；依赖 M3 的审计连续性；回滚指令格式另行评审 |
+| **M4** 灰度与回滚 | **机制已落地（2026-11-18），计划已批准，生产放量未开始** | 设备侧 `--abac-device-mode`（off/shadow/enforce）+ 属性选择器 + kill switch + disabled-ids（批次58，默认 off）；7 天 soak 后 D9–D13 从 1 台→5%→25%→50%→100% 放量，见 [`abac-m4-soak-plan.md`](./abac-m4-soak-plan.md)；单批回滚 ≤5 分钟；生产放量须过 D8 门禁与 owner 签字 |
 
 ## 6. 验收标准（DoD）
 
@@ -105,7 +105,7 @@
 | 依赖/决策 | 状态 | 说明 |
 |---|---|---|
 | **owner 决策 D1：设备侧评估立项** | **已批准（2026-11-17）** | 决策原文：`2026-11-17 用户批准立项，撤销“设备端不实现”的 501 立场；501 仅保留为“禁止脚本路径伪造判定”的函数级守卫。` 范围：只撤销“设备端评估不实现”，**不撤销**“禁止造假判定”守卫；服务端评估仍是权威默认路径。 |
-| **owner 决策 D2：设备侧决策定位** | **待定** | 建议先做“咨询/审计”（advisory），不直接阻断设备操作；强制模式另行评审。注意：**服务端**定向强制（批次53 的 `--abac-enforce`，默认关闭、按路由白名单 opt-in）是独立开关，不属于 D2，也不改变设备侧定位。 |
+| **owner 决策 D2：设备侧决策定位** | **部分批准（2026-11-18）** | owner 批准“先 7 天 soak，再按设备属性选择器从 shadow → enforce 逐步放量”，默认仍为 off；全站 ABAC 强制暂不启用，只有 RBAC→ABAC 策略基线完成且 shadow would-deny 在关键路径 <1% 时才重新评估（§10.3）。注意：**服务端**定向强制（批次53 的 `--abac-enforce`，默认关闭、按路由白名单 opt-in）是独立开关，不属于 D2，也不改变设备侧定位。 |
 | **owner 决策 D3：签名私钥归属与轮换** | **待定** | 私钥存放、轮换周期、吊销流程需 owner 指定责任方；M1 先支持“配置提供密钥 + 双公钥轮换”，生产密钥托管仍依赖 D3 |
 | 服务端策略镜像持久化 | **已落地**（批次47） | 迁移 035 + 启动装载 + 跨副本刷新；`abacPolicies` 降为评估缓存 |
 | deny 策略创建能力 | 待补 | `policy-create` 仍把 `Effect` 硬编码为 `allow`（`abac_ops.go:229`）；需支持显式 `effect` 并做权限校验 |
@@ -145,7 +145,7 @@
 
 ## 10. 状态与决策记录
 
-- **当前状态：已立项**（2026-11-17，owner 批准）；**负责人：待定**；**M1 已完成（2026-11-17），M2 已完成（2026-11-17），M3 已完成（2026-11-17），M4 待启动**。
+- **当前状态：已立项**（2026-11-17，owner 批准）；**负责人：待定**；**M1–M3 已完成（2026-11-17）；M4 机制已完成（2026-11-18，默认 off），7 天 soak 与选择器放量计划已批准（2026-11-18）；生产放量未开始；全站 ABAC 强制暂不启用**。
 - **owner 决策原文（2026-11-17，逐字记录）**：
 
   > 2026-11-17 用户批准立项，撤销“设备端不实现”的 501 立场；501 仅保留为“禁止脚本路径伪造判定”的函数级守卫。
@@ -165,7 +165,7 @@
 | **M1** 策略包格式与签名 | **已完成（2026-11-17）** | 规格 `docs/projects/abac-device-engine-m1-bundle-spec.md`（bundle v1）；实现 `pkg/abacbundle/` + `internal/controlplane/abac_bundle_endpoint.go` + `internal/agent/abac_bundle_client.go`；M2 待启动 |
 | **M2** 设备端评估器 | **已完成（2026-11-17）** | 设备侧 `pkg/abacbundle.Evaluate` 与服务端 `evaluateABAC` 同语义；32 条共享 fixture 两端逐例一致（`eval_test.go` + `abac_eval_parity_test.go`）；`EvaluateLocal` 每次调用重新验签、过期仅标记；未接入请求闸门 |
 | **M3** 决策审计回传 | **已完成（2026-11-17）** | `POST /api/v1/agent/abac-decisions` + `abac_decision_logs`（迁移 036）+ `ABACDecisionStore` 三实现 + agent 环形缓冲/重试；保留期默认 720h、按 received_at 清理 |
-| **M4** 灰度与回滚 | 待启动 | 按设备标签灰度 + 回滚；等待 M3 审计连续性（已就绪） |
+| **M4** 灰度与回滚 | **机制已完成（2026-11-18）；计划已批准；生产放量未开始** | 设备侧 `DeviceGuard`（批次58）+ 四道回滚杠杆，默认 off；7 天 soak + D9–D13 选择器放量见 [`abac-m4-soak-plan.md`](./abac-m4-soak-plan.md)；D8 门禁与 owner 签字前不进入 enforce |
 
 ### 10.2 决策日志
 
@@ -178,6 +178,21 @@
 | 2026-11-17 | 本草程起草：设备侧引擎待批准；启动需先反转 501 | 本文件（初稿） |
 | **2026-11-17** | **owner 批准立项：撤销“设备端不实现”的 501 立场；501 仅保留为“禁止脚本路径伪造判定”的函数级守卫** | 本节逐字记录；状态改为“已立项”，M1 启动 |
 | **2026-11-17** | **M1 完成（bundle v1 签名库/签发端点/Agent LKG）；M2 完成（设备端评估器 + 32 条共享 fixture 两端逐例一致）；M3 完成（决策审计回传 + 保留期 + Agent 缓冲）** | §5.1 / §10.1 状态表；`CHANGELOG.md` 批次54/55/56 |
+| **2026-11-18** | **M4 机制完成（默认 off，四道回滚杠杆）；owner 批准 7 天 soak + 选择器 shadow→enforce 逐步放量；全站 ABAC 强制暂不启用** | §10.3 逐字记录；[`abac-m4-soak-plan.md`](./abac-m4-soak-plan.md)；`internal/agent/abac_device_guard.go`（批次58） |
+
+### 10.3 owner 决策（2026-11-18，逐字记录）
+
+> 1) M4 放量：批准“先 7 天 soak，再按设备属性选择器从 shadow → enforce 逐步放量”的方案。默认仍为 off。
+>
+> 2) ABAC 全站强制：确认暂不启用；只有当 RBAC→ABAC 策略基线完成且 shadow would-deny 在关键路径 <1% 时才重新评估。
+
+**范围解释（不扩大原文）：**
+
+- 决策 1 只覆盖**设备侧** M4 的 soak 与选择器内逐步放量；执行入口是 `--abac-device-mode`，默认值仍为 `off`，回滚杠杆见本文件「M4 设备侧决策机制」与 [`abac-m4-soak-plan.md`](./abac-m4-soak-plan.md)。
+- 决策 1 不改变服务端定向强制 `--abac-enforce` 的独立 opt-in 定位，也不等于全站强制。
+- 决策 2 的两个前提必须**同时**满足才重新评估全站强制：RBAC→ABAC 策略基线完成、shadow would-deny 在关键路径 <1%。
+- D2 由“待定”更新为“部分批准”；D3（生产私钥托管/轮换责任方）仍待定。
+- 执行计划：D0–D13 阶段、每日指标、晋升门禁、D7 kill-switch 演练与签字责任均落在 [`abac-m4-soak-plan.md`](./abac-m4-soak-plan.md)。
 
 ---
 
@@ -185,7 +200,7 @@
 
 ## 进展记录（2026-11-17）
 
-本节记录设备脚本路径 `evaluate` 501 口径复核后的落地进展。**D1 已于 2026-11-17 批准（见 §10），本草程状态为“已立项（M1 已完成（2026-11-17），M2 已完成（2026-11-17），M3 已完成（2026-11-17），M4 待启动）”；D2/D3 仍待定。**
+本节为 2026-11-17 的历史记录。**D1 已于 2026-11-17 批准（见 §10）；当时状态为“M1–M3 已完成、M4 待启动”。2026-11-18 更新：M4 机制已完成并批准 7 天 soak + 选择器放量计划（§10.3），D2 部分批准，D3 仍待定；最新状态以 §10.1/§10.3 为准。**
 
 - **501 守卫保留（不反转）**：`buildABACScript` 的 `evaluate` 分支继续显式返回 501（`internal/controlplane/abac_ops.go:40-52`）。理由：该分支是**函数级守卫**，用于阻止设备脚本路径伪造 ALLOWED 判定；HTTP `POST /api/v1/abac action=evaluate` 早已由服务端真实引擎决策（200），守卫只覆盖不可能产出判定的脚本通道。文案改述为 “device-script evaluation is intentionally disabled; the HTTP evaluate path is served by the server-side engine with device-context enrichment”，由 `TestBuildABACScript_EvaluateIsExplicit501`（`internal/controlplane/abac_ops_security_test.go:91`）钉住 501 与关键措辞。
 - **设备上下文增强已落地**：HTTP evaluate 带 `deviceID` 时，先查设备（不存在 404；跨租户 403，与不存在同形不泄露存在性），再把设备属性（`deviceID/hostname/segment/os/arch/state/taskState/agentID/managed`，空字符串跳过）注入策略上下文（`internal/controlplane/abac_ops.go:102-170`，属性展开见 `abac_ops.go:58-78`）。合并规则：**调用方自带键优先**，设备属性只补空缺，绝不覆盖调用方显式上下文；顶层扁平键供现有等值条件匹配，另附嵌套 `device` 对象副本（调用方已提供 `device` 时同样不覆盖）。响应新增 `evaluatedBy`（`server` / `server+device-context`）与 `deviceContext`（实际注入子集）供审计。用例：`abac_ops_security_test.go:163`（同租户注入并命中）、`:197`（跨租户 403 无决策字段）、`:214`（未知设备 404）、`:227`（调用方键不被覆盖）、`:256`（非法 context JSON 400）、`:266`（无 deviceID 时 `evaluatedBy=server`）。
@@ -227,7 +242,7 @@
 
 ## M4 设备侧决策机制（默认关闭，2026-11-18）
 
-本节记录 **M4 机制**（设备侧决策闸门 + 灰度/回滚开关）的落地口径。**默认 `off`，不改变任何既有行为**；只有显式开启 `shadow`/`enforce` 才会在 agent 任务执行路径上做本地 ABAC 决策。
+本节记录 **M4 机制**（设备侧决策闸门 + 灰度/回滚开关）的落地口径。**默认 `off`，不改变任何既有行为**；只有显式开启 `shadow`/`enforce` 才会在 agent 任务执行路径上做本地 ABAC 决策。生产启用必须按 [`abac-m4-soak-plan.md`](./abac-m4-soak-plan.md) 执行，D8 门禁与 owner 签字前不得进入 enforce。
 
 ### 配置语法
 
@@ -281,7 +296,7 @@
 
 ### 启用生产前的剩余项
 
-本批只交付 **M4 机制**，不构成生产启用依据。按 `docs/abac-m1-m3-dogfood-2026-11-18.md` §7 的 7 天 soak 口径，至少需要：
+本批只交付 **M4 机制**，不构成生产启用依据。7 天 soak 的执行、每日指标、晋升门禁、回滚演练与签字责任以 [`abac-m4-soak-plan.md`](./abac-m4-soak-plan.md) 为准；下列条目是该计划的检查面摘要，至少需要：
 
 1. **策略包拉取健康度**：每 agent 每小时 200/304 比例（稳态 >99% 304）、p95 拉取延迟、超时、401 原因分布（缺头/时钟偏移/签名不符）；`bundleId`/`digest` 仅在策略变化或 TTL 到期时变化。
 2. **签名/缓存完整性**：`Verify` 失败为 0；首次成功拉取后 `ErrNoBundle` 为 0；POSIX 下缓存 0600、无 `.abac-bundle-*.tmp` 残留、重启先加载 LKG。
@@ -290,4 +305,4 @@
 5. **决策面观察**：`shadow` 期统计 would-deny 率、`BundleExpired` 决策、allow/deny 体积；在进入 `enforce` 前定义每条路径的 fail-open/fail-closed 口径。
 6. **重启/故障演练**：控制面重启后策略与决策日志不丢；agent 保留 LKG 并恢复 304 轮询；MySQL/Redis 故障时签名（本地）不受影响、store 读取可预期降级。
 
-在 7 天 soak 数据齐备且上述指标达标前，生产部署保持 `--abac-device-mode=off`（默认）。
+在 7 天 soak 数据齐备、D8 门禁通过且 owner 签字前，生产部署保持 `--abac-device-mode=off`（默认）；任何阶段未过门禁即停在当前阶段或回滚。全站 ABAC 强制不因本计划自动启用（§10.3 决策 2）。
