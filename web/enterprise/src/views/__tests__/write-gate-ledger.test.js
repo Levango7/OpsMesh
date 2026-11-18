@@ -66,7 +66,20 @@ const GATED = [
   ['KnowledgeView.vue', 'knowledge:write'],
   ['MiddlewareDeployView.vue', 'middleware:write/execute'],
   ['NetworkDevicesView.vue', 'network:write'],
-  ['WorkflowsView.vue', 'workflow:write']
+  ['WorkflowsView.vue', 'workflow:write'],
+  ['AIPromptsView.vue', 'ai:write'],
+  ['AgentView.vue', 'ai:write'],
+  ['AutoscalerView.vue', 'autoscaler:write'],
+  ['BotView.vue', 'bot:write'],
+  ['CanaryView.vue', 'task:write'],
+  ['CostView.vue', 'cost:write'],
+  ['DeploysView.vue', 'deploy:write'],
+  ['DeviceDiscoveryView.vue', 'device:delete/provision:execute'],
+  ['FederationDeploysView.vue', 'deploy:write'],
+  ['OSOptimizeView.vue', 'os:write/execute'],
+  ['PlatformConfigView.vue', 'platform:write'],
+  ['PluginView.vue', 'plugin:write'],
+  ['PortalView.vue', 'portal:write']
 ]
 
 // —— 欠账（matrix 实测：调用写端点但视图内无对应 hasPerm）。每挂完一个视图，把它从这里挪到 GATED。
@@ -74,30 +87,17 @@ const GATED = [
 // 注：PermissionsView 与 DeviceDetailView 经核对为纯只读页（仅 GET listPermissions / fetchMetrics），
 // 无任何可变控件，故保留在 PENDING，不为了台账好看而添加无意义的 hasPerm。
 const PENDING = [
-  ['AIPromptsView.vue', 'ai:write'],
   ['AIRagView.vue', 'ai:write'],
-  ['AgentView.vue', 'ai:write'],
   ['AutoProvisionView.vue', 'provision:execute'],
-  ['AutoscalerView.vue', 'autoscaler:write'],
   ['BatchView.vue', 'task:write'],
-  ['BotView.vue', 'bot:write'],
-  ['CanaryView.vue', 'task:write'],
   ['ConfigHotpushView.vue', 'cmdb:write'],
-  ['CostView.vue', 'cost:write'],
-  ['DeploysView.vue', 'deploy:write'],
   ['DeviceDetailView.vue', 'device:delete/provision:execute'],
-  ['DeviceDiscoveryView.vue', 'device:delete/provision:execute'],
-  ['FederationDeploysView.vue', 'deploy:write'],
   ['FederationView.vue', 'federation:write'],
   ['GitOpsDashboardView.vue', 'argocd:write/flux:write'],
   ['NetworkDiagnoseView.vue', 'network:write'],
   ['NetworkTopologyView.vue', 'network:write'],
-  ['OSOptimizeView.vue', 'os:write/execute'],
   ['OverviewView.vue', 'alert:ack/workflow:write'],
   ['PermissionsView.vue', 'role:write/user:write'],
-  ['PlatformConfigView.vue', 'platform:write'],
-  ['PluginView.vue', 'plugin:write'],
-  ['PortalView.vue', 'portal:write']
 ]
 
 // 先行两批用的是自有 testid（历史形态，保留）

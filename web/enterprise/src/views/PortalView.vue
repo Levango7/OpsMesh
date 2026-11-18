@@ -5,6 +5,7 @@
     testid="portal"
     :error="store.error"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 成本概览 -->
     <div class="metrics-row">
       <MetricsCard :title="$t('portal.totalCost')" icon="cmdb" accent="--accent">
@@ -64,7 +65,7 @@
             <input v-model="requestForm.reason" :placeholder="$t('portal.reasonPlaceholder')" data-testid="portal-request-reason" />
           </div>
           <div class="btnbar">
-            <Button variant="primary" size="md" @click="submitRequest" :disabled="submitting" data-testid="portal-submit-btn">{{ $t('portal.submit') }}</Button>
+            <Button variant="primary" size="md" @click="submitRequest" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (submitting)" data-testid="portal-submit-btn">{{ $t('portal.submit') }}</Button>
           </div>
           <p v-if="requestMsg" :class="['msg', requestOk ? 'ok' : 'err']">{{ requestMsg }}</p>
         </div>
@@ -101,8 +102,8 @@
         <template #cell-requester="{ value }">{{ value || '-' }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
-            <Button variant="primary" size="sm" @click="onApprove(row.id)" data-testid="portal-approve-btn">{{ $t('portal.approve') }}</Button>
-            <Button variant="ghost" size="sm" style="color: var(--fail); border-color: var(--fail)" @click="onReject(row.id)" data-testid="portal-reject-btn">{{ $t('portal.reject') }}</Button>
+            <Button variant="primary" size="sm" @click="onApprove(row.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="portal-approve-btn">{{ $t('portal.approve') }}</Button>
+            <Button variant="ghost" size="sm" style="color: var(--fail); border-color: var(--fail)" @click="onReject(row.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="portal-reject-btn">{{ $t('portal.reject') }}</Button>
           </div>
         </template>
       </DataTable>
@@ -123,6 +124,7 @@
 import PageShell from '@/components/PageShell.vue'
 
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { usePortalStore } from '@/stores/portal'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -134,6 +136,10 @@ import Button from "@/components/ui/Button.vue"
 
 const store = usePortalStore()
 
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('portal:write'))
 const requestCols = computed(() => [
   { key: 'id', title: t('portal.col.requestId') },
   { key: 'type', title: t('portal.col.type'), slot: 'cell-type' },

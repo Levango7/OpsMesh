@@ -5,8 +5,9 @@
     testid="ai-prompts"
     :error="store.error"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate" data-testid="ai-prompts-create-btn">
+      <Button variant="primary" size="md" @click="openCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="ai-prompts-create-btn">
         <Icon name="add" :size="14" /> {{ $t('prompts.add') }}
       </Button>
       <Button variant="ghost" size="md" @click="reload"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
@@ -26,15 +27,15 @@
       </template>
       <template #cell-actions="{ row }">
         <div class="row-actions">
-          <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="ai-prompts-edit-btn"><Icon name="edit" :size="13" /></Button>
-          <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="ai-prompts-delete-btn"><Icon name="delete" :size="13" /></Button>
+          <Button variant="ghost" size="sm" @click="openEdit(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="ai-prompts-edit-btn"><Icon name="edit" :size="13" /></Button>
+          <Button variant="danger" size="sm" @click="onDelete(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="ai-prompts-delete-btn"><Icon name="delete" :size="13" /></Button>
         </div>
       </template>
     </DataTable>
 
     <!-- 新增/编辑 -->
     <DetailDrawer :open="!!form" :title="form && form.id ? $t('prompts.edit') : $t('prompts.add')" @close="form = null">
-      <form v-if="form" class="entity-form" @submit.prevent="onSave">
+      <form v-if="form" class="entity-form" @submit.prevent="onSave" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <div class="field">
           <label>{{ $t('prompts.field_name') }}</label>
           <input v-model.trim="form.name" type="text" required :placeholder="$t('prompts.field_name_placeholder')" />
@@ -76,6 +77,7 @@
 // 属死 API 面清查交产品裁后补的缺口。写权限（create/update/delete）走 ai:write，
 // 本页路由门挂 ai:read（读即可进页，写操作在后端另行 403 并弹错）。
 import { ref, computed, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
 import PageShell from '@/components/PageShell.vue'
 import DataTable from '@/components/DataTable.vue'
@@ -87,6 +89,10 @@ import { useAIPromptsStore } from '@/stores/ai-prompts'
 
 const store = useAIPromptsStore()
 
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('ai:write'))
 const columns = computed(() => [
   { key: 'name', label: t('prompts.col_name') },
   { key: 'category', label: t('prompts.col_category') },

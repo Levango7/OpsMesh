@@ -5,6 +5,7 @@
     testid="os-optimize"
     :error="store.error || loadErr"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 分类筛选：保留原位（骨架默认插槽内，头部之下） -->
     <div class="cat-filter">
       <Button
@@ -40,7 +41,7 @@
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
             <Button variant="ghost" size="sm" @click="onView(row.id)">{{ $t('osopt.view') }}</Button>
-            <Button variant="primary" size="sm" @click="onExecute(row.id)">{{ $t('osopt.execute') }}</Button>
+            <Button variant="primary" size="sm" @click="onExecute(row.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('osopt.execute') }}</Button>
           </div>
         </template>
       </DataTable>
@@ -73,7 +74,7 @@
           </DataTable>
         </div>
         <div class="btnbar">
-          <Button variant="primary" size="sm" @click="onExecute(tpl.id)">{{ $t('osopt.execute') }}</Button>
+          <Button variant="primary" size="sm" @click="onExecute(tpl.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('osopt.execute') }}</Button>
         </div>
       </div>
     </DetailDrawer>
@@ -112,7 +113,7 @@
             <textarea v-model="execForm.rawParams" rows="3" placeholder="param1&#10;param2"></textarea>
           </div>
           <div class="btnbar">
-            <Button variant="primary" size="sm" @click="confirmExec" :disabled="executing">{{ $t('osopt.confirm') }}</Button>
+            <Button variant="primary" size="sm" @click="confirmExec" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (executing)">{{ $t('osopt.confirm') }}</Button>
             <Button variant="ghost" size="sm" @click="closeExec">{{ $t('osopt.cancel') }}</Button>
           </div>
           <p v-if="execMsg" :class="['msg', execOk ? 'ok' : 'err']">{{ execMsg }}</p>
@@ -131,6 +132,7 @@ import PageShell from '@/components/PageShell.vue'
 
 // OS 基础环境优化 — 模板列表 + 分类筛选 + 详情抽屉 + 执行对话框 + 日志轮询
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useOSOptimizeStore } from '@/stores/os-optimize'
 import { getOSTemplate } from '@/api/os-optimize'
 import { getTaskDetail } from '@/api/task'
@@ -142,6 +144,10 @@ import { Button } from '@/components/ui'
 
 const store = useOSOptimizeStore()
 // 模板详情加载失败此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('os:write/execute'))
 const loadErr = ref('')
 
 // 分类列表（与个人版对齐：内核/网络/安全/时间/SSH/磁盘/系统/用户/存储/服务/监控）

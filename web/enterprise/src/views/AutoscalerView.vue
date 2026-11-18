@@ -5,13 +5,14 @@
     testid="autoscaler"
     :error="store.error"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div class="row">
       <!-- 左：扩缩容规则 -->
       <div class="col">
         <div class="card">
           <div class="flowbar">
             <h3 style="margin: 0">{{ $t('autoscaler.rules') }}</h3>
-            <Button variant="primary" size="sm" @click="openAddRule" data-testid="autoscaler-add-btn">{{ $t('autoscaler.addRule') }}</Button>
+            <Button variant="primary" size="sm" @click="openAddRule" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="autoscaler-add-btn">{{ $t('autoscaler.addRule') }}</Button>
             <Button variant="ghost" size="sm" @click="store.fetchRules()">↻ {{ $t('common.refresh') }}</Button>
           </div>
           <div v-if="store.loading && !store.rules.length" class="muted">{{ $t('common.loading') }}</div>
@@ -26,8 +27,8 @@
             <template #cell-threshold="{ value }">{{ value || 0 }}%</template>
             <template #cell-actions="{ row }">
               <div class="row-actions" @click.stop>
-                <Button variant="ghost" size="sm" @click="onToggleRule(row)" data-testid="autoscaler-toggle-btn">{{ row.enabled ? $t('autoscaler.disable') : $t('autoscaler.enable') }}</Button>
-                <Button variant="ghost" size="sm" style="color: var(--fail); border-color: var(--fail)" @click="onDeleteRule(row.id)" data-testid="autoscaler-delete-btn">{{ $t('common.delete') }}</Button>
+                <Button variant="ghost" size="sm" @click="onToggleRule(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="autoscaler-toggle-btn">{{ row.enabled ? $t('autoscaler.disable') : $t('autoscaler.enable') }}</Button>
+                <Button variant="ghost" size="sm" style="color: var(--fail); border-color: var(--fail)" @click="onDeleteRule(row.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="autoscaler-delete-btn">{{ $t('common.delete') }}</Button>
               </div>
             </template>
           </DataTable>
@@ -89,7 +90,7 @@
             <input v-model="scaleForm.reason" :placeholder="$t('autoscaler.reasonPlaceholder')" data-testid="autoscaler-scale-reason" />
           </div>
           <div class="btnbar">
-            <Button variant="primary" size="md" @click="onManualScale" :disabled="scaling" data-testid="autoscaler-scale-btn">{{ $t('autoscaler.trigger') }}</Button>
+            <Button variant="primary" size="md" @click="onManualScale" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (scaling)" data-testid="autoscaler-scale-btn">{{ $t('autoscaler.trigger') }}</Button>
           </div>
           <p v-if="scaleMsg" :class="['msg', scaleOk ? 'ok' : 'err']">{{ scaleMsg }}</p>
         </div>
@@ -134,7 +135,7 @@
             <input v-model.number="addForm.cooldown" type="number" min="0" data-testid="autoscaler-add-cooldown" />
           </div>
           <div class="btnbar">
-            <Button variant="primary" size="md" @click="confirmAddRule" :disabled="adding" data-testid="autoscaler-add-confirm">{{ $t('common.confirm') }}</Button>
+            <Button variant="primary" size="md" @click="confirmAddRule" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (adding)" data-testid="autoscaler-add-confirm">{{ $t('common.confirm') }}</Button>
             <Button variant="ghost" size="md" @click="addOpen = false">{{ $t('common.cancel') }}</Button>
           </div>
           <p v-if="addMsg" :class="['msg', addOk ? 'ok' : 'err']">{{ addMsg }}</p>
@@ -161,6 +162,7 @@
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useAutoscalerStore } from '@/stores/autoscaler'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -170,6 +172,10 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const store = useAutoscalerStore()
 
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('autoscaler:write'))
 const ruleCols = computed(() => [
   { key: 'name', title: t('autoscaler.col.rule'), slot: 'cell-name' },
   { key: 'metric', title: t('autoscaler.col.metric'), slot: 'cell-metric' },

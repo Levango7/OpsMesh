@@ -1,5 +1,6 @@
 <template>
   <PageShell :title="$t('plugin.title')" :desc="$t('plugin.desc')" testid="plugin" :error="store.error">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 搜索 -->
     <div class="flowbar search-bar">
       <div class="field search-field">
@@ -37,14 +38,14 @@
         <div class="plugin-actions" @click.stop>
           <Button
             variant="primary" size="sm" v-if="p.status !== 'installed'"
-            @click="onInstall(p.id)"
+            @click="onInstall(p.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"
             data-testid="plugin-install-btn"
           >{{ $t('plugin.install') }}</Button>
           <Button
             variant="ghost" size="sm" v-else
 
             style="color: var(--fail); border-color: var(--fail)"
-            @click="onUninstall(p.id)"
+            @click="onUninstall(p.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"
             data-testid="plugin-uninstall-btn"
           >{{ $t('plugin.uninstall') }}</Button>
         </div>
@@ -78,7 +79,8 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, computed} from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import PageShell from '@/components/PageShell.vue'
 import { usePluginStore } from '@/stores/plugin'
 import { t } from '@/i18n'
@@ -89,6 +91,10 @@ import { toast } from '@/utils/toast'
 import Button from "@/components/ui/Button.vue"
 
 const store = usePluginStore()
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('plugin:write'))
 const searchInput = ref('')
 const detailOpen = ref(false)
 
