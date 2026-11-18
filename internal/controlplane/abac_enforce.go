@@ -15,6 +15,7 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -107,11 +108,11 @@ func compileABACEnforceRules(cfg *config.Config) []abacEnforceRule {
 	for _, entry := range cfg.ABACEnforce {
 		method, path, err := config.ParseABACEnforceEntry(entry)
 		if err != nil {
-			logx.Warn(nil, "abac enforce: ignoring invalid allowlist entry", "entry", entry, "err", err)
+			logx.Warn(context.Background(), "abac enforce: ignoring invalid allowlist entry", "entry", entry, "err", err)
 			continue
 		}
 		if abacEnforceExcludedPath(path) {
-			logx.Warn(nil, "abac enforce: ignoring excluded allowlist entry", "entry", entry)
+			logx.Warn(context.Background(), "abac enforce: ignoring excluded allowlist entry", "entry", entry)
 			continue
 		}
 		key := method + " " + path

@@ -435,8 +435,14 @@ func (r *ABACDecisionReporter) post(ctx context.Context, body []byte) (int, []by
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	// 状态码仍是主判据；读取失败保留已有状态与部分 body，不把成功回传误判为失败。
+	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	if readErr != nil {
+		r.log.Debug(ctx, "ABAC 决策回传响应体读取失败", "agentID", r.agentID, "err", readErr.Error())
+	}
+	if _, copyErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20)); copyErr != nil {
+		r.log.Debug(ctx, "ABAC 决策回传剩余响应体排空失败", "agentID", r.agentID, "err", copyErr.Error())
+	}
 	return resp.StatusCode, respBody, nil
 }
 

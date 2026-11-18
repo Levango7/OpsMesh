@@ -56,13 +56,16 @@ func NewInMemoryDiscoveryFromAddrs(serviceName, addrs string) *InMemoryDiscovery
 			continue
 		}
 		addr, port := parseAddrPort(raw)
-		_ = d.Register(context.Background(), Service{
+		if err := d.Register(context.Background(), Service{
 			ID:      raw,
 			Name:    serviceName,
 			Addr:    addr,
 			Port:    port,
 			Healthy: true,
-		})
+		}); err != nil {
+			// 当前内存实现不会失败；若未来增加校验，坏条目不能静默混入发现表。
+			continue
+		}
 	}
 	return d
 }
@@ -138,7 +141,7 @@ func (d *InMemoryDiscovery) Register(ctx context.Context, svc Service) error {
 
 	for _, ch := range chans {
 		func(ch chan []Service) {
-			defer func() { recover() }()
+			defer func() { recovered := recover(); _ = recovered }()
 			select {
 			case ch <- snap:
 			default:
@@ -170,7 +173,7 @@ func (d *InMemoryDiscovery) Deregister(ctx context.Context, serviceName, address
 
 	for _, ch := range chans {
 		func(ch chan []Service) {
-			defer func() { recover() }()
+			defer func() { recovered := recover(); _ = recovered }()
 			select {
 			case ch <- snap:
 			default:
@@ -243,7 +246,7 @@ func (d *InMemoryDiscovery) Watch(ctx context.Context, serviceName string) (<-ch
 		d.mu.Unlock()
 		// 避免重复关闭
 		func() {
-			defer func() { recover() }()
+			defer func() { recovered := recover(); _ = recovered }()
 			close(ch)
 		}()
 	}()
@@ -259,7 +262,7 @@ func (d *InMemoryDiscovery) Watch(ctx context.Context, serviceName string) (<-ch
 		}
 		d.mu.Unlock()
 		func() {
-			defer func() { recover() }()
+			defer func() { recovered := recover(); _ = recovered }()
 			close(ch)
 		}()
 	}
@@ -287,7 +290,7 @@ func (d *InMemoryDiscovery) MarkHealthy(ctx context.Context, serviceName, addres
 
 	for _, ch := range chans {
 		func(ch chan []Service) {
-			defer func() { recover() }()
+			defer func() { recovered := recover(); _ = recovered }()
 			select {
 			case ch <- snap:
 			default:
