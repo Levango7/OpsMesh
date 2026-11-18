@@ -609,6 +609,9 @@ func (s *Server) Start() error {
 			errCh <- fmt.Errorf("grpc: %w", err)
 		}
 	}()
+	// issue #121：gRPC server 已开始监听后再初始化 task-svc 客户端——消除
+	// "客户端早于 server 就绪" 的启动竞态。NewServer 阶段预装的存根在此被升级为真实连接。
+	s.initTaskClients()
 	go func() {
 		if err := metricsSrv.Serve(metricsLis); err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("metrics: %w", err)

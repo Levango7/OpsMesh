@@ -1037,60 +1037,107 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		bus:      bus,
 	})
 
-	// TD-60 任务域切流：初始化选主客户端（gRPC 调用 task-svc LeaderElectorService）。
-	// 使用 task-svc 的 gRPC 地址（默认 localhost:9090，可通过配置覆盖）。
-	// 若配置为空或连接失败，回退到存根实现（单副本/开发模式）。
-	if cfg.TaskSvcGRPCAddr != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		client, err := NewGRPCLeaderElectorClient(ctx, cfg.TaskSvcGRPCAddr)
-		if err != nil {
-			logx.Warn(context.Background(), "Task leader 客户端初始化失败，回退存根", "err", err)
-			s.electorClient = NewStubLeaderElectorClient(true)
-		} else {
-			s.electorClient = client
-			logx.Info(context.Background(), "Task leader 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
-		}
-		cancel()
-	} else {
-		s.electorClient = NewStubLeaderElectorClient(true)
-		logx.Info(context.Background(), "Task leader 客户端使用存根实现（单副本/开发模式）")
-	}
-
-	// TD-60 任务域切流：初始化任务服务 gRPC 客户端（HTTP 代理转发到 task-svc TaskService）。
-	if cfg.TaskSvcGRPCAddr != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		client, err := NewGRPCTaskServiceClient(ctx, cfg.TaskSvcGRPCAddr)
-		if err != nil {
-			logx.Warn(context.Background(), "Task service 客户端初始化失败，回退存根", "err", err)
-			s.taskServiceClient = NewStubTaskServiceClient()
-		} else {
-			s.taskServiceClient = client
-			logx.Info(context.Background(), "Task service 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
-		}
-		cancel()
-	} else {
-		s.taskServiceClient = NewStubTaskServiceClient()
-		logx.Info(context.Background(), "Task service 客户端使用存根实现（单副本/开发模式）")
-	}
-
-	// TD-60 任务域切流：初始化任务结果服务 gRPC 客户端（HTTP 代理转发到 task-svc ResultService）。
-	if cfg.TaskSvcGRPCAddr != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		client, err := NewGRPCResultServiceClient(ctx, cfg.TaskSvcGRPCAddr)
-		if err != nil {
-			logx.Warn(context.Background(), "Result service 客户端初始化失败，回退存根", "err", err)
-			s.resultServiceClient = NewStubResultServiceClient()
-		} else {
-			s.resultServiceClient = client
-			logx.Info(context.Background(), "Result service 客户端初始化成功", "target", cfg.TaskSvcGRPCAddr)
-		}
-		cancel()
-	} else {
-		s.resultServiceClient = NewStubResultServiceClient()
-		logx.Info(context.Background(), "Result service 客户端使用存根实现（单副本/开发模式）")
-	}
+	// TD-60 任务域切流：task-svc 的三个 gRPC 客户端延迟到 Start() 里初始化。
+	//
+	// 修 issue #121：此前在 NewServer 阶段就 grpc.Dial(task-svc)，而控制面自己的 gRPC
+	// server 要到 Start() 才 net.Listen/Serve。demo/单副本默认的 task-svc 地址就是本机
+	// 9090（与控制面同端口、且只提供 Registration service）⇒ 必然 5s 超时回退存根，
+	// 且 agent 注册也因 gRPC server 尚未监听而重试多次。
+	//
+	// 现在 NewServer 先装存根（保证客户端非 nil、NewServer 后即可用），真正的连接
+	// 由 initTaskClients() 在 Start() 的 gRPC Serve 之后完成——消除"客户端早于 server"的
+	// 顺序竞态。生产环境（独立 task-svc 已起）连接正常，行为不变。
+	s.electorClient = NewStubLeaderElectorClient(true)
+	s.taskServiceClient = NewStubTaskServiceClient()
+	s.resultServiceClient = NewStubResultServiceClient()
 
 	return s, nil
+}
+
+// initTaskClients 在 Start() 的 gRPC server 就绪后调用，把 NewServer 阶段预装的存根
+// 升级为真实 task-svc gRPC 客户端（issue #121）。
+//
+// 每个客户端独立做有限重试 + 退避：task-svc 可能与控制面同时启动、稍晚才就绪；
+// 一次 5s 超时就永久回退存根会让任务功能在整个进程生命周期内不可用。
+// 重试全部失败仍回退存根（单副本/开发模式的正常降级），但不再是启动期顺序竞态的牺牲品。
+//
+// 注意：本方法只在 Start() 中调用一次；过早调用（NewServer 阶段）会因控制面 gRPC
+// server 尚未监听而误判——这正是本方法被延后的原因。
+func (s *Server) initTaskClients() {
+	target := s.cfg.TaskSvcGRPCAddr
+	if target == "" {
+		logx.Info(context.Background(), "Task 客户端使用存根实现（task-svc 地址未配置）")
+		return
+	}
+	// 单副本/demo 默认地址与控制面 gRPC 端口相同：此时对侧不提供 task-svc 服务，
+	// 连接会得到 Unimplemented。仍尝试一次以覆盖"用户确实在同端口起了 task-svc"的情况，
+	// 失败即保留存根，避免多轮无意义重试拖慢启动。
+	attempts := 2
+	backoff := 200 * time.Millisecond
+
+	{
+		var lastErr error
+		for i := 0; i < attempts; i++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			client, err := NewGRPCLeaderElectorClient(ctx, target)
+			cancel()
+			if err == nil {
+				s.electorClient = client
+				logx.Info(context.Background(), "Task leader 客户端初始化成功", "target", target)
+				lastErr = nil
+				break
+			}
+			lastErr = err
+			if i+1 < attempts {
+				time.Sleep(backoff)
+			}
+		}
+		if lastErr != nil {
+			logx.Warn(context.Background(), "Task leader 客户端初始化失败，保留存根", "err", lastErr)
+		}
+	}
+	{
+		var lastErr error
+		for i := 0; i < attempts; i++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			client, err := NewGRPCTaskServiceClient(ctx, target)
+			cancel()
+			if err == nil {
+				s.taskServiceClient = client
+				logx.Info(context.Background(), "Task service 客户端初始化成功", "target", target)
+				lastErr = nil
+				break
+			}
+			lastErr = err
+			if i+1 < attempts {
+				time.Sleep(backoff)
+			}
+		}
+		if lastErr != nil {
+			logx.Warn(context.Background(), "Task service 客户端初始化失败，保留存根", "err", lastErr)
+		}
+	}
+	{
+		var lastErr error
+		for i := 0; i < attempts; i++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			client, err := NewGRPCResultServiceClient(ctx, target)
+			cancel()
+			if err == nil {
+				s.resultServiceClient = client
+				logx.Info(context.Background(), "Result service 客户端初始化成功", "target", target)
+				lastErr = nil
+				break
+			}
+			lastErr = err
+			if i+1 < attempts {
+				time.Sleep(backoff)
+			}
+		}
+		if lastErr != nil {
+			logx.Warn(context.Background(), "Result service 客户端初始化失败，保留存根", "err", lastErr)
+		}
+	}
 }
 
 // firstNonEmpty 返回第一个非空字符串，全空返回空串。用于服务名默认值回退。
