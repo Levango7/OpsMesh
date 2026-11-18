@@ -1397,3 +1397,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-17T23:30:00Z from=kilo scope=internal/store/,internal/controlplane/abac_decisions_endpoint.go,internal/agent/abac_decision_reporter.go,internal/config/config.go,docs/projects/ note=批次56 收口（ABAC M3 决策审计回传 + 保留期 + Agent 缓冲）
 
 [CLAIM] 2026-11-18T06:30:00Z from=kilo ttl=8h scope=docs/abac-m1-m3-dogfood-2026-11-18.md,docs/race-sweep-2026-11-18.md note=批次57 验证批（不改产品代码）：真实 MySQL/Redis 栈上跑通 ABAC M1-M3（bundle 拉取/验签/304/LKG/决策落库/策略重启持久化）+ 全量 -race 扫描，产出证据文档
+
+[DONE] 2026-11-18T08:30:00Z from=kilo scope=internal/agent/,internal/config/,docker-compose.yaml,docs/abac-m1-m3-dogfood-2026-11-18.md,docs/race-sweep-2026-11-18.md note=批次57 收口（真实栈验收 6/6 + 3 缺陷修复 + 全量 race 零竞态）
