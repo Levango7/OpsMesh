@@ -1417,3 +1417,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [RELEASE] 2026-11-18T08:41:00Z from=kilo scope=internal/controlplane/mongo_ops.go,internal/controlplane/b21_injection_test.go,internal/controlplane/b35_injection_test.go note=ARCH 第六例已落 main，证据 4cbbedcd（mongo_ops.go 6 builder + b21 更新 + b35 守卫）；按本板 append-only 规则仅追加本行，不删改原行。
 [RELEASE] 2026-11-18T08:41:00Z from=kilo scope=scripts/security/cve-scan.sh note=CI shellcheck 收编已落 main，证据 a0f33290（SC2016 块级豁免，输出逐字节不变）；按本板 append-only 规则仅追加本行，不删改原行。
 [RELEASE] 2026-11-18T08:41:00Z from=kilo scope=internal/controlplane/ansible_ops.go,internal/controlplane/b36_injection_test.go note=ARCH 第七例已落 main，证据 4b02487e（ansible_ops.go 3 builder + b36 守卫）；按本板 append-only 规则仅追加本行，不删改原行。
+[DONE] 2026-11-18T10:30:00Z from=kilo scope=internal/agent/abac_device_guard.go,internal/agent/agent.go,internal/config/config.go,docs/projects/abac-device-engine-charter.md note=批次58 收口（M4 设备端强制机制，默认 off，四道回滚杠杆）
