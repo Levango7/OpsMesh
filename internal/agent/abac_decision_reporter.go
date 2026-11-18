@@ -166,6 +166,21 @@ func (r *ABACDecisionReporter) SetBundleIDProvider(fn func() string) {
 	r.mu.Unlock()
 }
 
+// CurrentBundleID 返回当前策略包 ID（未配置 provider 时为空）。
+// 供 DeviceGuard 直接 Record 本地决策时填充 bundleId，保持 M3 审计字段完整。
+func (r *ABACDecisionReporter) CurrentBundleID() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	provider := r.bundleIDProvider
+	r.mu.Unlock()
+	if provider == nil {
+		return ""
+	}
+	return provider()
+}
+
 // Record 非阻塞追加一条记录；容量满时丢最旧并累加 dropped。
 func (r *ABACDecisionReporter) Record(d ABACDecisionRecord) {
 	if r == nil || !r.enabled {

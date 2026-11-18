@@ -1,4 +1,4 @@
-﻿# ABAC 设备侧决策引擎 项目章程
+# ABAC 设备侧决策引擎 项目章程
 
 > **状态：已立项（2026-11-17，owner 批准；M1 已完成（2026-11-17），M2 已完成（2026-11-17），M3 已完成（2026-11-17），M4 待启动）**
 > **负责人：待定**
@@ -224,3 +224,70 @@
 - **行为**：命中白名单且身份/租户已建立时评估一次；`allow` 放行且不改写响应，`deny`/default-deny 返回 403 JSON（`error/reason/matchedPolicyID/enforced`），同时写审计 `abac_enforce_denied`（target=path、detail=reason）并累加 `opsmesh_abac_enforce_decisions_total{decision,method}`。评估器 panic 由 `recover` 兜住并按 fail-closed 返回受控 403。强制面硬排除 `/api/v1/abac*`、`/api/v1/federation/*`、`/healthz`、`/readyz`、`/metrics` 与 `/api/v1/events/stream`。
 - **与 shadow 的关系**：强制中间件位于 `defaultDenyMiddleware` 之内、shadow 之外；shadow 在构造期编译同一份白名单并对命中路由直接让位，避免同一请求被评估两遍。未命中强制白名单的路由仍由 shadow 只观察。
 - **回滚**：清空 `--abac-enforce`（同时移除 preset）即回到 RBAC-only；空白名单在中间件构造期直接返回 `next`，热路径零开销。
+
+## M4 设备侧决策机制（默认关闭，2026-11-18）
+
+本节记录 **M4 机制**（设备侧决策闸门 + 灰度/回滚开关）的落地口径。**默认 `off`，不改变任何既有行为**；只有显式开启 `shadow`/`enforce` 才会在 agent 任务执行路径上做本地 ABAC 决策。
+
+### 配置语法
+
+| 开关 | flag | env | 默认 | 说明 |
+|---|---|---|---|---|
+| 模式 | `--abac-device-mode` | `OPSMESH_ABAC_DEVICE_MODE` | `off` | `off`/`shadow`/`enforce`；非法值在 `Config.Validate` 拒绝启动 |
+| 选择器 | `--abac-device-selector` | `OPSMESH_ABAC_DEVICE_SELECTOR` | 空 | 逗号分隔 `field=value`；空=所有设备命中 |
+| 一键关停 | `--abac-device-kill-switch` | `OPSMESH_ABAC_DEVICE_KILL_SWITCH` | `false` | `true` 时无论 mode 为何都按 `off` 处理 |
+| 单设备豁免 | `--abac-device-disabled-ids` | `OPSMESH_ABAC_DEVICE_DISABLED_IDS` | 空 | 逗号分隔设备 ID；命中设备始终 bypass |
+
+选择器支持字段（全部来自 `DeviceInfo`，设备侧**没有 labels**，因此不提供 label 选择器）：
+
+- `segment`
+- `os`
+- `arch`
+- `hostname`
+- `agent_id`
+
+逐字段**精确匹配**（区分大小写），多个条件为 AND；任一字段不命中即 `bypass`。未知字段在启动期拒绝（`Config.Validate` + `NewDeviceGuard` 双重校验）。
+
+### 决策语义矩阵
+
+| 条件 | Allowed | Enforced | Marker |
+|---|---|---|---|
+| `mode=off` / kill switch / 设备在 disabled 列表 / 选择器不命中 | `true` | `false` | `bypass` |
+| `mode=shadow`（评估成功与否） | `true` | `false` | `shadow` |
+| `mode=enforce`，bundle 正常 | 按本地策略 | `true` | `device` |
+| `mode=enforce`，bundle 缺失/复验失败，action != `read` | `false` | `true` | `device-offline-fail-closed` |
+| `mode=enforce`，bundle 缺失/复验失败，action = `read` | `true` | `false` | `device-offline-fail-open` |
+| `mode=enforce`，bundle 过期，action != `read` | `false` | `true` | `device-offline-fail-closed` |
+| `mode=enforce`，bundle 过期，action = `read` | `true` | `false` | `device-offline-fail-open` |
+
+- `shadow` 只观察：动作始终执行，但 would-be 决策（`Allowed`/`PolicyID`/`reason`）照常写入 M3 决策审计；marker 以 `shadow: ` 前缀写入审计 `reason`（服务端 `mode` 字段仍只接受 `device`/`device-offline`）。
+- `bypass` 路径不做本地评估、不写 M3 审计（与「未启用」等价）。
+- 默认（`off`）下 agent 不构造 `DeviceGuard`，worker 仅多一次 nil 判断，**零评估开销**。
+
+### 接线点
+
+- 构造：`internal/agent/agent.go` 的 `Agent.Run` 在 ABAC 策略包/审计回传初始化之后；仅 `mode != off` 且 kill switch 关闭时构造 `DeviceGuard`（`internal/agent/abac_device_guard.go`）。
+- 执行前决策：`internal/agent/agent.go` 的 `(*Agent).worker`，在 `task:execute` 执行前调用 `Decide("task:execute", resource{deviceID,segment,os,arch,hostname,taskType})`。
+- 拒绝路径：**不执行任务**，回传 `ExitCode=-1` + `Stderr="abac denied: <reason>"`，并写一条 M3 审计（`requestID=taskID`，mode 标记为 `device`/`device-offline`）。
+- 允许路径：正常执行；`shadow` 同时记录 would-be 决策。
+- 本地评估复用 M2 `ABACBundleClient.EvaluateLocal`（每次重新验签 LKG），不新增策略语义。
+
+### 回滚杠杆（按优先级）
+
+1. **`--abac-device-kill-switch=true`**：一键停用（agent 重配置/重启后生效），无需改 mode；true 时按 `off` 处理。
+2. **`--abac-device-disabled-ids=dev-1,dev-2`**：单设备豁免，用于隔离坏设备/异常样本。
+3. **`--abac-device-mode=off`**：整域关闭，回到引入前行为（agent 不构造 guard，零开销）。
+4. **缩小 selector**：把灰度面收敛到指定 `segment/os/arch/hostname/agent_id`。
+
+### 启用生产前的剩余项
+
+本批只交付 **M4 机制**，不构成生产启用依据。按 `docs/abac-m1-m3-dogfood-2026-11-18.md` §7 的 7 天 soak 口径，至少需要：
+
+1. **策略包拉取健康度**：每 agent 每小时 200/304 比例（稳态 >99% 304）、p95 拉取延迟、超时、401 原因分布（缺头/时钟偏移/签名不符）；`bundleId`/`digest` 仅在策略变化或 TTL 到期时变化。
+2. **签名/缓存完整性**：`Verify` 失败为 0；首次成功拉取后 `ErrNoBundle` 为 0；POSIX 下缓存 0600、无 `.abac-bundle-*.tmp` 残留、重启先加载 LKG。
+3. **M3 决策回传**：`accepted/failed/dropped`（目标 `dropped=0`）、`received_at - occurred_at` p50/p95（在线亚秒级，>30s 视为回归）、`abac_decision_logs` 增长与索引健康、保留期清理不误删离线补传。
+4. **两端一致性**：每日重放 32 条共享 fixture（`pkg/abacbundle/testdata` + `abac_eval_parity_test.go`），差异必须为 0；对同一请求元组监控 `server.evaluate` 与 `EvaluateLocal` 分歧。
+5. **决策面观察**：`shadow` 期统计 would-deny 率、`BundleExpired` 决策、allow/deny 体积；在进入 `enforce` 前定义每条路径的 fail-open/fail-closed 口径。
+6. **重启/故障演练**：控制面重启后策略与决策日志不丢；agent 保留 LKG 并恢复 304 轮询；MySQL/Redis 故障时签名（本地）不受影响、store 读取可预期降级。
+
+在 7 天 soak 数据齐备且上述指标达标前，生产部署保持 `--abac-device-mode=off`（默认）。

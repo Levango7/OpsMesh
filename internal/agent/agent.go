@@ -107,6 +107,9 @@ type Agent struct {
 	// ABAC 决策审计回传（M3）：与策略包客户端同时启用（可用 --abac-decision-report 单独关闭）；
 	// nil=未启用。心跳能力声明据此追加 abac_decisions=v1。
 	abacDecisionReporter *ABACDecisionReporter
+	// 设备侧 ABAC 决策闸门（M4）：仅 cfg.ABACDeviceMode != off 且未开 kill switch 时构造；
+	// nil=完全绕过（worker 只做一次 nil 判断，零评估开销）。
+	abacDeviceGuard *DeviceGuard
 }
 
 // New 构造 agent（读取 hostname，作为注册信息）。
@@ -560,6 +563,23 @@ func (a *Agent) Run() error {
 			safeGo(ctx, "abacDecisionReporter", a.abacDecisionReporter.Start)
 		}
 	}
+	// 设备侧 ABAC 决策闸门（M4 机制）：默认 off，不构造 guard（零行为变化）。
+	// kill switch 视同 off（回滚杠杆：无需改 mode 即可一键停用）。
+	if mode, err := config.NormalizeABACDeviceMode(a.cfg.ABACDeviceMode); err != nil {
+		return fmt.Errorf("设备侧 ABAC 配置非法: %w", err)
+	} else if mode != config.ABACDeviceModeOff && !a.cfg.ABACDeviceKillSwitch {
+		guard, gerr := NewDeviceGuard(a.cfg, a.abacBundleClient, a.abacDecisionReporter, a.deviceGuardInfo, nil)
+		if gerr != nil {
+			return fmt.Errorf("设备侧 ABAC 初始化失败: %w", gerr)
+		}
+		a.abacDeviceGuard = guard
+		logx.Info(ctx, "设备侧 ABAC 决策闸门已启用",
+			"mode", mode, "selector", a.cfg.ABACDeviceSelector,
+			"disabledDevices", len(config.ParseABACDeviceDisabledIDs(a.cfg.ABACDeviceDisabledIDs)))
+		if a.abacBundleClient == nil {
+			logx.Warn(ctx, "设备侧 ABAC 已启用但策略包拉取未启用：enforce 模式下 mutating 任务将 fail-closed")
+		}
+	}
 	// 日志采集：定时读取指定日志文件增量并上报控制面。
 	// 未配置采集路径时不启动——此时 logCollectLoop 会立即 return，而无条件启动会让
 	// safeGo 每 5s 重启一个空循环并打印「循环提前退出」（实机观测：默认配置下每分钟 12 条）。
@@ -765,6 +785,36 @@ func (a *Agent) abacHTTPBaseURL() string {
 // 单独抽方法便于测试密钥来源与 base URL 的优先级（Run 与测试共用同一接线）。
 func (a *Agent) newABACBundleClient() *ABACBundleClient {
 	return NewABACBundleClient(a.cfg, a.agentID, a.abacSecret, a.abacHTTPBaseURL(), nil)
+}
+
+// deviceGuardInfo 返回设备侧 ABAC 选择器/豁免匹配所需的设备属性快照。
+// 设备无 labels（见 charter M4）：只暴露 DeviceInfo 字段。
+func (a *Agent) deviceGuardInfo() DeviceGuardDevice {
+	info := DeviceGuardDevice{DeviceID: a.agentID, AgentID: a.agentID, Hostname: a.hostname}
+	if a.cfg != nil {
+		info.Segment = a.cfg.Segment
+	}
+	info.OS = runtime.GOOS
+	info.Arch = runtime.GOARCH
+	return info
+}
+
+// deviceGuardDecision 在任务执行前做设备侧 ABAC 决策（M4）。
+// denied=true 表示不得执行该任务；actionAttr 固定 task:execute（变更动作）。
+func (a *Agent) deviceGuardDecision(t proto.Task, deviceID string) (DecisionInfo, bool) {
+	info := a.deviceGuardInfo()
+	resource := map[string]any{
+		"deviceID": deviceID,
+		"segment":  info.Segment,
+		"os":       info.OS,
+		"arch":     info.Arch,
+		"hostname": info.Hostname,
+		"taskID":   t.TaskID,
+		"taskType": t.Type,
+		"agent_id": info.AgentID,
+	}
+	decision := a.abacDeviceGuard.Decide("task:execute", resource)
+	return decision, !decision.Allowed
 }
 
 // register 经 gRPC Register 注册自身，拿到 agentID。带有限重试，避免控制面未就绪即退出。
@@ -1053,6 +1103,26 @@ func (a *Agent) worker(ctx context.Context) {
 			var cancelled bool
 			// 节点级超时：任务自带 Timeout>0 时覆盖全局 taskTimeout，0=用全局。
 			taskTimeout := taskTimeoutFor(t, a.taskTimeout)
+			// 设备侧 ABAC 决策闸门（M4）：执行前做一次本地决策。
+			// guard=nil（mode=off / kill switch）时只多一次 nil 判断，零评估开销。
+			if a.abacDeviceGuard != nil {
+				decision, denied := a.deviceGuardDecision(t, deviceID)
+				if denied {
+					logx.Warn(ctx, "设备侧 ABAC 拒绝任务，跳过执行",
+						"taskID", t.TaskID, "deviceID", deviceID,
+						"marker", decision.Marker, "policyID", decision.PolicyID, "reason", decision.Reason)
+					res = proto.TaskResult{
+						TaskID:     t.TaskID,
+						AgentID:    a.agentID,
+						ClaimEpoch: t.ClaimEpoch,
+						ExitCode:   -1,
+						Stderr:     "abac denied: " + decision.Reason,
+						FinishedAt: time.Now(),
+					}
+					a.reportResult(ctx, t, res)
+					continue
+				}
+			}
 			if a.cbSet != nil {
 				// 通过熔断器执行：Execute 内部处理 Open→HalfOpen→Closed 状态机。
 				cbErr := a.cbSet.Execute(deviceID, func() error {

@@ -541,6 +541,20 @@ type Config struct {
 	// 仅当 ABACBundleEnabled=true 时生效（回传凭证与策略包共用）。
 	ABACDecisionReport bool // --abac-decision-report / env OPSMESH_ABAC_DECISION_REPORT
 
+	// ABAC 设备侧决策引擎 M4 机制开关（默认 off，零行为差异）：
+	//   - ABACDeviceMode：off|shadow|enforce。off=完全绕过（不评估、不记录）；
+	//     shadow=本地评估但始终放行（记录 would-be 决策）；enforce=按本地决策
+	//     阻断 task:execute（bundle 缺失/过期时 mutating 动作 fail-closed）。
+	//   - ABACDeviceSelector：逗号分隔 `field=value` 精确匹配；支持 segment/os/arch/
+	//     hostname/agent_id（DeviceInfo 字段，设备无 labels）。空=所有设备命中。
+	//   - ABACDeviceKillSwitch：一键回滚开关；true 时无论 mode 为何都按 off 处理。
+	//   - ABACDeviceDisabledIDs：逗号分隔设备 ID 列表，命中设备始终 bypass
+	//     （per-device kill switch）。
+	ABACDeviceMode        string // --abac-device-mode / env OPSMESH_ABAC_DEVICE_MODE（默认 off）
+	ABACDeviceSelector    string // --abac-device-selector / env OPSMESH_ABAC_DEVICE_SELECTOR（空=全部设备）
+	ABACDeviceKillSwitch  bool   // --abac-device-kill-switch / env OPSMESH_ABAC_DEVICE_KILL_SWITCH
+	ABACDeviceDisabledIDs string // --abac-device-disabled-ids / env OPSMESH_ABAC_DEVICE_DISABLED_IDS
+
 	// H2/H3 配套开关：是否允许 SQL 后端继续使用 P1-P6 桩存储。
 	// 背景：SQLStore 对 15 个领域（见 stubStoreDomains 清单）曾为桩实现，写入不持久化；
 	// 生产模式（--production=true）+ --store=mysql 时默认拒绝启动（fail-fast），
@@ -793,6 +807,11 @@ func Load() *Config {
 	abacBundleRefreshInterval := flag.Duration("abac-bundle-refresh-interval", 10*time.Minute, "agent 侧 ABAC 策略包轮询间隔（默认 10m；<=0 回退默认）；或 env OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL")
 	abacBundleBaseURL := flag.String("abac-bundle-base-url", "", "ABAC HTTP 通道（bundle/decisions）控制面基地址（如 http://controlplane:8080）；空=从 --control-addr 派生；或 env OPSMESH_ABAC_BUNDLE_BASE_URL")
 	abacDecisionReport := flag.Bool("abac-decision-report", true, "agent 侧 ABAC 决策审计回传（M3）；默认 true，仅在 --abac-bundle-enabled 时生效；或 env OPSMESH_ABAC_DECISION_REPORT")
+	// ABAC 设备侧决策引擎（M4）：默认 off（零行为差异）。
+	abacDeviceMode := flag.String("abac-device-mode", ABACDeviceModeOff, "设备侧 ABAC 决策模式：off|shadow|enforce（默认 off=完全不介入；shadow=只评估不阻断；enforce=按本地策略阻断 task:execute）；或 env OPSMESH_ABAC_DEVICE_MODE")
+	abacDeviceSelector := flag.String("abac-device-selector", "", "设备侧 ABAC 选择器：逗号分隔 field=value（支持 segment,os,arch,hostname,agent_id 精确匹配）；空=所有设备命中；或 env OPSMESH_ABAC_DEVICE_SELECTOR")
+	abacDeviceKillSwitch := flag.Bool("abac-device-kill-switch", false, "设备侧 ABAC 一键关停：true 时无论 --abac-device-mode 为何都按 off 处理（回滚杠杆）；或 env OPSMESH_ABAC_DEVICE_KILL_SWITCH")
+	abacDeviceDisabledIDs := flag.String("abac-device-disabled-ids", "", "设备侧 ABAC 单设备豁免列表：逗号分隔设备 ID，命中设备始终 bypass（per-device kill switch）；或 env OPSMESH_ABAC_DEVICE_DISABLED_IDS")
 	// 自动化引擎评估周期。
 	automationEvalInterval := flag.Duration("automation-eval-interval", 30*time.Second, "自动化引擎评估周期：周期评估 enabled 自动化规则并执行命中动作（默认 30s；或 env OPSMESH_AUTOMATION_EVAL_INTERVAL）")
 	flag.Parse()
@@ -1026,6 +1045,13 @@ func Load() *Config {
 			"OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL"),
 		ABACBundleBaseURL:  val("abac-bundle-base-url", *abacBundleBaseURL, "OPSMESH_ABAC_BUNDLE_BASE_URL"),
 		ABACDecisionReport: valBool("abac-decision-report", *abacDecisionReport, "OPSMESH_ABAC_DECISION_REPORT"),
+		ABACDeviceMode: strings.ToLower(strings.TrimSpace(
+			val("abac-device-mode", *abacDeviceMode, "OPSMESH_ABAC_DEVICE_MODE"))),
+		ABACDeviceSelector: strings.TrimSpace(
+			val("abac-device-selector", *abacDeviceSelector, "OPSMESH_ABAC_DEVICE_SELECTOR")),
+		ABACDeviceKillSwitch: valBool("abac-device-kill-switch", *abacDeviceKillSwitch, "OPSMESH_ABAC_DEVICE_KILL_SWITCH"),
+		ABACDeviceDisabledIDs: strings.TrimSpace(
+			val("abac-device-disabled-ids", *abacDeviceDisabledIDs, "OPSMESH_ABAC_DEVICE_DISABLED_IDS")),
 	}
 	// --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
@@ -1626,7 +1652,91 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("非法 --abac-enforce 条目 #%d %q: %w", i+1, entry, err)
 		}
 	}
+	// 设备侧 ABAC 决策引擎（M4）：mode 与 selector 均启动期 fail-fast。
+	// 灰度/强制开关拼错却静默不生效，会让设备侧长期停留在未启用状态。
+	if _, err := NormalizeABACDeviceMode(c.ABACDeviceMode); err != nil {
+		return err
+	}
+	if _, err := ParseABACDeviceSelector(c.ABACDeviceSelector); err != nil {
+		return fmt.Errorf("非法 --abac-device-selector=%q: %w", c.ABACDeviceSelector, err)
+	}
 	return nil
+}
+
+// 设备侧 ABAC 决策模式（M4）。默认 off；shadow 只观察；enforce 参与阻断。
+const (
+	ABACDeviceModeOff     = "off"
+	ABACDeviceModeShadow  = "shadow"
+	ABACDeviceModeEnforce = "enforce"
+)
+
+// NormalizeABACDeviceMode 规范化并校验设备侧 ABAC 模式。
+// 空串视为 off（程序化构造 Config 的默认值）；未知取值返回 error（Validate 拒绝启动）。
+func NormalizeABACDeviceMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "":
+		return ABACDeviceModeOff, nil
+	case ABACDeviceModeOff, ABACDeviceModeShadow, ABACDeviceModeEnforce:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("非法 --abac-device-mode=%q（应为 off | shadow | enforce）", raw)
+	}
+}
+
+// abacDeviceSelectorFields 是设备侧 ABAC 选择器支持的字段白名单。
+// 这些字段全部来自 DeviceInfo（设备无 labels，故不提供 label 选择器）。
+var abacDeviceSelectorFields = map[string]struct{}{
+	"segment":  {},
+	"os":       {},
+	"arch":     {},
+	"hostname": {},
+	"agent_id": {},
+}
+
+// ParseABACDeviceSelector 解析 `field=value[,field=value...]` 选择器。
+// 空串=无选择器（所有设备命中）。未知字段/缺 '='/空值均返回 error。
+func ParseABACDeviceSelector(raw string) (map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	out := make(map[string]string)
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("条目 %q 缺少 '='（应为 field=value）", entry)
+		}
+		field := strings.ToLower(strings.TrimSpace(parts[0]))
+		value := strings.TrimSpace(parts[1])
+		if _, ok := abacDeviceSelectorFields[field]; !ok {
+			return nil, fmt.Errorf("不支持的字段 %q（支持 segment, os, arch, hostname, agent_id）", field)
+		}
+		if value == "" {
+			return nil, fmt.Errorf("条目 %q 的值为空", entry)
+		}
+		out[field] = value
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// ParseABACDeviceDisabledIDs 解析逗号分隔的设备 ID 豁免列表。
+// 空串返回空集合；条目去空白、忽略空项。
+func ParseABACDeviceDisabledIDs(raw string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, entry := range strings.Split(raw, ",") {
+		if id := strings.TrimSpace(entry); id != "" {
+			out[id] = struct{}{}
+		}
+	}
+	return out
 }
 
 // ABACEnforcePresetHighRisk 是唯一受支持的 ABAC 定向强制预置名。
