@@ -36,7 +36,15 @@ func tenantPrefix(ctx context.Context) string {
 	return tenant + tenantSep
 }
 
-// bareID 从租户隔离键还原裸 ID（翻过前缀即原始 ID；无前缀时原样返回，
+// ctxTenant 返回当前请求的规范化租户 ID（空归 default）。
+func ctxTenant(ctx context.Context) string {
+	tenant := authctx.FromContext(ctx).TenantID
+	if tenant == "" {
+		tenant = store.DefaultTenantID
+	}
+	return tenant
+}
+
 // 兼容未经本函数编码的历史键——但注意那也意味着可被任何租户看到，
 // 故 InMemory store 之外的生产存储不应有未编码键）。
 func bareID(key string) string {
@@ -49,6 +57,7 @@ func bareID(key string) string {
 // VectorDocument 向量文档
 type VectorDocument struct {
 	ID        string                 `json:"id"`
+	TenantID  string                 `json:"tenantId,omitempty"`
 	Content   string                 `json:"content"`
 	Embedding []float64              `json:"embedding"`
 	Metadata  map[string]interface{} `json:"metadata"`
@@ -73,8 +82,13 @@ func NewInMemoryVectorStore() *InMemoryVectorStore {
 }
 
 func (s *InMemoryVectorStore) Upsert(ctx context.Context, docs []VectorDocument) error {
-	for _, d := range docs {
-		s.docs[tenantKey(ctx, d.ID)] = d
+	tenant := authctx.FromContext(ctx).TenantID
+	if tenant == "" {
+		tenant = store.DefaultTenantID
+	}
+	for i := range docs {
+		docs[i].TenantID = tenant
+		s.docs[tenantKey(ctx, docs[i].ID)] = docs[i]
 	}
 	return nil
 }
@@ -87,9 +101,21 @@ func (s *InMemoryVectorStore) Search(ctx context.Context, embedding []float64, t
 	var results []scored
 
 	prefix := tenantPrefix(ctx)
+	currentTenant := authctx.FromContext(ctx).TenantID
+	if currentTenant == "" {
+		currentTenant = store.DefaultTenantID
+	}
 	for key, doc := range s.docs {
 		// TD-97 ②：只检索本租户的文档（编码键的前缀即租户）。
 		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		// 显式按 TenantID 过滤（字段可见化后，admin 可按此字段过滤）。
+		docTenant := doc.TenantID
+		if docTenant == "" {
+			docTenant = store.DefaultTenantID
+		}
+		if docTenant != currentTenant {
 			continue
 		}
 		// 过滤
@@ -99,6 +125,9 @@ func (s *InMemoryVectorStore) Search(ctx context.Context, embedding []float64, t
 		score := cosineSimilarity(embedding, doc.Embedding)
 		// 出口还原裸 ID：调用方（handler/上层）只见自己写入时的 ID。
 		doc.ID = bareID(key)
+		if doc.TenantID == "" {
+			doc.TenantID = currentTenant
+		}
 		results = append(results, scored{doc, score})
 	}
 
@@ -121,20 +150,49 @@ func (s *InMemoryVectorStore) Search(ctx context.Context, embedding []float64, t
 }
 
 func (s *InMemoryVectorStore) Delete(ctx context.Context, ids []string) error {
-	// 按本租户键删：A 租户传 B 租户的文档 ID 删不到（键前缀不匹配即不存在）。
+	currentTenant := authctx.FromContext(ctx).TenantID
+	if currentTenant == "" {
+		currentTenant = store.DefaultTenantID
+	}
+	idSet := make(map[string]bool, len(ids))
 	for _, id := range ids {
-		delete(s.docs, tenantKey(ctx, id))
+		idSet[id] = true
+	}
+	for key, doc := range s.docs {
+		if !idSet[bareID(key)] {
+			continue
+		}
+		docTenant := doc.TenantID
+		if docTenant == "" {
+			docTenant = store.DefaultTenantID
+		}
+		if docTenant != currentTenant {
+			continue
+		}
+		delete(s.docs, key)
 	}
 	return nil
 }
 
 func (s *InMemoryVectorStore) Count(ctx context.Context) (int, error) {
 	prefix := tenantPrefix(ctx)
+	currentTenant := authctx.FromContext(ctx).TenantID
+	if currentTenant == "" {
+		currentTenant = store.DefaultTenantID
+	}
 	n := 0
-	for key := range s.docs {
-		if strings.HasPrefix(key, prefix) {
-			n++
+	for key, doc := range s.docs {
+		if !strings.HasPrefix(key, prefix) {
+			continue
 		}
+		docTenant := doc.TenantID
+		if docTenant == "" {
+			docTenant = store.DefaultTenantID
+		}
+		if docTenant != currentTenant {
+			continue
+		}
+		n++
 	}
 	return n, nil
 }

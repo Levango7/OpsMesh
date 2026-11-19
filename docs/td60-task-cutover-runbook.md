@@ -58,18 +58,19 @@ curl -s -H 'X-Tenant-ID: default' http://<控制面>/api/v1/admin/service-traffi
 ### 2.3 切换（打增量开关）
 
 ```bash
-# 步骤 A：以 OPSMESH_SERVICE_PROXY=task + TASK_SVC_OWNS_NEW_TASKS=true 重启控制面
-# 域停用优先：即便增量开关打开，域停用时也不 409，避免自伤式停摆
+# 步骤 A：以 TASK_SVC_PROXY_ENABLED=true + TASK_SVC_OWNS_NEW_TASKS=true 重启控制面
+# OPSMESH_SERVICE_PROXY 是停用列表，必须为空（或不含 task）：含 task 只会停用
+# /api/v1/task-svc/* 别名，既不停用 /api/v1/tasks 主代理，也换不来任何「切到 task-svc」效果
 OPSMESH_JWT_SECRET=*** OPSMESH_HTTP_TLS=off TASK_SVC_URL=http://task-svc:8102 \
-  TASK_SVC_PROXY_ENABLED=true TASK_SVC_OWNS_NEW_TASKS=true OPSMESH_SERVICE_PROXY=task \
+  TASK_SVC_PROXY_ENABLED=true TASK_SVC_OWNS_NEW_TASKS=true OPSMESH_SERVICE_PROXY="" \
   opsmesh --mode=controlplane --http-port 8080 --grpc-port 9090 --metrics-port 9091 \
     --store memory --demo=false
 
-# 步骤 B：验证四个建任务入口全部 409（域未停用前的预检，可选）
-# 若域已停用（OPSMESH_SERVICE_PROXY=task），本步骤跳过——期望不 409
+# 步骤 B：验证 /api/v1/tasks 主代理已生效（TASK_SVC_PROXY_ENABLED=true 时根路由与子路径走 task-svc gRPC）
+# 备注：四个建任务入口的 409 只在 TASK_SVC_PROXY_ENABLED=false 且 TASK_SVC_OWNS_NEW_TASKS=true 时出现
 ```
 
-**判据**：重启后，`OPSMESH_SERVICE_PROXY` 不含 `task` 时四个入口（单建/batch/batch-exec/canary）均 409 且文案指向 task-svc；GET `/api/v1/tasks` 仍 200（读不受闸门影响）。
+**判据**：重启后，`TASK_SVC_PROXY_ENABLED=true` 时 `/api/v1/tasks` 根路由与 `/api/v1/tasks/` 子路径（GET 列表/详情、POST 下发）均走 task-svc gRPC（`internal/controlplane/server_lifecycle.go:705-715`）；409 语义只在总闸关闭时对本地四个建任务入口（单建/batch/batch-exec/canary）生效，文案指向 task-svc。
 
 ### 2.4 生效与抽验（切换后 30s 内）
 
@@ -104,7 +105,7 @@ OPSMESH_JWT_SECRET=*** OPSMESH_HTTP_TLS=off TASK_SVC_URL=http://task-svc:8102 \
 
 **判据**：重启后本地建任务立即恢复 201（判据读 env 在请求时，无需重新编译）。
 
-**整域回退（面级）**：把 `OPSMESH_SERVICE_PROXY` 设为空（或不含 task），全部转发回单体本地实现。
+**整域回退（面级）**：置 `TASK_SVC_PROXY_ENABLED=false` 并重启控制面——`/api/v1/tasks` 主代理回到本地 handler（`internal/controlplane/server_lifecycle.go:705-717`）。`OPSMESH_SERVICE_PROXY` 只控制 svcproxy 别名规则（停用列表），含 `task` 仅停用 `/api/v1/task-svc/*`、**不能**停用主代理（`internal/controlplane/svcproxy/proxy.go:517-525`）。
 
 **回退前必须知道的语义边界**：
 - 回退**不回滚已完成的任务迁移**：在 task-svc 侧已建的任务仍在 task-svc，只是不再被新路由过去；重切时继续用 task-svc 侧即可（幂等）。

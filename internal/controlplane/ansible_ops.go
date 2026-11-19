@@ -29,6 +29,7 @@
 package controlplane
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -79,6 +80,66 @@ var ansiblePatternRe = regexp.MustCompile(`^[a-zA-Z0-9_.\-\*:\[\]]{1,256}$`)
 
 // playbook 名正则。
 var ansiblePlaybookRe = regexp.MustCompile(`^[a-zA-Z0-9_.\-]{1,128}$`)
+
+// validatedAnsibleAdhoc / validatedAnsiblePlaybook / validatedAnsibleInventory 是白名单校验后的形态。
+// builder 只接受这几种类型 —— 原始 ansibleAdhocReq / ansiblePlaybookReq / ansibleInventoryReq 无法被传入 builder。
+// Pattern 并入 validated 结构（默认值 all 在 validator 内置）。
+type validatedAnsibleAdhoc struct {
+	Pattern, Module, Args string
+}
+
+type validatedAnsiblePlaybook struct {
+	Action, Name, Content string
+}
+
+type validatedAnsibleInventory struct {
+	Action, Hosts string
+}
+
+func validateAnsibleAdhoc(req ansibleAdhocReq) (validatedAnsibleAdhoc, error) {
+	if !allowedAnsibleModules[req.Module] {
+		return validatedAnsibleAdhoc{}, errors.New("unsupported module (whitelist enforced)")
+	}
+	pattern := req.Pattern
+	if pattern == "" {
+		pattern = "all"
+	}
+	if !ansiblePatternRe.MatchString(pattern) {
+		return validatedAnsibleAdhoc{}, errors.New("invalid pattern")
+	}
+	if strings.ContainsAny(req.Args, "\x00") {
+		return validatedAnsibleAdhoc{}, errors.New("args must not contain NUL")
+	}
+	return validatedAnsibleAdhoc{Pattern: pattern, Module: req.Module, Args: req.Args}, nil
+}
+
+func validateAnsiblePlaybook(req ansiblePlaybookReq) (validatedAnsiblePlaybook, error) {
+	if !allowedAnsiblePlaybookActions[req.Action] {
+		return validatedAnsiblePlaybook{}, errors.New("unsupported action (run/check/syntax)")
+	}
+	if !ansiblePlaybookRe.MatchString(req.Name) {
+		return validatedAnsiblePlaybook{}, errors.New("invalid playbook name")
+	}
+	if strings.ContainsAny(req.Content, "\x00") {
+		return validatedAnsiblePlaybook{}, errors.New("content must not contain NUL")
+	}
+	return validatedAnsiblePlaybook{Action: req.Action, Name: req.Name, Content: req.Content}, nil
+}
+
+func validateAnsibleInventory(req ansibleInventoryReq) (validatedAnsibleInventory, error) {
+	if !allowedAnsibleInventoryActions[req.Action] {
+		return validatedAnsibleInventory{}, errors.New("unsupported action (list/sync)")
+	}
+	if req.Action == "sync" {
+		if strings.TrimSpace(req.Hosts) == "" {
+			return validatedAnsibleInventory{}, errors.New("hosts is required for sync")
+		}
+		if strings.ContainsAny(req.Hosts, "\x00") {
+			return validatedAnsibleInventory{}, errors.New("hosts must not contain NUL")
+		}
+	}
+	return validatedAnsibleInventory{Action: req.Action, Hosts: req.Hosts}, nil
+}
 
 // ansibleAdhocReq ad-hoc 请求体。
 type ansibleAdhocReq struct {
@@ -213,43 +274,32 @@ func (s *Server) handleAnsibleAdhoc(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if !allowedAnsibleModules[req.Module] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported module (whitelist enforced)"})
-		return
-	}
-	pattern := req.Pattern
-	if pattern == "" {
-		pattern = "all"
-	}
-	if !ansiblePatternRe.MatchString(pattern) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid pattern"})
-		return
-	}
-	if strings.ContainsAny(req.Args, "\x00") {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "args must not contain NUL"})
+	vreq, verr := validateAnsibleAdhoc(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildAnsibleAdhocScript(req, pattern)
+	script := buildAnsibleAdhocScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "ansible_adhoc")
 	if err != nil {
 		writeInternalError(r.Context(), w, "ansible.adhoc", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "ansible_adhoc", Target: pattern + ":" + req.Module,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "ansible_adhoc", Target: vreq.Pattern + ":" + vreq.Module,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildAnsibleAdhocScript(req ansibleAdhocReq, pattern string) string {
+func buildAnsibleAdhocScript(vreq validatedAnsibleAdhoc) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	if req.Args != "" {
-		fmt.Fprintf(&b, "ansible %s -m %s -a %s\n", pattern, req.Module, shellQuote(req.Args))
+	if vreq.Args != "" {
+		fmt.Fprintf(&b, "ansible %s -m %s -a %s\n", vreq.Pattern, vreq.Module, shellQuote(vreq.Args))
 	} else {
-		fmt.Fprintf(&b, "ansible %s -m %s\n", pattern, req.Module)
+		fmt.Fprintf(&b, "ansible %s -m %s\n", vreq.Pattern, vreq.Module)
 	}
 	b.WriteString("echo 'Ansible ad-hoc 执行完成'\n")
 	return b.String()
@@ -277,46 +327,39 @@ func (s *Server) handleAnsiblePlaybook(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if !allowedAnsiblePlaybookActions[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (run/check/syntax)"})
-		return
-	}
-	if !ansiblePlaybookRe.MatchString(req.Name) {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid playbook name"})
-		return
-	}
-	if strings.ContainsAny(req.Content, "\x00") {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "content must not contain NUL"})
+	vreq, verr := validateAnsiblePlaybook(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
 
-	script := buildAnsiblePlaybookScript(req)
+	script := buildAnsiblePlaybookScript(vreq)
 	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "ansible_playbook_"+req.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "ansible.playbook", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "ansible_playbook_" + req.Action, Target: req.Name,
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "ansible_playbook_" + vreq.Action, Target: req.Name,
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildAnsiblePlaybookScript(req ansiblePlaybookReq) string {
+func buildAnsiblePlaybookScript(vreq validatedAnsiblePlaybook) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	pbPath := "/etc/ansible/playbooks/" + req.Name + ".yml"
-	if req.Content != "" {
+	pbPath := "/etc/ansible/playbooks/" + vreq.Name + ".yml"
+	if vreq.Content != "" {
 		b.WriteString("# 写入剧本（heredoc 防止 shell 解释）\n")
 		fmt.Fprintf(&b, "cat > %s <<'ANSIBLE_PLAYBOOK_EOF'\n", pbPath)
-		b.WriteString(req.Content)
-		if !strings.HasSuffix(req.Content, "\n") {
+		b.WriteString(vreq.Content)
+		if !strings.HasSuffix(vreq.Content, "\n") {
 			b.WriteString("\n")
 		}
 		b.WriteString("ANSIBLE_PLAYBOOK_EOF\n")
 	}
-	switch req.Action {
+	switch vreq.Action {
 	case "syntax":
 		fmt.Fprintf(&b, "ansible-playbook --syntax-check %s\n", pbPath)
 	case "check":
@@ -324,7 +367,7 @@ func buildAnsiblePlaybookScript(req ansiblePlaybookReq) string {
 	case "run":
 		fmt.Fprintf(&b, "ansible-playbook %s\n", pbPath)
 	}
-	fmt.Fprintf(&b, "echo 'Ansible playbook %s 执行完成\n", req.Action)
+	fmt.Fprintf(&b, "echo 'Ansible playbook %s 执行完成\n", vreq.Action)
 	return b.String()
 }
 
@@ -350,38 +393,29 @@ func (s *Server) handleAnsibleInventory(w http.ResponseWriter, r *http.Request) 
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	if !allowedAnsibleInventoryActions[req.Action] {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action (list/sync)"})
+	vreq, verr := validateAnsibleInventory(req)
+	if verr != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": verr.Error()})
 		return
 	}
-	if req.Action == "sync" {
-		if strings.TrimSpace(req.Hosts) == "" {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "hosts is required for sync"})
-			return
-		}
-		if strings.ContainsAny(req.Hosts, "\x00") {
-			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "hosts must not contain NUL"})
-			return
-		}
-	}
 
-	script := buildAnsibleInventoryScript(req)
-	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "ansible_inventory_"+req.Action)
+	script := buildAnsibleInventoryScript(vreq)
+	task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "ansible_inventory_"+vreq.Action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "ansible.inventory", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "ansible_inventory_" + req.Action, Target: "inventory",
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "ansible_inventory_" + vreq.Action, Target: "inventory",
 		Detail: sanitizeAuditDetail("deviceID=" + req.DeviceID),
 	})
 	paginate.WriteJSON(w, http.StatusOK, task)
 }
 
-func buildAnsibleInventoryScript(req ansibleInventoryReq) string {
+func buildAnsibleInventoryScript(vreq validatedAnsibleInventory) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	switch req.Action {
+	switch vreq.Action {
 	case "list":
 		b.WriteString("# 查看主机清单\n")
 		b.WriteString("if [ -f /etc/ansible/hosts ]; then cat /etc/ansible/hosts; else echo '（inventory 为空）'; fi\n")
@@ -392,8 +426,8 @@ func buildAnsibleInventoryScript(req ansibleInventoryReq) string {
 		b.WriteString("mkdir -p /etc/ansible\n")
 		b.WriteString("[ -f /etc/ansible/hosts ] && cp /etc/ansible/hosts /etc/ansible/hosts.bak.$(date +%s) || true\n")
 		b.WriteString("cat > /etc/ansible/hosts <<'ANSIBLE_INVENTORY_EOF'\n")
-		b.WriteString(req.Hosts)
-		if !strings.HasSuffix(req.Hosts, "\n") {
+		b.WriteString(vreq.Hosts)
+		if !strings.HasSuffix(vreq.Hosts, "\n") {
 			b.WriteString("\n")
 		}
 		b.WriteString("ANSIBLE_INVENTORY_EOF\n")

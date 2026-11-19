@@ -12,7 +12,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	lg "log"
 
 	"github.com/Levango7/OpsMesh/internal/plugin"
 )
@@ -39,19 +39,19 @@ func (p *helloPlugin) Init(cfg any) error {
 			return fmt.Errorf("注册钩子失败: %w", err)
 		}
 	}
-	log.Printf("[hello] 插件已初始化")
+	lg.Printf("[hello] 插件已初始化")
 	return nil
 }
 
 // Close 清理：示例插件无资源需释放。
 func (p *helloPlugin) Close() error {
-	log.Printf("[hello] 插件已关闭")
+	lg.Printf("[hello] 插件已关闭")
 	return nil
 }
 
 // onConfigSet 配置变更钩子处理函数：打印变更日志（模拟审计增强）。
 func (p *helloPlugin) onConfigSet(ev plugin.Event) error {
-	log.Printf("[hello] 检测到配置变更: hook=%s name=%s payload=%v", ev.Hook, ev.Name, ev.Payload)
+	lg.Printf("[hello] 检测到配置变更: hook=%s name=%s payload=%v", ev.Hook, ev.Name, ev.Payload)
 	return nil
 }
 
@@ -61,7 +61,7 @@ func main() {
 
 	// 注册插件，传入 mgr 作为配置（让插件能反向注册钩子）。
 	if err := mgr.Register(&helloPlugin{}, mgr); err != nil {
-		log.Fatalf("注册插件失败: %v", err)
+		lg.Fatalf("注册插件失败: %v", err)
 	}
 
 	// 模拟控制面触发配置变更钩子。
@@ -69,7 +69,7 @@ func main() {
 		Name:    "config.set",
 		Payload: map[string]any{"key": "app/db/pool", "version": 3, "updatedBy": "admin"},
 	}); err != nil {
-		log.Fatalf("触发钩子失败: %v", err)
+		lg.Fatalf("触发钩子失败: %v", err)
 	}
 
 	fmt.Println("hello 插件演示完成")

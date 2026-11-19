@@ -5,6 +5,7 @@
     testid="cost"
     :error="store.error || loadErr"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 预算概览 -->
     <div class="metrics-row metrics-row--four" v-if="store.budget">
       <MetricsCard :title="$t('cost.daily_used')" icon="cmdb">
@@ -42,7 +43,7 @@
           <input v-model.number="budgetForm.threshold" type="number" min="0" max="1" step="0.1" />
         </div>
         <div class="field field--fixed">
-          <Button variant="primary" size="sm" :disabled="saving" @click="updateBudget">{{ $t('cost.save_budget') }}</Button>
+          <Button variant="primary" size="sm" :disabled="!canWrite || (saving)" @click="updateBudget" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('cost.save_budget') }}</Button>
         </div>
       </div>
       <p class="muted" data-testid="cost-budget-note">{{ $t('cost.budget_note') }}</p>
@@ -124,6 +125,7 @@
 import PageShell from '@/components/PageShell.vue'
 
 import { ref, computed, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useCostStore } from '@/stores/cost'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -133,6 +135,10 @@ import { Button } from '@/components/ui'
 const store = useCostStore()
 
 // 预算保存/报告刷新/导出此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('cost:write'))
 const loadErr = ref('')
 
 // 审计整改批次4：补 loading/防重（此前 4 个异步请求全无加载态、保存按钮无防重）。

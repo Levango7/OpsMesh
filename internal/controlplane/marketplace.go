@@ -304,7 +304,7 @@ func downloadAndVerifyPlugin(p *store.Plugin) error {
 	// ——"校验通过的外网 URL"返回 302 → 169.254.169.254 即可打到云元数据。
 	// newEgressClient 在建连时逐 IP 复检、且对每一跳重定向重新校验。
 	client := newEgressClient(5*time.Minute, false)
-	resp, err := client.Get(p.DownloadURL)
+	resp, err := client.Get(p.DownloadURL) // #nosec G704 -- DownloadURL passes ValidateWebhookURL (private-IP/metadata block) above; newEgressClient re-checks resolved IPs and every redirect hop.
 	if err != nil {
 		return fmt.Errorf("download: %w", err)
 	}

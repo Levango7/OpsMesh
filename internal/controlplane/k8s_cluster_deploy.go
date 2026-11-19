@@ -126,8 +126,11 @@ func (d *K8sClusterDeployer) Deploy(ctx context.Context, spec K8sClusterDeploySp
 	// executeDeploy 的 updateStatus 构成 data race（CI -race 实测判红）。
 	resp := snapshotDeployStatus(status)
 
+	// 部署必须活过 HTTP 响应（最长 2h），但不能丢掉请求 context 里的 trace/日志值：
+	// WithoutCancel 保留 values、剥离取消信号，再由 2h timeout 兜底回收。
+	base := context.WithoutCancel(ctx)
 	go func() {
-		deployCtx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+		deployCtx, cancel := context.WithTimeout(base, 2*time.Hour)
 		defer cancel()
 
 		if err := d.executeDeploy(deployCtx, deployID, spec); err != nil {

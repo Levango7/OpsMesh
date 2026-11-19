@@ -110,6 +110,28 @@ func TestDiscoverMethodsReturnEmptyNotError(t *testing.T) {
 	}
 }
 
+func TestSyncTags_EmptyUIN(t *testing.T) {
+	p := NewTencentProvider()
+	ctx := context.Background()
+	creds := types.Credentials{Type: types.AuthTypeAKSK, AccessKeyID: "id", AccessKeySecret: "secret", UIN: ""}
+	err := p.SyncTags(ctx, creds, "ins-123", map[string]string{"env": "test"})
+	if err == nil {
+		t.Fatal("期望报错，得到 nil")
+	}
+	if err.Error() != "tencent: SyncTags requires account UIN in credentials (set credentials.uin)" {
+		t.Fatalf("错误文案不匹配: %v", err)
+	}
+}
+
+func TestSyncTags_EmptyTags_NoCall(t *testing.T) {
+	p := NewTencentProvider()
+	ctx := context.Background()
+	creds := types.Credentials{Type: types.AuthTypeAKSK, AccessKeyID: "id", AccessKeySecret: "secret", UIN: "100000"}
+	if err := p.SyncTags(ctx, creds, "ins-123", nil); err != nil {
+		t.Fatalf("空标签应返回 nil，得到 %v", err)
+	}
+}
+
 func TestMutatingMethodsRequireAKSK(t *testing.T) {
 	p := NewTencentProvider()
 	ctx := context.Background()

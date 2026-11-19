@@ -1,10 +1,11 @@
 package service
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/metrics"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/gpu-svc/internal/node"
@@ -22,6 +23,20 @@ type Service struct {
 	ollama    *ollama.Client
 	quotas    *quota.Manager
 	metrics   *metrics.Collector
+	// ascend 可选的昇腾 NPU 采集器（issue #98）；nil=不采集昇腾指标。
+	// 用窄接口便于注入假实现测试；AscendCollector 满足该接口。
+	ascend ascendCollector
+}
+
+// ascendCollector 昇腾采集器的最小接口（与 metrics.AscendCollector.Collect 同签名）。
+type ascendCollector interface {
+	Collect(ctx context.Context, nodeID string) (*models.GPUMetrics, error)
+}
+
+// SetAscendCollector 装配昇腾 NPU 采集器（可选）。装配后 GetGPUMetrics 会优先用它，
+// 采集失败自动回退默认 Collector——不因为 NPU 不可用而让整个指标端点失败。
+func (s *Service) SetAscendCollector(c ascendCollector) {
+	s.ascend = c
 }
 
 // NewService creates a new Service.
@@ -179,14 +194,16 @@ func (s *Service) CancelWorkload(id string) error {
 		if n, err := s.nodes.Get(nodeID); err == nil {
 			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
 			if err := s.nodes.Update(n); err != nil {
-				log.Printf("[service] update node %s: %v", n.ID, err)
+				logx.Error(context.Background(), "[service] update node 失败", err,
+					"service", "gpu-svc", "nodeID", n.ID, "workloadID", wl.ID)
 			}
 		}
 	}
 
 	// Release quota
 	if err := s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
-		log.Printf("[service] release quota for workload %s: %v", wl.ID, err)
+		logx.Error(context.Background(), "[service] release quota 失败", err,
+			"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 	}
 	return nil
 }
@@ -216,14 +233,16 @@ func (s *Service) CompleteWorkload(id string) error {
 		if n, err := s.nodes.Get(nodeID); err == nil {
 			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
 			if err := s.nodes.Update(n); err != nil {
-				log.Printf("[service] update node %s: %v", n.ID, err)
+				logx.Error(context.Background(), "[service] update node 失败", err,
+					"service", "gpu-svc", "nodeID", n.ID, "workloadID", wl.ID)
 			}
 		}
 	}
 
 	// Release quota
 	if err := s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
-		log.Printf("[service] release quota for workload %s: %v", wl.ID, err)
+		logx.Error(context.Background(), "[service] release quota 失败", err,
+			"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 	}
 	return nil
 }
@@ -248,14 +267,16 @@ func (s *Service) FailWorkload(id, errMsg string) error {
 		if n, err := s.nodes.Get(nodeID); err == nil {
 			s.scheduler.ReleaseNodeResources(n, vramPerWorkload)
 			if err := s.nodes.Update(n); err != nil {
-				log.Printf("[service] update node %s: %v", n.ID, err)
+				logx.Error(context.Background(), "[service] update node 失败", err,
+					"service", "gpu-svc", "nodeID", n.ID, "workloadID", wl.ID)
 			}
 		}
 	}
 
 	// Release quota
 	if err := s.quotas.ReleaseAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
-		log.Printf("[service] release quota for workload %s: %v", wl.ID, err)
+		logx.Error(context.Background(), "[service] release quota 失败", err,
+			"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 	}
 	return nil
 }
@@ -268,14 +289,16 @@ func (s *Service) TriggerScheduling() []*models.ScheduleResult {
 	for _, wl := range pending {
 		result, schedErr := s.scheduler.Schedule(wl, s.nodes)
 		if schedErr != nil {
-			log.Printf("[service] schedule workload %s: %v", wl.ID, schedErr)
+			logx.Error(context.Background(), "[service] schedule workload 失败", schedErr,
+				"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 		}
 		if result == nil {
 			continue
 		}
 		if result.Assigned {
 			if err := s.workloads.AssignNode(wl.ID, result.NodeIDs); err != nil {
-				log.Printf("[service] assign node for workload %s: %v", wl.ID, err)
+				logx.Error(context.Background(), "[service] assign node for workload 失败", err,
+					"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 			}
 			// Update node VRAM allocation
 			vramPerWorkload := wl.GPURequest.MinVRAMMB
@@ -286,12 +309,14 @@ func (s *Service) TriggerScheduling() []*models.ScheduleResult {
 				if n, err := s.nodes.Get(nodeID); err == nil {
 					s.scheduler.AssignNodeResources(n, vramPerWorkload)
 					if err := s.nodes.Update(n); err != nil {
-						log.Printf("[service] update node %s: %v", n.ID, err)
+						logx.Error(context.Background(), "[service] update node 失败", err,
+							"service", "gpu-svc", "nodeID", n.ID, "workloadID", wl.ID)
 					}
 				}
 			}
 			if err := s.quotas.RecordAllocation(wl.TenantID, wl.GPURequest.Count, wl.GPURequest.MinVRAMMB, 1); err != nil {
-				log.Printf("[service] record quota for workload %s: %v", wl.ID, err)
+				logx.Error(context.Background(), "[service] record quota 失败", err,
+					"service", "gpu-svc", "workloadID", wl.ID, "tenantID", wl.TenantID)
 			}
 		}
 		results = append(results, result)
@@ -399,7 +424,20 @@ func (s *Service) GetQuotaUsage(tenantID string) (*models.QuotaUsage, error) {
 }
 
 // GetGPUMetrics returns GPU metrics for a node.
+//
+// 装配了昇腾采集器时优先用 npu-smi 采集真实 NPU 指标（issue #98）；
+// 采集失败或该节点无 NPU 时回退默认 Collector，保证指标端点始终可用。
 func (s *Service) GetGPUMetrics(nodeID string, gpuCount int) (*models.GPUMetrics, error) {
+	if s.ascend != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		m, err := s.ascend.Collect(ctx, nodeID)
+		cancel()
+		if err == nil && m != nil {
+			return m, nil
+		}
+		// 回退：昇腾不可用（无 npu-smi/该节点非 NPU）时仍返回默认指标。
+		logx.Warn(context.Background(), "ascend NPU 采集失败，回退默认指标", "nodeID", nodeID, "err", err)
+	}
 	m, err := s.metrics.GetMetrics(nodeID)
 	if err != nil {
 		m = s.metrics.CollectMetrics(nodeID, gpuCount)

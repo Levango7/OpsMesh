@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/version"
 	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
@@ -71,7 +71,7 @@ func main() {
 			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
 			st = ms
-			log.Printf("MySQL store 已启用")
+			logx.Info(context.Background(), "MySQL store 已启用", "service", "config-svc", "store", "mysql")
 		}
 	}
 	svc := service.NewService(st)
@@ -137,14 +137,14 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Starting gRPC server on :%d", cfg.GRPCPort)
+		logx.Info(context.Background(), "Starting gRPC server", "service", "config-svc", "port", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcLis); err != nil {
 			lgr.Fatalf("gRPC server failed: %v", err)
 		}
 	}()
 
 	go func() {
-		log.Printf("Starting HTTP health server on :%d", cfg.HTTPPort)
+		logx.Info(context.Background(), "Starting HTTP health server", "service", "config-svc", "port", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			lgr.Fatalf("HTTP server failed: %v", err)
 		}
@@ -153,7 +153,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down...")
+	logx.Info(context.Background(), "Shutting down...", "service", "config-svc")
 
 	healthServer.SetServingStatus("opsmesh.config.v1.ConfigService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 	healthServer.SetServingStatus("opsmesh.config.v1.SecretService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
@@ -166,10 +166,10 @@ func main() {
 	grpcServer.GracefulStop()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		logx.Error(shutdownCtx, "HTTP server shutdown error", err, "service", "config-svc")
 	}
 
-	log.Println("Server stopped")
+	logx.Info(context.Background(), "Server stopped", "service", "config-svc")
 }
 
 func registerDriftHandlers(mux *http.ServeMux, det *drift.Detector) {

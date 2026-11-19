@@ -64,6 +64,19 @@ jobs:
             exit 1
           fi
           echo "✅ internal 包数一致 ($ACTUAL)"
+      - name: 控制面鉴权面全量审计（可派发但无 RBAC 的路径数棘轮在 0）
+        # 为什么单开这一步：internal/gates/ops_route_ratchet_gate_test.go 只扫**文件名含 "ops"**
+        # 的批量运维文件（2026-11-04 那次「只读角色可下发任意 shell」的洞就发源在那批文件），
+        # 非 ops 文件（server_lifecycle.go 等）不在它的射程里；而 scripts/authz-route-audit.py
+        # 覆盖整个 controlplane，却从未进 CI ⇒ 有人在新文件里加一条未鉴权写路由，
+        # 没有任何门禁会拦。本步把该脚本接成硬门（与既有门禁同一份实现，不复制判据）。
+        # 基线 0 已人工核过（2026-11-16 实跑：616 注册 / 592 RBAC / 6 租户级 / 18 匿名 /
+        # 416 可派发 / 0 无 RBAC）；脚本自陈「启发式、宁可漏报不可误报」，故 --fail-on 0。
+        run: |
+          set -euo pipefail
+          PY=python3
+          command -v "$PY" >/dev/null 2>&1 || PY=python
+          "$PY" scripts/authz-route-audit.py --fail-on 0
       - name: golangci-lint (聚合静态分析，钉版 v2.13.2)
         # 与 services job 的逐模块 lint 同版同信道（v2.13.2，go install）。
         # 取数改用 go install：github release 在 CI runner 稳定 504，golangci-lint-action 默认
@@ -243,15 +256,36 @@ jobs:
           }
 
           mem_line "测试开始前"
-          # agent 批不带 -race + GOMEMLIMIT=3GiB + 拆两半（取舍与诊断）：
+          # agent 批不带 -race + GOMEMLIMIT=3GiB + 拆三半（取舍与诊断）：
           # - TSan 在该包 goroutine 密集场景分配器恒 OOM（hardlimit 约束不了）
-          # - 拆两半（字母序）降低单进程累计分配；-v 保留死点可诊断
+          # - 拆三半（字母序）降低单进程累计分配；-v 保留死点可诊断
           # - 2026-09-25 复核见上方 env 注释：峰值堆实测 223–227MB，旧「打满 7GB」未被复现
-          run_batch agent_AI go test -p 1 -timeout 180s -coverprofile=cov3a.out -v -run 'Test[A-I]' ./internal/agent/
-          run_batch agent_JZ go test -p 1 -timeout 180s -coverprofile=cov3b.out -v -run 'Test[J-Z]' ./internal/agent/
-          cat cov3a.out cov3b.out | grep -v '^mode:' > cov3.out
+          #
+          # ⚠ 2026-11-16（用户裁决）：agent_JZ（Test[J-Z]）在本 runner 代际上 12h 内两次崩在
+          #   `fatal error: runtime: cannot allocate memory`（runtime.persistentalloc 头，
+          #   用例全 PASS、0 --- FAIL，RSS 贴 ~265MB；fail-closed 判据因无裸 PASS/ok 结束行
+          #   判定为真实失败 → build-test 腿整体红）。沿用 2026-09 先例折入拆分：JZ→[J-N]+[O-Z]，
+          #   单进程累计分配再减半，用例集合不变、判据语义不变。
+          #
+          # ⚠ 2026-11-16 追加（用户裁决：A）：实测 [J-N] 与 [O-Z] 峰值均贴 ~271MB
+          #   （前一次 271220kB PASS、后一次 271628kB FAIL），该 runner 对本包 test 二进制
+          #   的进程级上限稳定在 ~265–271MB，与用例挑选无关。Go 运行时默认 GOMEMLIMIT=3GiB
+          #   按此推算不会报警。2026-11-17 实测：250MiB 仍不足——三条腿 RSS 恒定贴 270MB 墙
+          #   （270608/271112/270968KB），agent_OZ 连续 3 次重跑均在 270968KB 处 fatal OOM。
+          #   墙 = Go heap(~250MB) + 非堆(~20MB)，故把 GOMEMLIMIT 降到 180MiB（heap 180 + 非堆 20
+          #   = ~200MB RSS，远离 270MB 墙）。仅运行时回收力度，测试语义/断言/覆盖率不变。
+          #   历史：GOMEMLIMIT=250MiB——运行时 GC 将字节级堆压到 250MB 以下，
+          #   永远不会撞到 persistentalloc 墙；测试语义/断言/覆盖率指示一字不动。
+          GOMEMLIMIT=180MiB run_batch agent_AI go test -p 1 -timeout 180s -coverprofile=cov3a.out -v -run 'Test[A-I]' ./internal/agent/
+          GOMEMLIMIT=180MiB run_batch agent_JN go test -p 1 -timeout 180s -coverprofile=cov3b.out -v -run 'Test[J-N]' ./internal/agent/
+          GOMEMLIMIT=180MiB run_batch agent_OZ go test -p 1 -timeout 180s -coverprofile=cov3c.out -v -run 'Test[O-Z]' ./internal/agent/
+          cat cov3a.out cov3b.out cov3c.out | grep -v '^mode:' > cov3.out
           run_batch store_race go test -race -p 1 -timeout 300s -coverprofile=cov2.out ./internal/store/...
-          run_batch cp_race go test -race -p 1 -timeout 600s -coverprofile=cov1.out ./internal/controlplane/...
+          # 2026-11-16：600s→900s 仅为预算余量，检测语义一字不动（-race -p 1 / -coverprofile / 单 pass / 断言数均不变）。
+          # 取证：Kilo 批次33/35（federation/authn 鉴权）为控制面套件增长 +25% 体积后，本脚站在 -timeout 600s 贴壁
+          # （#76 CI：go -timeout 10m0s 自杀，RSS 1.4GB 无崩溃头——非 agent ENOMEM 同类，系纯计时预算翻墙）。
+          # Race detector 腿已按 2026-11-15 同查放宽到 2400s；本行同步放宽到 900s（-race 单 pass，~11–15m 实测）。
+          run_batch cp_race go test -race -p 1 -timeout 900s -coverprofile=cov1.out ./internal/controlplane/...
           # 其余全部包（小包为主，-p 2 内存可控）
           # 用数组而不是裸 $(go list …)：不加引号是 SC2046 词分裂，加引号又会把整份清单
           # 当成一个参数交给 go test —— 数组两种错都不犯（actionlint+shellcheck 首跑报出）。

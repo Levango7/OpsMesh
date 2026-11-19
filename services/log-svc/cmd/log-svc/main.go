@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -100,7 +99,7 @@ func main() {
 
 	// Start gRPC server in goroutine
 	go func() {
-		log.Printf("gRPC server starting on %s", cfg.Server.Address)
+		lgr.Info(context.Background(), "gRPC server starting", "address", cfg.Server.Address)
 		if err := grpcServer.Serve(lis); err != nil {
 			errCh <- fmt.Errorf("gRPC server error: %w", err)
 		}
@@ -108,7 +107,7 @@ func main() {
 
 	// Start health server in goroutine
 	go func() {
-		log.Printf("Health check server starting on %s", cfg.Health.Address)
+		lgr.Info(context.Background(), "Health check server starting", "address", cfg.Health.Address)
 		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("health server error: %w", err)
 		}
@@ -117,9 +116,9 @@ func main() {
 	// Wait for shutdown signal or error
 	select {
 	case sig := <-sigCh:
-		log.Printf("Received signal %v, shutting down...", sig)
+		lgr.Info(context.Background(), "Received signal, shutting down...", "signal", sig.String())
 	case err := <-errCh:
-		log.Printf("Server error: %v", err)
+		lgr.Error(context.Background(), "Server error", err)
 	}
 
 	// Graceful shutdown
@@ -129,7 +128,7 @@ func main() {
 	grpcServer.GracefulStop()
 	_ = healthServer.Shutdown(shutdownCtx)
 
-	log.Println("Server stopped gracefully")
+	lgr.Info(context.Background(), "Server stopped gracefully")
 }
 
 // initLogStore creates a logstore backend based on configuration.

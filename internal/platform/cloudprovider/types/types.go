@@ -34,6 +34,7 @@ type Credentials struct {
 	OIDCToken       string   `json:"oidcToken,omitempty"`
 	RoleARN         string   `json:"roleArn,omitempty"`
 	Region          string   `json:"region"`
+	UIN             string   `json:"uin,omitempty"`
 }
 
 // Resource 通用云资源。

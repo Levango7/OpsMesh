@@ -1,5 +1,6 @@
 <template>
   <PageShell :title="$t('agent.title')" :desc="$t('agent.desc')" testid="agent" :error="store.error || loadErr">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 意图分类 -->
     <div class="card">
       <div class="flowbar">
@@ -12,9 +13,9 @@
         </div>
       </div>
       <div class="btnbar">
-        <Button variant="primary" size="sm" @click="classify" :disabled="classifying">{{ $t('agent.classify_btn') }}</Button>
-        <Button variant="ghost" size="sm" @click="decompose" :disabled="decomposing">{{ $t('agent.decompose_btn') }}</Button>
-        <Button variant="primary" size="sm" @click="execute" :disabled="store.loading || !input.trim()">{{ $t('agent.execute_btn') }}</Button>
+        <Button variant="primary" size="sm" @click="classify" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (classifying)">{{ $t('agent.classify_btn') }}</Button>
+        <Button variant="ghost" size="sm" @click="decompose" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (decomposing)">{{ $t('agent.decompose_btn') }}</Button>
+        <Button variant="primary" size="sm" @click="execute" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (store.loading || !input.trim())">{{ $t('agent.execute_btn') }}</Button>
         <label class="chk"><input type="checkbox" v-model="useDAG" /> {{ $t('agent.use_dag') }}</label>
       </div>
       <div v-if="store.intentType" class="result-box">
@@ -95,7 +96,8 @@
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 
-import { ref } from 'vue'
+import { ref, computed} from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useAgentStore } from '@/stores/agent'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -103,6 +105,10 @@ import { Button } from '@/components/ui'
 
 const store = useAgentStore()
 
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('ai:write'))
 const input = ref('')
 const classifying = ref(false)
 const decomposing = ref(false)

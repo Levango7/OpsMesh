@@ -24,7 +24,12 @@ func (n *NoopDiscovery) Register(ctx context.Context, service Service) error {
 }
 
 // Deregister no-op：返回 ErrNotImplemented。
-func (n *NoopDiscovery) Deregister(ctx context.Context, serviceID string) error {
+func (n *NoopDiscovery) Deregister(ctx context.Context, serviceName, address string, port int) error {
+	return ErrNotImplemented
+}
+
+// List no-op：返回空切片 + nil 错误。
+func (n *NoopDiscovery) MarkHealthy(ctx context.Context, serviceName, address string, port int, healthy bool) error {
 	return ErrNotImplemented
 }
 

@@ -15,9 +15,9 @@ package scheduler
 
 import (
 	"context"
-	"log"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/pkg/cron"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/task-svc/internal/store"
@@ -46,7 +46,7 @@ func (s *ShadowLoop) Start(ctx context.Context) {
 		return
 	}
 	go s.loop(ctx)
-	log.Printf("[shadow] 影子模式启动 interval=%s", shadowInterval.String())
+	logx.Info(ctx, "[shadow] 影子模式启动", "service", "task-svc", "interval", shadowInterval.String())
 }
 
 // loop 周期性执行影子评估；ctx.Done() 退出。
@@ -118,7 +118,7 @@ func (s *ShadowLoop) evaluate(now time.Time) {
 	metrics.SetBusinessMetric(shadowMetricPrefix+"_derived_active", float64(derivedActive), nil)
 
 	if fireWouldFire > 0 || reclaimWouldID > 0 {
-		log.Printf("[shadow] fire_would_fire=%d reclaim_would_id=%d derived_active=%d",
-			fireWouldFire, reclaimWouldID, derivedActive)
+		logx.Info(context.Background(), "[shadow] 影子评估结果", "service", "task-svc",
+			"fireWouldFire", fireWouldFire, "reclaimWouldID", reclaimWouldID, "derivedActive", derivedActive)
 	}
 }

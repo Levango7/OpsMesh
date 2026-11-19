@@ -70,9 +70,9 @@
             <Button variant="primary" size="sm" @click="addCPNode" data-testid="k8sclusterdeploy-addcpnode-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8sDeploy.add_node') }}</Button>
           </div>
           <div v-for="(node, idx) in form.controlPlaneNodes" :key="idx" class="node-row">
-            <div class="field field--fixed"><label>Host</label><input v-model="node.host" required placeholder="192.168.1.10" /></div>
-            <div class="field field--fixed"><label>User</label><input v-model="node.user" placeholder="root" /></div>
-            <div class="field field--fixed"><label>SSH Key</label><textarea v-model="node.sshKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" /></div>
+            <div class="field field--fixed"><label>{{ $t('k8sDeploy.node_host') }}</label><input v-model="node.host" required placeholder="192.168.1.10" /></div>
+            <div class="field field--fixed"><label>{{ $t('k8sDeploy.node_user') }}</label><input v-model="node.user" placeholder="root" /></div>
+            <div class="field field--fixed"><label>{{ $t('k8sDeploy.node_ssh_key') }}</label><textarea v-model="node.sshKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" /></div>
             <Button variant="danger" size="sm" @click="removeCPNode(idx)" data-testid="k8sclusterdeploy-removecpnode-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
           </div>
         </div>
@@ -84,9 +84,9 @@
             <Button variant="primary" size="sm" @click="addWorkerNode" data-testid="k8sclusterdeploy-addworkernode-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('k8sDeploy.add_node') }}</Button>
           </div>
           <div v-for="(node, idx) in form.workerNodes" :key="idx" class="node-row">
-            <div class="field field--fixed"><label>Host</label><input v-model="node.host" required placeholder="192.168.1.20" /></div>
-            <div class="field field--fixed"><label>User</label><input v-model="node.user" placeholder="root" /></div>
-            <div class="field field--fixed"><label>SSH Key</label><textarea v-model="node.sshKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" /></div>
+            <div class="field field--fixed"><label>{{ $t('k8sDeploy.node_host') }}</label><input v-model="node.host" required placeholder="192.168.1.20" /></div>
+            <div class="field field--fixed"><label>{{ $t('k8sDeploy.node_user') }}</label><input v-model="node.user" placeholder="root" /></div>
+            <div class="field field--fixed"><label>{{ $t('k8sDeploy.node_ssh_key') }}</label><textarea v-model="node.sshKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" /></div>
             <Button variant="danger" size="sm" @click="removeWorkerNode(idx)" data-testid="k8sclusterdeploy-removeworkernode-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('common.delete') }}</Button>
           </div>
         </div>

@@ -18,7 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	lg "log"
 	"net"
 	"net/http"
 	"os"
@@ -76,7 +76,7 @@ func (s *server) hook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	decision, reason := policy(req)
-	log.Printf("hook=%s name=%s decision=%s reason=%q", req.Hook, req.Name, decision, reason)
+	lg.Printf("hook=%s name=%s decision=%s reason=%q", req.Hook, req.Name, decision, reason)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(hookResponse{Decision: decision, Reason: reason})
 }
@@ -117,14 +117,14 @@ func main() {
 	token := strings.TrimSpace(os.Getenv(*tokenEnv))
 	if token == "" {
 		// 没有令牌就跑不起来：与控制面同一条判据（无鉴权的插件调用不可验证调用方）。
-		log.Fatalf("环境变量 %s 为空：独立进程插件必须经令牌互相鉴权", *tokenEnv)
+		lg.Fatalf("环境变量 %s 为空：独立进程插件必须经令牌互相鉴权", *tokenEnv)
 	}
 	host, port, err := net.SplitHostPort(*addr)
 	if err != nil {
-		log.Fatalf("--addr 格式应为 host:port：%v", err)
+		lg.Fatalf("--addr 格式应为 host:port：%v", err)
 	}
 	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
-		log.Printf("警告：监听 %s 把扩展点入口暴露到了非环回接口——该端点能否决平台配置写入，"+
+		lg.Printf("警告：监听 %s 把扩展点入口暴露到了非环回接口——该端点能否决平台配置写入，"+
 			"请仅在已有反代/TLS 的前提下使用", net.JoinHostPort(host, port))
 	}
 
@@ -152,6 +152,6 @@ func main() {
 
 	fmt.Fprintf(os.Stderr, "opsmesh-plugin-example 监听 %s（token-env=%s）\n", srv.Addr, *tokenEnv)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatalf("监听失败：%v", err)
+		lg.Fatalf("监听失败：%v", err)
 	}
 }

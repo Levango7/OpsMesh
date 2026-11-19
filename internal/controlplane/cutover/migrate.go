@@ -44,13 +44,14 @@ type LocalLookup func(username string) (LocalUser, bool)
 
 // MigrateOptions job 入参。
 type MigrateOptions struct {
-	Users         []string // 本批要迁的用户名（显式清单 = 批次；决策单 Q1：文件名册 + 流水线变更）
-	AuthSvcURL    string   // 对侧 HTTP 网关地址（与代理共用 AUTH_SVC_URL）
-	AdminUser     string   // 对侧管理员账号（须持 user:write；默认 admin）
-	AdminPassword string   // 对侧管理员口令
-	RosterFile    string   // 名册文件路径（job 的唯一产物之一；控制面 30s 热加载）
-	DryRun        bool     // 只做只读核验（本地存在性 + 对侧现状 + 名册现状），不建号不写名册
-	ForceChange   bool     // 建号时要求首登强制改密（auth-svc 3261169 起的 mustChangePassword）
+	Users           []string // 本批要迁的用户名（显式清单 = 批次；决策单 Q1：文件名册 + 流水线变更）
+	AuthSvcURL      string   // 对侧 HTTP 网关地址（与代理共用 AUTH_SVC_URL）
+	AdminUser       string   // 对侧管理员账号（须持 user:write；默认 admin）
+	AdminPassword   string   // 对侧管理员口令
+	RosterFile      string   // 名册文件路径（job 的唯一产物之一；控制面 30s 热加载）
+	CredentialsFile string   // 一次性口令持久化文件（0600）：每成功一个用户立即追加一条（断点续跑凭据不丢）
+	DryRun          bool     // 只做只读核验（本地存在性 + 对侧现状 + 名册现状），不建号不写名册
+	ForceChange     bool     // 建号时要求首登强制改密（auth-svc 3261169 起的 mustChangePassword）
 }
 
 // MigratedUser 迁移成功的用户（含一次性口令，供运维交接）。
@@ -201,7 +202,16 @@ func RunMigration(opts MigrateOptions, lookup LocalLookup) (*MigrateResult, erro
 				far.ID = u.ID
 			}
 		}
-		res.Created = append(res.Created, MigratedUser{Username: name, OneTimePassword: oneTime, FarSideID: far.ID, DroppedRoles: dropped, MustChangePassword: opts.ForceChange})
+		created := MigratedUser{Username: name, OneTimePassword: oneTime, FarSideID: far.ID, DroppedRoles: dropped, MustChangePassword: opts.ForceChange}
+		res.Created = append(res.Created, created)
+		// 断点续跑（issue #106）：口令在本用户成功的当下就落盘，而不是等整批跑完由调用方一次性写。
+		// 否则中途崩溃 ⇒ 已建号用户的口令丢失，而重跑时它们变 Adopted（不再生成口令）⇒ 账号永久不可用。
+		// 落盘失败按本用户的硬失败处理：返回错误让运维停下修复，不带着"凭据丢失"继续跑。
+		if strings.TrimSpace(opts.CredentialsFile) != "" {
+			if err := appendCredentialLine(opts.CredentialsFile, name, oneTime, opts.ForceChange); err != nil {
+				return nil, fmt.Errorf("用户 %s 已在对侧建号但口令落盘失败（凭据丢失风险，请立即处理）: %w", name, err)
+			}
+		}
 	}
 
 	if opts.DryRun {
@@ -278,6 +288,91 @@ func appendToRoster(path string, names []string, now time.Time) (int, error) {
 		return 0, err
 	}
 	return added, nil
+}
+
+// #nosec G101 -- 这是凭据文件的表头说明，不是凭据；真正的口令仅由调用方参数传入。
+const credentialHeader = "# 一次性口令清单（cutover-migrate）——凭据，勿入库、勿进工单系统；经安全渠道交给用户本人。\n"
+
+// appendCredentialLine 把单个用户的 (用户名, 一次性口令) 立即追加到凭据文件（0600）。
+//
+// 断点续跑语义：
+//   - 每成功一个用户就调用一次，进度随口令即时落盘；中途崩溃不会丢已建号用户的口令；
+//   - 按用户名去重（解析已有 `用户名\t口令` 行）——重跑时已落盘的用户不重复追加；
+//   - temp+rename 原子替换，避免写一半留下半行；首次创建时写表头。
+func appendCredentialLine(path, username, password string, forceChange bool) error {
+	if strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
+		return fmt.Errorf("username/password 不可为空")
+	}
+	if strings.ContainsAny(username, "\r\n\t") || strings.ContainsAny(password, "\r\n\t") {
+		return fmt.Errorf("username/password 含换行或制表符，拒绝写入")
+	}
+	old := ""
+	if b, err := os.ReadFile(path); err == nil {
+		old = string(b)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	// 解析已有条目（跳过 # 注释与空行），按用户名去重。
+	seen := map[string]bool{}
+	for _, line := range strings.Split(old, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) == 2 {
+			seen[parts[0]] = true
+		}
+	}
+	if seen[username] {
+		return nil // 已落盘（重跑幂等）
+	}
+
+	var b strings.Builder
+	if old == "" {
+		b.WriteString(credentialHeader)
+		if forceChange {
+			b.WriteString("# 本次建号已要求首登强制改密：口令只使用一次。\n")
+		} else {
+			b.WriteString("# 本次未要求首登改密：该口令即长期口令，提示用户登录后自行修改。\n")
+		}
+	} else {
+		b.WriteString(strings.TrimRight(old, "\r\n"))
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(&b, "%s\t%s\n", username, password)
+
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".creds-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	// 0600：口令是凭据，权限最小化。
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if _, err := tmp.WriteString(b.String()); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Sync(); err != nil { // fsync：崩溃前真正落盘。
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // ---------- 对侧 HTTP 客户端 ----------

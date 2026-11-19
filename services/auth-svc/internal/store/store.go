@@ -1,8 +1,9 @@
 package store
 
 import (
+	"context"
 	"fmt"
-	"log"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
 )
 
@@ -189,12 +191,15 @@ func (s *MemoryStore) seedViewerRole() {
 
 // seedAdminUser seeds the default admin user.
 // bcrypt 失败必须可见：原 `hash, _ :=` 吞错误会把空 PasswordHash 落入用户表，
-// admin 永远无法登录且无任何日志。此处 log.Fatal 快速失败（熵源不可用属不可恢复
+// admin 永远无法登录且无任何日志。此处快速失败（熵源不可用属不可恢复
 // 的系统级故障，与 auth.randHex 的 panic 语义一致），拒绝带坏数据启动。
+// 退出语义保持 stdlib Fatalf 原样：ERROR 日志 + os.Exit(1)。
 func (s *MemoryStore) seedAdminUser() {
 	hash, err := auth.HashPassword("admin123")
 	if err != nil {
-		log.Fatalf("auth-store: seed admin password hash failed: %v", err)
+		logx.Error(context.Background(), "auth-store: seed admin password hash failed", err,
+			"service", "auth-svc", "fatal", true)
+		os.Exit(1)
 	}
 	user := &User{
 		ID:                 "user-admin",

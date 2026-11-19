@@ -19,6 +19,8 @@
 
 import { refreshToken } from './request'
 
+const DEV = import.meta.env.DEV
+
 // EVENT_CONTRACT：事件 → data 必含字段（与 sse-protocol.md 表对齐）。
 // 用于运行时契约校验（DoD：前端对 SSE 字段名做静态校验/契约测试）。
 export const EVENT_CONTRACT = {
@@ -234,7 +236,9 @@ export class SSEClient {
         parsed = f.data ? JSON.parse(f.data) : {}
       } catch {
         this._validateCount++
-        console.warn('[sse] 事件 data 非 JSON，丢弃:', f.event)
+        if (DEV) {
+          console.warn('[sse] 事件 data 非 JSON，丢弃:', f.event)
+        }
         continue
       }
       // 类型以帧的 event 行为准（后端事件帧 event 行与信封 type 一致；
@@ -249,12 +253,16 @@ export class SSEClient {
       }
       if (!validateEnvelope(ev)) {
         this._validateCount++
-        console.warn('[sse] 信封契约校验失败，丢弃:', ev)
+        if (DEV) {
+          console.warn('[sse] 信封契约校验失败，丢弃:', ev)
+        }
         continue
       }
       if (!validateEventData(ev.type, ev.data)) {
         this._validateCount++
-        console.warn(`[sse] ${ev.type} 事件 data 缺关键字段，丢弃:`, ev.data)
+        if (DEV) {
+          console.warn(`[sse] ${ev.type} 事件 data 缺关键字段，丢弃:`, ev.data)
+        }
         continue
       }
       if (this.onEvent) this.onEvent(ev)

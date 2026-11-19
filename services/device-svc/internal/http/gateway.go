@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/pkg/provision"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/models"
 	"github.com/Levango7/OpsMesh/services/device-svc/internal/store"
@@ -112,7 +112,7 @@ func (g *Gateway) handleDevices(w http.ResponseWriter, r *http.Request) {
 		limit, aErr := strconv.Atoi(q.Get("limit"))
 		if aErr != nil {
 			// G706：limit 是用户输入，taint 分析不认 %q 转义——原值不落日志。
-			log.Printf("[gateway] invalid limit query param: %v", aErr)
+			logx.Warn(r.Context(), "[gateway] invalid limit query param", "service", "device-svc", "error", aErr.Error())
 		}
 		devs := g.devices.ListDevices(q.Get("tenantID"), q.Get("status"), q.Get("group"), limit)
 		// 响应格式对齐 controlplane GET /api/v1/devices：按 segment 分组返回
@@ -395,7 +395,7 @@ func (g *Gateway) handleAgents(w http.ResponseWriter, r *http.Request) {
 		limit, aErr := strconv.Atoi(q.Get("limit"))
 		if aErr != nil {
 			// G706：limit 是用户输入，taint 分析不认 %q 转义——原值不落日志。
-			log.Printf("[gateway] invalid limit query param: %v", aErr)
+			logx.Warn(r.Context(), "[gateway] invalid limit query param", "service", "device-svc", "error", aErr.Error())
 		}
 		tenantID := q.Get("tenantID")
 		agents := g.agents.ListAgents(tenantID, q.Get("status"), limit)
@@ -491,7 +491,7 @@ func (g *Gateway) handleCIs(w http.ResponseWriter, r *http.Request) {
 		limit, aErr := strconv.Atoi(q.Get("limit"))
 		if aErr != nil {
 			// G706：limit 是用户输入，taint 分析不认 %q 转义——原值不落日志。
-			log.Printf("[gateway] invalid limit query param: %v", aErr)
+			logx.Warn(r.Context(), "[gateway] invalid limit query param", "service", "device-svc", "error", aErr.Error())
 		}
 		cis := g.cis.ListCIs(q.Get("tenantID"), q.Get("ciType"), q.Get("status"), limit)
 		writeJSON(w, http.StatusOK, map[string]any{"cis": cis})
@@ -709,7 +709,8 @@ func (g *Gateway) handleServeAgent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-OpsMesh-Agent-Arch", arch)
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, f); err != nil {
-		log.Printf("device-svc: handleServeAgent 写 agent 二进制失败: %v", err)
+		logx.Error(r.Context(), "device-svc: handleServeAgent 写 agent 二进制失败", err,
+			"service", "device-svc", "os", osName, "arch", arch)
 	}
 }
 

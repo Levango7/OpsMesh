@@ -22,12 +22,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"log"
+	"errors"
 	"net/http"
 	"strings"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	authv1 "github.com/Levango7/OpsMesh/services/auth-svc/api/proto/v1"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/cache"
@@ -135,7 +137,8 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/me", g.handleMe)
 
 	// 用户/角色/权限管理（与 controlplane /users /roles /permissions 路径一致）。
-	mux.HandleFunc("/api/v1/users", g.managementHandler("user", g.handleUsers))
+	// users 列表需要调用方租户（P0-6 同口径的租户隔离），故走带 caller 的包装。
+	mux.HandleFunc("/api/v1/users", g.managementHandlerWithCaller("user", g.handleUsers))
 	mux.HandleFunc("/api/v1/users/", g.managementHandler("user", g.handleUserDetail))
 	mux.HandleFunc("/api/v1/roles", g.managementHandler("role", g.handleRoles))
 	mux.HandleFunc("/api/v1/roles/", g.managementHandler("role", g.handleRoleDetail))
@@ -146,6 +149,14 @@ func (g *Gateway) RegisterRoutes(mux *http.ServeMux) {
 // 角色/权限查询与 controlplane 一致，允许有效登录用户访问。
 // auth-svc 已定义 user:approve 权限，审批由 user:approve 门控（对齐 controlplane）。
 func (g *Gateway) managementHandler(resource string, next http.HandlerFunc) http.HandlerFunc {
+	return g.managementHandlerWithCaller(resource, func(w http.ResponseWriter, r *http.Request, _ *authv1.ValidateTokenResponse) {
+		next(w, r)
+	})
+}
+
+// managementHandlerWithCaller 与 managementHandler 同语义，额外把已验证的
+// token claims 传给 handler（列表类端点需要调用方租户做行级隔离）。
+func (g *Gateway) managementHandlerWithCaller(resource string, next func(http.ResponseWriter, *http.Request, *authv1.ValidateTokenResponse)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		permission := resource + ":write"
 		switch r.Method {
@@ -157,10 +168,11 @@ func (g *Gateway) managementHandler(resource string, next http.HandlerFunc) http
 		case http.MethodDelete:
 			permission = resource + ":delete"
 		}
-		if _, ok := g.requirePermission(w, r, permission); !ok {
+		caller, ok := g.requirePermission(w, r, permission)
+		if !ok {
 			return
 		}
-		next(w, r)
+		next(w, r, caller)
 	}
 }
 
@@ -205,9 +217,17 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password: body.Password,
 	}, fp)
 	if err != nil {
+		// 口令已校验通过、仅账号状态阻断：此时才允许透露状态（与 controlplane
+		// auth_login.go:208-221 完全同序）。失败/成功计数都不动——controlplane
+		// 对该分支同样不 RecordFail、不 ResetFail。
+		var inactive *service.AccountInactiveError
+		if errors.As(err, &inactive) {
+			writeError(w, http.StatusForbidden, accountStatusMessage(inactive.Status))
+			return
+		}
 		// 失败计入账号锁定计数（成功才复位——与 controlplane 同语义）。
 		g.guard.recordFail(body.Username)
-		// 统一 401（不区分"用户不存在/密码错/非 active"——防用户名枚举，controlplane 同语义）。
+		// 统一 401（不区分"用户不存在/密码错"——防用户名枚举，controlplane 同语义）。
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -242,6 +262,21 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// accountStatusMessage 返回与 controlplane auth_login.go:211-220 逐字一致的状态文案。
+// 仅可在口令校验成功后调用（见 service.authenticate 的顺序约束）。
+func accountStatusMessage(status string) string {
+	switch status {
+	case "pending":
+		return "account pending admin approval"
+	case "disabled":
+		return "account disabled"
+	case "rejected":
+		return "account registration rejected"
+	default:
+		return "account not active"
+	}
+}
+
 // handleLogout POST /api/v1/auth/logout → 清双 Cookie + 吊销（jti 黑名单 + rt 删除 + Session 撤销）。
 func (g *Gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -259,7 +294,7 @@ func (g *Gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 	} else if at != "" {
 		if err := g.sessions.Revoke(sessionIDFromToken(at)); err != nil {
 			sessionRevocation = "failed: " + err.Error()
-			log.Printf("[gateway] logout: session revoke failed: %v", err)
+			logx.Error(r.Context(), "[gateway] logout: session revoke failed", err, "service", "auth-svc")
 		}
 	}
 	// 复用 service.Logout（jti 黑名单 + rt 删除）。
@@ -345,7 +380,8 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// viewer 同语义。先校验角色存在——缺失时拒绝注册并留痕，而不是静默建出
 	// 一个无任何权限的孤儿账号（对齐 controlplane auth_login.go:80 的前置校验）。
 	if g.svc.Store().GetRole("role-viewer") == nil {
-		log.Printf("[auth-svc] handleRegister 默认角色 role-viewer 不存在，注册中止（seed 未生效）")
+		logx.Error(r.Context(), "[auth-svc] handleRegister 默认角色 role-viewer 不存在，注册中止（seed 未生效）", nil,
+			"service", "auth-svc")
 		writeError(w, http.StatusInternalServerError, "default role missing, registration refused")
 		return
 	}
@@ -464,7 +500,8 @@ func (g *Gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		}, fp)
 		if loginErr != nil {
 			// 口令已改成功但会话签发失败：不得留半成品状态，清 Cookie 让客户端重新登录。
-			log.Printf("[auth-svc] handleChangePassword 首登改密后签发会话失败 (user=%s): %v", u.Username, loginErr)
+			logx.Error(r.Context(), "[auth-svc] handleChangePassword 首登改密后签发会话失败", loginErr,
+				"service", "auth-svc", "userID", u.ID)
 			g.clearCookies(w)
 			writeError(w, http.StatusInternalServerError, "password changed, but session issue failed; please log in again")
 			return
@@ -608,30 +645,57 @@ func (g *Gateway) effectivePermissions(roleIDs []string) []string {
 
 // ============ 用户/角色/权限管理 ============
 
+// listUsers GET /api/v1/users：租户隔离 + page/pageSize opt-in 分页。
+//
+// 契约对齐 controlplane auth_users.go:46-80（TD-60 A-3）：
+//   - 非平台租户（default）的调用方仅见本租户用户；平台租户保持全量视图；
+//   - 任一 page/pageSize 参数存在 → 返回 {users,total,page,pageSize,hasMore}；
+//   - 两参数都缺省 → 保持旧 {users:[…]} 形态（byte-compatible）；
+//   - page 缺省 1，pageSize 缺省 20、上限 200；非整数 → 400。
+func (g *Gateway) listUsers(w http.ResponseWriter, r *http.Request, caller *authv1.ValidateTokenResponse) {
+	resp, err := g.svc.ListUsers(r.Context(), &emptypb.Empty{})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	tenant := tenantOrDefault(caller.GetTenantId())
+	// F6 字段名收口（板第七十九则）：此前这里把 proto 结构直接交给 writeJSON，
+	// 列表项于是是 protobuf 特有拼写——role_ids / created_at（还是 {"seconds":…}
+	// 对象，不是 RFC3339）/ must_change_password——而前端 UsersView 读的是驼峰
+	// roleIDs / createdAt ⇒ 切流到本服务后"角色列空白、时间列 Invalid Date"。
+	// 现逐项经 toPublicUser 收敛到 controlplane 契约（规范名 roleIDs/createdAt/
+	// mustChangePassword），并把本服务列表此前的拼写保留为过渡别名（零断裂）。
+	users := make([]map[string]any, 0, len(resp.Users))
+	for _, u := range resp.Users {
+		if tenant != defaultTenantID && tenantOrDefault(u.GetTenantId()) != tenant {
+			continue
+		}
+		item := g.toPublicUser(u)
+		item["role_ids"] = u.GetRoleIds()
+		item["created_at"] = u.GetCreatedAt()
+		item["must_change_password"] = u.GetMustChangePassword()
+		users = append(users, item)
+	}
+	page, pageSize, active, err := paginate.ParsePaginationOptIn(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !active {
+		writeJSON(w, http.StatusOK, map[string]any{"users": users})
+		return
+	}
+	pageUsers, hasMore := paginate.PaginateSlice(users, page, pageSize)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"users": pageUsers, "total": len(users), "page": page, "pageSize": pageSize, "hasMore": hasMore,
+	})
+}
+
 // handleUsers GET 列表 / POST 创建（approve 用 POST {id}/approve）。
-func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request) {
+func (g *Gateway) handleUsers(w http.ResponseWriter, r *http.Request, caller *authv1.ValidateTokenResponse) {
 	switch r.Method {
 	case http.MethodGet:
-		resp, err := g.svc.ListUsers(r.Context(), &emptypb.Empty{})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		// F6 字段名收口（板第七十九则）：此前这里把 proto 结构直接交给 writeJSON，
-		// 列表项于是是 protobuf 特有拼写——role_ids / created_at（还是 {"seconds":…}
-		// 对象，不是 RFC3339）/ must_change_password——而前端 UsersView 读的是驼峰
-		// roleIDs / createdAt ⇒ 切流到本服务后"角色列空白、时间列 Invalid Date"。
-		// 现逐项经 toPublicUser 收敛到 controlplane 契约（规范名 roleIDs/createdAt/
-		// mustChangePassword），并把本服务列表此前的拼写保留为过渡别名（零断裂）。
-		users := make([]map[string]any, 0, len(resp.Users))
-		for _, u := range resp.Users {
-			item := g.toPublicUser(u)
-			item["role_ids"] = u.GetRoleIds()
-			item["created_at"] = u.GetCreatedAt()
-			item["must_change_password"] = u.GetMustChangePassword()
-			users = append(users, item)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"users": users})
+		g.listUsers(w, r, caller)
 	case http.MethodPost:
 		// 管理员创建用户（区别于注册端点：管理端创建默认 active，无须审批）。
 		// 契约对齐 controlplane auth_users.go handleCreateUser：
@@ -731,7 +795,8 @@ func (g *Gateway) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 			// 不落原始 user id：它来自路径参数（外部可控），gosec G706 的污点分析不认 %%q，
 			// 仓内先例是"修法不落原值"而非加豁免（见 .golangci.services.yml 的 G 规则注释）。
 			// 该 id 已在响应体里返回给调用方，日志只需说明"Redis 侧撤销失败"这一事实。
-			log.Printf("[gateway] revoke-sessions: Redis 会话撤销失败（用户 id 见响应体）: %v", err)
+			logx.Error(r.Context(), "[gateway] revoke-sessions: Redis 会话撤销失败（用户 id 见响应体）", err,
+				"service", "auth-svc")
 			sessionRevocation = "failed: " + err.Error()
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -1072,6 +1137,19 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// defaultTenantID 与 controlplane tenantguard.TenantOrDefault 的兜底值一致：
+// 空串归属为主租户，主租户调用方保有跨租户全量视图。
+const defaultTenantID = "default"
+
+// tenantOrDefault 把空租户归一化为 default（与 controlplane auth_users.go:52
+// 使用的 tenantOrDefault 同语义）。
+func tenantOrDefault(tenantID string) string {
+	if tenantID == "" {
+		return defaultTenantID
+	}
+	return tenantID
 }
 
 // 编译期依赖断言（store 包被 Gateway 经 service.Store() 间接消费）。

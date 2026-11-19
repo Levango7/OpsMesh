@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/version"
 	applog "github.com/Levango7/OpsMesh/pkg/log"
 	pkgmetrics "github.com/Levango7/OpsMesh/pkg/metrics"
@@ -44,18 +45,19 @@ func main() {
 
 	nvidiaDetector := gpu.NewNvidiaDetector()
 	if nvidiaDetector.IsAvailable() {
-		log.Println("NVIDIA GPU detector available - using real nvidia-smi data")
+		logx.Info(context.Background(), "NVIDIA GPU detector available - using real nvidia-smi data", "service", "gpu-svc")
 		gpus, err := nvidiaDetector.DetectGPUs()
 		if err != nil {
-			log.Printf("nvidia-smi detection failed (%v), falling back to simulated data", err)
+			logx.Warn(context.Background(), "nvidia-smi detection failed, falling back to simulated data", "service", "gpu-svc", "error", err)
 		} else {
-			log.Printf("Detected %d NVIDIA GPU(s)", len(gpus))
+			logx.Info(context.Background(), "Detected NVIDIA GPUs", "service", "gpu-svc", "count", len(gpus))
 			for _, g := range gpus {
-				log.Printf("  GPU %s: %s (%d MB, driver %s)", g.ID, g.Name, g.MemoryTotalMB, g.DriverVersion)
+				logx.Info(context.Background(), "Detected GPU", "service", "gpu-svc",
+					"gpuID", g.ID, "name", g.Name, "memoryTotalMB", g.MemoryTotalMB, "driverVersion", g.DriverVersion)
 			}
 		}
 	} else {
-		log.Println("nvidia-smi not found - using simulated GPU data")
+		logx.Warn(context.Background(), "nvidia-smi not found - using simulated GPU data", "service", "gpu-svc")
 	}
 
 	nodeMgr := node.NewManager(nil)
@@ -63,14 +65,21 @@ func main() {
 	wlMgr := workload.NewManager(nil)
 	oc := ollama.NewClient(cfg.OllamaURL, 30*time.Second)
 	if oc.IsAvailable() {
-		log.Printf("Ollama server reachable at %s - using real HTTP API mode", cfg.OllamaURL)
+		logx.Info(context.Background(), "Ollama server reachable - using real HTTP API mode", "service", "gpu-svc", "url", cfg.OllamaURL)
 	} else {
-		log.Printf("Ollama server not reachable at %s - falling back to simulated mode", cfg.OllamaURL)
+		logx.Warn(context.Background(), "Ollama server not reachable - falling back to simulated mode", "service", "gpu-svc", "url", cfg.OllamaURL)
 	}
 	qMgr := quota.NewManager(nil)
 	collector := metrics.NewCollector(nil)
 
 	svc := service.NewService(nodeMgr, sched, wlMgr, oc, qMgr, collector)
+	// issue #98：按配置装配华为昇腾 NPU 采集器（npu-smi）。默认不启用；
+	// GPU_SVC_ACCELERATOR=ascend 时接入，GetGPUMetrics 会优先用它采集真实 NPU 指标。
+	if strings.EqualFold(cfg.Accelerator, "ascend") {
+		asc := metrics.NewAscendCollector(cfg.MetricsInterval)
+		svc.SetAscendCollector(asc)
+		logx.Info(context.Background(), "Ascend NPU 采集器已接入", "service", "gpu-svc", "interval", cfg.MetricsInterval)
+	}
 	h := handler.NewHandler(svc)
 
 	mux := http.NewServeMux()
@@ -113,7 +122,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Starting gpu-svc HTTP server on :%d", cfg.HTTPPort)
+		logx.Info(context.Background(), "Starting gpu-svc HTTP server", "service", "gpu-svc", "port", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			lgr.Fatalf("HTTP server failed: %v", err)
 		}
@@ -122,14 +131,14 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down gpu-svc...")
+	logx.Info(context.Background(), "Shutting down gpu-svc...", "service", "gpu-svc")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		logx.Error(shutdownCtx, "HTTP server shutdown error", err, "service", "gpu-svc")
 	}
 
-	log.Println("gpu-svc stopped")
+	logx.Info(context.Background(), "gpu-svc stopped", "service", "gpu-svc")
 }

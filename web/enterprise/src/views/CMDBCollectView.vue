@@ -9,8 +9,9 @@
     <div class="card card--raised">
       <h3>{{ $t('cmdbCollect.collect_title') }}</h3>
       <p class="muted">{{ $t('cmdbCollect.collect_hint') }}</p>
+      <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
       <div class="btnbar btnbar--bottom">
-        <Button variant="primary" size="md" :disabled="collecting" @click="onCollect" data-testid="cmdb-collect-btn">
+        <Button variant="primary" size="md" :disabled="collecting || !canWrite" :title="canWrite ? '' : $t('common.write_denied')" @click="onCollect" data-testid="cmdb-collect-btn">
           <Icon name="refresh" :size="14" /> {{ collecting ? $t('common.loading') : $t('cmdbCollect.collect') }}
         </Button>
       </div>
@@ -27,7 +28,7 @@
         <div class="field field--fixed">
           <label>{{ $t('cmdbCollect.import_label') }}</label>
           <textarea v-model="importRaw" rows="4" :placeholder="$t('cmdbCollect.import_placeholder')"></textarea>
-          <Button variant="primary" size="sm" :disabled="importing" @click="onImport" data-testid="cmdb-import-btn">
+          <Button variant="primary" size="sm" :disabled="importing || !canWrite" :title="canWrite ? '' : $t('common.write_denied')" @click="onImport" data-testid="cmdb-import-btn">
             {{ importing ? $t('common.loading') : $t('cmdbCollect.import') }}
           </Button>
         </div>
@@ -63,10 +64,10 @@
         <template #cell-id="{ value }"><code>{{ value }}</code></template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <Button variant="ghost" size="sm" @click="openCIEdit(row)" data-testid="cmdb-ci-edit-btn"><Icon name="edit" :size="13" /></Button>
-            <Button variant="primary" size="sm" @click="onCIApprove(row)" data-testid="cmdb-ci-approve-btn">{{ $t('cmdbCollect.approve') }}</Button>
-            <Button variant="danger" size="sm" @click="onCIReject(row)" data-testid="cmdb-ci-reject-btn">{{ $t('cmdbCollect.reject') }}</Button>
-            <Button variant="danger" size="sm" @click="onCIDelete(row)" data-testid="cmdb-ci-delete-btn"><Icon name="delete" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openCIEdit(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="cmdb-ci-edit-btn"><Icon name="edit" :size="13" /></Button>
+            <Button variant="primary" size="sm" @click="onCIApprove(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="cmdb-ci-approve-btn">{{ $t('cmdbCollect.approve') }}</Button>
+            <Button variant="danger" size="sm" @click="onCIReject(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="cmdb-ci-reject-btn">{{ $t('cmdbCollect.reject') }}</Button>
+            <Button variant="danger" size="sm" @click="onCIDelete(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="cmdb-ci-delete-btn"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -81,7 +82,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="ciForm = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
@@ -110,6 +111,7 @@ import PageShell from '@/components/PageShell.vue'
 // CMDB 采集管理页 — 触发采集 + CI 导入导出 + 待审批 CI 列表 + CI 编辑/删除/审批
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useCMDBAdvancedStore } from '@/stores/cmdb-advanced'
+import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
 import DataTable from '@/components/DataTable.vue'
@@ -119,6 +121,9 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 import Button from "@/components/ui/Button.vue"
 
 const store = useCMDBAdvancedStore()
+// 采集触发/CI 导入/审批/编辑/删除均走后端 cmdb:write（cmdb_collector.go:28、cmdb_approval.go:432）。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('cmdb:write'))
 const collecting = ref(false)
 const importing = ref(false)
 const exporting = ref(false)

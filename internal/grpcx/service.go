@@ -31,6 +31,10 @@ type HeartbeatReq struct {
 	Load       int                  `json:"load"`
 	CmdbReport *proto.CmdbReport    `json:"cmdbReport,omitempty"` // CMDB 增量上报（cmdb 选填）
 	Metrics    *proto.DeviceMetrics `json:"metrics,omitempty"`    // 实时监控指标（agent 周期采集，选填）
+	// Capabilities agent 声明的协议能力（追加式可选字段，见 M1 规格 §9）。
+	// M1 定义 "abac_bundle=v1"（可拉取 GET /api/v1/agent/abac-bundle）。
+	// 旧控制面忽略未知字段；旧 agent 不发送即视为无能力，双向兼容。
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // Empty 无业务负载的空响应（心跳/上报结果用）。

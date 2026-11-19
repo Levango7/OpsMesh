@@ -1,11 +1,12 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/alert-svc/internal/escalation"
 )
 
@@ -46,7 +47,7 @@ func (h *EscalationHandler) createPolicy(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.escalator.AddPolicy(&policy); err != nil {
-		log.Printf("Failed to create escalation policy: %v", err)
+		logx.Error(r.Context(), "Failed to create escalation policy", err, "service", "alert-svc", "tenantID", policy.TenantID)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -94,7 +95,7 @@ func (h *EscalationHandler) createSchedule(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.escalator.AddSchedule(&schedule); err != nil {
-		log.Printf("Failed to create on-call schedule: %v", err)
+		logx.Error(r.Context(), "Failed to create on-call schedule", err, "service", "alert-svc", "tenantID", schedule.TenantID)
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -143,7 +144,7 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("Failed to encode JSON response: %v", err)
+		logx.Error(context.Background(), "Failed to encode JSON response", err, "service", "alert-svc")
 	}
 }
 
@@ -152,6 +153,6 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	w.WriteHeader(status)
 	resp := map[string]string{"error": msg}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("Failed to encode JSON error: %v", err)
+		logx.Error(context.Background(), "Failed to encode JSON error", err, "service", "alert-svc")
 	}
 }

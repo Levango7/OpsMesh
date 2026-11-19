@@ -8,7 +8,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strconv"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,37 +39,36 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap := s.store.Snapshot(actx.TenantID)
-	// 修复 3：分页（向后兼容：不传 page 返回全量 map）。
-	page, pageSize := paginate.ParsePagination(r.URL.Query())
-	if page == 0 {
+	// 分页（opt-in，向后兼容）：不传 page/pageSize 返回原 segment map；任一存在则返回
+	// 统一信封 {data,total,page,pageSize,hasMore}，data 为跨 segment 展平后的设备列表。
+	page, pageSize, paged, err := paginate.ParsePaginationOptIn(r.URL.Query())
+	if err != nil {
+		paginate.JSONError(w, http.StatusBadRequest, "invalid page/pageSize")
+		return
+	}
+	if !paged {
 		paginate.WriteJSON(w, http.StatusOK, snap)
 		return
 	}
-	// 展平所有 segment 的设备后分页，但**保持 segment 形态**返回：
-	// 前端 store 按 Object.entries 遍历 segments，若返回 {data:[…]} 会崩。
-	// 审计整改批次24：分页时仅截断每个 segment 内的设备数，总数字段放响应头。
 	var allDevs []proto.DeviceInfo
 	for _, devs := range snap {
 		allDevs = append(allDevs, devs...)
 	}
+	// 稳定排序：DeviceID 升序；同 ID 时以 segment/agentID 兜底保证确定性。
+	sort.SliceStable(allDevs, func(i, j int) bool {
+		if allDevs[i].DeviceID != allDevs[j].DeviceID {
+			return allDevs[i].DeviceID < allDevs[j].DeviceID
+		}
+		if allDevs[i].Segment != allDevs[j].Segment {
+			return allDevs[i].Segment < allDevs[j].Segment
+		}
+		return allDevs[i].AgentID < allDevs[j].AgentID
+	})
 	total := len(allDevs)
-	start := (page - 1) * pageSize
-	if start >= total {
-		start = total
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-	// 按 segment 重新分组（保持前端契约）
-	paged := make(map[string][]proto.DeviceInfo)
-	for _, dev := range allDevs[start:end] {
-		paged[dev.Segment] = append(paged[dev.Segment], dev)
-	}
-	w.Header().Set("X-Total-Count", strconv.Itoa(total))
-	w.Header().Set("X-Page", strconv.Itoa(page))
-	w.Header().Set("X-Page-Size", strconv.Itoa(pageSize))
-	paginate.WriteJSON(w, http.StatusOK, paged)
+	data, hasMore := paginate.PaginateSlice(allDevs, page, pageSize)
+	paginate.WriteJSON(w, http.StatusOK, paginate.PaginateResult{
+		Data: data, Total: total, Page: page, PageSize: pageSize, HasMore: hasMore,
+	})
 }
 
 // agentLiveWindow 是 agent 判定失联的心跳窗口（§3.9）：心跳 10s/次，30s（3 个
@@ -330,9 +329,12 @@ func (s *Server) handleProvision(w http.ResponseWriter, r *http.Request, id stri
 	// B1 SSH 自动推送：若配置了 SSH 私钥，自动通过 SSH 在候选设备上执行 bootstrap。
 	if s.cfg.ProvisionSSHKey != "" {
 		sshAddr := fmt.Sprintf("%s:22", dev.IP)
+		// SSH 推送在响应返回后继续执行（5min），不能绑定请求取消；
+		// WithoutCancel 保留 request context 的 trace/日志值，仅剥离取消信号。
+		parent := context.WithoutCancel(r.Context())
 		go func(addr, cmd, device string) {
 			// 5 分钟超时，防 SSH 推送阻塞导致 goroutine 泄漏。
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 			defer cancel()
 			logx.Info(ctx, "SSH 自动推送 agent", "device", device, "sshAddr", addr)
 			out, err := provision.PushAndExec(ctx, addr, s.cfg.ProvisionSSHUser, s.cfg.ProvisionSSHKey, s.cfg.ProvisionSSHKP, s.cfg.ProvisionSSHKnownHosts, cmd)

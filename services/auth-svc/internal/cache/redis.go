@@ -3,11 +3,12 @@ package cache
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 const (
@@ -64,7 +65,7 @@ func NewWithAddr(prefix, addr string) *Cache {
 
 	enabled := true
 	if err := client.Ping(ctx).Err(); err != nil {
-		log.Printf("[cache] Redis unreachable (graceful fallback active): %v", err)
+		logx.Warn(ctx, "[cache] Redis unreachable (graceful fallback active)", "service", "auth-svc", "error", err.Error())
 		enabled = false
 	}
 
@@ -103,13 +104,13 @@ func (c *Cache) Get(key string, dest interface{}) bool {
 	data, err := c.client.Get(ctx, c.key(key)).Bytes()
 	if err != nil {
 		if err != redis.Nil {
-			log.Printf("[cache] Get %s failed (fallback to DB): %v", key, err)
+			logx.Warn(ctx, "[cache] Get 失败（回退数据库）", "service", "auth-svc", "key", key, "error", err.Error())
 		}
 		return false
 	}
 
 	if err := json.Unmarshal(data, dest); err != nil {
-		log.Printf("[cache] Get %s unmarshal error: %v", key, err)
+		logx.Warn(ctx, "[cache] Get 反序列化失败", "service", "auth-svc", "key", key, "error", err.Error())
 		return false
 	}
 	return true
@@ -131,7 +132,7 @@ func (c *Cache) SetWithTTL(key string, value interface{}, ttl time.Duration) {
 
 	data, err := json.Marshal(value)
 	if err != nil {
-		log.Printf("[cache] Set %s marshal error: %v", key, err)
+		logx.Warn(context.Background(), "[cache] Set 序列化失败", "service", "auth-svc", "key", key, "error", err.Error())
 		return
 	}
 
@@ -139,7 +140,7 @@ func (c *Cache) SetWithTTL(key string, value interface{}, ttl time.Duration) {
 	defer cancel()
 
 	if err := c.client.Set(ctx, c.key(key), data, ttl).Err(); err != nil {
-		log.Printf("[cache] Set %s failed: %v", key, err)
+		logx.Warn(ctx, "[cache] Set 失败", "service", "auth-svc", "key", key, "error", err.Error())
 	}
 }
 
@@ -155,7 +156,7 @@ func (c *Cache) Delete(key string) {
 	defer cancel()
 
 	if err := c.client.Del(ctx, c.key(key)).Err(); err != nil {
-		log.Printf("[cache] Delete %s failed: %v", key, err)
+		logx.Warn(ctx, "[cache] Delete 失败", "service", "auth-svc", "key", key, "error", err.Error())
 	}
 }
 
@@ -172,7 +173,7 @@ func (c *Cache) Exists(key string) bool {
 
 	n, err := c.client.Exists(ctx, c.key(key)).Result()
 	if err != nil {
-		log.Printf("[cache] Exists %s failed: %v", key, err)
+		logx.Warn(ctx, "[cache] Exists 失败", "service", "auth-svc", "key", key, "error", err.Error())
 		return false
 	}
 	return n > 0
@@ -206,11 +207,11 @@ func (c *Cache) GetOrDefault(key string, dest interface{}, fetchFn func() (inter
 	// Re-marshal and unmarshal to populate dest (avoids reflection complexity).
 	data, err := json.Marshal(val)
 	if err != nil {
-		log.Printf("[cache] GetOrDefault %s marshal error: %v", key, err)
+		logx.Warn(context.Background(), "[cache] GetOrDefault 序列化失败", "service", "auth-svc", "key", key, "error", err.Error())
 		return false
 	}
 	if err := json.Unmarshal(data, dest); err != nil {
-		log.Printf("[cache] GetOrDefault %s unmarshal error: %v", key, err)
+		logx.Warn(context.Background(), "[cache] GetOrDefault 反序列化失败", "service", "auth-svc", "key", key, "error", err.Error())
 		return false
 	}
 	return false
@@ -244,14 +245,14 @@ func (c *Cache) IncrWithExpire(key string, expire time.Duration) (int64, bool) {
 	fullKey := c.key(key)
 	n, err := c.client.Incr(ctx, fullKey).Result()
 	if err != nil {
-		log.Printf("[cache] Incr %s failed: %v", key, err)
+		logx.Warn(ctx, "[cache] Incr 失败", "service", "auth-svc", "key", key, "error", err.Error())
 		return 0, false
 	}
 	// 仅在首次递增（n==1）时设置 TTL，避免每次递增都重置窗口。
 	// 窗口语义：从首次失败起 guardFailWindow 内累计计数，过期后 Redis 自动清理。
 	if n == 1 {
 		if err := c.client.Expire(ctx, fullKey, expire).Err(); err != nil {
-			log.Printf("[cache] Expire %s failed: %v", key, err)
+			logx.Warn(ctx, "[cache] Expire 失败", "service", "auth-svc", "key", key, "error", err.Error())
 		}
 	}
 	return n, true
@@ -266,7 +267,7 @@ func (c *Cache) SetExpire(key string, expire time.Duration) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 	if err := c.client.Expire(ctx, c.key(key), expire).Err(); err != nil {
-		log.Printf("[cache] SetExpire %s failed: %v", key, err)
+		logx.Warn(ctx, "[cache] SetExpire 失败", "service", "auth-svc", "key", key, "error", err.Error())
 		return false
 	}
 	return true

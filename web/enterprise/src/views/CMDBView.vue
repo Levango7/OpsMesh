@@ -1,5 +1,6 @@
 <template>
   <PageShell :title="$t('cmdb.title')" :desc="$t('cmdb.subtitle')" testid="cmdb">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div class="row">
       <!-- 左：实例列表 -->
       <div class="col">
@@ -51,7 +52,7 @@
               <label>{{ $t('cmdb.attrs_label') }}</label>
               <textarea v-model="form.attrsRaw" rows="3" placeholder='{"env":"prod"}' style="width:100%" data-testid="cmdb-create-attrs" />
             </div>
-            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" :title="submitting ? $t('common.loading') : ''" data-testid="cmdb-create-btn">{{ $t('cmdb.create_btn') }}</Button>
+            <Button variant="primary" size="md" native-type="submit" :disabled="!canWrite || submitting" :title="!canWrite ? $t('common.write_denied') : (submitting ? $t('common.loading') : '')" data-testid="cmdb-create-btn">{{ $t('cmdb.create_btn') }}</Button>
             <p v-if="store.msg" :class="['msg', store.error ? 'err' : 'ok']">{{ store.msg }}</p>
           </form>
         </div>
@@ -108,6 +109,11 @@ import PageShell from '@/components/PageShell.vue'
 
 import { computed, onMounted, reactive, ref, defineAsyncComponent } from 'vue'
 import { useCmdbStore } from '@/stores/cmdb'
+
+// 写操作门：与后端 requirePermission('cmdb:write') 同源；只读者显式禁用写按钮。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('cmdb:write'))
+import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import Button from "@/components/ui/Button.vue"

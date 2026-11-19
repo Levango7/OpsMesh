@@ -27,6 +27,7 @@ import (
 	"go/parser"
 	"go/token"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -34,8 +35,7 @@ import (
 // TestB21FilterNotInBareSingleQuotes 真洞判据①。
 func TestB21FilterNotInBareSingleQuotes(t *testing.T) {
 	payload := "x'); touch /tmp/PWNED; echo '"
-	script := buildMongoQueryScript(mongoQueryReq{
-		DeviceID:   "b21-mongo",
+	script := buildMongoQueryScript(validatedMongoQuery{
 		Database:   "db1",
 		Collection: "c1",
 		Filter:     payload,
@@ -63,6 +63,13 @@ func TestB21FilterNotInBareSingleQuotes(t *testing.T) {
 		}
 	}
 }
+
+// b21RawReqRef 检测脚本实参是否包含「裸 req. 引用」（vreq. / validatedMongo* 不算）。
+// 原始判据 strings.Contains(src, "req.") 在迁移后会把 vreq.* 全部误命中，故改为
+// 词边界正则：前面必须是非单词字符（或串首）的 req.——vreq. 以字母 v 开头，不命中。
+var b21ReqRawRe = regexp.MustCompile(`(^|[^A-Za-z0-9_])req\.`)
+
+func b21RawReqRef(src string) bool { return b21ReqRawRe.MatchString(src) }
 
 // TestB21NoRawReqInScriptArgs AST 判据②。
 func TestB21NoRawReqInScriptArgs(t *testing.T) {
@@ -94,7 +101,7 @@ func TestB21NoRawReqInScriptArgs(t *testing.T) {
 		}
 		for _, a := range args {
 			src := b9Src(fset, a)
-			if strings.Contains(src, "req.") {
+			if b21RawReqRef(src) {
 				t.Errorf("%s:%d 脚本实参裸引用 req.*：%s", f, fset.Position(a.Pos()).Line, src)
 			}
 		}

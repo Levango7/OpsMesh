@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/version"
 	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
@@ -74,7 +74,7 @@ func main() {
 			lgr.Fatalf("MySQL store 初始化失败，停止启动: %v", err)
 		} else {
 			st = ms
-			log.Printf("MySQL store 已启用")
+			logx.Info(context.Background(), "MySQL store 已启用", "service", "auth-svc", "store", "mysql")
 			defer func() { _ = st.Close() }()
 		}
 	}
@@ -153,15 +153,18 @@ func main() {
 			redisCache = cache.NewWithAddr("auth:", cfg.RedisAddr)
 			defer redisCache.Close()
 			if redisCache.Enabled() {
-				log.Printf("Redis cache enabled — guard/deviceFP backed by Redis")
+				logx.Info(context.Background(), "Redis cache enabled — guard/deviceFP backed by Redis",
+					"service", "auth-svc", "redisAddr", cfg.RedisAddr)
 			}
 		}
 		if cfg.SessionStoreEnabled && cfg.RedisAddr != "" {
 			sessionStore = cache.NewSessionStore(cfg.RedisAddr, cfg.SessionTTL)
 			if sessionStore.Enabled() {
-				log.Printf("Redis SessionStore enabled (TTL=%v) — stateful session management active", cfg.SessionTTL)
+				logx.Info(context.Background(), "Redis SessionStore enabled — stateful session management active",
+					"service", "auth-svc", "sessionTTL", cfg.SessionTTL.String())
 			} else {
-				log.Printf("Redis SessionStore disabled (Redis unreachable) — degraded to stateless JWT mode")
+				logx.Warn(context.Background(), "Redis SessionStore disabled (Redis unreachable) — degraded to stateless JWT mode",
+					"service", "auth-svc", "redisAddr", cfg.RedisAddr)
 			}
 		}
 
@@ -177,10 +180,12 @@ func main() {
 		// 开启时注入**；关闭时（gRPC-only，控制面仍是唯一登录入口）查询返回保守的
 		// 「未锁定」，锁定制由控制面侧继续负责——不会误拒合法登录。
 		svc.SetLoginGuardStatus(gw.ServiceGuardStatusProvider())
-		log.Printf("HTTP gateway enabled (AUTH_SVC_HTTP_ENABLED=true) — cookie_secure=%v deviceFP=%v public_register=%v",
-			cfg.CookieSecure, cfg.DeviceFPEnabled, cfg.PublicRegister)
+		logx.Info(context.Background(), "HTTP gateway enabled (AUTH_SVC_HTTP_ENABLED=true)",
+			"service", "auth-svc", "cookieSecure", cfg.CookieSecure,
+			"deviceFP", cfg.DeviceFPEnabled, "publicRegister", cfg.PublicRegister)
 	} else {
-		log.Printf("HTTP gateway disabled (default) — auth-svc serves gRPC only; controlplane remains the sole login entry")
+		logx.Info(context.Background(), "HTTP gateway disabled (default) — auth-svc serves gRPC only; controlplane remains the sole login entry",
+			"service", "auth-svc")
 	}
 
 	corsConfig := security.CORSConfig{
@@ -216,14 +221,14 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Starting gRPC server on :%d", cfg.GRPCPort)
+		logx.Info(context.Background(), "Starting gRPC server", "service", "auth-svc", "port", cfg.GRPCPort)
 		if err := grpcServer.Serve(grpcLis); err != nil {
 			lgr.Fatalf("gRPC server failed: %v", err)
 		}
 	}()
 
 	go func() {
-		log.Printf("Starting HTTP health server on :%d", cfg.HTTPPort)
+		logx.Info(context.Background(), "Starting HTTP health server", "service", "auth-svc", "port", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			lgr.Fatalf("HTTP server failed: %v", err)
 		}
@@ -232,7 +237,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down...")
+	logx.Info(context.Background(), "Shutting down...", "service", "auth-svc")
 
 	healthServer.SetServingStatus("opsmesh.auth.v1.AuthService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 	healthServer.SetServingStatus("opsmesh.auth.v1.UserService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
@@ -245,10 +250,10 @@ func main() {
 	grpcServer.GracefulStop()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		logx.Error(shutdownCtx, "HTTP server shutdown error", err, "service", "auth-svc")
 	}
 
-	log.Println("Server stopped")
+	logx.Info(context.Background(), "Server stopped", "service", "auth-svc")
 }
 
 // rotateDefaultAdminPassword admin 弱口令启动加固（A2，与 controlplane
@@ -292,15 +297,16 @@ func rotateDefaultAdminPassword(st store.Store, cfg *config.Config) error {
 			if err := writeAdminPasswordFile(cfg.AdminPasswordFile, newPass); err != nil {
 				return err
 			}
-			log.Printf("[auth-svc] 初始 admin 口令已写入 %s（权限 0600，内含明文，请读取后妥善保管并删除该文件）", cfg.AdminPasswordFile)
+			logx.Info(context.Background(),
+				"[auth-svc] 初始 admin 口令已写入文件（权限 0600，内含明文，请读取后妥善保管并删除该文件）",
+				"service", "auth-svc", "path", cfg.AdminPasswordFile)
 		} else {
-			log.Printf("============================================================")
-			log.Printf("[auth-svc] 安全提示：默认 admin 弱口令(admin123)已替换为随机口令。")
-			log.Printf("[auth-svc]   一次性随机密码（请立即复制并登录后修改）: %s", newPass)
-			log.Printf("[auth-svc]   注意：该口令已进入容器/服务日志；生产请改用 AUTH_SVC_ADMIN_PASSWORD")
-			log.Printf("[auth-svc]   （Secret 注入）或 AUTH_SVC_ADMIN_PASSWORD_FILE 交付。")
-			log.Printf("[auth-svc]   MustChangePassword=true 保持：首登仍强制改密。")
-			log.Printf("============================================================")
+			// 安全约束：口令属机密，写入日志即对所有采集方可见（原实现为"兜底打印一次"）。
+			// 此处只告警、不回显口令；交付通道请改用 AUTH_SVC_ADMIN_PASSWORD（Secret）
+			// 或 AUTH_SVC_ADMIN_PASSWORD_FILE。
+			logx.Warn(context.Background(),
+				"[auth-svc] 默认 admin 弱口令(admin123)已替换为随机口令，但未配置 AUTH_SVC_ADMIN_PASSWORD_FILE——口令未回显（避免进入日志采集）；请改用 AUTH_SVC_ADMIN_PASSWORD（Secret 注入）或 AUTH_SVC_ADMIN_PASSWORD_FILE 交付。MustChangePassword=true 保持：首登仍强制改密",
+				"service", "auth-svc", "mustChangePassword", true)
 		}
 	}
 	hash, err := auth.HashPassword(newPass)
@@ -314,10 +320,12 @@ func rotateDefaultAdminPassword(st store.Store, cfg *config.Config) error {
 	// 轮换不是用户主动改密，标记须置回 true（首登强制改密保持，与 controlplane
 	// enforceInitialCredentials 的"改密后恢复标记"同语义）。
 	if err := st.SetMustChangePassword(u.ID, true); err != nil {
-		log.Printf("[auth-svc] admin 轮换置回 MustChangePassword 失败: %v", err)
+		logx.Error(context.Background(), "[auth-svc] admin 轮换置回 MustChangePassword 失败", err,
+			"service", "auth-svc", "userID", u.ID)
 	}
 	if cfg.AdminPassword != "" {
-		log.Printf("[auth-svc] 安全提示：admin 口令已按 AUTH_SVC_ADMIN_PASSWORD 设置（首登仍须改密）。")
+		logx.Info(context.Background(), "[auth-svc] 安全提示：admin 口令已按 AUTH_SVC_ADMIN_PASSWORD 设置（首登仍须改密）",
+			"service", "auth-svc", "userID", u.ID)
 	}
 	return nil
 }

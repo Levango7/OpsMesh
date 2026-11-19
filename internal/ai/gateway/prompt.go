@@ -7,11 +7,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Levango7/OpsMesh/internal/store"
 )
 
 // PromptTemplate 提示词模板
 type PromptTemplate struct {
 	ID          string            `json:"id"`
+	TenantID    string            `json:"tenantId,omitempty"`
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Category    string            `json:"category"` // system/user/tool/few-shot
@@ -51,6 +54,7 @@ func (s *PromptTemplateStore) Create(ctx context.Context, tmpl *PromptTemplate) 
 	tmpl.CreatedAt = now
 	tmpl.UpdatedAt = now
 	tmpl.Version = 1
+	tmpl.TenantID = ctxTenant(ctx)
 	s.templates[key] = tmpl
 	return tmpl, nil
 }
@@ -63,6 +67,9 @@ func (s *PromptTemplateStore) Get(ctx context.Context, id string) (*PromptTempla
 		return nil, false
 	}
 	cp := *tmpl
+	if cp.TenantID == "" {
+		cp.TenantID = ctxTenant(ctx)
+	}
 	return &cp, true
 }
 
@@ -72,9 +79,18 @@ func (s *PromptTemplateStore) List(ctx context.Context, category string) []*Prom
 
 	out := make([]*PromptTemplate, 0)
 	prefix := tenantPrefix(ctx)
+	currentTenant := ctxTenant(ctx)
 	for key, t := range s.templates {
 		// TD-97 ②：只列本租户模板（提示词模板此前全平台共用）。
 		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		// 显式按 TenantID 过滤。
+		docTenant := t.TenantID
+		if docTenant == "" {
+			docTenant = store.DefaultTenantID
+		}
+		if docTenant != currentTenant {
 			continue
 		}
 		if category != "" && t.Category != category {
@@ -82,6 +98,9 @@ func (s *PromptTemplateStore) List(ctx context.Context, category string) []*Prom
 		}
 		cp := *t
 		cp.ID = bareID(key) // 出口还原裸 ID
+		if cp.TenantID == "" {
+			cp.TenantID = currentTenant
+		}
 		out = append(out, &cp)
 	}
 	return out
@@ -100,6 +119,9 @@ func (s *PromptTemplateStore) Update(ctx context.Context, id string, content str
 	tmpl.Variables = variables
 	tmpl.Version++
 	tmpl.UpdatedAt = time.Now()
+	if tmpl.TenantID == "" {
+		tmpl.TenantID = ctxTenant(ctx)
+	}
 	return tmpl, nil
 }
 

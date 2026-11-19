@@ -55,6 +55,7 @@ var tenantStoreVerdicts = map[string]storeVerdict{
 	"internal/cmdb/memory.go::MemoryCiStore":                       {kindTenantField, "Tenant", "internal/cmdb/memory.go", "handler 全量传 actx.TenantID；另有 idTakenByOtherTenant 防跨租户 ID 冲突"},
 	"internal/controlplane/flux.go::fluxAppStore":                  {kindTenantField, "Tenant", "internal/controlplane/flux.go", "requireTenantContext + 列表/读按 TenantID 过滤"},
 	"internal/controlplane/server_batch.go::batchStore":            {kindTenantField, "Tenant", "internal/controlplane/server_batch.go", "对象带 TenantID；handler 取 actx.TenantID"},
+	"internal/cost/memory_budget_store.go::MemoryBudgetStore":      {kindTenantField, "Tenant", "internal/cost/memory_budget_store.go", "budgets/alerts map 以 tenantID 为键 + TokenBudget/BudgetAlert 带 TenantID；GetBudget/ListAlerts 按租户直取"},
 	"internal/deploy/store.go::MemoryDeployStore":                  {kindTenantField, "Tenant", "internal/deploy/store.go", "行级租户隔离 + ErrTenantMismatch"},
 	"internal/deploy/federation.go::MemoryFederationStore":         {kindTenantField, "Tenant", "internal/deploy/federation.go", "同族口径（ErrTenantMismatch）"},
 	"internal/orchestration/store.go::MemoryWorkflowStore":         {kindTenantField, "Tenant", "internal/orchestration/store.go", "接口自带租户参数 + ErrWFTenantMismatch"},

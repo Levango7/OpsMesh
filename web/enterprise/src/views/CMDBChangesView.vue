@@ -5,6 +5,7 @@
     testid="cmdb-changes"
     :error="store.error"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 状态筛选 -->
     <div class="filter-bar">
       <Button
@@ -37,8 +38,8 @@
       <template #cell-actions="{ row }">
         <div class="row-actions">
           <Button variant="ghost" size="sm" @click="viewDetail(row)" data-testid="cmdb-change-detail-btn">{{ $t('cmdbChanges.detail') }}</Button>
-          <Button variant="primary" size="sm" v-if="row.status === 'pending'" @click="onApprove(row)" data-testid="cmdb-change-approve-btn">{{ $t('cmdbChanges.approve') }}</Button>
-          <Button variant="danger" size="sm" v-if="row.status === 'pending'" @click="onReject(row)" data-testid="cmdb-change-reject-btn">{{ $t('cmdbChanges.reject') }}</Button>
+          <Button variant="primary" size="sm" v-if="row.status === 'pending'" @click="onApprove(row)" data-testid="cmdb-change-approve-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('cmdbChanges.approve') }}</Button>
+          <Button variant="danger" size="sm" v-if="row.status === 'pending'" @click="onReject(row)" data-testid="cmdb-change-reject-btn" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('cmdbChanges.reject') }}</Button>
         </div>
       </template>
     </DataTable>
@@ -83,8 +84,13 @@ import PageShell from '@/components/PageShell.vue'
 // CMDB 变更审批页 — 列表 + 状态筛选 + 详情 + approve/reject
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useCMDBAdvancedStore } from '@/stores/cmdb-advanced'
+
+// 写操作门：与后端 requirePermission('cmdb:write') 同源；只读者显式禁用写按钮。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('cmdb:write'))
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
+import { useAuthStore } from '@/stores/auth'
 import DataTable from '@/components/DataTable.vue'
 import DetailDrawer from '@/components/DetailDrawer.vue'
 import Icon from '@/components/Icon.vue'

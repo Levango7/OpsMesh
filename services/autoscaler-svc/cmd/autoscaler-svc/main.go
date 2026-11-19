@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	applog "github.com/Levango7/OpsMesh/pkg/log"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/evaluator"
@@ -17,6 +17,7 @@ import (
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/k8s"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/prometheus"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/service"
+	"github.com/Levango7/OpsMesh/services/autoscaler-svc/internal/store"
 	"github.com/Levango7/OpsMesh/services/autoscaler-svc/pkg/config"
 )
 
@@ -50,6 +51,26 @@ func main() {
 	metrics.Init("autoscaler-svc")
 
 	eng := evaluator.NewEvaluator(nil)
+
+	// 持久化接线（issue #48 裁决①）：DSN 非空即装配 MySQL store，装载存量规则并写穿；
+	// 装配失败 fail-fast——"声明了持久化却装载不进来"比启动失败更难发现（假持久化）。
+	// 未配置 DSN = 纯内存（单副本/开发形态），行为与接线前逐字相同。
+	if cfg.DSN != "" {
+		st, err := store.NewMySQLStore(cfg.DSN)
+		if err != nil {
+			lgr.Fatalf("autoscaler 持久化装配失败（issue #48 裁决①）：DSN 已配置但建连/迁移不通过，"+
+				"声明了持久化却装载不进来比启动失败更难发现。err=%v", err)
+		}
+		if err := eng.SetStore(st); err != nil {
+			lgr.Fatalf("autoscaler 存量规则装载失败: %v", err)
+		}
+		logx.Info(context.Background(), "autoscaler 持久化已接线（存量规则已装载，重启不丢）",
+			"service", "autoscaler-svc")
+	} else {
+		logx.Info(context.Background(), "autoscaler 未配置 DSN：规则/决策仅内存（重启即丢），持久化未启用",
+			"service", "autoscaler-svc")
+	}
+
 	reader := prometheus.NewClient(cfg.PrometheusURL)
 	scaler, err := buildScaler(cfg)
 	if err != nil {
@@ -58,10 +79,11 @@ func main() {
 		lgr.Fatalf("扩缩容执行器装配失败: %v", err)
 	}
 	if k8s.IsSimulated(scaler.Executor()) {
-		log.Printf("WARN｜扩缩容执行器=memory-simulated：scale 动作只改本进程内存，**不会改动任何集群**，重启即丢。" +
-			"需要真实执行请设 AUTOSCALER_K8S_EXECUTOR=in-cluster（Pod 内）或 kubeconfig + AUTOSCALER_KUBECONFIG")
+		logx.Warn(context.Background(), "扩缩容执行器=memory-simulated：scale 动作只改本进程内存，**不会改动任何集群**，重启即丢。"+
+			"需要真实执行请设 AUTOSCALER_K8S_EXECUTOR=in-cluster（Pod 内）或 kubeconfig + AUTOSCALER_KUBECONFIG",
+			"service", "autoscaler-svc", "executor", scaler.Executor())
 	} else {
-		log.Printf("扩缩容执行器=%s（会真实改动集群副本数）", scaler.Executor())
+		logx.Info(context.Background(), "扩缩容执行器已启用（会真实改动集群副本数）", "service", "autoscaler-svc", "executor", scaler.Executor())
 	}
 	svc := service.NewService(eng, reader, scaler)
 	h := handler.NewHandler(svc)
@@ -77,7 +99,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Starting autoscaler-svc HTTP server on :%d", cfg.HTTPPort)
+		logx.Info(context.Background(), "Starting autoscaler-svc HTTP server", "service", "autoscaler-svc", "port", cfg.HTTPPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			lgr.Fatalf("HTTP server failed: %v", err)
 		}
@@ -86,14 +108,14 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down...")
+	logx.Info(context.Background(), "Shutting down...", "service", "autoscaler-svc")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		logx.Error(shutdownCtx, "HTTP server shutdown error", err, "service", "autoscaler-svc")
 	}
 
-	log.Println("Server stopped")
+	logx.Info(context.Background(), "Server stopped", "service", "autoscaler-svc")
 }

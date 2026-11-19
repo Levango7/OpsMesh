@@ -2,6 +2,7 @@
 package cost
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
 // ModelTier 模型层级
@@ -45,11 +47,11 @@ type TokenBudget struct {
 	// Timezone 是配额窗口的切分时区（IANA 名，空=UTC）。日/月窗口按该时区的
 	// 自然日/自然月零点切；按服务器时区切会让异地租户每月凭空损失数小时额度。
 	Timezone string `json:"timezone"`
-	// monthReset 记录 UsedMonth 的窗口起点（不对外序列化）。
-	monthReset time.Time
-	// alerted 记录本窗口已发过的告警键（`类型:阈值`）。没有它，越限后每一次写入
+	// MonthReset 记录 UsedMonth 的窗口起点（不对外序列化）。
+	MonthReset time.Time `json:"-"`
+	// Alerted 记录本窗口已发过的告警键（`类型:阈值`）。没有它，越限后每一次写入
 	// 都会再追加一条同样的告警，把列表刷成噪音；窗口切换时按对应类型清空。
-	alerted map[string]bool
+	Alerted map[string]bool `json:"-"`
 }
 
 // BudgetManager 预算管理器
@@ -59,6 +61,17 @@ type BudgetManager struct {
 	alerts  []BudgetAlert
 	// now 是时间注入缝：窗口边界用例不该等真实时钟跨过零点。
 	now func() time.Time
+	// store 是可选的持久化后端；nil 时保持进程内-only 行为（向后兼容）。
+	store BudgetStore
+}
+
+// BudgetStore 预算持久化抽象（TD-97 ①）。
+type BudgetStore interface {
+	GetBudget(ctx context.Context, tenantID string) (*TokenBudget, error)
+	UpsertBudget(ctx context.Context, b *TokenBudget) error
+	ListBudgets(ctx context.Context) ([]*TokenBudget, error)
+	RecordAlert(ctx context.Context, alert BudgetAlert) error
+	ListAlerts(ctx context.Context, tenantID string, limit int) ([]BudgetAlert, error)
 }
 
 type BudgetAlert struct {
@@ -70,12 +83,21 @@ type BudgetAlert struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-func NewBudgetManager() *BudgetManager {
-	return &BudgetManager{
+func NewBudgetManager(store ...BudgetStore) *BudgetManager {
+	bm := &BudgetManager{
 		budgets: make(map[string]*TokenBudget),
 		alerts:  make([]BudgetAlert, 0),
 		now:     time.Now,
 	}
+	if len(store) > 0 {
+		bm.store = store[0]
+	}
+	return bm
+}
+
+// NewBudgetManagerWithStore 构造带持久化后端的 BudgetManager（显式命名，便于调用方）。
+func NewBudgetManagerWithStore(store BudgetStore) *BudgetManager {
+	return NewBudgetManager(store)
 }
 
 // location 解析窗口切分时区；非法名（只可能来自手搓结构，SetTimezone 已校验）退回 UTC。
@@ -109,20 +131,20 @@ func (b *TokenBudget) normalizeLocked(now time.Time) {
 		b.LastReset = day
 		b.clearAlerted("daily:")
 	}
-	if month := monthStart(now, loc); b.monthReset.IsZero() {
-		b.monthReset = month
-	} else if month.After(b.monthReset) {
+	if month := monthStart(now, loc); b.MonthReset.IsZero() {
+		b.MonthReset = month
+	} else if month.After(b.MonthReset) {
 		b.UsedMonth = 0
-		b.monthReset = month
+		b.MonthReset = month
 		b.clearAlerted("monthly:")
 	}
 }
 
 // clearAlerted 丢弃该类型在本窗口的「已告警」标记，让新窗口能重新告警一次。
 func (b *TokenBudget) clearAlerted(prefix string) {
-	for key := range b.alerted {
+	for key := range b.Alerted {
 		if strings.HasPrefix(key, prefix) {
-			delete(b.alerted, key)
+			delete(b.Alerted, key)
 		}
 	}
 }
@@ -139,6 +161,16 @@ func (bm *BudgetManager) SetBudget(tenantID string, daily, monthly int, threshol
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	budget, ok := bm.budgets[tenantID]
+	if !ok && bm.store != nil {
+		if sb, err := bm.store.GetBudget(context.Background(), tenantID); err == nil && sb != nil {
+			if sb.Alerted == nil {
+				sb.Alerted = make(map[string]bool)
+			}
+			budget = sb
+			bm.budgets[tenantID] = sb
+			ok = true
+		}
+	}
 	if !ok {
 		budget = &TokenBudget{TenantID: tenantID}
 		bm.budgets[tenantID] = budget
@@ -149,6 +181,10 @@ func (bm *BudgetManager) SetBudget(tenantID string, daily, monthly int, threshol
 	budget.MonthlyLimit = monthly
 	budget.AlertThreshold = threshold
 	budget.normalizeLocked(bm.now())
+	if bm.store != nil {
+		cp := cloneBudget(budget)
+		_ = bm.store.UpsertBudget(context.Background(), cp) //nolint:errcheck // fail-open:内存权威源
+	}
 }
 
 // SetTimezone 设置租户配额窗口的切分时区（空串归一为 UTC）；非法时区名拒绝且不落库。
@@ -163,21 +199,51 @@ func (bm *BudgetManager) SetTimezone(tenantID, tz string) error {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	budget, ok := bm.budgets[tenantID]
+	if !ok && bm.store != nil {
+		if sb, err := bm.store.GetBudget(context.Background(), tenantID); err == nil && sb != nil {
+			if sb.Alerted == nil {
+				sb.Alerted = make(map[string]bool)
+			}
+			budget = sb
+			bm.budgets[tenantID] = sb
+			ok = true
+		}
+	}
 	if !ok {
 		budget = &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8}
 		bm.budgets[tenantID] = budget
 	}
 	budget.Timezone = loc.String()
 	budget.normalizeLocked(bm.now())
+	if bm.store != nil {
+		_ = bm.store.UpsertBudget(context.Background(), cloneBudget(budget)) //nolint:errcheck // fail-open:内存权威源
+	}
 	return nil
 }
 
 func (bm *BudgetManager) GetBudget(tenantID string) *TokenBudget {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
-	if b, ok := bm.budgets[tenantID]; ok {
+	b, ok := bm.budgets[tenantID]
+	if !ok && bm.store != nil {
+		if sb, err := bm.store.GetBudget(context.Background(), tenantID); err == nil && sb != nil {
+			if sb.Alerted == nil {
+				sb.Alerted = make(map[string]bool)
+			}
+			bm.budgets[tenantID] = sb
+			b = sb
+			ok = true
+		}
+	}
+	if ok {
 		b.normalizeLocked(bm.now())
 		cp := *b
+		if b.Alerted != nil {
+			cp.Alerted = make(map[string]bool, len(b.Alerted))
+			for k, v := range b.Alerted {
+				cp.Alerted[k] = v
+			}
+		}
 		return &cp
 	}
 	return &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8, Timezone: "UTC"}
@@ -190,6 +256,16 @@ func (bm *BudgetManager) RecordUsage(tenantID string, tokens int) (bool, []Budge
 	defer bm.mu.Unlock()
 
 	budget, ok := bm.budgets[tenantID]
+	if !ok && bm.store != nil {
+		if sb, err := bm.store.GetBudget(context.Background(), tenantID); err == nil && sb != nil {
+			if sb.Alerted == nil {
+				sb.Alerted = make(map[string]bool)
+			}
+			budget = sb
+			bm.budgets[tenantID] = sb
+			ok = true
+		}
+	}
 	if !ok {
 		budget = &TokenBudget{TenantID: tenantID, DailyLimit: 100000, MonthlyLimit: 1000000, AlertThreshold: 0.8}
 		bm.budgets[tenantID] = budget
@@ -203,6 +279,14 @@ func (bm *BudgetManager) RecordUsage(tenantID string, tokens int) (bool, []Budge
 	alerts := budget.checkAlertLocked(now)
 	if len(alerts) > 0 {
 		bm.alerts = append(bm.alerts, alerts...)
+		if bm.store != nil {
+			for _, a := range alerts {
+				_ = bm.store.RecordAlert(context.Background(), a) //nolint:errcheck // fail-open:告警不阻断调用方
+			}
+		}
+	}
+	if bm.store != nil {
+		_ = bm.store.UpsertBudget(context.Background(), cloneBudget(budget)) //nolint:errcheck // fail-open:内存权威源
 	}
 	return !budget.overLimitLocked(), alerts
 }
@@ -217,13 +301,13 @@ func (b *TokenBudget) checkAlertLocked(now time.Time) []BudgetAlert {
 			return
 		}
 		key := fmt.Sprintf("%s:%g", alertType, b.AlertThreshold)
-		if b.alerted[key] {
+		if b.Alerted[key] {
 			return
 		}
-		if b.alerted == nil {
-			b.alerted = make(map[string]bool)
+		if b.Alerted == nil {
+			b.Alerted = make(map[string]bool)
 		}
-		b.alerted[key] = true
+		b.Alerted[key] = true
 		out = append(out, BudgetAlert{
 			TenantID:  b.TenantID,
 			Type:      alertType,
@@ -238,7 +322,47 @@ func (b *TokenBudget) checkAlertLocked(now time.Time) []BudgetAlert {
 	return out
 }
 
+// ListBudgets 返回全部租户预算（跨租户视图），优先走持久化后端。
+func (bm *BudgetManager) ListBudgets(ctx context.Context) ([]*TokenBudget, error) {
+	if bm.store != nil {
+		if list, err := bm.store.ListBudgets(ctx); err == nil {
+			out := make([]*TokenBudget, 0, len(list))
+			for _, b := range list {
+				if b == nil {
+					continue
+				}
+				cp := cloneBudget(b)
+				bm.mu.Lock()
+				cp.normalizeLocked(bm.now())
+				bm.mu.Unlock()
+				out = append(out, cp)
+			}
+			return out, nil
+		}
+	}
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	out := make([]*TokenBudget, 0, len(bm.budgets))
+	for _, b := range bm.budgets {
+		cp := cloneBudget(b)
+		cp.normalizeLocked(bm.now())
+		out = append(out, cp)
+	}
+	return out, nil
+}
 func (bm *BudgetManager) GetAlerts(tenantID string) []BudgetAlert {
+	if bm.store != nil {
+		alerts, err := bm.store.ListAlerts(context.Background(), tenantID, 1000)
+		if err == nil {
+			out := make([]BudgetAlert, 0, len(alerts))
+			for _, a := range alerts {
+				if tenantID == "" || a.TenantID == tenantID {
+					out = append(out, a)
+				}
+			}
+			return out
+		}
+	}
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
 	out := make([]BudgetAlert, 0)
@@ -254,6 +378,16 @@ func (bm *BudgetManager) IsOverBudget(tenantID string) bool {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	budget, ok := bm.budgets[tenantID]
+	if !ok && bm.store != nil {
+		if sb, err := bm.store.GetBudget(context.Background(), tenantID); err == nil && sb != nil {
+			if sb.Alerted == nil {
+				sb.Alerted = make(map[string]bool)
+			}
+			bm.budgets[tenantID] = sb
+			budget = sb
+			ok = true
+		}
+	}
 	if !ok {
 		return false
 	}
@@ -418,6 +552,7 @@ type CostReport struct {
 	ByTenant          map[string]float64 `json:"byTenant"`
 	ByTaskType        map[string]float64 `json:"byTaskType"`
 	RecordCount       int                `json:"recordCount"`
+	Scope             string             `json:"scope"`
 }
 
 func (ct *CostTracker) Report(tenantID string, since time.Time) *CostReport {
@@ -429,6 +564,10 @@ func (ct *CostTracker) Report(tenantID string, since time.Time) *CostReport {
 		ByModel:    make(map[string]float64),
 		ByTenant:   make(map[string]float64),
 		ByTaskType: make(map[string]float64),
+		Scope:      "all",
+	}
+	if tenantID != "" {
+		report.Scope = "own"
 	}
 
 	for _, r := range ct.records {
@@ -627,6 +766,31 @@ func (h *CostHandler) HandleBudget(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		// TD-97 ④：scope=all 的跨租户预算列表，仅 default 租户 + platform:readall 双门齐备时给全量；
+		// 其余情况静默降回本租户口径（与 /ai/usage 同口径）。
+		if r.URL.Query().Get("scope") == "all" {
+			tenant := actx.TenantID
+			if tenant == "" {
+				tenant = model.DefaultTenantID
+			}
+			if tenant == model.DefaultTenantID {
+				if _, ok2 := h.authorize(w, r, "platform:readall"); ok2 {
+					budgets, err := h.budget.ListBudgets(r.Context())
+					if err != nil {
+						paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+						return
+					}
+					paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+						"budgets": budgets,
+						"count":   len(budgets),
+					})
+					return
+				}
+				// authorize 失败时响应已写入（403），直接返回。
+				return
+			}
+			// 业务租户：静默降回本租户口径。
+		}
 		budget := h.budget.GetBudget(scopedTenant(actx, r))
 		// 口径随响应体走（qoder 2026-11-05T16:55 交接的缺口）：usedToday/usedMonth 是
 		// **进程内计数**——控制面重启归零、多副本各自计数（≈额度×副本数），客户端此前
@@ -679,6 +843,25 @@ func (h *CostHandler) HandleBudgetAlerts(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	// TD-97 ④：scope=all 跨租户告警，仅 default 租户 + platform:readall 双门齐备时给全量。
+	if r.URL.Query().Get("scope") == "all" {
+		tenant := actx.TenantID
+		if tenant == "" {
+			tenant = model.DefaultTenantID
+		}
+		if tenant == model.DefaultTenantID {
+			if _, ok2 := h.authorize(w, r, "platform:readall"); ok2 {
+				alerts := h.budget.GetAlerts("")
+				paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
+					"alerts": alerts,
+					"count":  len(alerts),
+				})
+				return
+			}
+			return
+		}
+		// 业务租户：静默降回本租户口径。
+	}
 	alerts := h.budget.GetAlerts(scopedTenant(actx, r))
 	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"alerts": alerts,
@@ -698,6 +881,21 @@ func (h *CostHandler) HandleCostReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := scopedTenant(actx, r)
+	// TD-97 ④：scope=all 跨租户报表，仅 default 租户 + platform:readall 双门齐备时给全量。
+	if r.URL.Query().Get("scope") == "all" {
+		tenant := actx.TenantID
+		if tenant == "" {
+			tenant = model.DefaultTenantID
+		}
+		if tenant == model.DefaultTenantID {
+			if _, ok2 := h.authorize(w, r, "platform:readall"); ok2 {
+				tenantID = ""
+			} else {
+				return
+			}
+		}
+		// 业务租户：静默降回本租户口径（tenantID 保持原值）。
+	}
 	sinceStr := r.URL.Query().Get("since")
 	var since time.Time
 	if sinceStr != "" {
@@ -816,6 +1014,21 @@ func (h *CostHandler) HandleGenerateReport(w http.ResponseWriter, r *http.Reques
 	}
 
 	paginate.WriteJSON(w, http.StatusOK, map[string]string{"markdown": md})
+}
+
+// cloneBudget 深拷贝 TokenBudget（含 Alerted map），用于持久化时避免并发修改。
+func cloneBudget(b *TokenBudget) *TokenBudget {
+	if b == nil {
+		return nil
+	}
+	cp := *b
+	if b.Alerted != nil {
+		cp.Alerted = make(map[string]bool, len(b.Alerted))
+		for k, v := range b.Alerted {
+			cp.Alerted[k] = v
+		}
+	}
+	return &cp
 }
 
 // RegisterCostRoutes 注册成本控制路由。

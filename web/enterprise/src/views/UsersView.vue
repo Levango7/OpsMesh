@@ -1,7 +1,8 @@
 <template>
   <PageShell :title="$t('users.title')" :desc="$t('users.subtitle')" testid="users" :error="loadErr">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" data-testid="users-add-btn" @click="openCreate">
+      <Button variant="primary" size="md" data-testid="users-add-btn" @click="openCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <Icon name="add" :size="14" />
         {{ $t('users.add') }}
       </Button>
@@ -28,10 +29,10 @@
         <template #cell-createdAt="{ value }">{{ fmtTime(value) }}</template>
         <template #cell-actions="{ row }">
           <div class="row-actions" :data-testid="'users-row-' + (row.id || row.username)">
-            <Button variant="primary" size="sm" v-if="row.status === 'pending'" data-testid="btn-row-approve" @click="onApprove(row)"><Icon name="success" :size="13" /> {{ $t('users.approve') }}</Button>
-            <Button variant="danger" size="sm" v-if="row.status === 'pending'" data-testid="btn-row-reject" @click="askReject(row)"><Icon name="delete" :size="13" /> {{ $t('users.reject') }}</Button>
-            <Button variant="ghost" size="sm" data-testid="btn-row-edit" @click="openEdit(row)"><Icon name="edit" :size="13" /></Button>
-            <Button variant="danger" size="sm" data-testid="btn-row-delete" @click="onDelete(row)"><Icon name="delete" :size="13" /></Button>
+            <Button variant="primary" size="sm" v-if="row.status === 'pending'" data-testid="btn-row-approve" @click="onApprove(row)" :disabled="!canApprove" :title="canApprove ? '' : $t('common.write_denied')"><Icon name="success" :size="13" /> {{ $t('users.approve') }}</Button>
+            <Button variant="danger" size="sm" v-if="row.status === 'pending'" data-testid="btn-row-reject" @click="askReject(row)" :disabled="!canApprove" :title="canApprove ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /> {{ $t('users.reject') }}</Button>
+            <Button variant="ghost" size="sm" data-testid="btn-row-edit" @click="openEdit(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="edit" :size="13" /></Button>
+            <Button variant="danger" size="sm" data-testid="btn-row-delete" @click="onDelete(row)" :disabled="!canDelete" :title="canDelete ? '' : $t('common.write_denied')"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -83,7 +84,7 @@
         </div>
         <div v-if="formError" class="msg err" data-testid="users-form-error">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit" :disabled="saving" data-testid="users-save-btn"><Icon name="success" :size="14" /> {{ $t('users.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="!canWrite || saving" :title="canWrite ? '' : $t('common.write_denied')" data-testid="users-save-btn"><Icon name="success" :size="14" /> {{ $t('users.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" data-testid="users-cancel-btn" @click="form = null">{{ $t('users.cancel') }}</Button>
         </div>
       </form>
@@ -119,7 +120,8 @@
 <script setup>
 // 用户管理页 — 列表 + 新增/编辑/删除，复用 DataTable / DetailDrawer / StatusBadge
 import PageShell from '@/components/PageShell.vue'
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { authApi } from '@/api/auth'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -128,6 +130,13 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { fmtTime } from '@/composables/useFormatTime'
+
+// 写操作门：与后端 requirePermission('user:write') 同源；只读者显式禁用写按钮。
+// 删除 / 审批走后端独立权限点 user:delete、user:approve（controlplane/auth_users.go）。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('user:write'))
+const canDelete = computed(() => auth.hasPerm('user:delete'))
+const canApprove = computed(() => auth.hasPerm('user:approve'))
 import Button from "@/components/ui/Button.vue"
 import Pagination from '@/components/Pagination.vue'
 

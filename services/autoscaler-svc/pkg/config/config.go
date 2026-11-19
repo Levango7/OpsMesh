@@ -33,6 +33,11 @@ type Config struct {
 	// Cooldown settings.
 	CooldownUp   time.Duration `json:"cooldownUp"`
 	CooldownDown time.Duration `json:"cooldownDown"`
+
+	// DSN 非空即接线 MySQL 持久层（issue #48 裁决①：规则/决策落库，重启不丢）；
+	// 空（默认）= 纯内存（单副本/开发形态，重启即丢——与接线前行为一致）。
+	// 装配失败（建连/迁移不通）由 main 侧 fail-fast 阻断启动，不静默退回内存。
+	DSN string `json:"dsn"`
 }
 
 // Load returns a Config populated from environment variables with defaults.
@@ -49,6 +54,8 @@ func Load() *Config {
 		Production:    getEnvBool("OPSMESH_PRODUCTION", false),
 		CooldownUp:    getEnvDuration("COOLDOWN_UP", 60*time.Second),
 		CooldownDown:  getEnvDuration("COOLDOWN_DOWN", 300*time.Second),
+		// DSN：与兄弟服务同款 `<NAME>_SVC_DSN` 约定（如 log-svc 的 LOG_SVC_SQL_DSN）。
+		DSN: getEnv("AUTOSCALER_SVC_DSN", ""),
 	}
 }
 

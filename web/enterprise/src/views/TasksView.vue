@@ -148,6 +148,7 @@ import { useTaskStore } from '@/stores/task'
 import { useAuthStore } from '@/stores/auth'
 import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
+import { toast } from '@/utils/toast'
 import DataTable from '@/components/DataTable.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import Icon from '@/components/Icon.vue'
@@ -185,7 +186,7 @@ async function onActionConfirm() {
   try {
     if (kind === 'approve') await store.approve(id)
     else await store.reject(id)
-  } catch (e) { console.error(kind + ' task failed:', e) }
+   } catch { toast.error(kind + ' task failed') }
 }
 
 // SSE 事件刷新节流：2s 内多个 task-status 事件只 refetch 一次，
@@ -263,11 +264,11 @@ function onCancel(id) {
 async function onCancelConfirm() {
   const id = cancelConfirm.id
   if (!id) return
-  try { await store.cancel(id) } catch (e) { console.error('cancel task failed:', e) }
+   try { await store.cancel(id) } catch { toast.error('cancel task failed') }
 }
 
 onMounted(async () => {
-  try { agents.value = await getAgents() || [] } catch (e) { console.error('fetch agents failed:', e) }
+   try { agents.value = await getAgents() || [] } catch { toast.error('fetch agents failed') }
   store.fetchTasks()
   store.fetchPendingApprovals()
   // SSE 实时推送：任务状态变更（创建/领取/回执）到达即刷新列表（App.vue 事件总线）。

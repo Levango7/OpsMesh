@@ -114,16 +114,39 @@ func (d *StaticDiscovery) Register(ctx context.Context, service Service) error {
 }
 
 // Deregister 注销一个服务实例。
-// serviceID 不存在时不报错（幂等）。
-func (d *StaticDiscovery) Deregister(ctx context.Context, serviceID string) error {
+// 按 serviceName + address + port 匹配；不存在时幂等返回 nil。
+func (d *StaticDiscovery) Deregister(ctx context.Context, serviceName, address string, port int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for name, instances := range d.services {
-		if _, ok := instances[serviceID]; ok {
-			delete(instances, serviceID)
+	instances, ok := d.services[serviceName]
+	if !ok {
+		return nil
+	}
+	for id, svc := range instances {
+		if svc.Addr == address && svc.Port == port {
+			delete(instances, id)
 			if len(instances) == 0 {
-				delete(d.services, name)
+				delete(d.services, serviceName)
 			}
+			return nil
+		}
+	}
+	return nil
+}
+
+// MarkHealthy 更新指定实例的健康状态。
+// 不存在时幂等返回 nil。
+func (d *StaticDiscovery) MarkHealthy(ctx context.Context, serviceName, address string, port int, healthy bool) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	instances, ok := d.services[serviceName]
+	if !ok {
+		return nil
+	}
+	for id, svc := range instances {
+		if svc.Addr == address && svc.Port == port {
+			svc.Healthy = healthy
+			instances[id] = svc
 			return nil
 		}
 	}

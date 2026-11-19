@@ -3754,23 +3754,63 @@ MVP 限制：非 leader 实例无法得知 leader 详情（返回占位 `unknown
 
 ### POST /api/v1/ha/failover
 
-手动切换 leader。返回当前实例角色与说明：实际选主由 leader_lease 表续租驱动，
-手动切换需运维摘掉当前 leader Pod 触发重新选举（本端点不直接执行切换）。
+手动切换 leader —— **当前返回 `501 Not Implemented`**。
+
+选主由 `leader_lease` 表续租驱动（权威源 task-svc），"强制作废当前 leader 租约"的
+跨实例操作尚未接线。原实现曾返回 `200 {"status":"accepted"}` 但**不做任何切换**，
+属假成功（审计整改批次 1 已改为显式 501，避免运维误以为已触发切主）。
 
 - **认证**：需 `ha:write` 权限
 - **请求体**：无
-- **响应**：`200 OK`
+- **响应**：`501 Not Implemented`
 
 ```json
 {
-  "status": "accepted",
-  "message": "failover triggered; new leader will be elected via leader_lease renewal",
+  "code": "ERR_NOT_IMPLEMENTED",
+  "error": "手动 leader 切换尚未接线：选主由 leader_lease 续租驱动（权威源 task-svc）",
   "current": {"instanceId": "host-1", "role": "leader", "isLeader": true},
-  "simulated": false
+  "alternative": "摘除当前 leader 实例（滚动重启/缩容）后，租约过期将自动触发重新选主"
 }
 ```
 
-> `simulated: false` 表示响应返回的是真实当前状态（旧版本的占位 `simulated:true` 标记已移除）。
+> **可执行的替代路径**：摘除当前 leader 实例（滚动重启 / 缩容），租约过期后自动重新选主。
+> "一键强制切主"属未接线能力，实现见 `internal/controlplane/ha.go` 的 `handleHAFailover`。
+
+---
+
+## 未接线能力（显式 501 清单）
+
+控制面有一批能力是**刻意未接线**的：不是 bug，而是"尚未实现 / 本后端不支持 / 本模式无此语义"。
+统一口径是**显式 `501 Not Implemented`**，并尽可能在响应体里给 `alternative`（可执行的替代路径）。
+目的是消除**假成功**：早期多处回 `200` 却不干活（`ha/failover` 回 `accepted`、任务 `retry`
+只取消不重建、代理模式 `dead-letter` 清除回 200），运维会据此误判。
+
+> 本清单由 `internal/gates/not_implemented_doc_gate_test.go` 钉住：清单里每条路由必须在场，
+> 且对应实现仍返回 501 —— 任一侧漂移即判红。
+
+| 端点 | 触发条件 | 说明 / 替代路径 |
+|---|---|---|
+| `POST /api/v1/ha/failover` | 恒 501 | 选主由 `leader_lease` 续租驱动（权威源 task-svc）；**摘除当前 leader 实例**（滚动重启 / 缩容），租约过期自动重选 |
+| `GET /api/v1/audit/verify` | 存储后端不支持链式校验 | 内存态 / 未迁移库（`supported=false`）；SQL 后端可用 |
+| `POST /api/v1/tasks/{id}/retry` | 恒 501（代理模式） | 需按原任务参数重建（含 `claim_epoch` / 审批语义）；当前只有死信队列的 retry 语义 |
+| `DELETE /api/v1/tasks/{id}/dead-letter` | 代理模式 | task-svc 无 purge 接口，`CancelTask` 不等于清除死信；走本地 controlplane |
+| `POST /api/v1/deploys/{id}/auto-advance` | 处理器未启用自动推进 | `auto-advance not enabled on this handler` |
+| `GET` / `POST /api/v1/deploys/federation` | 联邦未启用 | `federation not enabled` |
+| `POST /api/v1/logs` | ES / Loki 后端（按设计只读） | 日志须由 filebeat / promtail / fluent-bit 直推；或把 `log-backend` 配成 `memory` / `sql` |
+| `POST /api/v1/ai/agent/execute` | 运行中调用了未接线工具 | 响应带 `notWired`（工具名）与原 `result`；**业务数据不可信**，前端已置灰 |
+
+### AI Agent API（`/api/v1/ai/agent/*`）
+
+这六个端点此前在本文件里**没有条目**（2026-11-16 补）：
+
+| 端点 | 权限 | 说明 |
+|---|---|---|
+| `POST /execute` | `ai:write` | 执行 Agent 推理；命中未接线工具 ⇒ **501** + `notWired` + 原 `result`（推理过程仍可看，业务数据不再冒充事实） |
+| `POST /classify` | `ai:read` | 意图分类（只回标签文本，不改状态，但会打 LLM 故不能匿名） |
+| `POST /decompose` | `ai:read` | 任务分解为子任务计划文本 |
+| `GET /memory` | `ai:read` | 取会话记忆（一律按**已验签租户**作用域，`sessionId` 由客户端自报） |
+| `DELETE /memory?sessionId=` | `ai:write` | 清空会话记忆（破坏性动作；后端只注册 GET / DELETE 两条） |
+| `GET /tools` | `ai:read` | 工具清单；未接线的工具带 `implemented:false` + `notImplementedReason`（前端置灰判据） |
 
 ---
 

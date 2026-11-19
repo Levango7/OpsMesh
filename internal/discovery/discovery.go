@@ -54,7 +54,7 @@ type ServiceDiscovery interface {
 
 	// Deregister 注销一个已注册的服务实例。
 	// serviceID 为 Register 时的 Service.ID。
-	Deregister(ctx context.Context, serviceID string) error
+	Deregister(ctx context.Context, serviceName, address string, port int) error
 
 	// List 列出指定服务名的所有健康实例。
 	// 返回的列表应按稳定顺序排列（便于 balancer 决策可预测）。
@@ -66,6 +66,9 @@ type ServiceDiscovery interface {
 	// 调用方应持续读取直到 channel 关闭或 ctx 取消。
 	// 静态/noop 实现返回立即关闭的 channel（无变更）。
 	Watch(ctx context.Context, serviceName string) (<-chan []Service, error)
+
+	// MarkHealthy 更新指定实例的健康状态并通知 watcher。
+	MarkHealthy(ctx context.Context, serviceName, address string, port int, healthy bool) error
 }
 
 // ErrNotImplemented 未实现的操作错误。
@@ -76,6 +79,10 @@ var ErrNotImplemented = errors.New("服务发现后端未实现该操作")
 // List 在服务名不存在或所有实例不健康时返回此错误（区别于"空切片+nil"的"服务存在但无健康实例"语义）。
 // 实际上 List 约定无实例时返回空切片+nil，此错误保留给未来需要区分的场景。
 var ErrNoInstances = errors.New("未找到服务实例")
+
+// ErrNotRegistered 未注册的服务实例错误。
+// Deregister/MarkHealthy 在目标实例不存在时返回此错误。
+var ErrNotRegistered = errors.New("服务实例未注册")
 
 // DefaultWatchTimeout Watch channel 的默认内部刷新超时。
 // 静态实现用此超时周期性推送当前列表（模拟变更通知，便于 balancer 拿到最新列表）。

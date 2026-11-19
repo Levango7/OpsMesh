@@ -315,11 +315,14 @@ func TestRegister_PendingApprovalFlow(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("register: got %d, body=%s", rec.Code, rec.Body.String())
 	}
-	// pending 用户登录 → 401（Status!=active 拒绝）。
+	// pending 用户登录 → 403 + controlplane 同文案（TD-60 A-2：口令正确才揭示状态）。
 	rec2 := doReq(t, mux, http.MethodPost, "/api/v1/auth/login",
 		`{"username":"newuser","password":"SomePass123!x"}`, nil)
-	if rec2.Code != http.StatusUnauthorized {
-		t.Fatalf("pending 用户登录应 401，实际 %d", rec2.Code)
+	if rec2.Code != http.StatusForbidden {
+		t.Fatalf("pending 用户登录应 403，实际 %d body=%s", rec2.Code, rec2.Body.String())
+	}
+	if !strings.Contains(rec2.Body.String(), "account pending admin approval") {
+		t.Fatalf("pending 文案不符: %s", rec2.Body.String())
 	}
 
 	// admin 登录后 approve。

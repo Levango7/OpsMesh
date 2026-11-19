@@ -1,6 +1,7 @@
 <template>
   <!-- testid="platform" 驱动标题 id（platform-title，沿用既有前缀） -->
   <PageShell :title="$t('platform.title')" :desc="$t('platform.subtitle')" testid="platform" :error="store.error">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- Tab 切换 -->
     <div class="tabbar">
       <Button
@@ -16,7 +17,7 @@
     <div v-show="activeTab === 'config'">
       <div class="btnbar btnbar--bottom">
         <Button variant="ghost" size="md" @click="store.fetchConfig()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
-        <Button variant="primary" size="md" @click="openEdit" data-testid="platform-config-edit-btn"><Icon name="edit" :size="14" /> {{ $t('platform.edit') }}</Button>
+        <Button variant="primary" size="md" @click="openEdit" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="platform-config-edit-btn"><Icon name="edit" :size="14" /> {{ $t('platform.edit') }}</Button>
       </div>
       <div v-if="store.loading && !store.config" class="muted">{{ $t('common.loading') }}</div>
       <div v-else-if="store.config" class="card card--raised">
@@ -75,7 +76,7 @@
 
     <!-- 编辑配置抽屉 -->
     <DetailDrawer :open="!!form" :title="$t('platform.edit')" @close="form = null">
-      <form v-if="form" class="entity-form" @submit.prevent="onSave">
+      <form v-if="form" class="entity-form" @submit.prevent="onSave" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <div class="field field--fixed">
           <label>{{ $t('platform.field_defaultTenant') }}</label>
           <input v-model.trim="form.defaultTenant" type="text" />
@@ -117,7 +118,8 @@
 <script setup>
 // 平台配置页 — 三 Tab：配置 / 健康检查 / 指标汇总
 import PageShell from '@/components/PageShell.vue'
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed} from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { usePlatformStore } from '@/stores/platform'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -127,6 +129,10 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 import Button from "@/components/ui/Button.vue"
 
 const store = usePlatformStore()
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('platform:write'))
 const activeTab = ref('config')
 const formError = ref('')
 const errorConfirm = reactive({ show: false, message: '' })

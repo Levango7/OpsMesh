@@ -62,7 +62,7 @@ COPY --from=web /src/web/enterprise/dist/ ./internal/controlplane/embed/enterpri
 ARG VERSION=dev
 ARG COMMIT=dev
 ARG BUILD_DATE=unknown
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath     -ldflags="-s -w -X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION} -X github.com/Levango7/OpsMesh/internal/version.Commit=${COMMIT} -X github.com/Levango7/OpsMesh/internal/version.Date=${BUILD_DATE}"     -o /opsmesh ./cmd/opsmesh
+RUN CGO_ENABLED=0 GOOS=linux go build -tags kafka -trimpath     -ldflags="-s -w -X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION} -X github.com/Levango7/OpsMesh/internal/version.Commit=${COMMIT} -X github.com/Levango7/OpsMesh/internal/version.Date=${BUILD_DATE}"     -o /opsmesh ./cmd/opsmesh
 
 # P2-2 供应链安全：distroless 镜像 digest 同样由 Renovate 自动钉死。
 # 手动钉死：crane digest gcr.io/distroless/static-debian12 → FROM gcr.io/distroless/static-debian12@sha256:<digest> AS runtime

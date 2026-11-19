@@ -3,6 +3,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -301,9 +302,16 @@ func alertEventToAlert(ev *alertengine.AlertEvent) *proto.Alert {
 
 // randHex 生成 n 字节随机十六进制串（用于 ID 生成）。
 func randHex(n int) string {
+	if n <= 0 {
+		return ""
+	}
 	b := make([]byte, n)
-	for i := range b {
-		b[i] = byte(time.Now().UnixNano() >> uint(i*8))
+	if _, err := rand.Read(b); err != nil {
+		// 熵源不可用时的非安全兜底（仅 ID 去重，非密钥材料）；&0xff 显式截断。
+		now := time.Now().UnixNano()
+		for i := range b {
+			b[i] = byte(uint64(now)>>uint((i%8)*8)) & 0xff // #nosec G115 -- explicit 8-bit mask, not a narrowing overflow.
+		}
 	}
 	return fmt.Sprintf("%x", b)
 }

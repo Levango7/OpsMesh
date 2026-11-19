@@ -112,20 +112,44 @@
       />
       <!-- 侧栏导航：分组 + 编号功能入口 -->
       <aside class="sidebar" :class="{ open: sidebarOpen, collapsed: sidebarCollapsed }">
+        <!-- 侧栏搜索：按分组名/入口名过滤（中英双语均可），空结果给出明确提示 -->
+        <div v-if="!sidebarCollapsed" class="nav-search">
+          <input
+            v-model="navQuery"
+            type="search"
+            class="nav-search__input"
+            :placeholder="$t('common.search')"
+            :aria-label="$t('common.search')"
+            data-testid="nav-search-input"
+          />
+        </div>
+        <div v-if="navQuery && !navView.length" class="nav-search__empty" data-testid="nav-search-empty">
+          {{ $t('common.no_results') }}
+        </div>
         <div v-for="grp in navView" :key="grp.group" class="nav-group">
-          <div class="nav-group-title">{{ $t(grp.labelKey) }}</div>
-          <div
-            v-for="item in grp.items"
-            :key="item.name"
-            class="tab"
-            :class="{ active: isNavActive(item.name) }"
-            :data-label="$t(item.labelKey)"
-            :title="sidebarCollapsed ? $t(item.labelKey) : ''"
-            @click="goNav(item.path)"
+          <button
+            type="button"
+            class="nav-group-title nav-group-title--button"
+            :aria-expanded="!isGroupFolded(grp.group)"
+            :data-testid="'nav-group-toggle-' + grp.group"
+            @click="toggleGroup(grp.group)"
           >
-            <span class="tab-index">{{ item.index }}</span>
-            <span class="tab-icon"><Icon :name="item.icon" :size="16" /></span>
-            <span class="tab-label">{{ $t(item.labelKey) }}</span>
+            <span>{{ $t(grp.labelKey) }}</span>
+          </button>
+          <div v-show="!isGroupFolded(grp.group)">
+            <div
+              v-for="item in grp.items"
+              :key="item.name"
+              class="tab"
+              :class="{ active: isNavActive(item.name) }"
+              :data-label="$t(item.labelKey)"
+              :title="sidebarCollapsed ? $t(item.labelKey) : ''"
+              @click="goNav(item.path)"
+            >
+              <span class="tab-index">{{ item.index }}</span>
+              <span class="tab-icon"><Icon :name="item.icon" :size="16" /></span>
+              <span class="tab-label">{{ $t(item.labelKey) }}</span>
+            </div>
           </div>
         </div>
 
@@ -160,7 +184,7 @@ import { useDeviceStore } from '@/stores/device'
 import { useAlertStore } from '@/stores/alert'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
-import { currentLang, setLang } from '@/i18n'
+import { currentLang, setLang, t } from '@/i18n'
 import { createSSEClient } from '@/api/sse'
 import { routes as appRoutes } from '@/router'
 import { buildNavGroups } from '@/nav/model'
@@ -182,17 +206,38 @@ const navGroups = buildNavGroups(appRoutes)
 
 // 权限过滤后的侧栏视图：仅保留当前用户有权限的入口，并赋予全局连续编号（1、2、3…）。
 // 编号即"功能入口序号"，用户点击即可执行对应操作；空权限集合时（demo 等）放宽展示全部。
+const navQuery = ref('')
+
 const navView = computed(() => {
   const out = []
   let idx = 0
+  const q = navQuery.value.trim().toLowerCase()
   for (const grp of navGroups) {
+    const groupLabel = t(grp.labelKey).toLowerCase()
     const items = grp.items
       .filter((it) => authStore.hasPerm(it.required))
+      // 搜索命中：分组名或入口名（解析后的当前语言文本）含查询串。
+      .filter((it) => !q || groupLabel.includes(q) || t(it.labelKey).toLowerCase().includes(q))
       .map((it) => ({ ...it, index: ++idx }))
     if (items.length) out.push({ ...grp, items })
   }
   return out
 })
+
+// 分组折叠状态：按组名存 localStorage，默认全展开（78 项平铺时可按需收起）。
+const NAV_FOLD_KEY = 'opsmesh-nav-folded-groups'
+const foldedGroups = ref(new Set())
+try {
+  const stored = JSON.parse(localStorage.getItem(NAV_FOLD_KEY) || '[]')
+  if (Array.isArray(stored)) foldedGroups.value = new Set(stored)
+} catch { /* localStorage 不可用时默认全展开 */ }
+function isGroupFolded(group) { return foldedGroups.value.has(group) }
+function toggleGroup(group) {
+  const next = new Set(foldedGroups.value)
+  if (next.has(group)) next.delete(group); else next.add(group)
+  foldedGroups.value = next
+  try { localStorage.setItem(NAV_FOLD_KEY, JSON.stringify([...next])) } catch { /* ignore */ }
+}
 
 // 切换语言
 function toggleLang() {
@@ -450,6 +495,29 @@ onUnmounted(() => {
   padding: 16px 12px;
   box-shadow: var(--shadow-md, 0 4px 6px rgba(0, 0, 0, 0.08));
 }
+/* 侧栏独立滚动：78 项平铺时导航不随整页滚走（审计项②）*/
+.sidebar:not(.collapsed) { overflow-y: auto; max-height: calc(100vh - 64px); }
+/* 搜索框 */
+.nav-search { padding: 0 4px 10px; }
+.nav-search__input {
+  width: 100%; box-sizing: border-box;
+  padding: 7px 10px; font-size: 13px;
+  color: var(--text, #1a2138);
+  background: var(--surface-2, #f3f5f9);
+  border: 1px solid var(--color-hairline, #d3dbe8);
+  border-radius: var(--radius-sm, 6px);
+  outline: none;
+}
+.nav-search__input:focus { border-color: var(--accent); }
+.nav-search__empty { padding: 10px 12px; font-size: 12px; color: var(--text-2, #6b7280); }
+/* 组标题按钮：可折叠，保留原视觉（分隔线 ::after 由 .nav-group-title 提供）*/
+.nav-group-title--button {
+  width: 100%; text-align: left; cursor: pointer;
+  background: none; border: none; color: inherit; font: inherit;
+}
+.nav-group-title--button[aria-expanded="false"] { opacity: .65; }
+.nav-group-title--button[aria-expanded="false"]::after { content: '▸'; }
+.nav-group-title--button[aria-expanded="true"]::after { content: '▾'; }
 
 /* 侧栏折叠态：仅保留图标。
    固定 64px 宽 + 12px 内边距 → 内容区 40px，16px 图标居中后左右各留 12px；
@@ -503,14 +571,9 @@ onUnmounted(() => {
   padding: 8px 12px 7px;
   display: flex; align-items: center; gap: 8px;
 }
-/* 组标题下的分隔线，强化分组边界 */
-.nav-group-title::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--color-hairline, #d3dbe8);
-  opacity: .7;
-}
+/* 组标题下分隔线由 .nav-group 的 border-bottom 承担（::after 让位于折叠箭头） */
+.nav-group { border-bottom: 1px solid var(--color-hairline, #d3dbe8); padding-bottom: 8px; }
+.nav-group-title::after { margin-left: auto; }
 .sidebar .tab {
   display: flex; width: 100%; text-align: left;
   /* 左内边距 18px：相对分组标题（12px）缩进 6px，层级关系一目了然 */
@@ -546,7 +609,10 @@ onUnmounted(() => {
 .tab-icon { display: inline-flex; flex-shrink: 0; }
 .tab-label { flex: 1; min-width: 0; }
 
-.content { flex: 1; max-width: 1200px; margin: 0 auto; padding: 22px; }
+/* min-width: 0 —— 父级 .layout 是行 flex，flex 项默认 min-width:auto 会取自身
+   min-content 宽（宽表格/长串把它顶到 800+px），窄视口（≤1024）下整页横向滚动。
+   置 0 后内容区可收缩，溢出由 DataTable 的 .dt-wrap{overflow-x:auto} 就地承接。 */
+.content { flex: 1; min-width: 0; max-width: 1200px; margin: 0 auto; padding: 22px; }
 
 .footbar {
   display: flex; align-items: center; justify-content: space-between;

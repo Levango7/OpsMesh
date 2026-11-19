@@ -5,6 +5,7 @@
     testid="device-discovery"
     :error="store.error || loadErr"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 启动发现任务 -->
     <div class="card">
       <div class="flowbar">
@@ -20,7 +21,7 @@
         />
       </div>
       <div class="btnbar">
-        <Button variant="primary" size="sm" @click="startDiscovery" :disabled="discovering">{{ $t('deviceDiscovery.start_btn') }}</Button>
+        <Button variant="primary" size="sm" @click="startDiscovery" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (discovering)">{{ $t('deviceDiscovery.start_btn') }}</Button>
         <Button variant="ghost" size="sm" @click="refreshJobs">{{ $t('common.refresh') }}</Button>
       </div>
       <p v-if="discoveryMsg" :class="['msg', discoveryMsgOk ? 'ok' : 'err']">{{ discoveryMsg }}</p>
@@ -68,7 +69,7 @@
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions" @click.stop>
-            <Button variant="primary" size="sm" @click="provisionDiscovered(row)">{{ $t('deviceDiscovery.provision_btn') }}</Button>
+            <Button variant="primary" size="sm" @click="provisionDiscovered(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('deviceDiscovery.provision_btn') }}</Button>
           </div>
         </template>
       </DataTable>
@@ -81,6 +82,7 @@
 import PageShell from '@/components/PageShell.vue'
 
 import { ref, computed } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useDeviceStore } from '@/stores/device'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
@@ -89,6 +91,10 @@ import { Button } from '@/components/ui'
 
 const store = useDeviceStore()
 
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('device:delete/provision:execute'))
 const cidr = ref('')
 const discovering = ref(false)
 const discoveryMsg = ref('')

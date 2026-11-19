@@ -15,6 +15,9 @@ const st = vi.hoisted(() => {
   }
 })
 
+// 写权限门清尾：视图 setup 取 auth store（无 Pinia 会抛 [🍍]）。
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPerm: () => true }) }))
+
 vi.mock('@/i18n', () => ({
   t: (k) => k,
   currentLang: { value: 'zh' },

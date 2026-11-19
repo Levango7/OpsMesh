@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+
+	"github.com/Levango7/OpsMesh/internal/logx"
 )
 
 // MySQLStore is a MySQL-backed implementation of AlertStore.
@@ -31,7 +32,7 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	if err := db.Ping(); err != nil {
-		log.Printf("[store] mysql ping 失败（将延迟重连）: %v", err)
+		logx.Warn(context.Background(), "[store] mysql ping 失败（将延迟重连）", "service", "alert-svc", "error", err)
 	}
 	if err := initSchema(db); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
@@ -271,7 +272,7 @@ func (m *MySQLStore) Alerts(tenantID string) []*Alert {
 	q += ` ORDER BY created_at DESC`
 	rows, err := m.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] Alerts 查询失败: %v", err)
+		logx.Error(ctx, "[store] Alerts 查询失败", err, "service", "alert-svc", "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -279,7 +280,7 @@ func (m *MySQLStore) Alerts(tenantID string) []*Alert {
 	for rows.Next() {
 		var na nullAlert
 		if err := rows.Scan(na.dest()...); err != nil {
-			log.Printf("[store] Alerts 扫描失败: %v", err)
+			logx.Error(ctx, "[store] Alerts 扫描失败", err, "service", "alert-svc", "tenantID", tenantID)
 			continue
 		}
 		out = append(out, na.toAlert())
@@ -308,7 +309,7 @@ func (m *MySQLStore) AddAlert(a *Alert) {
 		nullString(a.AcknowledgedBy), nullTime(a.SilencedUntil), nullString(a.Comment),
 		nullTime(a.CreatedAt), nullTime(a.UpdatedAt))
 	if err != nil {
-		log.Printf("[store] AddAlert 失败: %v", err)
+		logx.Error(ctx, "[store] AddAlert 失败", err, "service", "alert-svc", "alertID", a.AlertID, "tenantID", a.TenantID)
 	}
 }
 
@@ -320,7 +321,7 @@ func (m *MySQLStore) Alert(id string) *Alert {
 	var na nullAlert
 	if err := row.Scan(na.dest()...); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] Alert 查询失败: %v", err)
+			logx.Error(ctx, "[store] Alert 查询失败", err, "service", "alert-svc", "alertID", id)
 		}
 		return nil
 	}
@@ -335,12 +336,12 @@ func (m *MySQLStore) AckAlert(id, tenantID, by string) bool {
 		`UPDATE alerts SET status=?, acknowledged_by=?, updated_at=? WHERE alert_id=? AND (tenant_id=? OR ?='')`,
 		"acknowledged", by, time.Now().UTC(), id, tenantID, tenantID)
 	if err != nil {
-		log.Printf("[store] AckAlert 失败: %v", err)
+		logx.Error(ctx, "[store] AckAlert 失败", err, "service", "alert-svc", "alertID", id, "tenantID", tenantID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "alert-svc", "error", err)
 	}
 	return n > 0
 }
@@ -356,12 +357,12 @@ func (m *MySQLStore) SilenceAlert(id, tenantID, by string, until time.Time, comm
 		`UPDATE alerts SET status=?, acknowledged_by=?, silenced_until=?, comment=?, updated_at=? WHERE alert_id=? AND (tenant_id=? OR ?='')`,
 		"silenced", by, until, comment, time.Now().UTC(), id, tenantID, tenantID)
 	if err != nil {
-		log.Printf("[store] SilenceAlert 失败: %v", err)
+		logx.Error(ctx, "[store] SilenceAlert 失败", err, "service", "alert-svc", "alertID", id, "tenantID", tenantID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "alert-svc", "error", err)
 	}
 	return n > 0
 }
@@ -374,12 +375,12 @@ func (m *MySQLStore) ResolveAlert(id, tenantID, by string) bool {
 		`UPDATE alerts SET status=?, acknowledged_by=?, updated_at=? WHERE alert_id=? AND (tenant_id=? OR ?='')`,
 		"resolved", by, time.Now().UTC(), id, tenantID, tenantID)
 	if err != nil {
-		log.Printf("[store] ResolveAlert 失败: %v", err)
+		logx.Error(ctx, "[store] ResolveAlert 失败", err, "service", "alert-svc", "alertID", id, "tenantID", tenantID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "alert-svc", "error", err)
 	}
 	return n > 0
 }
@@ -403,7 +404,7 @@ func (m *MySQLStore) CreateAlertRule(r *AlertRule) *AlertRule {
 		r.ID, r.TenantID, r.Metric, r.Op, r.Threshold, r.ForDuration, r.Severity, r.Message,
 		boolToInt(r.Enabled), r.CreatedAt, nullString(r.CreatedBy))
 	if err != nil {
-		log.Printf("[store] CreateAlertRule 失败: %v", err)
+		logx.Error(ctx, "[store] CreateAlertRule 失败", err, "service", "alert-svc", "ruleID", r.ID, "tenantID", r.TenantID)
 		return nil
 	}
 	return r
@@ -422,7 +423,7 @@ func (m *MySQLStore) ListAlertRules(tenantID string) []*AlertRule {
 	q += ` ORDER BY created_at ASC`
 	rows, err := m.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		log.Printf("[store] ListAlertRules 失败: %v", err)
+		logx.Error(ctx, "[store] ListAlertRules 失败", err, "service", "alert-svc", "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -430,7 +431,7 @@ func (m *MySQLStore) ListAlertRules(tenantID string) []*AlertRule {
 	for rows.Next() {
 		var nr nullAlertRule
 		if err := rows.Scan(nr.dest()...); err != nil {
-			log.Printf("[store] ListAlertRules 扫描失败: %v", err)
+			logx.Error(ctx, "[store] ListAlertRules 扫描失败", err, "service", "alert-svc", "tenantID", tenantID)
 			continue
 		}
 		out = append(out, nr.toRule())
@@ -444,12 +445,12 @@ func (m *MySQLStore) DeleteAlertRule(id string) bool {
 	defer cancel()
 	res, err := m.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id=?`, id)
 	if err != nil {
-		log.Printf("[store] DeleteAlertRule 失败: %v", err)
+		logx.Error(ctx, "[store] DeleteAlertRule 失败", err, "service", "alert-svc", "ruleID", id)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "alert-svc", "error", err)
 	}
 	return n > 0
 }
@@ -462,7 +463,7 @@ func (m *MySQLStore) GetAlertRule(id string) *AlertRule {
 	var nr nullAlertRule
 	if err := row.Scan(nr.dest()...); err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetAlertRule 查询失败: %v", err)
+			logx.Error(ctx, "[store] GetAlertRule 查询失败", err, "service", "alert-svc", "ruleID", id)
 		}
 		return nil
 	}
@@ -481,12 +482,12 @@ func (m *MySQLStore) UpdateAlertRule(r *AlertRule) bool {
 		r.TenantID, r.Metric, r.Op, r.Threshold, r.ForDuration, r.Severity, r.Message,
 		boolToInt(r.Enabled), nullString(r.CreatedBy), r.ID)
 	if err != nil {
-		log.Printf("[store] UpdateAlertRule 失败: %v", err)
+		logx.Error(ctx, "[store] UpdateAlertRule 失败", err, "service", "alert-svc", "ruleID", r.ID, "tenantID", r.TenantID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Warn(ctx, "[store] RowsAffected 读取失败", "service", "alert-svc", "error", err)
 	}
 	return n > 0
 }

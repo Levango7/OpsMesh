@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/pkg/circuit"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	alertv1 "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1"
@@ -82,16 +82,15 @@ func InitNotifyFailureBaseline() {
 // 刻意不把 err 返回给调用方：ack/resolve 的事实来源是本地告警状态，让远端故障把它
 // 升级成 5xx 会诱导操作者反复点击，且熔断器打开期间会彻底无法确认告警。
 //
-// 日志走标准库 log（服务名 [alert-svc] 前缀）：cmd/alert-svc/main.go 的
-// applog.Init 已把标准库 logger 接管成 JSON，因此不 import 根的 internal/logx
-// ——微服务只依赖 pkg/*，这条边界一旦破，服务镜像就会跟着控制面的内部包一起变。
+// 日志走结构化 logx（进程 JSON 管道，traceID 可关联），并显式带 service 字段。
 func (s *Service) recordExternalNotifyFailure(action, alertID string, err error) {
 	// 措辞按动作区分：resolve 记成"确认"会把排障线索指错方向。
 	verb := "解决"
 	if action == "ack" {
 		verb = "确认"
 	}
-	log.Printf("[alert-svc] WARN 告警%s已落库但外部通知失败: action=%s alertID=%s err=%v", verb, action, alertID, err)
+	logx.Warn(context.Background(), "[alert-svc] WARN 告警"+verb+"已落库但外部通知失败",
+		"service", "alert-svc", "action", action, "alertID", alertID, "error", err)
 	metrics.AddBusinessMetric(externalNotifyFailureMetric, 1, map[string]string{"action": action})
 }
 
@@ -195,8 +194,9 @@ func (s *Service) Evaluate(ctx context.Context, req *alertv1.EvaluateRequest) (*
 		return nil, err
 	}
 	if len(req.GetMetrics()) == 0 && len(report.Evaluations) > 0 {
-		log.Printf("[alert-svc] 评估未携带任何读数：device=%s tenant=%s 规则=%d 条，全部按 no_data 处理",
-			req.GetDeviceId(), req.GetTenantId(), len(report.Evaluations))
+		logx.Warn(ctx, "[alert-svc] 评估未携带任何读数，全部按 no_data 处理",
+			"service", "alert-svc", "deviceID", req.GetDeviceId(), "tenantID", req.GetTenantId(),
+			"rules", len(report.Evaluations))
 	}
 
 	out := make([]*alertv1.Alert, 0, len(report.Events))

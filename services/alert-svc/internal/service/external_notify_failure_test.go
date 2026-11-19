@@ -4,15 +4,14 @@
 //  1. 本地状态确实变了、调用仍返回成功（远端失败不回滚 ack/resolve，这是既定意图）；
 //  2. 失败被计入 business_metrics_total（counter 家族），值为 1——既证明"记下来了"，
 //     也证明没被同时记进 gauge 家族或重复计数；
-//  3. 日志里带真实错误文本且没有 !BADKEY。日志走标准库 log（cmd 侧 applog.Init 会把它
-//     接管成 JSON），因此这里用 log.SetOutput 捕获——服务层不 import 根的 internal/logx。
+//  3. 日志里带真实错误文本且没有 !BADKEY。日志走结构化 logx（cmd 侧 applog.Init 把同一
+//     管道接到 JSON），因此这里用 logx.SetOutput 捕获——与服务层实际出口一致。
 package service
 
 import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/pkg/circuit"
 	"github.com/Levango7/OpsMesh/pkg/metrics"
 	alertv1 "github.com/Levango7/OpsMesh/services/alert-svc/api/proto/v1"
@@ -58,12 +58,12 @@ func renderMetrics(t *testing.T) string {
 	return rec.Body.String()
 }
 
-// captureWarn 捕获一段代码写出的日志（标准库 log 的输出目标可换，无需管道/goroutine）。
+// captureWarn 捕获一段代码写出的结构化日志（logx 的输出目标可换，无需管道/goroutine）。
 func captureWarn(t *testing.T, fn func()) string {
 	t.Helper()
 	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	defer func() { log.SetOutput(os.Stderr) }()
+	logx.SetOutput(&buf)
+	defer logx.SetOutput(os.Stderr)
 	fn()
 	return buf.String()
 }
@@ -134,9 +134,7 @@ func TestAckResolveExternalNotifyFailureIsVisible(t *testing.T) {
 			}
 
 			// 3. 日志可见性：级别 + 错误文本 + 定位字段 + 无 !BADKEY。
-			// 断言按标准库 log 的 key=value 形态写（cmd 侧 applog.Init 会把它接管成 JSON，
-			// 届时同样带这些子串）——服务层不 import 根的 internal/logx，避免服务镜像
-			// 跟着控制面的内部包一起变。
+			// 断言按 logx JSON 形态写：level=WARN、error 字段带原文、alertID/action 字段齐全。
 			if !strings.Contains(logs, "WARN") {
 				t.Errorf("日志里没有 WARN 级记录（运维按级别 grep 会漏掉这条）\n---%s", logs)
 			}
@@ -146,7 +144,7 @@ func TestAckResolveExternalNotifyFailureIsVisible(t *testing.T) {
 			if strings.Contains(logs, "!BADKEY") {
 				t.Errorf("日志出现 !BADKEY 这类无键输出\n---%s", logs)
 			}
-			if !strings.Contains(logs, "alertID=alert-1") || !strings.Contains(logs, "action="+tc.action) {
+			if !strings.Contains(logs, `"alertID":"alert-1"`) || !strings.Contains(logs, `"action":"`+tc.action+`"`) {
 				t.Errorf("日志缺 alertID/action 字段（无法定位是哪条告警的哪种操作）\n---%s", logs)
 			}
 		})

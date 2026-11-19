@@ -14,9 +14,9 @@ export const mockUser = {
   // （实测：缺 k8s:write 让 k8s.spec 8 条资源子页用例全红）。E2E 管辖的功能视图需要哪族，
   // 这里就补到哪族；权限矩阵本身的判定由单测棘轮（write-gate-ledger / router-perms）负责。
   permissions: [
-    'device:read', 'device:write',
+    'device:read', 'device:write', 'device:delete', 'provision:execute',
     'task:read', 'task:write', 'task:cancel',
-    'alert:read', 'alert:write',
+    'alert:read', 'alert:write', 'alert:ack', 'alert:silence',
     'cmdb:read',
     'workflow:read',
     'deploy:read',

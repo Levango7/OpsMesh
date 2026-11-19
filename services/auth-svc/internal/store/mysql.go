@@ -1,14 +1,15 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
 )
 
@@ -438,7 +439,8 @@ func (s *MySQLStore) ChangePassword(userID, newHash string) error {
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Error(context.Background(), "[store] RowsAffected 读取失败", err,
+			"service", "auth-svc", "op", "ChangePassword", "userID", userID)
 	}
 	if rows == 0 {
 		return fmt.Errorf("user not found")
@@ -461,7 +463,8 @@ func (s *MySQLStore) SetMustChangePassword(userID string, mustChange bool) error
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Error(context.Background(), "[store] RowsAffected 读取失败", err,
+			"service", "auth-svc", "op", "SetMustChangePassword", "userID", userID)
 	}
 	if rows == 0 {
 		return fmt.Errorf("user not found")
@@ -654,7 +657,8 @@ func (s *MySQLStore) SaveRefreshToken(rt *RefreshToken) {
 		rt.TokenHash, rt.UserID, rt.TenantID, rt.DeviceFP, rt.ExpiresAt, rt.CreatedAt,
 		rt.ExpiresAt, rt.UserID,
 	); err != nil {
-		log.Printf("[store] best-effort exec: %v", err)
+		logx.Error(context.Background(), "[store] SaveRefreshToken best-effort exec 失败", err,
+			"service", "auth-svc", "userID", rt.UserID)
 	}
 }
 
@@ -679,7 +683,8 @@ func (s *MySQLStore) DeleteRefreshToken(tokenHash string) bool {
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] RowsAffected: %v", err)
+		logx.Error(context.Background(), "[store] RowsAffected 读取失败", err,
+			"service", "auth-svc", "op", "DeleteRefreshToken")
 	}
 	return n > 0
 }
@@ -688,12 +693,14 @@ func (s *MySQLStore) DeleteRefreshToken(tokenHash string) bool {
 func (s *MySQLStore) DeleteRefreshTokensByUser(userID string) int {
 	res, err := s.db.Exec("DELETE FROM refresh_tokens WHERE user_id = ?", userID)
 	if err != nil {
-		log.Printf("[store] DeleteRefreshTokensByUser(%s): %v", userID, err)
+		logx.Error(context.Background(), "[store] DeleteRefreshTokensByUser 失败", err,
+			"service", "auth-svc", "userID", userID)
 		return 0
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] DeleteRefreshTokensByUser RowsAffected: %v", err)
+		logx.Error(context.Background(), "[store] DeleteRefreshTokensByUser RowsAffected 读取失败", err,
+			"service", "auth-svc", "userID", userID)
 		return 0
 	}
 	return int(n)
@@ -718,7 +725,8 @@ func (s *MySQLStore) BlacklistJTI(jti string, ttl time.Duration) {
 		"INSERT INTO jti_blacklist (jti, expires_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE expires_at = ?",
 		jti, expiresAt, expiresAt,
 	); err != nil {
-		log.Printf("[store] best-effort exec: %v", err)
+		logx.Error(context.Background(), "[store] BlacklistJTI best-effort exec 失败", err,
+			"service", "auth-svc")
 	}
 }
 
@@ -735,7 +743,8 @@ func (s *MySQLStore) IsBlacklisted(jti string) bool {
 // PurgeBlacklist removes expired blacklist entries.
 func (s *MySQLStore) PurgeBlacklist() {
 	if _, err := s.db.Exec("DELETE FROM jti_blacklist WHERE expires_at < ?", time.Now()); err != nil {
-		log.Printf("[store] best-effort exec: %v", err)
+		logx.Error(context.Background(), "[store] PurgeBlacklist best-effort exec 失败", err,
+			"service", "auth-svc")
 	}
 }
 

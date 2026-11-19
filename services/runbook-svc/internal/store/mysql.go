@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/services/runbook-svc/internal/models"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -125,7 +125,7 @@ func ensureColumn(ctx context.Context, db *sql.DB, table, column, ddl string) er
 	if _, err := db.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("补列 %s.%s: %w", table, column, err)
 	}
-	log.Printf("[store] %s 表已补列 %s（既有库迁移）", table, column)
+	logx.Info(ctx, "[store] 表已补列（既有库迁移）", "service", "runbook-svc", "table", table, "column", column)
 	return nil
 }
 
@@ -141,12 +141,12 @@ func scanRunbook(scan func(dest ...any) error) (*models.Runbook, error) {
 	// 一条坏行不该让整个列表打不开。
 	if len(triggers) > 0 {
 		if err := json.Unmarshal(triggers, &r.Triggers); err != nil {
-			log.Printf("[store] runbook %s triggers 解码失败（按空处理）: %v", r.ID, err)
+			logx.Warn(context.Background(), "[store] runbook triggers 解码失败（按空处理）", "service", "runbook-svc", "runbookID", r.ID, "error", err)
 		}
 	}
 	if len(steps) > 0 {
 		if err := json.Unmarshal(steps, &r.Steps); err != nil {
-			log.Printf("[store] runbook %s steps 解码失败（按空处理）: %v", r.ID, err)
+			logx.Warn(context.Background(), "[store] runbook steps 解码失败（按空处理）", "service", "runbook-svc", "runbookID", r.ID, "error", err)
 		}
 	}
 	return &r, nil
@@ -171,7 +171,7 @@ func (m *MySQLStore) CreateRunbook(r *models.Runbook) *models.Runbook {
 		`INSERT INTO runbooks (`+runbookCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.TenantID, r.Name, r.Description, r.Content, triggers, steps, r.Enabled, r.CreatedAt, r.UpdatedAt)
 	if err != nil {
-		log.Printf("[store] CreateRunbook 失败: %v", err)
+		logx.Error(ctx, "[store] CreateRunbook 失败", err, "service", "runbook-svc", "runbookID", r.ID, "tenantID", r.TenantID)
 		return nil
 	}
 	return r
@@ -186,7 +186,7 @@ func (m *MySQLStore) GetRunbook(id, tenantID string) *models.Runbook {
 	r, err := scanRunbook(row.Scan)
 	if err != nil {
 		if err != sql.ErrNoRows {
-			log.Printf("[store] GetRunbook 失败: %v", err)
+			logx.Error(ctx, "[store] GetRunbook 失败", err, "service", "runbook-svc", "runbookID", id, "tenantID", tenantID)
 		}
 		return nil
 	}
@@ -200,7 +200,7 @@ func (m *MySQLStore) ListRunbooks(tenantID string) []*models.Runbook {
 	defer cancel()
 	rows, err := m.db.QueryContext(ctx, `SELECT `+runbookCols+` FROM runbooks WHERE tenant_id = ? ORDER BY created_at DESC`, tenantID)
 	if err != nil {
-		log.Printf("[store] ListRunbooks 失败: %v", err)
+		logx.Error(ctx, "[store] ListRunbooks 失败", err, "service", "runbook-svc", "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -208,7 +208,7 @@ func (m *MySQLStore) ListRunbooks(tenantID string) []*models.Runbook {
 	for rows.Next() {
 		r, err := scanRunbook(rows.Scan)
 		if err != nil {
-			log.Printf("[store] ListRunbooks 扫描失败: %v", err)
+			logx.Warn(ctx, "[store] ListRunbooks 扫描失败", "service", "runbook-svc", "tenantID", tenantID, "error", err)
 			continue
 		}
 		out = append(out, r)
@@ -231,12 +231,12 @@ func (m *MySQLStore) UpdateRunbook(r *models.Runbook, tenantID string) bool {
 		`UPDATE runbooks SET name=?, description=?, content=?, triggers=?, steps=?, enabled=?, updated_at=? WHERE id=? AND tenant_id=?`,
 		r.Name, r.Description, r.Content, triggers, steps, r.Enabled, r.UpdatedAt, r.ID, tenantID)
 	if err != nil {
-		log.Printf("[store] UpdateRunbook 失败: %v", err)
+		logx.Error(ctx, "[store] UpdateRunbook 失败", err, "service", "runbook-svc", "runbookID", r.ID, "tenantID", tenantID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] UpdateRunbook RowsAffected: %v", err)
+		logx.Error(ctx, "[store] UpdateRunbook RowsAffected 读取失败", err, "service", "runbook-svc", "runbookID", r.ID)
 		return false
 	}
 	return n > 0
@@ -249,19 +249,19 @@ func (m *MySQLStore) DeleteRunbook(id, tenantID string) bool {
 	defer cancel()
 	res, err := m.db.ExecContext(ctx, `DELETE FROM runbooks WHERE id = ? AND tenant_id = ?`, id, tenantID)
 	if err != nil {
-		log.Printf("[store] DeleteRunbook 失败: %v", err)
+		logx.Error(ctx, "[store] DeleteRunbook 失败", err, "service", "runbook-svc", "runbookID", id, "tenantID", tenantID)
 		return false
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("[store] DeleteRunbook RowsAffected: %v", err)
+		logx.Error(ctx, "[store] DeleteRunbook RowsAffected 读取失败", err, "service", "runbook-svc", "runbookID", id)
 		return false
 	}
 	if n > 0 {
 		// 执行历史随 runbook 一并清理；失败只记日志（下个删除周期无重放入口，
 		// 但 runbook 本体已删，孤儿执行记录不影响正确性）。
 		if _, err := m.db.ExecContext(ctx, `DELETE FROM runbook_executions WHERE runbook_id = ?`, id); err != nil {
-			log.Printf("[store] 清理执行历史失败: %v", err)
+			logx.Warn(ctx, "[store] 清理执行历史失败", "service", "runbook-svc", "runbookID", id, "error", err)
 		}
 	}
 	return n > 0
@@ -290,7 +290,7 @@ func (m *MySQLStore) AddExecution(e *models.ExecutionRecord) {
 		`INSERT INTO runbook_executions (id, tenant_id, runbook_id, triggered_by, status, step_results, started_at, completed_at, error_message)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.TenantID, e.RunbookID, e.TriggeredBy, e.Status, results, e.StartedAt, completedAt, e.ErrorMessage); err != nil {
-		log.Printf("[store] AddExecution 失败: %v", err)
+		logx.Error(ctx, "[store] AddExecution 失败", err, "service", "runbook-svc", "executionID", e.ID, "runbookID", e.RunbookID, "tenantID", e.TenantID)
 	}
 }
 
@@ -303,7 +303,7 @@ func (m *MySQLStore) GetExecutions(runbookID, tenantID string) []*models.Executi
 		`SELECT id, tenant_id, runbook_id, triggered_by, status, step_results, started_at, completed_at, error_message
 		 FROM runbook_executions WHERE runbook_id = ? AND tenant_id = ? ORDER BY started_at DESC`, runbookID, tenantID)
 	if err != nil {
-		log.Printf("[store] GetExecutions 失败: %v", err)
+		logx.Error(ctx, "[store] GetExecutions 失败", err, "service", "runbook-svc", "runbookID", runbookID, "tenantID", tenantID)
 		return nil
 	}
 	defer rows.Close()
@@ -314,7 +314,7 @@ func (m *MySQLStore) GetExecutions(runbookID, tenantID string) []*models.Executi
 		var completedAt sql.NullTime
 		var errMsg sql.NullString
 		if err := rows.Scan(&e.ID, &e.TenantID, &e.RunbookID, &e.TriggeredBy, &e.Status, &results, &e.StartedAt, &completedAt, &errMsg); err != nil {
-			log.Printf("[store] GetExecutions 扫描失败: %v", err)
+			logx.Warn(ctx, "[store] GetExecutions 扫描失败", "service", "runbook-svc", "runbookID", runbookID, "error", err)
 			continue
 		}
 		if completedAt.Valid {
@@ -323,7 +323,7 @@ func (m *MySQLStore) GetExecutions(runbookID, tenantID string) []*models.Executi
 		e.ErrorMessage = errMsg.String
 		if len(results) > 0 {
 			if err := json.Unmarshal(results, &e.StepResults); err != nil {
-				log.Printf("[store] execution %s step_results 解码失败（按空处理）: %v", e.ID, err)
+				logx.Warn(ctx, "[store] execution step_results 解码失败（按空处理）", "service", "runbook-svc", "executionID", e.ID, "error", err)
 			}
 		}
 		out = append(out, &e)
