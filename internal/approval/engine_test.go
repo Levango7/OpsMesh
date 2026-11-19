@@ -2,6 +2,7 @@ package approval
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -725,5 +726,122 @@ func TestErrorSentinels(t *testing.T) {
 	}
 	if !errors.Is(ErrInvalidTransition, ErrInvalidTransition) {
 		t.Error("ErrInvalidTransition identity")
+	}
+}
+
+// ===== 幂等提交与执行前二次校验（issue #105）=====
+
+func TestSubmitIdempotent(t *testing.T) {
+	e, _ := newTestEngine()
+	_ = e.CreateFlow(newFlow("f1", "t1", TriggerShell, StepAnyOf, "alice"))
+
+	r1 := newRequest("r1", "f1", "t1", TriggerShell, "ops")
+	r1.IdempotencyKey = "client-key-1"
+	first, created, err := e.SubmitIdempotent(r1)
+	if err != nil || !created || first == nil {
+		t.Fatalf("first submit: created=%v err=%v", created, err)
+	}
+
+	// 同键、不同请求 ID 重试 → 返回首次请求（created=false，ID 不变）
+	r2 := newRequest("r2", "f1", "t1", TriggerShell, "ops")
+	r2.IdempotencyKey = "client-key-1"
+	again, created2, err := e.SubmitIdempotent(r2)
+	if err != nil || created2 {
+		t.Fatalf("idempotent retry: created=%v err=%v", created2, err)
+	}
+	if again.ID != first.ID {
+		t.Errorf("idempotent retry changed ID: got %s want %s", again.ID, first.ID)
+	}
+	if got := e.ListRequests("t1", ""); len(got) != 1 {
+		t.Errorf("requests after retry = %d want 1", len(got))
+	}
+
+	// 不同键 → 新建
+	r3 := newRequest("r3", "f1", "t1", TriggerShell, "ops")
+	r3.IdempotencyKey = "client-key-2"
+	if _, created3, err := e.SubmitIdempotent(r3); err != nil || !created3 {
+		t.Fatalf("different key: created=%v err=%v", created3, err)
+	}
+	if got := e.ListRequests("t1", ""); len(got) != 2 {
+		t.Errorf("requests after different key = %d want 2", len(got))
+	}
+}
+
+func TestSubmitIdempotentTenantIsolation(t *testing.T) {
+	e, _ := newTestEngine()
+	_ = e.CreateFlow(newFlow("f1", "t1", TriggerShell, StepAnyOf, "alice"))
+	_ = e.CreateFlow(newFlow("f2", "t2", TriggerShell, StepAnyOf, "alice"))
+
+	ra := newRequest("ra", "f1", "t1", TriggerShell, "ops")
+	ra.IdempotencyKey = "same-key"
+	if _, _, err := e.SubmitIdempotent(ra); err != nil {
+		t.Fatal(err)
+	}
+	rb := newRequest("rb", "f2", "t2", TriggerShell, "ops")
+	rb.IdempotencyKey = "same-key"
+	got, created, err := e.SubmitIdempotent(rb)
+	if err != nil || !created || got.ID != "rb" {
+		t.Fatalf("cross-tenant key must not collide: got=%v created=%v err=%v", got, created, err)
+	}
+}
+
+func TestSubmitIdempotentConcurrent(t *testing.T) {
+	e, _ := newTestEngine()
+	_ = e.CreateFlow(newFlow("f1", "t1", TriggerShell, StepAnyOf, "alice"))
+	const n = 32
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	createdCount := 0
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := newRequest(fmt.Sprintf("r%d", i), "f1", "t1", TriggerShell, "ops")
+			r.IdempotencyKey = "concurrent-key"
+			_, created, err := e.SubmitIdempotent(r)
+			if err != nil {
+				t.Errorf("submit %d: %v", i, err)
+				return
+			}
+			if created {
+				mu.Lock()
+				createdCount++
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+	if createdCount != 1 {
+		t.Errorf("concurrent same-key created %d requests want 1", createdCount)
+	}
+}
+
+func TestVerifyApproved(t *testing.T) {
+	e, _ := newTestEngine()
+	_ = e.CreateFlow(newFlow("f1", "t1", TriggerShell, StepAnyOf, "alice"))
+
+	r := newRequest("r1", "f1", "t1", TriggerShell, "ops")
+	r.Target = "cluster-A"
+	r.Detail = "v1.2.3"
+	if err := e.Submit(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.VerifyApproved("r1", "t1", "cluster-A", "v1.2.3"); err == nil {
+		t.Error("pending request must be rejected")
+	}
+	if err := e.Approve("r1", "alice", "ok"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.VerifyApproved("r1", "t1", "cluster-A", "v1.2.3"); err != nil {
+		t.Errorf("approved request verify: %v", err)
+	}
+	if err := e.VerifyApproved("r1", "t1", "cluster-B", "v1.2.3"); err == nil {
+		t.Error("target drift must be rejected")
+	}
+	if err := e.VerifyApproved("r1", "t1", "cluster-A", "v9.9.9"); err == nil {
+		t.Error("version drift must be rejected")
+	}
+	if err := e.VerifyApproved("r1", "t2", "cluster-A", "v1.2.3"); err == nil {
+		t.Error("tenant drift must be rejected")
 	}
 }

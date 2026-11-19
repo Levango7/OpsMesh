@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -72,7 +73,23 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhooks := s.store.ListWebhooks(actx.TenantID)
-	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"webhooks": webhooks})
+	// 分页（opt-in，向后兼容）：不传 page/pageSize 保持 {"webhooks":[…]}；
+	// 任一存在则返回统一信封，按自然 ID 升序保证跨页顺序稳定。
+	page, pageSize, paged, err := paginate.ParsePaginationOptIn(r.URL.Query())
+	if err != nil {
+		paginate.JSONError(w, http.StatusBadRequest, "invalid page/pageSize")
+		return
+	}
+	if !paged {
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"webhooks": webhooks})
+		return
+	}
+	sort.SliceStable(webhooks, func(i, j int) bool { return webhooks[i].ID < webhooks[j].ID })
+	total := len(webhooks)
+	data, hasMore := paginate.PaginateSlice(webhooks, page, pageSize)
+	paginate.WriteJSON(w, http.StatusOK, paginate.PaginateResult{
+		Data: data, Total: total, Page: page, PageSize: pageSize, HasMore: hasMore,
+	})
 }
 
 // handleCreateWebhook 处理 POST /api/v1/webhooks：创建 Webhook。
@@ -324,7 +341,7 @@ func deliverWebhook(rawURL, event, payload string, allowPrivate bool) (int, stri
 	if err := ValidateWebhookURL(rawURL, allowPrivate); err != nil {
 		return 0, "", fmt.Errorf("webhook URL rejected at delivery time: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(payload)) // #nosec G704 -- rawURL passes ValidateWebhookURL immediately above (http/https + private-IP/metadata block); egress client re-checks every resolved IP and redirect hop.
 	if err != nil {
 		return 0, "", fmt.Errorf("create request: %w", err)
 	}
@@ -333,7 +350,7 @@ func deliverWebhook(rawURL, event, payload string, allowPrivate bool) (int, stri
 	req.Header.Set("X-OpsMesh-Event", event)
 
 	client := newEgressClient(notifyEgressTimeout, allowPrivate)
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec G704 -- client is newEgressClient (per-IP connect-time recheck + per-redirect URL validation); URL pre-validated above.
 	if err != nil {
 		return 0, "", fmt.Errorf("HTTP POST: %w", err)
 	}

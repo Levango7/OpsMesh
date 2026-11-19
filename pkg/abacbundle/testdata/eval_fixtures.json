@@ -1,0 +1,359 @@
+[
+  {
+    "name": "allow-basic",
+    "policies": [
+      {"id": "p-allow", "subject": "alice", "resource": "vm:1", "action": "read", "effect": "allow"}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "",
+    "expected": {"allowed": true, "matchedPolicyID": "p-allow", "denyOverride": false}
+  },
+  {
+    "name": "no-match-default-deny",
+    "policies": [
+      {"id": "p-allow", "subject": "alice", "resource": "vm:1", "action": "read", "effect": "allow"}
+    ],
+    "subject": "bob",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "empty-policies-default-deny",
+    "policies": [],
+    "subject": "alice",
+    "resource": "*",
+    "action": "*",
+    "context": "{}",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "deny-overrides-allow",
+    "policies": [
+      {"id": "p-allow-all", "subject": "*", "resource": "*", "action": "*", "effect": "allow"},
+      {"id": "p-deny-prod", "subject": "*", "resource": "vm:prod-1", "action": "*", "effect": "deny"}
+    ],
+    "subject": "bob",
+    "resource": "vm:prod-1",
+    "action": "write",
+    "context": "",
+    "expected": {"allowed": false, "matchedPolicyID": "p-deny-prod", "denyOverride": true}
+  },
+  {
+    "name": "deny-overrides-allow-deny-listed-first",
+    "policies": [
+      {"id": "p-deny-prod", "subject": "*", "resource": "vm:prod-1", "action": "*", "effect": "deny"},
+      {"id": "p-allow-all", "subject": "*", "resource": "*", "action": "*", "effect": "allow"}
+    ],
+    "subject": "bob",
+    "resource": "vm:prod-1",
+    "action": "write",
+    "context": "",
+    "expected": {"allowed": false, "matchedPolicyID": "p-deny-prod", "denyOverride": true}
+  },
+  {
+    "name": "deny-condition-not-met-falls-through-to-allow",
+    "policies": [
+      {"id": "p-allow-all", "subject": "*", "resource": "*", "action": "*", "effect": "allow"},
+      {"id": "p-deny-prod", "subject": "*", "resource": "*", "action": "*", "effect": "deny", "conditions": {"env": "production"}}
+    ],
+    "subject": "bob",
+    "resource": "vm:1",
+    "action": "write",
+    "context": "{\"env\":\"staging\"}",
+    "expected": {"allowed": true, "matchedPolicyID": "p-allow-all", "denyOverride": false}
+  },
+  {
+    "name": "condition-match-string",
+    "policies": [
+      {"id": "p-cond", "subject": "alice", "resource": "*", "action": "write", "effect": "allow", "conditions": {"env": "staging"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "write",
+    "context": "{\"env\":\"staging\",\"extra\":\"ignored\"}",
+    "expected": {"allowed": true, "matchedPolicyID": "p-cond", "denyOverride": false}
+  },
+  {
+    "name": "condition-mismatch",
+    "policies": [
+      {"id": "p-cond", "subject": "alice", "resource": "*", "action": "write", "effect": "allow", "conditions": {"env": "staging"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "write",
+    "context": "{\"env\":\"production\"}",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "condition-missing-key",
+    "policies": [
+      {"id": "p-cond", "subject": "alice", "resource": "*", "action": "write", "effect": "allow", "conditions": {"env": "staging"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "write",
+    "context": "{\"other\":\"staging\"}",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "empty-conditions-map-matches-any-context",
+    "policies": [
+      {"id": "p-empty-cond", "subject": "*", "resource": "*", "action": "*", "effect": "allow", "conditions": {}}
+    ],
+    "subject": "anyone",
+    "resource": "anything",
+    "action": "delete",
+    "context": "not-json-at-all",
+    "expected": {"allowed": true, "matchedPolicyID": "p-empty-cond", "denyOverride": false}
+  },
+  {
+    "name": "empty-effect-treated-as-allow",
+    "policies": [
+      {"id": "p-empty-effect", "subject": "*", "resource": "*", "action": "*", "effect": ""}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "",
+    "expected": {"allowed": true, "matchedPolicyID": "p-empty-effect", "denyOverride": false}
+  },
+  {
+    "name": "non-allow-effect-treated-as-allow",
+    "policies": [
+      {"id": "p-audit", "subject": "*", "resource": "*", "action": "*", "effect": "audit"}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "",
+    "expected": {"allowed": true, "matchedPolicyID": "p-audit", "denyOverride": false}
+  },
+  {
+    "name": "multiple-allows-sorted-id-tiebreak",
+    "policies": [
+      {"id": "zeta-allow", "subject": "*", "resource": "*", "action": "*", "effect": "allow"},
+      {"id": "alpha-allow", "subject": "*", "resource": "*", "action": "*", "effect": "allow"},
+      {"id": "mike-allow", "subject": "*", "resource": "*", "action": "*", "effect": "allow"}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "",
+    "expected": {"allowed": true, "matchedPolicyID": "alpha-allow", "denyOverride": false}
+  },
+  {
+    "name": "multiple-denies-sorted-id-tiebreak",
+    "policies": [
+      {"id": "z-deny", "subject": "*", "resource": "*", "action": "*", "effect": "deny"},
+      {"id": "b-deny", "subject": "*", "resource": "*", "action": "*", "effect": "deny"},
+      {"id": "a-allow", "subject": "*", "resource": "*", "action": "*", "effect": "allow"}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "",
+    "expected": {"allowed": false, "matchedPolicyID": "b-deny", "denyOverride": true}
+  },
+  {
+    "name": "prefix-resource-match",
+    "policies": [
+      {"id": "p-prefix", "subject": "ops", "resource": "vm:prod-*", "action": "restart", "effect": "allow"}
+    ],
+    "subject": "ops",
+    "resource": "vm:prod-42",
+    "action": "restart",
+    "context": "",
+    "expected": {"allowed": true, "matchedPolicyID": "p-prefix", "denyOverride": false}
+  },
+  {
+    "name": "prefix-resource-mismatch",
+    "policies": [
+      {"id": "p-prefix", "subject": "ops", "resource": "vm:prod-*", "action": "restart", "effect": "allow"}
+    ],
+    "subject": "ops",
+    "resource": "vm:dev-42",
+    "action": "restart",
+    "context": "",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "wildcard-action",
+    "policies": [
+      {"id": "p-action-star", "subject": "ops", "resource": "vm:1", "action": "*", "effect": "allow"}
+    ],
+    "subject": "ops",
+    "resource": "vm:1",
+    "action": "delete",
+    "context": "",
+    "expected": {"allowed": true, "matchedPolicyID": "p-action-star", "denyOverride": false}
+  },
+  {
+    "name": "empty-pattern-subject-matches-any",
+    "policies": [
+      {"id": "p-empty-subject", "subject": "", "resource": "vm:1", "action": "read", "effect": "allow"}
+    ],
+    "subject": "whoever",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "",
+    "expected": {"allowed": true, "matchedPolicyID": "p-empty-subject", "denyOverride": false}
+  },
+  {
+    "name": "case-sensitive-subject",
+    "policies": [
+      {"id": "p-case", "subject": "alice", "resource": "*", "action": "*", "effect": "allow"}
+    ],
+    "subject": "Alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "star-in-middle-is-literal",
+    "policies": [
+      {"id": "p-midstar", "subject": "*", "resource": "vm:*:x", "action": "*", "effect": "allow"}
+    ],
+    "subject": "alice",
+    "resource": "vm:1:x",
+    "action": "read",
+    "context": "",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "invalid-context-with-condition-denies",
+    "policies": [
+      {"id": "p-cond", "subject": "*", "resource": "*", "action": "*", "effect": "allow", "conditions": {"env": "staging"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "not-json",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "invalid-context-without-condition-allows",
+    "policies": [
+      {"id": "p-nocond", "subject": "*", "resource": "*", "action": "*", "effect": "allow"}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "{broken",
+    "expected": {"allowed": true, "matchedPolicyID": "p-nocond", "denyOverride": false}
+  },
+  {
+    "name": "context-null-with-condition-denies",
+    "policies": [
+      {"id": "p-cond", "subject": "*", "resource": "*", "action": "*", "effect": "allow", "conditions": {"env": "staging"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "null",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "context-array-with-condition-denies",
+    "policies": [
+      {"id": "p-cond", "subject": "*", "resource": "*", "action": "*", "effect": "allow", "conditions": {"env": "staging"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "[1,2,3]",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "nested-json-condition-match-key-order-insensitive",
+    "policies": [
+      {"id": "p-nested", "subject": "*", "resource": "*", "action": "*", "effect": "allow", "conditions": {"req": "{\"env\":\"prod\",\"n\":1}"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "{\"req\":{\"n\":1,\"env\":\"prod\"}}",
+    "expected": {"allowed": true, "matchedPolicyID": "p-nested", "denyOverride": false}
+  },
+  {
+    "name": "nested-json-condition-mismatch",
+    "policies": [
+      {"id": "p-nested", "subject": "*", "resource": "*", "action": "*", "effect": "allow", "conditions": {"req": "{\"env\":\"prod\"}"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "{\"req\":{\"env\":\"staging\"}}",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "numeric-condition-value-compared-as-json-text",
+    "policies": [
+      {"id": "p-num", "subject": "*", "resource": "*", "action": "*", "effect": "allow", "conditions": {"count": "3"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "{\"count\":3}",
+    "expected": {"allowed": true, "matchedPolicyID": "p-num", "denyOverride": false}
+  },
+  {
+    "name": "numeric-condition-not-equal-to-plain-string",
+    "policies": [
+      {"id": "p-num", "subject": "*", "resource": "*", "action": "*", "effect": "allow", "conditions": {"count": "3.0"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "{\"count\":3}",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "boolean-condition-value",
+    "policies": [
+      {"id": "p-bool", "subject": "*", "resource": "*", "action": "*", "effect": "allow", "conditions": {"flag": "true"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "{\"flag\":true}",
+    "expected": {"allowed": true, "matchedPolicyID": "p-bool", "denyOverride": false}
+  },
+  {
+    "name": "null-condition-value",
+    "policies": [
+      {"id": "p-null", "subject": "*", "resource": "*", "action": "*", "effect": "allow", "conditions": {"x": "null"}}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "read",
+    "context": "{\"x\":null}",
+    "expected": {"allowed": true, "matchedPolicyID": "p-null", "denyOverride": false}
+  },
+  {
+    "name": "action-mismatch",
+    "policies": [
+      {"id": "p-read", "subject": "*", "resource": "*", "action": "read", "effect": "allow"}
+    ],
+    "subject": "alice",
+    "resource": "vm:1",
+    "action": "write",
+    "context": "",
+    "expected": {"allowed": false, "matchedPolicyID": "", "denyOverride": false}
+  },
+  {
+    "name": "all-wildcards-allow",
+    "policies": [
+      {"id": "p-all", "subject": "*", "resource": "*", "action": "*", "effect": "allow"}
+    ],
+    "subject": "anyone",
+    "resource": "anything:at-all",
+    "action": "some-action",
+    "context": "",
+    "expected": {"allowed": true, "matchedPolicyID": "p-all", "denyOverride": false}
+  }
+]

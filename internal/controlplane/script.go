@@ -24,6 +24,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,7 +79,23 @@ func (s *Server) handleListScripts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scripts := s.store.ListScripts(actx.TenantID)
-	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"scripts": scripts})
+	// 分页（opt-in，向后兼容）：不传 page/pageSize 保持 {"scripts":[…]}；
+	// 任一存在则返回统一信封，按自然 ID 升序保证跨页顺序稳定。
+	page, pageSize, paged, err := paginate.ParsePaginationOptIn(r.URL.Query())
+	if err != nil {
+		paginate.JSONError(w, http.StatusBadRequest, "invalid page/pageSize")
+		return
+	}
+	if !paged {
+		paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"scripts": scripts})
+		return
+	}
+	sort.SliceStable(scripts, func(i, j int) bool { return scripts[i].ID < scripts[j].ID })
+	total := len(scripts)
+	data, hasMore := paginate.PaginateSlice(scripts, page, pageSize)
+	paginate.WriteJSON(w, http.StatusOK, paginate.PaginateResult{
+		Data: data, Total: total, Page: page, PageSize: pageSize, HasMore: hasMore,
+	})
 }
 
 // handleCreateScript 处理 POST /api/v1/scripts：创建脚本。

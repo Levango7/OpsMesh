@@ -4,6 +4,7 @@ package paginate
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -166,25 +167,93 @@ func ParsePagination(q url.Values) (page, pageSize int) {
 	if page < 1 {
 		page = 1
 	}
-	pageSize = 20
+	pageSize = defaultPageSize
 	if v := q.Get("pageSize"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			pageSize = n
 		}
 	}
-	if pageSize > 200 {
-		pageSize = 200
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
 	}
-	// 防止 (page-1)*pageSize 溢出：page <= MaxInt64/pageSize + 1
+	return clampPage(page, pageSize), pageSize
+}
+
+// 分页参数的默认值与上限（ParsePagination / ParsePaginationOptIn 共用）。
+const (
+	defaultPageSize = 20
+	maxPageSize     = 200
+)
+
+// ErrInvalidPagination 表示 page/pageSize 存在但不是合法整数。
+// handler 应映射为 400 {"error":"invalid page/pageSize"}。
+var ErrInvalidPagination = errors.New("invalid page/pageSize")
+
+// ParsePaginationOptIn 解析 page/pageSize，用于"任一参数存在即启用分页"的列表端点：
+//   - 两个参数都不存在：active=false，调用方必须保持旧响应形态（向后兼容）；
+//   - page 缺省为 1，page<1 clamp 到 1（与 ParsePagination 一致）；
+//   - pageSize 缺省为 20，pageSize<1 回退默认 20（与 ParsePagination 一致），>200 clamp 到 200；
+//   - 任一参数非整数：返回 ErrInvalidPagination（调用方回 400）。
+func ParsePaginationOptIn(q url.Values) (page, pageSize int, active bool, err error) {
+	pageStr := q.Get("page")
+	sizeStr := q.Get("pageSize")
+	if pageStr == "" && sizeStr == "" {
+		return 0, 0, false, nil
+	}
+	page = 1
+	if pageStr != "" {
+		n, atoiErr := strconv.Atoi(pageStr)
+		if atoiErr != nil {
+			return 0, 0, true, ErrInvalidPagination
+		}
+		page = n
+	}
+	if page < 1 {
+		page = 1
+	}
+	pageSize = defaultPageSize
+	if sizeStr != "" {
+		n, atoiErr := strconv.Atoi(sizeStr)
+		if atoiErr != nil {
+			return 0, 0, true, ErrInvalidPagination
+		}
+		if n > 0 {
+			pageSize = n
+		}
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
+	}
+	return clampPage(page, pageSize), pageSize, true, nil
+}
+
+// clampPage 防止 (page-1)*pageSize 整数溢出：page <= maxInt/pageSize + 1。
+func clampPage(page, pageSize int) int {
 	const maxInt = (1 << 62) - 1 // 留足余量避免乘法溢出
 	maxPage := maxInt / pageSize
 	if maxPage < 1 {
 		maxPage = 1
 	}
 	if page > maxPage {
-		page = maxPage
+		return maxPage
 	}
-	return page, pageSize
+	return page
+}
+
+// PaginateSlice 按 page/pageSize（1 起始）切分 items，返回本页数据与 hasMore。
+// 越界页返回非 nil 空切片（JSON 序列化为 [] 而非 null）。page/pageSize 由
+// ParsePagination / ParsePaginationOptIn 提供，调用方负责保证 page>=1、pageSize>=1。
+func PaginateSlice[T any](items []T, page, pageSize int) ([]T, bool) {
+	total := len(items)
+	start := (page - 1) * pageSize
+	if start >= total {
+		return []T{}, false
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return items[start:end], end < total
 }
 
 // ResponseCapture 捕获 http.Handler 的响应（状态码 + body），用于分页包装。

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -17,6 +18,9 @@ type AIGatewayHandler struct {
 	retriever   *RAGRetriever
 	compressor  *ContextCompressor
 	promptStore *PromptTemplateStore
+	// embedProvider 是 Embed 请求未指定 provider 及 RAG ingest 自动生成向量时
+	// 使用的 Provider；默认 openai 保持旧契约，控制面可改成已装配的其他 Provider。
+	embedProvider string
 	// Authorize 鉴权回调（由 controlplane 注入 subsystemAuthorize）：校验身份并核对
 	// 权限点。nil 时不启用鉴权（独立使用与单测的向后兼容路径）。
 	//
@@ -36,10 +40,19 @@ func (h *AIGatewayHandler) authorize(w http.ResponseWriter, r *http.Request, per
 
 func NewAIGatewayHandler(gw *Gateway, vs VectorStore, topK int) *AIGatewayHandler {
 	return &AIGatewayHandler{
-		gateway:     gw,
-		retriever:   NewRAGRetriever(vs, gw, topK),
-		compressor:  NewContextCompressor(4096),
-		promptStore: NewPromptTemplateStore(),
+		gateway:       gw,
+		retriever:     NewRAGRetriever(vs, gw, topK),
+		compressor:    NewContextCompressor(4096),
+		promptStore:   NewPromptTemplateStore(),
+		embedProvider: "openai",
+	}
+}
+
+// SetEmbedProvider 设置默认 embedding Provider；空值不改变默认 openai。
+// 启动装配期调用，运行期只读。
+func (h *AIGatewayHandler) SetEmbedProvider(name string) {
+	if name = strings.TrimSpace(name); name != "" {
+		h.embedProvider = name
 	}
 }
 
@@ -135,7 +148,7 @@ func (h *AIGatewayHandler) HandleEmbed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Provider == "" {
-		req.Provider = "openai"
+		req.Provider = h.embedProvider
 	}
 
 	embedding, err := h.gateway.Embed(r.Context(), req.Provider, req.Text)
@@ -178,7 +191,7 @@ func (h *AIGatewayHandler) HandleRAGIngest(w http.ResponseWriter, r *http.Reques
 	// 生成 embedding
 	for i := range req.Documents {
 		if len(req.Documents[i].Embedding) == 0 {
-			emb, err := h.gateway.Embed(r.Context(), "openai", req.Documents[i].Content)
+			emb, err := h.gateway.Embed(r.Context(), h.embedProvider, req.Documents[i].Content)
 			if err != nil {
 				paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("embed doc %d: %s", i, err.Error())})
 				return

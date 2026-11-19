@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -33,6 +34,11 @@ func (s *Server) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.T
 	if err != nil {
 		if err == service.ErrInvalidCredentials {
 			return nil, status.Error(codes.Unauthenticated, err.Error())
+		}
+		var inactive *service.AccountInactiveError
+		if errors.As(err, &inactive) {
+			// 口令已验证通过，仅账号状态阻断：与 HTTP 面同为 403 语义。
+			return nil, status.Error(codes.PermissionDenied, err.Error())
 		}
 		return nil, status.Error(codes.Internal, err.Error())
 	}

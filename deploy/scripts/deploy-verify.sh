@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329 # cleanup 经 trap 间接调用（shellcheck 误报）
 # deploy-verify.sh — OpsMesh 部署冒烟（第七批·实际部署验证，2026-11-05）
 #
 # 与 deploy/scripts/validate-deploy-assets.sh（2501 行静态门禁 PASS=87）的分工：

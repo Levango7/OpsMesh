@@ -249,9 +249,18 @@ func (s *Server) approvalSubmitRequest(w http.ResponseWriter, r *http.Request) {
 	if req.Status == "" {
 		req.Status = approval.StatusPending
 	}
-	if err := s.approvalEngine.Submit(&req); err != nil {
+	// 幂等键：body.idempotency_key 或 Idempotency-Key 头；同键重试返回首次请求，
+	// 不新建第二个审批（网络重试/双击安全）。
+	if req.IdempotencyKey == "" {
+		req.IdempotencyKey = r.Header.Get("Idempotency-Key")
+	}
+	submitted, _, err := s.approvalEngine.SubmitIdempotent(&req)
+	if err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
+	}
+	if submitted != nil {
+		req = *submitted
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "approval_submit", Target: req.ID,

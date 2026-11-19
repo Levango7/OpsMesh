@@ -197,7 +197,7 @@ func buildSecurityScanScript(req securityScanReq) string {
 //   - sysctl 类：临时生效 + /etc/sysctl.d 持久化
 //   - 服务类：systemctl enable --now
 //   - 文件权限类：chmod 至基线值
-var baselineFixScripts = map[string]string{ //nolint:gosec // 修复脚本模板含 sshd 配置项名（PasswordAuthentication 等），非硬编码凭据。
+var baselineFixScripts = map[string]string{ // #nosec G101 -- CIS hardening script templates; occurrences of "PasswordAuthentication"/"minlen" are sshd/pwquality config keywords, not credential values.
 	"cis-ssh-01": `sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && systemctl reload sshd || systemctl reload ssh
 echo 'SSH PermitRootLogin=no 已设置'`,
 	"cis-ssh-02": `sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && systemctl reload sshd || systemctl reload ssh
@@ -294,7 +294,7 @@ func buildSecurityBaselineScript(req securityBaselineReq) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	// 规则检查脚本（与 compliance 引擎一致的精简检查集）。
-	checks := map[string]string{ //nolint:gosec // 检查脚本含 sshd 配置项名（PasswordAuthentication 等），非硬编码凭据。
+	checks := map[string]string{ // #nosec G101 -- CIS compliance check scripts; "PasswordAuthentication" here is an sshd config keyword, not a credential value.
 		"cis-ssh-01":      `grep -qE "^PermitRootLogin\s+no" /etc/ssh/sshd_config && echo "PASS cis-ssh-01" || echo "FAIL cis-ssh-01"`,
 		"cis-ssh-02":      `grep -qE "^PasswordAuthentication\s+no" /etc/ssh/sshd_config && echo "PASS cis-ssh-02" || echo "FAIL cis-ssh-02"`,
 		"cis-firewall-01": `(systemctl is-active firewalld >/dev/null 2>&1 || systemctl is-active ufw >/dev/null 2>&1) && echo "PASS cis-firewall-01" || echo "FAIL cis-firewall-01"`,

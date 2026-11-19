@@ -46,6 +46,7 @@ export const ROUTE_DOMAIN_MAP = {
   login: 'common',
   register: 'common',
   'change-password': 'common',
+  'NotFound': 'common',
   overview: 'common',
   // 运维管理 → ops
   devices: 'ops',

@@ -66,6 +66,8 @@ vi.mock('@/composables/useFormatTime', () => ({
   fmtTime: (v) => v || '',
 }))
 
+// 2026-11-17 写权限门 batch2：DevicesView setup 取 auth store（无 Pinia 会抛 [🍍]）。
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPerm: () => true }) }))
 vi.mock('@/components/Icon.vue', () => ({
   default: { name: 'Icon', props: ['name', 'size'], template: '<span class="icon-mock" />' },
 }))

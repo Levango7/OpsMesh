@@ -25,6 +25,7 @@ const (
 // KnowledgeDoc 知识文档
 type KnowledgeDoc struct {
 	ID        string                 `json:"id"`
+	TenantID  string                 `json:"tenantId,omitempty"`
 	Source    KnowledgeSource        `json:"source"`
 	Title     string                 `json:"title"`
 	Content   string                 `json:"content"`

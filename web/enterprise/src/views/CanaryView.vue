@@ -1,9 +1,10 @@
 <template>
   <PageShell :title="$t('canary.title')" :desc="$t('canary.subtitle')" testid="canary" :error="store.error">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 创建灰度发布（详情页不显示） -->
     <div v-if="!detailId" class="card card--raised">
       <h3>{{ $t('canary.create_title') }}</h3>
-      <form @submit.prevent="onCreate">
+      <form @submit.prevent="onCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <div class="row-2">
           <div class="field field--fixed">
             <label>{{ $t('canary.field_devices') }}</label>
@@ -92,8 +93,8 @@
       <div class="btnbar btnbar--bottom">
         <Button
           variant="primary"
-          @click="onAdvance"
-          :disabled="advancing || !canAdvance"
+          @click="onAdvance" :title="canWrite ? '' : $t('common.write_denied')"
+          :disabled="!canWrite || (advancing || !canAdvance)"
           data-testid="canary-advance-btn"
         >
           <Icon name="arrow-right" :size="14" />
@@ -115,10 +116,10 @@
           <span class="dot baseline"></span> {{ $t('canary.legend_baseline') }} {{ baselinePercent }}%
         </div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="ghost" size="small" @click="openTrafficEdit" data-testid="canary-traffic-edit-btn">{{ $t('canary.traffic_edit') }}</Button>
+          <Button variant="ghost" size="small" @click="openTrafficEdit" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="canary-traffic-edit-btn">{{ $t('canary.traffic_edit') }}</Button>
         </div>
       </div>
-      <form v-else class="traffic-form" @submit.prevent="onTrafficSave">
+      <form v-else class="traffic-form" @submit.prevent="onTrafficSave" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <div class="field field--fixed">
           <label>{{ $t('canary.field_canary_percent') }}（0-100）</label>
           <Input v-model.number="trafficForm.canaryPercent" type="number" min="0" max="100" step="1" required />
@@ -199,6 +200,7 @@
 // 灰度发布页 — 创建 + 状态 + 推进 + 流量分割 + 指标
 // 路由：/canary | /canary/:id
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import PageShell from '@/components/PageShell.vue'
 import { useRoute } from 'vue-router'
 import { useCanaryStore } from '@/stores/canary'
@@ -210,6 +212,10 @@ import Icon from '@/components/Icon.vue'
 const route = useRoute()
 const store = useCanaryStore()
 // 审计整改批次24：表单对齐后端契约（deviceIDs + taskType + command + strategy）
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('task:write'))
 const form = ref({
 	deviceIDs: '', taskType: 'shell', command: '',
 	strategy: 'percentage', percentage: 50,

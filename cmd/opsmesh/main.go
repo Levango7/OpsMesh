@@ -95,6 +95,16 @@ func runMain() int {
 		return 1
 	}
 
+	// 控制面鉴权/存储组合守卫：持久化 store 未开启 require-auth 时读 API 对匿名开放。
+	// 默认 fail-fast；--allow-insecure-store / OPSMESH_ALLOW_INSECURE_STORE 降级为 WARN。
+	// 仅控制面需要（agent 不暴露 B/S 读 API，backup/restore 等子命令已在上面短路）。
+	if cfg.Mode == "controlplane" {
+		if err := cfg.ValidateAuthStoreSafety(); err != nil {
+			fmt.Fprintf(os.Stderr, "[config] 校验失败: %v\n", err)
+			return 1
+		}
+	}
+
 	switch cfg.Mode {
 	case "controlplane":
 		// 控制面模式：HTTP(B/S) 8080 + gRPC 9090（真实注册通道） + metrics 9091。
@@ -364,13 +374,14 @@ func runCutoverMigrate() int {
 		return os.Getenv(envKey)
 	}
 	opts := cutover.MigrateOptions{
-		Users:         strings.Split(*users, ","),
-		RosterFile:    envOr(*rosterFile, "AUTH_CUTOVER_ROSTER_FILE"),
-		AuthSvcURL:    envOr(*authSvcURL, "AUTH_SVC_URL"),
-		AdminUser:     envOr(*adminUser, "AUTH_SVC_MIGRATE_ADMIN_USER"),
-		AdminPassword: envOr(*adminPassword, "AUTH_SVC_MIGRATE_ADMIN_PASSWORD"),
-		DryRun:        *dryRun,
-		ForceChange:   *forceChange,
+		Users:           strings.Split(*users, ","),
+		RosterFile:      envOr(*rosterFile, "AUTH_CUTOVER_ROSTER_FILE"),
+		AuthSvcURL:      envOr(*authSvcURL, "AUTH_SVC_URL"),
+		AdminUser:       envOr(*adminUser, "AUTH_SVC_MIGRATE_ADMIN_USER"),
+		AdminPassword:   envOr(*adminPassword, "AUTH_SVC_MIGRATE_ADMIN_PASSWORD"),
+		CredentialsFile: *credentialsOut, // 逐用户即时落盘（断点续跑凭据不丢）；见 issue #106
+		DryRun:          *dryRun,
+		ForceChange:     *forceChange,
 	}
 	// 本地事实适配：store -> LocalLookup（job 只需要 email + 角色 ID）。
 	lookup := func(username string) (cutover.LocalUser, bool) {
@@ -409,24 +420,22 @@ func runCutoverMigrate() int {
 		creds = nil
 	}
 	if len(creds) > 0 {
-		var buf strings.Builder
-		buf.WriteString("# 一次性口令清单（cutover-migrate）——凭据，勿入库、勿进工单系统；经安全渠道交给用户本人。\n")
-		if *forceChange {
-			buf.WriteString("# 本次建号已要求首登强制改密：用户首次登录即被要求改密，口令只使用一次。\n")
-		} else {
-			buf.WriteString("# 本次未要求首登改密：该口令即长期口令，请提示用户登录后自行修改。\n")
-		}
-		for _, u := range creds {
-			fmt.Fprintf(&buf, "%s\t%s\n", u.Username, u.OneTimePassword)
-		}
 		if strings.TrimSpace(*credentialsOut) != "" {
-			if err := os.WriteFile(*credentialsOut, []byte(buf.String()), 0o600); err != nil {
-				fmt.Fprintf(os.Stderr, "[cutover-migrate] 一次性口令写文件失败: %v（改回打印到终端）\n", err)
-				fmt.Fprintln(os.Stderr, "\n"+strings.TrimRight(buf.String(), "\n"))
-			} else {
-				fmt.Fprintf(os.Stderr, "[cutover-migrate] 一次性口令已写入 %s（权限 0600），请经安全渠道交给用户\n", *credentialsOut)
-			}
+			// issue #106：口令已在 RunMigration 内逐用户即时落盘（0600、去重、fsync）。
+			// 中途崩溃时先前用户的口令已持久，重跑变 Adopted 也不会丢——此处仅提示。
+			fmt.Fprintf(os.Stderr, "[cutover-migrate] 一次性口令已逐用户写入 %s（权限 0600，可安全重跑），请经安全渠道交给用户\n", *credentialsOut)
 		} else {
+			// 未指定文件：打印到终端（无断点续跑保证，运维自行保存）。
+			var buf strings.Builder
+			buf.WriteString("# 一次性口令清单（cutover-migrate）——凭据，勿入库、勿进工单系统；经安全渠道交给用户本人。\n")
+			if *forceChange {
+				buf.WriteString("# 本次建号已要求首登强制改密：用户首次登录即被要求改密，口令只使用一次。\n")
+			} else {
+				buf.WriteString("# 本次未要求首登改密：该口令即长期口令，请提示用户登录后自行修改。\n")
+			}
+			for _, u := range creds {
+				fmt.Fprintf(&buf, "%s\t%s\n", u.Username, u.OneTimePassword)
+			}
 			fmt.Fprintln(os.Stderr, "")
 			fmt.Fprintln(os.Stderr, strings.TrimRight(buf.String(), "\n"))
 		}

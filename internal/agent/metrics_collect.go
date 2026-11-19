@@ -14,6 +14,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"math"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -398,7 +399,12 @@ func collectHost(m *proto.DeviceMetrics) {
 	m.OS = info.OS // windows / linux / darwin（gopsutil 已标准化）
 	m.OSVersion = strings.TrimSpace(info.Platform + " " + info.PlatformVersion)
 	m.Kernel = info.KernelVersion
-	m.Uptime = int64(info.Uptime)
+	// Uptime 是 uint64 秒；int64 值域上限约 2920 亿年，仍做显式收口避免窄化溢出。
+	uptime := info.Uptime
+	if uptime > uint64(math.MaxInt64) {
+		uptime = uint64(math.MaxInt64)
+	}
+	m.Uptime = int64(uptime)
 }
 
 // collectCPU 采集 CPU 指标：逻辑核心数、使用率（0-100）、型号。

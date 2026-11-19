@@ -88,6 +88,19 @@ type MemoryStore struct {
 	// 多租户资源配额：tenantID -> 配额配置。
 	// 由 m.mu 保护并发安全；未设置配额的租户在 QuotaManager 中回退到默认配额。
 	quotaConfigs map[string]*QuotaConfig
+	// TD-97 ① 预算持久化：tenantID -> TokenBudget。
+	// 由 m.mu 保护并发安全。
+	budgets map[string]*TokenBudget
+	// TD-97 ① 预算告警历史。
+	budgetAlerts []BudgetAlert
+	// 批次47 ABAC 策略持久化：tenantID -> policyID -> 记录（租户分区，隔离由外层 map 保证）。
+	// 由 m.mu 保护并发安全；version 每次 upsert 自增，供控制面多副本刷新比对。
+	abacPolicies map[string]map[string]ABACPolicyRecord
+	// M3 ABAC 决策审计日志：按追加顺序（≈ ReceivedAt 升序）保存，ID 单调递增。
+	// 由 m.mu 保护并发安全；容量上限见 ABACDecisionLogsPerTenantCap / ABACDecisionLogsGlobalCap，
+	// 超限时丢弃最旧记录（保留期清理另由 DeleteABACDecisionLogsBefore 负责）。
+	abacDecisionLogs []ABACDecisionLog
+	abacDecisionSeq  int64
 	// agent 日志上报：已落库的 LogReport 批次列表。
 	// 按 tenantID + logName 分组检索（线性遍历，MVP 内存后端够用；
 	// 生产高频场景应由 logstore.SQLLogStore / Loki / ES 承担检索侧）。
@@ -341,6 +354,10 @@ func NewMemoryStore() *MemoryStore {
 		notifyChannels:        make(map[string]*NotifyChannel),
 		notifyTemplates:       make(map[string]*NotifyTemplate),
 		quotaConfigs:          make(map[string]*QuotaConfig),
+		budgets:               make(map[string]*TokenBudget),
+		budgetAlerts:          make([]BudgetAlert, 0),
+		abacPolicies:          make(map[string]map[string]ABACPolicyRecord),
+		abacDecisionLogs:      make([]ABACDecisionLog, 0),
 		services:              make(map[string]*ServiceInstance),
 		configs:               make(map[string]*ConfigItem),
 		configHistory:         make(map[string][]*ConfigItem),

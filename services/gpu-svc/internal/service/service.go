@@ -23,6 +23,20 @@ type Service struct {
 	ollama    *ollama.Client
 	quotas    *quota.Manager
 	metrics   *metrics.Collector
+	// ascend 可选的昇腾 NPU 采集器（issue #98）；nil=不采集昇腾指标。
+	// 用窄接口便于注入假实现测试；AscendCollector 满足该接口。
+	ascend ascendCollector
+}
+
+// ascendCollector 昇腾采集器的最小接口（与 metrics.AscendCollector.Collect 同签名）。
+type ascendCollector interface {
+	Collect(ctx context.Context, nodeID string) (*models.GPUMetrics, error)
+}
+
+// SetAscendCollector 装配昇腾 NPU 采集器（可选）。装配后 GetGPUMetrics 会优先用它，
+// 采集失败自动回退默认 Collector——不因为 NPU 不可用而让整个指标端点失败。
+func (s *Service) SetAscendCollector(c ascendCollector) {
+	s.ascend = c
 }
 
 // NewService creates a new Service.
@@ -410,7 +424,20 @@ func (s *Service) GetQuotaUsage(tenantID string) (*models.QuotaUsage, error) {
 }
 
 // GetGPUMetrics returns GPU metrics for a node.
+//
+// 装配了昇腾采集器时优先用 npu-smi 采集真实 NPU 指标（issue #98）；
+// 采集失败或该节点无 NPU 时回退默认 Collector，保证指标端点始终可用。
 func (s *Service) GetGPUMetrics(nodeID string, gpuCount int) (*models.GPUMetrics, error) {
+	if s.ascend != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		m, err := s.ascend.Collect(ctx, nodeID)
+		cancel()
+		if err == nil && m != nil {
+			return m, nil
+		}
+		// 回退：昇腾不可用（无 npu-smi/该节点非 NPU）时仍返回默认指标。
+		logx.Warn(context.Background(), "ascend NPU 采集失败，回退默认指标", "nodeID", nodeID, "err", err)
+	}
 	m, err := s.metrics.GetMetrics(nodeID)
 	if err != nil {
 		m = s.metrics.CollectMetrics(nodeID, gpuCount)

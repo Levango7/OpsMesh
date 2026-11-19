@@ -5,8 +5,9 @@
     testid="federation-deploys"
     :error="store.error"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate" data-testid="federation-deploys-create-btn">
+      <Button variant="primary" size="md" @click="openCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="federation-deploys-create-btn">
         <Icon name="add" :size="14" /> {{ $t('federationDeploys.add') }}
       </Button>
       <Button variant="ghost" size="md" @click="store.fetchDeploys()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
@@ -42,7 +43,7 @@
 
     <!-- 创建联邦部署抽屉 -->
     <DetailDrawer :open="!!form" :title="$t('federationDeploys.add')" @close="form = null">
-      <form v-if="form" class="entity-form" @submit.prevent="onCreate">
+      <form v-if="form" class="entity-form" @submit.prevent="onCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
         <div class="field field--fixed">
           <label>{{ $t('federationDeploys.field_name') }}</label>
           <input v-model.trim="form.name" type="text" required />
@@ -104,6 +105,7 @@ import PageShell from '@/components/PageShell.vue'
 
 // 多集群联邦部署页 — 列表 + 创建 + 详情（各集群状态）
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useFederationDeploysStore } from '@/stores/deploys-federation'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -114,6 +116,10 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 import Button from "@/components/ui/Button.vue"
 
 const store = useFederationDeploysStore()
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('deploy:write'))
 const formError = ref('')
 const errorConfirm = reactive({ show: false, message: '' })
 

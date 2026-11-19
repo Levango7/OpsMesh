@@ -377,6 +377,7 @@ func TestNullableColumnsScanIntoNullTypes(t *testing.T) {
 // SELECT 写在调用方，故「就近取上一条 SELECT」的归属方式在这里必然取不到表——
 // 只靠归属的判定对它们完全失明。显式绑定表之后，同一套判定就能覆盖到。
 var helperScanTables = map[string]string{
+	"scanABACPolicyRecord":   "abac_policies",
 	"scanAlertRule":          "alert_rules",
 	"scanAPIKey":             "api_keys",
 	"scanArgoCDApp":          "argocd_apps",

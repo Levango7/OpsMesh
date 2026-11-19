@@ -209,6 +209,8 @@ var Rules = []Rule{
 		// refresh/change-password + users/roles/permissions 管理）。
 		// 双轨期用 /api/v1/auth-svc/* 前缀转发到 auth-svc 的 /api/v1/auth/*，
 		// 与 controlplane 本地 /api/v1/auth/* 并存；切流阶段再评估替换。
+		// TD-60 A-1：只转发会话/认证端点；管理面（users/roles/permissions）
+		// v1 保持 controlplane 本地，不进入本规则的改写面。
 		Domain:         "auth",
 		PublicPrefix:   "/api/v1/auth-svc",
 		UpstreamPrefix: "/api/v1/auth",
@@ -299,6 +301,22 @@ var DeviceExtras = []Rule{
 			// 本地语义，而不是设备域权限：能触发网段扫描的凭证应与本地一致。
 			{Method: http.MethodGet, Perm: "network:read"},
 		},
+	},
+	{
+		// 自动纳管：device-svc 的 POST /api/v1/provision/auto 与本地同名端点
+		// 同语义（provision:execute）。此前双轨前缀只覆盖 devices/agents/cmdb/
+		// discovery，`/api/v1/device-svc/provision/auto` 无规则可达 ⇒ 404；
+		// 前端曾因此退回本地路径（docs/CLAIMS.md 2026-11-02 条），双轨对比/
+		// 切流仍缺这一条。PublicPrefix 精确到 /auto 而非 /provision，避免把
+		// agent 自举的 /api/v1/provision/register（无 JWT、token 自证）卷进
+		// 需要租户上下文的代理鉴权面。
+		Domain:         "device",
+		PublicPrefix:   "/api/v1/device-svc/provision/auto",
+		UpstreamPrefix: "/api/v1/provision/auto",
+		DomainPrefix:   "/api/v1/device-svc/provision/auto",
+		EnvKey:         "DEVICE_SVC_URL",
+		DefaultURL:     "http://127.0.0.1:8081",
+		Perm:           "provision:execute",
 	},
 	{
 		// TD-60 device 域下沉：netsec 六端点（ips/siem/honeypot/traffic/vpn/zerotrust）。
@@ -583,11 +601,51 @@ func DisabledDomains() (map[string]bool, error) {
 	return ParseDisabledProxyDomains(os.Getenv(EnvKey))
 }
 
+// authSessionSubpaths 是 auth-svc 双轨前缀下允许转发改写的会话/认证端点。
+// 管理面（users/roles/permissions）不在其中：TD-60 A-1 裁决 v1 管理面保持
+// controlplane 本地，auth-svc 的同名副本不参与双轨代理。
+var authSessionSubpaths = map[string]bool{
+	"/login":           true,
+	"/logout":          true,
+	"/refresh":         true,
+	"/register":        true,
+	"/change-password": true,
+	"/me":              true,
+}
+
+// AuthManagementPath 判断请求是否指向 auth-svc 双轨前缀下的管理面
+// （/api/v1/auth-svc/users|roles|permissions 及其子路径）。
+//
+// 调用方据此返回明确的 {"error":"management plane is local"}，而不是把路径
+// 改写成 /api/v1/auth/users 后由 auth-svc 回一个裸 404——后者会让客户端误判
+// "后端路由不存在"，掩盖这是产品裁决而非故障。
+func AuthManagementPath(path string) bool {
+	const prefix = "/api/v1/auth-svc/"
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[:i]
+	}
+	switch rest {
+	case "users", "roles", "permissions":
+		return true
+	}
+	return false
+}
+
 // rewriteProxyPath 把聚合层路径改写为后端真实路径：
 // 剥 domainPrefix，剩余子路径拼到 upstreamPrefix 之后。
 // 例：/api/v1/autoscaler/rules/123 → /api/v1/rules/123。
+//
+// auth 域例外（TD-60 A-1）：只有会话/认证端点参与改写；管理面与未知子路径
+// 返回空串（= 不转发），handleServiceProxy 据此给出明确错误。
 func (r *Rule) RewriteProxyPath(path string) string {
 	rest := strings.TrimPrefix(path, r.DomainPrefix)
+	if r.Domain == "auth" && !authSessionSubpaths[rest] {
+		return ""
+	}
 	if rest == "" || rest == "/" {
 		return r.UpstreamPrefix
 	}

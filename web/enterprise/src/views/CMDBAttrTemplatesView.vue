@@ -6,11 +6,13 @@
     :error="store.error"
   >
     <div class="btnbar btnbar--bottom">
-      <Button variant="primary" size="md" @click="openCreate" data-testid="cmdb-attr-template-create-btn">
+      <Button variant="primary" size="md" @click="openCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="cmdb-attr-template-create-btn">
         <Icon name="add" :size="14" /> {{ $t('cmdbAttrTemplates.add') }}
       </Button>
       <Button variant="ghost" size="md" @click="store.fetchTemplates()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
     </div>
+
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
 
     <!-- 属性模板列表 -->
     <div v-if="store.loading && !store.templates.length" class="muted">{{ $t('common.loading') }}</div>
@@ -31,8 +33,8 @@
       </template>
       <template #cell-actions="{ row }">
         <div class="row-actions">
-          <Button variant="ghost" size="sm" @click="openEdit(row)" data-testid="cmdb-attr-template-edit-btn"><Icon name="edit" :size="13" /></Button>
-          <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="cmdb-attr-template-delete-btn"><Icon name="delete" :size="13" /></Button>
+          <Button variant="ghost" size="sm" @click="openEdit(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="cmdb-attr-template-edit-btn"><Icon name="edit" :size="13" /></Button>
+          <Button variant="danger" size="sm" @click="onDelete(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="cmdb-attr-template-delete-btn"><Icon name="delete" :size="13" /></Button>
         </div>
       </template>
     </DataTable>
@@ -76,7 +78,7 @@
         </div>
         <div v-if="formError" class="msg err">{{ formError }}</div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
+          <Button variant="primary" size="md" native-type="submit" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"><Icon name="success" :size="14" /> {{ $t('common.save') }}</Button>
           <Button variant="ghost" size="md" native-type="button" @click="form = null">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
@@ -105,6 +107,7 @@ import PageShell from '@/components/PageShell.vue'
 // CMDB 属性模板页 — CRUD（列表 + 创建/编辑 modal + 删除）
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useCMDBAdvancedStore } from '@/stores/cmdb-advanced'
+import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
 import DataTable from '@/components/DataTable.vue'
@@ -114,6 +117,9 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 import Button from "@/components/ui/Button.vue"
 
 const store = useCMDBAdvancedStore()
+// 属性模板 CRUD 走后端 cmdb:write（internal/cmdb/handler.go:77）。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('cmdb:write'))
 const formError = ref('')
 const deleteConfirm = reactive({ show: false, id: null })
 const errorConfirm = reactive({ show: false, message: '' })

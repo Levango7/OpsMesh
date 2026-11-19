@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -72,6 +73,13 @@ func main() {
 	collector := metrics.NewCollector(nil)
 
 	svc := service.NewService(nodeMgr, sched, wlMgr, oc, qMgr, collector)
+	// issue #98：按配置装配华为昇腾 NPU 采集器（npu-smi）。默认不启用；
+	// GPU_SVC_ACCELERATOR=ascend 时接入，GetGPUMetrics 会优先用它采集真实 NPU 指标。
+	if strings.EqualFold(cfg.Accelerator, "ascend") {
+		asc := metrics.NewAscendCollector(cfg.MetricsInterval)
+		svc.SetAscendCollector(asc)
+		logx.Info(context.Background(), "Ascend NPU 采集器已接入", "service", "gpu-svc", "interval", cfg.MetricsInterval)
+	}
 	h := handler.NewHandler(svc)
 
 	mux := http.NewServeMux()

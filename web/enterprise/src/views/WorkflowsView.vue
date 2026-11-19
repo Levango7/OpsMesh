@@ -8,6 +8,7 @@
     testid="workflows"
     data-testid="workflows-view"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
 
     <div class="flowbar flowbar--inline">
       <div class="field">
@@ -38,10 +39,10 @@
     </div>
 
     <div class="btnbar">
-      <Button variant="primary" size="md" data-testid="workflows-save-btn" :disabled="saving" @click="onSave">{{ $t('workflows.save_btn') }}</Button>
-      <Button variant="primary" size="md" :class="['teal']" data-testid="workflows-run-btn" @click="onRun" :disabled="!store.current.id || running">{{ $t('workflows.run_btn') }}</Button>
+      <Button variant="primary" size="md" data-testid="workflows-save-btn" :disabled="!canWrite || (saving)" :title="canWrite ? '' : $t('common.write_denied')" @click="onSave">{{ $t('workflows.save_btn') }}</Button>
+      <Button variant="primary" size="md" :class="['teal']" data-testid="workflows-run-btn" @click="onRun" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (!store.current.id || running)">{{ $t('workflows.run_btn') }}</Button>
       <Button variant="primary" size="md" data-testid="workflows-schedule-btn" @click="onSchedule" :disabled="!store.current.id">{{ $t('workflows.schedule_btn') }}</Button>
-      <Button variant="primary" size="md" data-testid="workflows-add-step-btn" @click="store.addNode()">{{ $t('workflows.add_step_btn') }}</Button>
+      <Button variant="primary" size="md" data-testid="workflows-add-step-btn" @click="store.addNode()" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('workflows.add_step_btn') }}</Button>
       <Button variant="primary" size="md" data-testid="workflows-auto-layout-btn" @click="store.autoLayout()">{{ $t('workflows.auto_layout_btn') }}</Button>
       <Button variant="primary" size="md" data-testid="workflows-load-demo-btn" @click="loadDemo">{{ $t('workflows.load_demo_btn') }}</Button>
       <Button variant="primary" size="md" data-testid="workflows-clear-btn" @click="clearConfirm.show = true">{{ $t('workflows.clear_btn') }}</Button>
@@ -154,6 +155,7 @@
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, defineAsyncComponent } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useWorkflowStore } from '@/stores/workflow'
 import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
@@ -163,6 +165,10 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.vue'))
 
 const store = useWorkflowStore()
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('workflow:write'))
 const agents = ref([])
 const selectedId = ref('')
 const canvasRef = ref(null)

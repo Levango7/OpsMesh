@@ -795,7 +795,7 @@ func (s *Server) handleFederationTaskRouting(w http.ResponseWriter, r *http.Requ
 	}
 	// 透传租户头，让 peer 侧按其网关鉴权。
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
-		strings.TrimRight(peerURL, "/")+"/api/v1/tasks/"+taskID+"/result", nil)
+		strings.TrimRight(peerURL, "/")+"/api/v1/tasks/"+taskID+"/result", nil) // #nosec G704 -- peerURL exact-matched against operator-configured peers by isKnownPeer above; not arbitrary request input.
 	if err != nil {
 		writeInternalError(r.Context(), w, "federation.forwardTaskResult", err)
 		return
@@ -807,7 +807,7 @@ func (s *Server) handleFederationTaskRouting(w http.ResponseWriter, r *http.Requ
 		writeInternalError(r.Context(), w, "federation.forwardTaskResult.sign", err)
 		return
 	}
-	resp, err := s.fed.httpClient.Do(req)
+	resp, err := s.fed.httpClient.Do(req) // #nosec G704 -- target peerURL allowlisted by isKnownPeer above; only peer base URLs from operator config.
 	if err != nil {
 		logx.Error(r.Context(), "联邦任务状态查询失败", err, "peer", peerURL, "taskID", taskID)
 		paginate.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "upstream peer request failed"})

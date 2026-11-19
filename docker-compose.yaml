@@ -61,6 +61,9 @@ services:
       # --demo：保持默认 admin/admin123 可登录（非 demo 模式会随机化 admin 密码，
       # 导致 e2e-real 登录 401）。compose 本就是开发/演示用途（README 已注明非生产）。
       - --demo
+      # 批次42 新增 fail-fast：--store=mysql 未开 --production/--require-auth 时，
+      # 必须显式接受匿名读风险（仅限本隔离 dev lab；生产请用 Helm + values-production.yaml）。
+      - --allow-insecure-store
     ports:
       - "8080:8080"   # HTTP API / Web UI
       - "9090:9090"   # gRPC
@@ -206,6 +209,8 @@ services:
     command:
       - --mode=agent
       - --control-addr=http://controlplane:9090
+      # ABAC HTTP 通道走 controlplane 的 HTTP 端口（--control-addr 是 gRPC 9090）。
+      - --abac-bundle-base-url=http://controlplane:8080
       - --segment=default
     depends_on:
       controlplane:
