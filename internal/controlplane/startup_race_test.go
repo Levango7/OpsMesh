@@ -50,7 +50,9 @@ func TestNewServerClientsNonNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
+	// 放宽阈值：CI 的 -race + coverage + 全包并发下 NewServer 可达 10s+；
+	// 核心不变式是"不永久阻塞在 task-svc 拨号"，60s 足以抓死锁又不误报。
+	if elapsed := time.Since(start); elapsed > 60*time.Second {
 		t.Errorf("NewServer must not block on task-svc dial (took %v)", elapsed)
 	}
 	if s.electorClient == nil || s.taskServiceClient == nil || s.resultServiceClient == nil {

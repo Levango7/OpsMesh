@@ -18,6 +18,7 @@ BASE_PORT="${PORT:-18080}"
 
 TMP_DIR="$(mktemp -d)"
 CP_PID=""
+# shellcheck disable=SC2317,SC2329  # cleanup 经 trap EXIT 间接调用，shellcheck 静态分析看不到调用链，误报"命令不可达/函数未调用"
 cleanup() {
     if [[ -n "$CP_PID" ]] && kill -0 "$CP_PID" 2>/dev/null; then
         kill "$CP_PID" 2>/dev/null || true
