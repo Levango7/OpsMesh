@@ -2,6 +2,7 @@ package approval
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ type Engine struct {
 	flows     map[string]*ApprovalFlow
 	requests  map[string]*ApprovalRequest
 	histories map[string]*History
+	idemIndex map[string]string // 幂等键 → requestID（含租户前缀，见 idemCacheKey）
 	mu        sync.RWMutex
 	notifier  NotifierFunc
 	now       func() time.Time
@@ -44,6 +46,7 @@ func New(opts ...Option) *Engine {
 		flows:     make(map[string]*ApprovalFlow),
 		requests:  make(map[string]*ApprovalRequest),
 		histories: make(map[string]*History),
+		idemIndex: make(map[string]string),
 		now:       time.Now,
 	}
 	for _, o := range opts {
@@ -178,28 +181,58 @@ func (e *Engine) ListFlows(tenantID string) []*ApprovalFlow {
 //   - 初始化 Status=pending、CurrentStep=1、各步骤快照。
 //   - 触发 submit 通知。
 func (e *Engine) Submit(req *ApprovalRequest) error {
-	// Status 为空时视为 pending（调用方未显式设置）。
+	_, _, err := e.submit(req)
+	return err
+}
+
+// idemCacheKey 把租户与幂等键拼成全局唯一键，避免不同租户使用相同键互相命中。
+func idemCacheKey(tenantID, key string) string {
+	return tenantID + "\x00" + key
+}
+
+// SubmitIdempotent 幂等提交审批请求。返回 (请求副本, 是否新建, error)：
+//   - 首次提交：新建请求，created=true；
+//   - 同租户同幂等键重复提交：返回首次请求，created=false，err=nil；
+//   - 参数/流校验失败：err 非 nil。
+//
+// 幂等键检查在锁内进行，并发同键只会建一个请求。
+func (e *Engine) SubmitIdempotent(req *ApprovalRequest) (*ApprovalRequest, bool, error) {
+	return e.submit(req)
+}
+
+// submit 是 Submit / SubmitIdempotent 的共用实现，返回 (请求副本, 是否新建, error)。
+func (e *Engine) submit(req *ApprovalRequest) (*ApprovalRequest, bool, error) {
 	if req.Status == "" {
 		req.Status = StatusPending
 	}
 	if err := req.Validate(); err != nil {
-		return err
+		return nil, false, err
 	}
 	now := e.nowTime()
 
 	e.mu.Lock()
+	var ikey string
+	if req.IdempotencyKey != "" {
+		ikey = idemCacheKey(req.TenantID, req.IdempotencyKey)
+		if id, ok := e.idemIndex[ikey]; ok {
+			if existing := e.requests[id]; existing != nil {
+				e.mu.Unlock()
+				return cloneRequest(existing), false, nil
+			}
+		}
+	}
 	if _, exists := e.requests[req.ID]; exists {
 		e.mu.Unlock()
-		return ErrRequestExists
+		return nil, false, ErrRequestExists
 	}
 	flow, ok := e.flows[req.FlowID]
 	if !ok {
 		e.mu.Unlock()
-		return ErrFlowNotFound
+		return nil, false, ErrFlowNotFound
 	}
 	if !flow.Enabled {
 		e.mu.Unlock()
-		return errors.New("approval: flow is disabled")
+		return nil, false, errors.New("approval: flow is disabled")
 	}
 
 	cp := *req
@@ -225,6 +258,9 @@ func (e *Engine) Submit(req *ApprovalRequest) error {
 	cp.UpdatedAt = now
 
 	e.requests[cp.ID] = &cp
+	if ikey != "" {
+		e.idemIndex[ikey] = cp.ID
+	}
 	hist := &History{RequestID: cp.ID}
 	hist.Append(HistoryEntry{
 		Timestamp: now,
@@ -236,6 +272,27 @@ func (e *Engine) Submit(req *ApprovalRequest) error {
 	e.mu.Unlock()
 
 	e.notify(&cp, HistorySubmit)
+	return &cp, true, nil
+}
+
+// VerifyApproved 执行前二次校验：确认请求已批准，且租户/目标/详情与预期一致。
+func (e *Engine) VerifyApproved(requestID, tenantID, target, detail string) error {
+	req, err := e.GetRequest(requestID)
+	if err != nil {
+		return err
+	}
+	if req.TenantID != tenantID {
+		return fmt.Errorf("approval: request tenant mismatch (want %s, got %s)", tenantID, req.TenantID)
+	}
+	if req.Status != StatusApproved {
+		return fmt.Errorf("approval: request not approved (status=%s)", req.Status)
+	}
+	if req.Target != target {
+		return fmt.Errorf("approval request target mismatch (want %s, got %s)", target, req.Target)
+	}
+	if req.Detail != detail {
+		return fmt.Errorf("approval request version mismatch (want %s, got %s)", detail, req.Detail)
+	}
 	return nil
 }
 

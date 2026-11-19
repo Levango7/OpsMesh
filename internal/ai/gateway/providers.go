@@ -7,8 +7,26 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
+
+// sanitizeProviderBaseURL 校验运维配置的 provider base URL：仅接受绝对
+// http/https URL 且不得内嵌 userinfo；不合法时回退到内置默认端点。
+//
+// 这是 providers.go 全部出网调用的 SSRF 控制点：base URL 在构造期固定，
+// 不来自任何单次请求数据（见各 #nosec G704 注释）。
+func sanitizeProviderBaseURL(raw, fallback string) string {
+	if raw == "" {
+		return fallback
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+		return fallback
+	}
+	return strings.TrimRight(raw, "/")
+}
 
 // OpenAIProvider OpenAI LLM 提供商适配器
 type OpenAIProvider struct {
@@ -20,9 +38,7 @@ type OpenAIProvider struct {
 }
 
 func NewOpenAIProvider(name, apiKey, baseURL string, models []string) *OpenAIProvider {
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
+	baseURL = sanitizeProviderBaseURL(baseURL, "https://api.openai.com/v1")
 	return &OpenAIProvider{
 		name:    name,
 		apiKey:  apiKey,
@@ -36,14 +52,14 @@ func (p *OpenAIProvider) Name() string { return p.name }
 
 func (p *OpenAIProvider) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	body, _ := json.Marshal(req)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/chat/completions", bytes.NewReader(body)) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return nil, err
 	}
@@ -70,14 +86,14 @@ func (p *OpenAIProvider) Embed(ctx context.Context, text string) ([]float64, err
 		"input": text,
 		"model": "text-embedding-3-small",
 	})
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/embeddings", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/embeddings", bytes.NewReader(body)) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return nil, err
 	}
@@ -108,12 +124,12 @@ func (p *OpenAIProvider) Embed(ctx context.Context, text string) ([]float64, err
 func (p *OpenAIProvider) ListModels() []string { return p.models }
 
 func (p *OpenAIProvider) HealthCheck(ctx context.Context) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/models", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/models", nil) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return err
 	}
@@ -134,9 +150,7 @@ type AnthropicProvider struct {
 }
 
 func NewAnthropicProvider(name, apiKey, baseURL string, models []string) *AnthropicProvider {
-	if baseURL == "" {
-		baseURL = "https://api.anthropic.com/v1"
-	}
+	baseURL = sanitizeProviderBaseURL(baseURL, "https://api.anthropic.com/v1")
 	return &AnthropicProvider{
 		name:    name,
 		apiKey:  apiKey,
@@ -163,7 +177,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	}
 
 	body, _ := json.Marshal(anthropicReq)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/messages", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/messages", bytes.NewReader(body)) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +185,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	httpReq.Header.Set("x-api-key", p.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return nil, err
 	}
@@ -243,13 +257,13 @@ func (p *AnthropicProvider) Embed(ctx context.Context, text string) ([]float64, 
 func (p *AnthropicProvider) ListModels() []string { return p.models }
 
 func (p *AnthropicProvider) HealthCheck(ctx context.Context) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/models", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/models", nil) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return err
 	}
 	httpReq.Header.Set("x-api-key", p.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return err
 	}
@@ -269,9 +283,7 @@ type OllamaProvider struct {
 }
 
 func NewOllamaProvider(name, baseURL string, models []string) *OllamaProvider {
-	if baseURL == "" {
-		baseURL = "http://localhost:11434"
-	}
+	baseURL = sanitizeProviderBaseURL(baseURL, "http://localhost:11434")
 	return &OllamaProvider{
 		name:    name,
 		baseURL: baseURL,
@@ -302,13 +314,13 @@ func (p *OllamaProvider) Complete(ctx context.Context, req CompletionRequest) (*
 	}
 
 	body, _ := json.Marshal(ollamaReq)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/api/chat", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/api/chat", bytes.NewReader(body)) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return nil, err
 	}
@@ -364,13 +376,13 @@ func (p *OllamaProvider) Embed(ctx context.Context, text string) ([]float64, err
 		"model":  "nomic-embed-text",
 		"prompt": text,
 	})
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/api/embeddings", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/api/embeddings", bytes.NewReader(body)) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return nil, err
 	}
@@ -396,11 +408,11 @@ func (p *OllamaProvider) Embed(ctx context.Context, text string) ([]float64, err
 func (p *OllamaProvider) ListModels() []string { return p.models }
 
 func (p *OllamaProvider) HealthCheck(ctx context.Context) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/api/tags", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/api/tags", nil) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return err
 	}
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return err
 	}
@@ -421,9 +433,7 @@ type DashScopeProvider struct {
 }
 
 func NewDashScopeProvider(name, apiKey, baseURL string, models []string) *DashScopeProvider {
-	if baseURL == "" {
-		baseURL = "https://dashscope.aliyuncs.com/api/v1"
-	}
+	baseURL = sanitizeProviderBaseURL(baseURL, "https://dashscope.aliyuncs.com/api/v1")
 	return &DashScopeProvider{
 		name:    name,
 		apiKey:  apiKey,
@@ -450,14 +460,14 @@ func (p *DashScopeProvider) Complete(ctx context.Context, req CompletionRequest)
 	}
 
 	body, _ := json.Marshal(dashReq)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/services/aigc/text-generation/generation", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/services/aigc/text-generation/generation", bytes.NewReader(body)) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return nil, err
 	}
@@ -525,14 +535,14 @@ func (p *DashScopeProvider) Embed(ctx context.Context, text string) ([]float64, 
 			"texts": []string{text},
 		},
 	})
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/services/embeddings/text-embedding/text-embedding", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/services/embeddings/text-embedding/text-embedding", bytes.NewReader(body)) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return nil, err
 	}
@@ -565,12 +575,12 @@ func (p *DashScopeProvider) Embed(ctx context.Context, text string) ([]float64, 
 func (p *DashScopeProvider) ListModels() []string { return p.models }
 
 func (p *DashScopeProvider) HealthCheck(ctx context.Context) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/models", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/models", nil) // #nosec G704 -- p.baseURL is operator config sanitized at construction (http/https, no userinfo); never request-controlled.
 	if err != nil {
 		return err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(httpReq) // #nosec G704 -- request URL built from sanitized operator-config baseURL; not request-controlled.
 	if err != nil {
 		return err
 	}

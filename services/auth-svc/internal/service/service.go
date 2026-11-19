@@ -26,6 +26,22 @@ var (
 	ErrPasswordMismatch   = errors.New("old password does not match")
 )
 
+// AccountInactiveError 表示用户名与口令均已验证通过，但账号状态不是 active。
+//
+// 只在密码校验成功之后返回——判据顺序是防用户名枚举的承重墙：未持正确口令的
+// 调用方始终只看到 ErrInvalidCredentials，无法借状态文案探测账号是否存在
+// （对齐 controlplane auth_login.go:203-221 的 VerifyPassword → Status 顺序）。
+type AccountInactiveError struct {
+	Status string
+}
+
+func (e *AccountInactiveError) Error() string {
+	if e.Status == "" {
+		return "account not active"
+	}
+	return "account not active: " + e.Status
+}
+
 // Service implements the auth service business logic.
 type Service struct {
 	jwtEngine *auth.Engine
@@ -86,15 +102,9 @@ const changePasswordTokenTTL = 5 * time.Minute
 // MustChangePassword=true 并附 ChangePasswordToken；改密成功（须重新 Login）
 // 后才签发正式 at+rt。
 func (s *Service) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.TokenResponse, error) {
-	u := s.store.GetUserByUsername(req.Username)
-	if u == nil {
-		return nil, ErrInvalidCredentials
-	}
-	if u.Status != "active" {
-		return nil, ErrInvalidCredentials
-	}
-	if !auth.VerifyPassword(u.PasswordHash, req.Password) {
-		return nil, ErrInvalidCredentials
+	u, err := s.authenticate(req.Username, req.Password)
+	if err != nil {
+		return nil, err
 	}
 	// 首登强制改密：仅签 5min 改密专用 token，不签常规 at+rt（防弱口令直取全量权限）。
 	if u.MustChangePassword {
@@ -106,20 +116,33 @@ func (s *Service) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.
 // LoginWithFP 带设备指纹的登录（A1 HTTP 网关专用——gRPC proto 不含 FP 字段，
 // HTTP 层从 X-Device-FP 头读取后走本方法；语义与 Login 一致 + FP 绑定 rt）。
 func (s *Service) LoginWithFP(ctx context.Context, req *authv1.LoginRequest, deviceFP string) (*authv1.TokenResponse, error) {
-	u := s.store.GetUserByUsername(req.Username)
-	if u == nil {
-		return nil, ErrInvalidCredentials
-	}
-	if u.Status != "active" {
-		return nil, ErrInvalidCredentials
-	}
-	if !auth.VerifyPassword(u.PasswordHash, req.Password) {
-		return nil, ErrInvalidCredentials
+	u, err := s.authenticate(req.Username, req.Password)
+	if err != nil {
+		return nil, err
 	}
 	if u.MustChangePassword {
 		return s.issueChangePasswordTokens(u)
 	}
 	return s.issueTokens(u, deviceFP, resolveTenantID(req.GetTenantId()))
+}
+
+// authenticate 校验用户名与口令，返回 active 用户。
+//
+// 返回 ErrInvalidCredentials（查无此人或口令错误）或 *AccountInactiveError
+// （口令正确但状态非 active）。状态检查**必须**在口令校验之后：反序会让
+// 仅知道用户名的攻击者直接拿到账号状态（用户名枚举回归）。
+func (s *Service) authenticate(username, password string) (*store.User, error) {
+	u := s.store.GetUserByUsername(username)
+	if u == nil {
+		return nil, ErrInvalidCredentials
+	}
+	if !auth.VerifyPassword(u.PasswordHash, password) {
+		return nil, ErrInvalidCredentials
+	}
+	if u.Status != "active" {
+		return nil, &AccountInactiveError{Status: u.Status}
+	}
+	return u, nil
 }
 
 // issueChangePasswordTokens issues a short-lived change-password-only token set

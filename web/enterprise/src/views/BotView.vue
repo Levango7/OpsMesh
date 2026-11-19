@@ -5,6 +5,7 @@
     testid="bot"
     :error="store.error"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <div class="row">
       <!-- 左：命令面板 -->
       <div class="col">
@@ -30,7 +31,7 @@
                 variant="ghost" size="sm" :class="['quick-btn']" v-for="qc in store.quickCommands"
                 :key="qc.command"
                 :data-testid="'bot-quick-' + qc.label"
-                @click="runQuickCommand(qc.command)"
+                @click="runQuickCommand(qc.command)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')"
               >{{ qc.label }}</Button>
             </div>
           </div>
@@ -44,7 +45,7 @@
               data-testid="bot-command-input"
               @keyup.enter="runCommand"
             />
-            <Button variant="primary" size="md" @click="runCommand" :disabled="store.executing || !commandInput.trim()" data-testid="bot-run-btn">
+            <Button variant="primary" size="md" @click="runCommand" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (store.executing || !commandInput.trim())" data-testid="bot-run-btn">
               {{ store.executing ? $t('bot.executing') : $t('bot.run') }}
             </Button>
           </div>
@@ -95,13 +96,18 @@
 <script setup>
 import PageShell from '@/components/PageShell.vue'
 
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed} from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useBotStore } from '@/stores/bot'
 
 import StatusBadge from '@/components/StatusBadge.vue'
 import Button from "@/components/ui/Button.vue"
 
 const store = useBotStore()
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('bot:write'))
 const commandInput = ref('')
 const lastResponse = ref(null)
 

@@ -17,7 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	lg "log"
 	"math/rand"
 	"net/http"
 	"os"
@@ -111,9 +111,9 @@ var (
 func main() {
 	cfg := parseFlags()
 
-	log.Printf("[simulator] Starting %d devices, interval=%s, batch=%d",
+	lg.Printf("[simulator] Starting %d devices, interval=%s, batch=%d",
 		cfg.NumDevices, cfg.HeartbeatInterval, cfg.BatchSize)
-	log.Printf("[simulator] Target: %s", cfg.ControlPlaneURL)
+	lg.Printf("[simulator] Target: %s", cfg.ControlPlaneURL)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -123,7 +123,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		log.Println("[simulator] Shutting down...")
+		lg.Println("[simulator] Shutting down...")
 		cancel()
 	}()
 
@@ -149,7 +149,7 @@ func main() {
 			go func(d *Device) {
 				defer wg.Done()
 				if err := registerDevice(ctx, cfg, d); err != nil {
-					log.Printf("[simulator] Device %s registration failed: %v", d.ID, err)
+					lg.Printf("[simulator] Device %s registration failed: %v", d.ID, err)
 					return
 				}
 				atomic.AddInt64(&registered, 1)
@@ -169,9 +169,9 @@ func main() {
 
 	select {
 	case <-doneCh:
-		log.Printf("[simulator] %d/%d devices registered", registered, cfg.NumDevices)
+		lg.Printf("[simulator] %d/%d devices registered", registered, cfg.NumDevices)
 	case <-time.After(30 * time.Second):
-		log.Printf("[simulator] Registration timeout (%d/%d registered)", atomic.LoadInt64(&registered), cfg.NumDevices)
+		lg.Printf("[simulator] Registration timeout (%d/%d registered)", atomic.LoadInt64(&registered), cfg.NumDevices)
 	}
 
 	// Start heartbeats
@@ -198,11 +198,11 @@ func main() {
 					}
 
 					// Simulate task execution
-					if rand.Float64() < 0.3 {
+					if rand.Float64() < 0.3 { // #nosec G404 -- dev simulator: scenario randomness only; not shipped in controlplane, holds no secrets.
 						result := simulateTask(d)
 						// 结果上报失败只影响模拟统计，不中断心跳循环；此处留痕即可。
 						if err := reportTaskResult(ctx, cfg, result); err != nil {
-							log.Printf("device-sim: reportTaskResult failed: %v", err)
+							lg.Printf("device-sim: reportTaskResult failed: %v", err)
 						}
 					}
 				}
@@ -221,7 +221,7 @@ func main() {
 			case <-ticker.C:
 				hb := atomic.LoadInt64(&heartbeatCount)
 				errs := atomic.LoadInt64(&errorCount)
-				log.Printf("[simulator] Stats: heartbeats=%d errors=%d devices=%d",
+				lg.Printf("[simulator] Stats: heartbeats=%d errors=%d devices=%d",
 					hb, errs, registered)
 			}
 		}
@@ -230,9 +230,9 @@ func main() {
 	<-ctx.Done()
 	heartbeatWg.Wait()
 
-	log.Printf("[simulator] Final: heartbeats=%d errors=%d",
+	lg.Printf("[simulator] Final: heartbeats=%d errors=%d",
 		atomic.LoadInt64(&heartbeatCount), atomic.LoadInt64(&errorCount))
-	log.Println("[simulator] Shutdown complete")
+	lg.Println("[simulator] Shutdown complete")
 }
 
 func parseFlags() Configuration {
@@ -247,7 +247,7 @@ func parseFlags() Configuration {
 
 	heartbeatInterval, err := time.ParseDuration(*interval)
 	if err != nil {
-		log.Fatalf("Invalid interval: %v", err)
+		lg.Fatalf("Invalid interval: %v", err)
 	}
 
 	return Configuration{
@@ -261,14 +261,14 @@ func parseFlags() Configuration {
 }
 
 func createDevice(index int) *Device {
-	osType := osTypes[rand.Intn(len(osTypes))]
+	osType := osTypes[rand.Intn(len(osTypes))] // #nosec G404 -- dev simulator: scenario randomness only; not shipped in controlplane.
 	versions := osVersions[osType]
-	osVersion := versions[rand.Intn(len(versions))]
-	arch := archs[rand.Intn(len(archs))]
+	osVersion := versions[rand.Intn(len(versions))] // #nosec G404 -- dev simulator: scenario randomness only; not shipped in controlplane.
+	arch := archs[rand.Intn(len(archs))]            // #nosec G404 -- dev simulator: scenario randomness only; not shipped in controlplane.
 
 	// Generate IP
 	ip := fmt.Sprintf("10.%d.%d.%d",
-		rand.Intn(254), rand.Intn(254), rand.Intn(254)+1)
+		rand.Intn(254), rand.Intn(254), rand.Intn(254)+1) // #nosec G404 -- dev simulator: fake IP selection only; not shipped in controlplane.
 
 	dev := &Device{
 		ID:        fmt.Sprintf("dev-%s-%04d", randomString(6), index),
@@ -282,13 +282,13 @@ func createDevice(index int) *Device {
 	}
 
 	// Some devices have GPUs
-	if rand.Float64() < 0.4 {
-		numGPUs := rand.Intn(3) + 1
+	if rand.Float64() < 0.4 { // #nosec G404 -- dev simulator: scenario randomness only; not shipped in controlplane.
+		numGPUs := rand.Intn(3) + 1 // #nosec G404 -- dev simulator: scenario randomness only; not shipped in controlplane.
 		for i := 0; i < numGPUs; i++ {
-			memTotal := int64((rand.Intn(16) + 4) * 1024)
+			memTotal := int64((rand.Intn(16) + 4) * 1024) // #nosec G404 -- dev simulator: synthetic GPU memory only.
 			dev.GPUs = append(dev.GPUs, GPUInfo{
 				ID:          fmt.Sprintf("gpu-%d", i),
-				Name:        gpuNames[rand.Intn(len(gpuNames))],
+				Name:        gpuNames[rand.Intn(len(gpuNames))], // #nosec G404 -- dev simulator: synthetic GPU model only.
 				MemoryTotal: memTotal,
 			})
 		}
@@ -368,18 +368,18 @@ func sendHeartbeat(ctx context.Context, cfg Configuration, d *Device) error {
 	d.CPU = randomMetric(5, 45, cfg.HighLoadRate)
 	d.Memory = randomMetric(20, 60, cfg.HighLoadRate)
 	d.Disk = randomMetric(30, 70, 0)
-	d.NetIn += int64(rand.Intn(1000000))
-	d.NetOut += int64(rand.Intn(500000))
+	d.NetIn += int64(rand.Intn(1000000)) // #nosec G404 -- dev simulator: synthetic metrics only; not shipped in controlplane.
+	d.NetOut += int64(rand.Intn(500000)) // #nosec G404 -- dev simulator: synthetic metrics only; not shipped in controlplane.
 
 	// Update GPU metrics
 	for i := range d.GPUs {
 		d.GPUs[i].Utilization = randomMetric(0, 30, cfg.HighLoadRate)
 		d.GPUs[i].MemoryUsed = int64(float64(d.GPUs[i].MemoryTotal) * randomMetric(0.1, 0.5, 0))
-		d.GPUs[i].Temperature = 40 + rand.Float64()*40
+		d.GPUs[i].Temperature = 40 + rand.Float64()*40 // #nosec G404 -- dev simulator: synthetic metrics only.
 	}
 
 	// Simulate occasional failures
-	if rand.Float64() < cfg.FailureRate {
+	if rand.Float64() < cfg.FailureRate { // #nosec G404 -- dev simulator: fault-injection randomness only.
 		d.Status = "offline"
 		d.Failures++
 	} else {
@@ -435,8 +435,8 @@ func sendHeartbeat(ctx context.Context, cfg Configuration, d *Device) error {
 func simulateTask(d *Device) TaskResult {
 	taskID := fmt.Sprintf("task-%s", randomString(8))
 	statuses := []string{"success", "success", "success", "success", "failed"}
-	status := statuses[rand.Intn(len(statuses))]
-	duration := int64(rand.Intn(5000) + 100)
+	status := statuses[rand.Intn(len(statuses))] // #nosec G404 -- dev simulator: synthetic task outcome only.
+	duration := int64(rand.Intn(5000) + 100)     // #nosec G404 -- dev simulator: synthetic task duration only.
 
 	if status == "success" {
 		d.TasksRun++
@@ -475,18 +475,18 @@ func reportTaskResult(ctx context.Context, cfg Configuration, result TaskResult)
 }
 
 func randomMetric(min, max float64, highLoadProb float64) float64 {
-	if rand.Float64() < highLoadProb {
+	if rand.Float64() < highLoadProb { // #nosec G404 -- dev simulator: synthetic load distribution only.
 		// High load: return value in upper range
-		return min + (max-min)*0.8 + rand.Float64()*(max-min)*0.2
+		return min + (max-min)*0.8 + rand.Float64()*(max-min)*0.2 // #nosec G404 -- dev simulator: synthetic metrics only.
 	}
-	return min + rand.Float64()*(max-min)
+	return min + rand.Float64()*(max-min) // #nosec G404 -- dev simulator: synthetic metrics only.
 }
 
 func randomString(n int) string {
 	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
+		b[i] = letters[rand.Intn(len(letters))] // #nosec G404 -- dev simulator: fake device/task IDs only; not security identifiers.
 	}
 	return string(b)
 }

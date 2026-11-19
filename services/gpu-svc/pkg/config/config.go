@@ -13,6 +13,9 @@ type Config struct {
 	OllamaURL       string        `json:"ollamaURL"`
 	MetricsInterval time.Duration `json:"metricsInterval"`
 
+	// Accelerator 指定 NPU 采集器类型：空/nvidia=默认模拟采集，ascend=华为昇腾（npu-smi）。
+	Accelerator string `json:"accelerator"`
+
 	// OTel tracing settings.
 	OTelEndpoint string `json:"otelEndpoint"` // OTLP gRPC collector address (empty = disabled)
 	LogLevel     string `json:"logLevel"`     // debug, info, warn, error (default: info)
@@ -25,6 +28,7 @@ func Load() *Config {
 		ShutdownTimeout: getEnvDuration("GPU_SVC_SHUTDOWN_TIMEOUT", 10*time.Second),
 		OllamaURL:       getEnv("OLLAMA_URL", getEnv("GPU_SVC_OLLAMA_URL", "http://localhost:11434")),
 		MetricsInterval: getEnvDuration("GPU_SVC_METRICS_INTERVAL", 30*time.Second),
+		Accelerator:     getEnv("GPU_SVC_ACCELERATOR", ""),
 		OTelEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}

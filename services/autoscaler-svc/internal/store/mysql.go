@@ -271,6 +271,44 @@ func (m *MySQLStore) ListRules(tenantID string) []*models.ScaleRule {
 	return out
 }
 
+// ListAllRules 返回全部规则（跨租户，启动时装载用；无租户过滤）。
+func (m *MySQLStore) ListAllRules() []*models.ScaleRule {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rows, err := m.db.QueryContext(ctx,
+		`SELECT id, tenant_id, name, deployment, namespace, metric, scale_up_threshold, scale_down_threshold, min_replicas, max_replicas, cooldown_up, cooldown_down, enabled, created_at, updated_at FROM scaling_rules`)
+	if err != nil {
+		logx.Error(ctx, "[store] ListAllRules 失败", err,
+			"service", "autoscaler-svc", "store", "mysql")
+		return nil
+	}
+	defer rows.Close()
+	var out []*models.ScaleRule
+	for rows.Next() {
+		r := &models.ScaleRule{}
+		var deployment, namespace, metric sql.NullString
+		var scaleUp, scaleDown sql.NullFloat64
+		var minReplicas, maxReplicas, cooldownUp, cooldownDown sql.NullInt64
+		var createdAt, updatedAt sql.NullTime
+		if err := rows.Scan(&r.ID, &r.TenantID, &r.Name, &deployment, &namespace, &metric, &scaleUp, &scaleDown,
+			&minReplicas, &maxReplicas, &cooldownUp, &cooldownDown, &r.Enabled, &createdAt, &updatedAt); err != nil {
+			continue
+		}
+		r.Deployment, r.Namespace, r.Metric = deployment.String, namespace.String, metric.String
+		r.ScaleUpThreshold, r.ScaleDownThreshold = scaleUp.Float64, scaleDown.Float64
+		r.MinReplicas, r.MaxReplicas = int32(minReplicas.Int64), int32(maxReplicas.Int64)
+		r.CooldownUp, r.CooldownDown = time.Duration(cooldownUp.Int64), time.Duration(cooldownDown.Int64)
+		if createdAt.Valid {
+			r.CreatedAt = createdAt.Time
+		}
+		if updatedAt.Valid {
+			r.UpdatedAt = updatedAt.Time
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // CreateDecision 归属由父规则决定：父规则不属于该租户 ⇒ 拒收。
 func (m *MySQLStore) CreateDecision(d *models.ScaleDecision) (*models.ScaleDecision, error) {
 	if d == nil {

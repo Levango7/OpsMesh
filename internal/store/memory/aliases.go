@@ -19,6 +19,7 @@
 package memory
 
 import (
+	"github.com/Levango7/OpsMesh/internal/cost"
 	"github.com/Levango7/OpsMesh/internal/store/model"
 )
 
@@ -78,6 +79,13 @@ type InvoiceItem = model.InvoiceItem
 type Invoice = model.Invoice
 type CloudAccount = model.CloudAccount
 type CloudResource = model.CloudResource
+type TokenBudget = cost.TokenBudget
+type BudgetAlert = cost.BudgetAlert
+type BudgetStore = cost.BudgetStore
+type ABACPolicyRecord = model.ABACPolicyRecord
+type ABACPolicyStore = model.ABACPolicyStore
+type ABACDecisionLog = model.ABACDecisionLog
+type ABACDecisionStore = model.ABACDecisionStore
 
 // ---- 随契约下沉上提的类型（3，批次 3） ----
 

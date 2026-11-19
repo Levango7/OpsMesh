@@ -352,6 +352,8 @@ func TestDeviceProxyRuleRewrite(t *testing.T) {
 		{"/api/v1/device-svc/cmdb", "/api/v1/device-svc/cmdb/cis", "/api/v1/cmdb/cis"},
 		{"/api/v1/device-svc/discovery", "/api/v1/device-svc/discovery/jobs", "/api/v1/discovery/jobs"},
 		{"/api/v1/device-svc/discovery", "/api/v1/device-svc/discovery/devices", "/api/v1/discovery/devices"},
+		// 自动纳管：双轨前缀精确到 /provision/auto，避免卷入 agent 自举 register。
+		{"/api/v1/device-svc/provision/auto", "/api/v1/device-svc/provision/auto", "/api/v1/provision/auto"},
 		// TD-60 device 域下沉：netsec 六端点共用 /api/v1/netsec 上游前缀。
 		{"/api/v1/device-svc/netsec", "/api/v1/device-svc/netsec/ips", "/api/v1/netsec/ips"},
 		{"/api/v1/device-svc/netsec", "/api/v1/device-svc/netsec/zerotrust", "/api/v1/netsec/zerotrust"},
@@ -375,13 +377,14 @@ func TestDeviceProxyRuleRewrite(t *testing.T) {
 
 // TestDeviceProxyLookup 验证 device 域路径命中规则表 + 五域规则不受影响。
 func TestDeviceProxyLookup(t *testing.T) {
-	// device 域四前缀命中（+ TD-60 下沉的 netsec 前缀）。
+	// device 域五前缀命中（+ TD-60 下沉的 netsec 前缀、自动纳管前缀）。
 	for _, p := range []string{
 		"/api/v1/device-svc/devices",
 		"/api/v1/device-svc/devices/dev-1",
 		"/api/v1/device-svc/agents",
 		"/api/v1/device-svc/cmdb/cis",
 		"/api/v1/device-svc/discovery/jobs",
+		"/api/v1/device-svc/provision/auto",
 		"/api/v1/device-svc/netsec/ips",
 	} {
 		r := svcproxy.Lookup(p)

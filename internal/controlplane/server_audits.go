@@ -7,6 +7,7 @@ package controlplane
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -78,6 +79,40 @@ func (s *Server) handleAudits(w http.ResponseWriter, r *http.Request) {
 	if limit > 1000 {
 		limit = 1000
 	}
-	evs := s.store.QueryAudits(tenant, action, since, until, limit)
-	paginate.WriteJSON(w, http.StatusOK, evs)
+	// 分页（opt-in，向后兼容）：不传 page/pageSize 保持裸数组 + limit 语义；
+	// 任一存在则返回统一信封，total = 切片前该租户（含 action/时间窗过滤）的全部行数，
+	// 此时忽略 legacy limit（limit 仅约束旧形态）。
+	page, pageSize, paged, perr := paginate.ParsePaginationOptIn(q)
+	if perr != nil {
+		paginate.JSONError(w, http.StatusBadRequest, "invalid page/pageSize")
+		return
+	}
+	if !paged {
+		evs := s.store.QueryAudits(tenant, action, since, until, limit)
+		paginate.WriteJSON(w, http.StatusOK, evs)
+		return
+	}
+	evs := s.store.QueryAudits(tenant, action, since, until, 0)
+	// 稳定排序：时间倒序（最新在前），同刻事件按可用的标识/内容字段兜底，
+	// 保证翻页之间顺序确定（AuditEvent 无独立 ID；TraceID 为唯一可用关联标识）。
+	sort.SliceStable(evs, func(i, j int) bool {
+		if !evs[i].CreatedAt.Equal(evs[j].CreatedAt) {
+			return evs[i].CreatedAt.After(evs[j].CreatedAt)
+		}
+		if evs[i].TraceID != evs[j].TraceID {
+			return evs[i].TraceID < evs[j].TraceID
+		}
+		if evs[i].Action != evs[j].Action {
+			return evs[i].Action < evs[j].Action
+		}
+		if evs[i].Target != evs[j].Target {
+			return evs[i].Target < evs[j].Target
+		}
+		return evs[i].Detail < evs[j].Detail
+	})
+	total := len(evs)
+	data, hasMore := paginate.PaginateSlice(evs, page, pageSize)
+	paginate.WriteJSON(w, http.StatusOK, paginate.PaginateResult{
+		Data: data, Total: total, Page: page, PageSize: pageSize, HasMore: hasMore,
+	})
 }

@@ -1,5 +1,6 @@
 <template>
   <PageShell :title="$t('network.devices_title')" :desc="$t('network.devices_subtitle')" testid="network-devices" :error="store.error">
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- Tab 切换 -->
     <div class="tabbar">
       <Button
@@ -14,7 +15,7 @@
     <!-- ========== Tab 1: 设备列表 ========== -->
     <div v-show="activeTab === 'devices'">
       <div class="btnbar btnbar--bottom">
-        <Button variant="primary" size="md" @click="openCreate" data-testid="network-device-create-btn">
+        <Button variant="primary" size="md" @click="openCreate" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="network-device-create-btn">
           <Icon name="add" :size="14" /> {{ $t('network.add_device') }}
         </Button>
         <Button variant="ghost" size="md" @click="store.fetchDevices()"><Icon name="refresh" :size="14" /> {{ $t('common.refresh') }}</Button>
@@ -34,8 +35,8 @@
         <template #cell-actions="{ row }">
           <div class="row-actions">
             <Button variant="ghost" size="sm" @click="viewMetrics(row)" data-testid="network-device-metrics-btn"><Icon name="logs" :size="13" /></Button>
-            <Button variant="ghost" size="sm" @click="openConfigPush(row)" data-testid="network-device-config-btn"><Icon name="settings" :size="13" /></Button>
-            <Button variant="danger" size="sm" @click="onDelete(row)" data-testid="network-device-delete-btn"><Icon name="delete" :size="13" /></Button>
+            <Button variant="ghost" size="sm" @click="openConfigPush(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="network-device-config-btn"><Icon name="settings" :size="13" /></Button>
+            <Button variant="danger" size="sm" @click="onDelete(row)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="network-device-delete-btn"><Icon name="delete" :size="13" /></Button>
           </div>
         </template>
       </DataTable>
@@ -189,6 +190,7 @@
 // 网络设备页 — 两 Tab：设备列表 CRUD + 指标查看 + 配置下发 / 网络发现
 import PageShell from '@/components/PageShell.vue'
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useNetworkStore } from '@/stores/network'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -199,6 +201,10 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 import Button from "@/components/ui/Button.vue"
 
 const store = useNetworkStore()
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('network:write'))
 const activeTab = ref('devices')
 const submitting = ref(false)
 const formError = ref('')

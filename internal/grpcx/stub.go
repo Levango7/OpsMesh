@@ -11,6 +11,7 @@ package grpcx
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -18,6 +19,18 @@ import (
 	pb "github.com/Levango7/OpsMesh/internal/grpcx/pb" // 包名为 pbv1，用 pb 别名引用（兼容性修复）
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
+
+// clampInt32 将 int 收敛到 int32 值域，避免窄化转换溢出回绕。
+// 端口/负载/重试计数等字段的合理值远小于 int32 上限，越界时饱和而非回绕。
+func clampInt32(v int) int32 {
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v) // #nosec G115 -- explicitly bounds-checked above.
+}
 
 // ===== StubAdapter =====
 
@@ -247,10 +260,10 @@ func AgentInfoToProto(src *proto.AgentInfo) *pb.AgentInfo {
 		Segment:         src.Segment,
 		TenantId:        src.TenantID,
 		Addr:            src.Addr,
-		GrpcPort:        int32(src.GRPCPort),
-		MetricsPort:     int32(src.MetricsPort),
+		GrpcPort:        clampInt32(src.GRPCPort),
+		MetricsPort:     clampInt32(src.MetricsPort),
 		Status:          src.Status,
-		Load:            int32(src.Load),
+		Load:            clampInt32(src.Load),
 		LastSeen:        tsToProto(src.LastSeen),
 		InstallToken:    src.InstallToken,
 		OnboardDeviceId: src.OnboardDeviceID,
@@ -274,8 +287,8 @@ func TaskToProto(src *proto.Task) *pb.Task {
 		ClaimedBy:   src.ClaimedBy,
 		ClaimedAt:   tsToProto(src.ClaimedAt),
 		CreatedAt:   tsToProto(src.CreatedAt),
-		RetryCount:  int32(src.RetryCount),
-		MaxRetries:  int32(src.MaxRetries),
+		RetryCount:  clampInt32(src.RetryCount),
+		MaxRetries:  clampInt32(src.MaxRetries),
 		DeadLetter:  src.DeadLetter,
 		Schedule:    src.Schedule,
 		ParentId:    src.ParentID,
@@ -292,7 +305,7 @@ func TaskResultToProto(src *proto.TaskResult) *pb.TaskResult {
 	return &pb.TaskResult{
 		TaskId:     src.TaskID,
 		AgentId:    src.AgentID,
-		ExitCode:   int32(src.ExitCode),
+		ExitCode:   clampInt32(src.ExitCode),
 		Stdout:     src.Stdout,
 		Stderr:     src.Stderr,
 		DurationMs: src.DurationMs,
@@ -307,7 +320,7 @@ func RegisterRespToProto(src *RegisterResp) *pb.RegisterResp {
 	}
 	cfg := make(map[string]int32, len(src.ControlConfig))
 	for k, v := range src.ControlConfig {
-		cfg[k] = int32(v)
+		cfg[k] = clampInt32(v)
 	}
 	return &pb.RegisterResp{
 		AgentId:       src.AgentID,

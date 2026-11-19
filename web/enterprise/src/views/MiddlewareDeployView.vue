@@ -5,6 +5,7 @@
     testid="mwdep"
     :error="store.error || loadErr"
   >
+    <div v-if="!canWrite" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- 单卡片 + 顶部视图切换：模板目录 / 已部署实例（分段开关保留原位，不做页面级 .btnbar） -->
     <div class="card">
       <div class="view-head">
@@ -82,7 +83,7 @@
           <template #cell-tpl-actions="{ row }">
             <div class="row-actions" @click.stop>
               <Button variant="ghost" size="sm" @click="onView(row.id)">{{ $t('mwdep.view') }}</Button>
-              <Button variant="primary" size="sm" @click="onDeploy(row.id)">{{ $t('mwdep.deploy') }}</Button>
+              <Button variant="primary" size="sm" @click="onDeploy(row.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('mwdep.deploy') }}</Button>
             </div>
           </template>
         </DataTable>
@@ -173,7 +174,7 @@
           </div>
         </div>
         <div class="btnbar">
-          <Button variant="primary" size="md" @click="onDeploy(tpl.id)">{{ $t('mwdep.deploy') }}</Button>
+          <Button variant="primary" size="md" @click="onDeploy(tpl.id)" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">{{ $t('mwdep.deploy') }}</Button>
         </div>
       </div>
     </DetailDrawer>
@@ -224,7 +225,7 @@
           </div>
           <div v-else class="muted">—</div>
           <div class="btnbar">
-            <Button variant="primary" size="md" @click="confirmDeploy" :disabled="deploying">{{ $t('mwdep.confirm') }}</Button>
+            <Button variant="primary" size="md" @click="confirmDeploy" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (deploying)">{{ $t('mwdep.confirm') }}</Button>
             <Button variant="ghost" size="md" @click="closeDeploy">{{ $t('mwdep.cancel') }}</Button>
           </div>
           <p v-if="deployMsg" :class="['msg', deployOk ? 'ok' : 'err']">{{ deployMsg }}</p>
@@ -247,7 +248,7 @@
           <p class="muted">{{ $t('mwdep.uninstallHint') }}</p>
           <p>{{ $t('mwdep.instanceIdLabel') }} <code>{{ uninstallTarget?.id }}</code></p>
           <div class="btnbar">
-            <Button variant="danger" size="md" @click="confirmUninstall" :disabled="uninstalling">{{ $t('mwdep.uninstallConfirmBtn') }}</Button>
+            <Button variant="danger" size="md" @click="confirmUninstall" :title="canWrite ? '' : $t('common.write_denied')" :disabled="!canWrite || (uninstalling)">{{ $t('mwdep.uninstallConfirmBtn') }}</Button>
             <Button variant="ghost" size="md" @click="uninstallOpen = false">{{ $t('mwdep.uninstallCancel') }}</Button>
           </div>
           <p v-if="uninstallMsg" :class="['msg', uninstallOk ? 'ok' : 'err']">{{ uninstallMsg }}</p>
@@ -266,6 +267,7 @@ import PageShell from '@/components/PageShell.vue'
 
 // 中间件部署 — 单面板视图切换（模板目录 / 已部署实例）+ 分类筛选 + 详情 + 多版本部署 + 卸载
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { useMiddlewareStore } from '@/stores/middleware'
 import { getMiddlewareTemplate } from '@/api/middleware'
 import { getTaskDetail } from '@/api/task'
@@ -277,6 +279,10 @@ import { Button } from '@/components/ui'
 
 const store = useMiddlewareStore()
 // 模板详情加载失败此前静默吞错——统一骨架批次补上可见错误（与 store.error 并列展示）
+
+// 写操作门：与后端权限同源；复合串由 hasPerm OR 语义判定。
+const auth = useAuthStore()
+const canWrite = computed(() => auth.hasPerm('middleware:write/execute'))
 const loadErr = ref('')
 
 // 视图切换：模板目录 / 已部署实例（分段开关）

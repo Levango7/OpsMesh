@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -93,6 +94,22 @@ type Agent struct {
 	// TD-60 任务域切流：任务服务 gRPC 客户端（连接 task-svc TaskService）。
 	// nil=使用存根实现（单副本/开发模式）；非 nil=gRPC 调用 task-svc TaskService。
 	taskServiceClient TaskServiceClient
+	// agentSecret 是本次运行的 per-agent HMAC 签名密钥（resolveAgentKey 解析结果）。
+	// 与 gRPC 请求签名共用同一密钥。
+	agentSecret string
+	// abacSecret 是 ABAC HTTP 通道（M1 bundle / M3 decisions）的 HMAC 密钥。
+	// 服务端 verifyAgentHMACRequest 只认 store.AgentSecret（注册时签发的 per-agent 密钥），
+	// 故优先取注册响应/本机 agent.key 中的 DB 密钥，--grpc-signature-key 仅作兜底。
+	abacSecret string
+	// ABAC 策略包拉取客户端（M1）：cfg.ABACBundleEnabled=true 时在注册成功、拿到
+	// per-agent 密钥后构造并启动；nil=未启用。心跳能力声明据此上报 abac_bundle=v1。
+	abacBundleClient *ABACBundleClient
+	// ABAC 决策审计回传（M3）：与策略包客户端同时启用（可用 --abac-decision-report 单独关闭）；
+	// nil=未启用。心跳能力声明据此追加 abac_decisions=v1。
+	abacDecisionReporter *ABACDecisionReporter
+	// 设备侧 ABAC 决策闸门（M4）：仅 cfg.ABACDeviceMode != off 且未开 kill switch 时构造；
+	// nil=完全绕过（worker 只做一次 nil 判断，零评估开销）。
+	abacDeviceGuard *DeviceGuard
 }
 
 // New 构造 agent（读取 hostname，作为注册信息）。
@@ -450,7 +467,7 @@ func (a *Agent) Run() error {
 	// OTel 链路追踪初始化：endpoint 为空且 stdout=false 时 no-op（零开销）。
 	// 服务名默认 "opsmesh-agent"（未配置时由 otelx 回退 "opsmesh"）。
 	// 启用后 agent gRPC 调用 + 心跳 + 任务执行自动埋点，trace_id 贯穿 agent→控制面→store。
-	// 初始化失败时返回 error（由 main.go 统一处理），而非 log.Fatalf 强制退出。
+	// 初始化失败时返回 error（由 main.go 统一处理），而非 stdlib Fatalf 强制退出。
 	otelShutdown, otelErr := otelx.Init(otelx.Config{
 		Endpoint:    a.cfg.OTELEndpoint,
 		ServiceName: firstNonEmptyAgent(a.cfg.OTELServiceName, "opsmesh-agent"),
@@ -525,6 +542,44 @@ func (a *Agent) Run() error {
 	safeGo(ctx, "heartbeatLoop", a.heartbeatLoop)
 	safeGo(ctx, "dispatchLoop", a.dispatchLoop)
 	safeGo(ctx, "cancelLoop", a.cancelLoop) // F3 取消信号：轮询控制面，中止已下发取消的正在执行任务
+	// ABAC 策略包（M1）：注册成功并解析出 per-agent 密钥后启动拉取循环。
+	// 先加载本地 LKG（离线可用），Start 立即拉取一轮后按 ABACBundleRefreshInterval 轮询；
+	// 未启用（默认）时完全不构造客户端，心跳不带能力声明——与引入前逐字一致。
+	if a.cfg.ABACBundleEnabled {
+		a.abacBundleClient = a.newABACBundleClient()
+		a.abacBundleClient.LoadFromCache()
+		safeGo(ctx, "abacBundleClient", a.abacBundleClient.Start)
+		// 决策审计回传（M3）：随策略包一起启用；cfg.ABACDecisionReport=false 可单独关闭。
+		// bundleId 取当前 LKG 包（评估与回传可能跨包换代，记录以评估时刻的包 ID 为准）。
+		if a.cfg.ABACDecisionReport {
+			a.abacDecisionReporter = NewABACDecisionReporter(a.cfg, a.agentID, a.abacSecret, a.abacHTTPBaseURL(), nil)
+			a.abacDecisionReporter.SetBundleIDProvider(func() string {
+				sb, _ := a.abacBundleClient.Current()
+				if sb == nil {
+					return ""
+				}
+				return sb.Bundle.BundleID
+			})
+			safeGo(ctx, "abacDecisionReporter", a.abacDecisionReporter.Start)
+		}
+	}
+	// 设备侧 ABAC 决策闸门（M4 机制）：默认 off，不构造 guard（零行为变化）。
+	// kill switch 视同 off（回滚杠杆：无需改 mode 即可一键停用）。
+	if mode, err := config.NormalizeABACDeviceMode(a.cfg.ABACDeviceMode); err != nil {
+		return fmt.Errorf("设备侧 ABAC 配置非法: %w", err)
+	} else if mode != config.ABACDeviceModeOff && !a.cfg.ABACDeviceKillSwitch {
+		guard, gerr := NewDeviceGuard(a.cfg, a.abacBundleClient, a.abacDecisionReporter, a.deviceGuardInfo, nil)
+		if gerr != nil {
+			return fmt.Errorf("设备侧 ABAC 初始化失败: %w", gerr)
+		}
+		a.abacDeviceGuard = guard
+		logx.Info(ctx, "设备侧 ABAC 决策闸门已启用",
+			"mode", mode, "selector", a.cfg.ABACDeviceSelector,
+			"disabledDevices", len(config.ParseABACDeviceDisabledIDs(a.cfg.ABACDeviceDisabledIDs)))
+		if a.abacBundleClient == nil {
+			logx.Warn(ctx, "设备侧 ABAC 已启用但策略包拉取未启用：enforce 模式下 mutating 任务将 fail-closed")
+		}
+	}
 	// 日志采集：定时读取指定日志文件增量并上报控制面。
 	// 未配置采集路径时不启动——此时 logCollectLoop 会立即 return，而无条件启动会让
 	// safeGo 每 5s 重启一个空循环并打印「循环提前退出」（实机观测：默认配置下每分钟 12 条）。
@@ -596,24 +651,29 @@ func (a *Agent) applyRlimits() {
 	setRlimits(a)
 }
 
-// setupDiscoveryBalancer 服务发现：用 StaticDiscovery 加载多控制面地址，
+// setupDiscoveryBalancer 服务发现：按 --discovery-backend 构造发现后端，
 // 按 --lb-strategy 构造 balancer 并注入 gRPC 客户端。
 //
 // 逻辑：
-//  1. 用 StaticDiscovery 从 addrs 构造控制面实例列表（服务名 "opsmesh-controlplane"）。
+//  1. 按 DiscoveryBackend 选择实现（memory 默认 / static / file），服务名 "opsmesh-controlplane"。
 //  2. 用 List 获取实例列表，按 cfg.LBStrategy 构造 balancer（round-robin/failover）。
 //  3. 通过 SetBalancer 注入 GRPCClient，invoke 后续优先走 balancer 路径。
 //
 // 单地址时 Failover 退化为始终用该地址（不破坏现有行为）。
 // addrs 为空时不注入 balancer（回退到 addrs failover，向后兼容）。
 func (a *Agent) setupDiscoveryBalancer(addrs []string) {
+	const serviceName = "opsmesh-controlplane"
 	if len(addrs) == 0 || a.grpc == nil {
 		return
 	}
-	// 用逗号拼接的地址列表构造 StaticDiscovery（与 NewStaticDiscoveryFromAddrs 签名匹配）。
+	// 用逗号拼接的地址列表供各后端构造实例（memory/static 语义一致）。
 	joined := strings.Join(addrs, ",")
-	disc := discovery.NewStaticDiscoveryFromAddrs("opsmesh-controlplane", joined)
-	instances, err := disc.List(context.Background(), "opsmesh-controlplane")
+	disc, err := newDiscoveryForConfig(a.cfg, serviceName, joined)
+	if err != nil {
+		// 构造失败已在 helper 内记录 WARN；不注入 balancer，回退到 addrs failover。
+		return
+	}
+	instances, err := disc.List(context.Background(), serviceName)
 	if err != nil || len(instances) == 0 {
 		// 静态实现不应出错，但防御性处理：不注入 balancer，回退到 addrs failover。
 		return
@@ -621,7 +681,32 @@ func (a *Agent) setupDiscoveryBalancer(addrs []string) {
 	balancer := discovery.NewBalancer(a.cfg.LBStrategy, instances)
 	a.grpc.SetBalancer(balancer)
 	logx.Info(context.Background(), "服务发现已启用",
-		"instances", len(instances), "lb-strategy", a.cfg.LBStrategy)
+		"backend", a.cfg.DiscoveryBackend, "instances", len(instances), "lb-strategy", a.cfg.LBStrategy)
+}
+
+// newDiscoveryForConfig 按 cfg.DiscoveryBackend 构造服务发现后端（服务名统一为 serviceName）。
+// joinedAddrs 为逗号分隔的初始地址，仅 memory/static 后端使用。
+// 返回 error 表示后端不可用（未知后端 / file 路径非法），调用方应回退 addrs failover；
+// 这两种情况均在返回前记录 WARN（与 setupDiscoveryBalancer 既有日志语义一致）。
+func newDiscoveryForConfig(cfg *config.Config, serviceName, joinedAddrs string) (discovery.ServiceDiscovery, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.DiscoveryBackend)) {
+	case "", "memory":
+		// 默认后端：进程内注册表，从静态地址初始化（零外部依赖）。
+		return discovery.NewInMemoryDiscoveryFromAddrs(serviceName, joinedAddrs), nil
+	case "static":
+		return discovery.NewStaticDiscoveryFromAddrs(serviceName, joinedAddrs), nil
+	case "file":
+		fd, err := discovery.NewFileDiscovery(cfg.DiscoveryFile)
+		if err != nil {
+			logx.Warn(context.Background(), "服务发现 file 后端初始化失败，回退 addrs failover", "error", err.Error())
+			return nil, err
+		}
+		return fd, nil
+	default:
+		// config.Validate 已拒绝未知值；此处防御程序化构造的配置。
+		logx.Warn(context.Background(), "未知服务发现后端，回退 addrs failover", "backend", cfg.DiscoveryBackend)
+		return nil, fmt.Errorf("未知服务发现后端 %q", cfg.DiscoveryBackend)
+	}
 }
 
 // capabilityNote 返回目标机能力矩阵提示（显式能力边界，避免“能注册但半数任务类型必挂”错觉）。
@@ -661,6 +746,77 @@ func (a *Agent) resolveAgentKey(ctx context.Context, respSecret string) (key, so
 	return "", ""
 }
 
+// resolveABACSecret 决定 ABAC HTTP 通道（M1 bundle / M3 decisions）的 HMAC 密钥。
+//
+// 服务端 verifyAgentHMACRequest 只认 store.AgentSecret(agentID) —— Register 时签发并
+// 落库的 per-agent 密钥，因此这里优先使用注册响应下发的密钥（并落盘），其次使用本机
+// <dataDir>/agent.key；只有注册从未提供 DB 密钥时才回退到 --grpc-signature-key 预共享密钥
+// （该回退仅适用于控制面同样接受预共享密钥的部署，否则 ABAC 仍会 401）。
+// gRPC 签名密钥的选择保持 resolveAgentKey 原有优先级不变。
+func (a *Agent) resolveABACSecret(ctx context.Context, respSecret string) (key, source string) {
+	if respSecret != "" {
+		if err := saveAgentKey(a.dataDir, respSecret); err != nil {
+			logx.Warn(ctx, "ABAC per-agent 密钥落盘失败，重启后将无法沿用该密钥",
+				"agentID", a.agentID, "error", err.Error())
+		}
+		return respSecret, "register-response"
+	}
+	if k := loadAgentKey(a.dataDir); k != "" {
+		return k, "agent.key"
+	}
+	if a.cfg.GRPCSignatureKey != "" {
+		return a.cfg.GRPCSignatureKey, "pre-shared"
+	}
+	return "", ""
+}
+
+// abacHTTPBaseURL 返回 ABAC HTTP 通道（M1 bundle / M3 decisions）的控制面基地址。
+// 优先使用 --abac-bundle-base-url / OPSMESH_ABAC_BUNDLE_BASE_URL：compose 中
+// --control-addr 指向 gRPC 端口（9090），HTTP API 在另一个端口（8080）。
+// 未配置时回退 --control-addr，保持既有单机部署行为不变。
+func (a *Agent) abacHTTPBaseURL() string {
+	if v := strings.TrimSpace(a.cfg.ABACBundleBaseURL); v != "" {
+		return v
+	}
+	return a.cfg.ControlAddr
+}
+
+// newABACBundleClient 用当前运行态密钥与 HTTP 基地址构造策略包客户端。
+// 单独抽方法便于测试密钥来源与 base URL 的优先级（Run 与测试共用同一接线）。
+func (a *Agent) newABACBundleClient() *ABACBundleClient {
+	return NewABACBundleClient(a.cfg, a.agentID, a.abacSecret, a.abacHTTPBaseURL(), nil)
+}
+
+// deviceGuardInfo 返回设备侧 ABAC 选择器/豁免匹配所需的设备属性快照。
+// 设备无 labels（见 charter M4）：只暴露 DeviceInfo 字段。
+func (a *Agent) deviceGuardInfo() DeviceGuardDevice {
+	info := DeviceGuardDevice{DeviceID: a.agentID, AgentID: a.agentID, Hostname: a.hostname}
+	if a.cfg != nil {
+		info.Segment = a.cfg.Segment
+	}
+	info.OS = runtime.GOOS
+	info.Arch = runtime.GOARCH
+	return info
+}
+
+// deviceGuardDecision 在任务执行前做设备侧 ABAC 决策（M4）。
+// denied=true 表示不得执行该任务；actionAttr 固定 task:execute（变更动作）。
+func (a *Agent) deviceGuardDecision(t proto.Task, deviceID string) (DecisionInfo, bool) {
+	info := a.deviceGuardInfo()
+	resource := map[string]any{
+		"deviceID": deviceID,
+		"segment":  info.Segment,
+		"os":       info.OS,
+		"arch":     info.Arch,
+		"hostname": info.Hostname,
+		"taskID":   t.TaskID,
+		"taskType": t.Type,
+		"agent_id": info.AgentID,
+	}
+	decision := a.abacDeviceGuard.Decide("task:execute", resource)
+	return decision, !decision.Allowed
+}
+
 // register 经 gRPC Register 注册自身，拿到 agentID。带有限重试，避免控制面未就绪即退出。
 func (a *Agent) register() error {
 	info := proto.AgentInfo{
@@ -690,14 +846,23 @@ func (a *Agent) register() error {
 			if key != "" {
 				a.grpc.SetSecret(key)
 			}
+			a.agentSecret = key
+			// ABAC HTTP HMAC 使用 DB 签发的注册密钥（服务端只认 store.AgentSecret）；
+			// 仅当注册从未提供密钥时才回退到 --grpc-signature-key。gRPC 密钥不受影响。
+			abacKey, abacKeySource := a.resolveABACSecret(ctx, resp.Secret)
+			a.abacSecret = abacKey
 			signed := key != ""
 			if !signed && a.cfg.GRPCRequireSignature {
 				// 控制面要求签名但 agent 三处都拿不到密钥：后续请求将被拒绝，提前告警。
 				logx.Warn(ctx, "控制面启用签名验证但 agent 无可用密钥（预共享 / 下发 / 本机 agent.key 均无），"+
 					"后续请求将被拒绝：请用 install token 重新纳管，或配置 --grpc-signature-key", "agentID", a.agentID)
 			}
+			if abacKeySource == "pre-shared" {
+				logx.Warn(ctx, "ABAC HTTP 通道回退到预共享密钥：若控制面按 store.AgentSecret 验签将返回 401，"+
+					"请用 install token 重新纳管或提供本机 agent.key", "agentID", a.agentID)
+			}
 			logx.Info(ctx, "注册成功", "agentID", a.agentID, "segment", a.cfg.Segment, "grpc", a.cfg.ControlAddr,
-				"signed", signed, "keySource", keySource)
+				"signed", signed, "keySource", keySource, "abacKeySource", abacKeySource)
 			return nil
 		}
 		// 安全：Unauthenticated（install token 无效/过期/已被消费）属不可重试错误，
@@ -709,6 +874,22 @@ func (a *Agent) register() error {
 		time.Sleep(3 * time.Second)
 	}
 	return fmt.Errorf("注册控制面失败，已重试 30 次")
+}
+
+// heartbeatRequest 构造心跳请求并附带 agent 协议能力（M1/M3 能力协商，追加式可选字段）。
+// 未启用 ABAC 策略包时 Capabilities 为 nil（omitempty 不出现在 JSON），旧控制面无感知；
+// 策略包与决策回传同时启用时合并去重上报（abac_bundle=v1 + abac_decisions=v1）。
+func (a *Agent) heartbeatRequest() *grpcx.HeartbeatReq {
+	req := &grpcx.HeartbeatReq{AgentID: a.agentID, Status: "online", Load: 1}
+	var groups [][]string
+	if a.abacBundleClient != nil {
+		groups = append(groups, a.abacBundleClient.Capabilities())
+	}
+	if a.abacDecisionReporter != nil {
+		groups = append(groups, a.abacDecisionReporter.Capabilities())
+	}
+	req.Capabilities = mergeCapabilities(groups...)
+	return req
 }
 
 // heartbeatLoop 每 10s 经 gRPC Heartbeat 发送一次心跳（ctx 取消即退出）。
@@ -724,7 +905,7 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		case <-ticker.C:
 			// OTel：为每次心跳创建 span，trace_id 贯穿 agent→控制面。
 			spanCtx, span := otelx.StartSpan(ctx, "agent.heartbeat")
-			req := &grpcx.HeartbeatReq{AgentID: a.agentID, Status: "online", Load: 1}
+			req := a.heartbeatRequest()
 			// CMDB 增量上报：每 60 秒采集一次机器属性并附带在心跳中。
 			if report := a.collectCmdbReport(); report != nil {
 				req.CmdbReport = report
@@ -804,6 +985,8 @@ func (a *Agent) drainTasks(ctx context.Context) {
 			logx.Error(ctx, "领取任务失败", err, "agentID", a.agentID)
 			return
 		}
+		// nil 或空 taskID = 当前无工作：本轮立即结束，由 dispatchLoop 的 ticker
+		// 按 TaskDispatchInterval 退避后再次领取（绝不执行合成任务，避免空转刷屏）。
 		if t == nil {
 			return
 		}
@@ -887,6 +1070,11 @@ func (a *Agent) claimTask(ctx context.Context) (*proto.Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 空响应/空 taskId 表示“当前无待领取任务”（存根客户端或 task-svc 空队列）。
+	// 必须按空闲处理并返回 nil，禁止把零值任务投递给 worker。
+	if resp == nil || strings.TrimSpace(resp.TaskId) == "" {
+		return nil, nil
+	}
 	// Convert taskv1.Task to proto.Task
 	return &proto.Task{
 		TaskID:     resp.TaskId,
@@ -929,6 +1117,26 @@ func (a *Agent) worker(ctx context.Context) {
 			var cancelled bool
 			// 节点级超时：任务自带 Timeout>0 时覆盖全局 taskTimeout，0=用全局。
 			taskTimeout := taskTimeoutFor(t, a.taskTimeout)
+			// 设备侧 ABAC 决策闸门（M4）：执行前做一次本地决策。
+			// guard=nil（mode=off / kill switch）时只多一次 nil 判断，零评估开销。
+			if a.abacDeviceGuard != nil {
+				decision, denied := a.deviceGuardDecision(t, deviceID)
+				if denied {
+					logx.Warn(ctx, "设备侧 ABAC 拒绝任务，跳过执行",
+						"taskID", t.TaskID, "deviceID", deviceID,
+						"marker", decision.Marker, "policyID", decision.PolicyID, "reason", decision.Reason)
+					res = proto.TaskResult{
+						TaskID:     t.TaskID,
+						AgentID:    a.agentID,
+						ClaimEpoch: t.ClaimEpoch,
+						ExitCode:   -1,
+						Stderr:     "abac denied: " + decision.Reason,
+						FinishedAt: time.Now(),
+					}
+					a.reportResult(ctx, t, res)
+					continue
+				}
+			}
 			if a.cbSet != nil {
 				// 通过熔断器执行：Execute 内部处理 Open→HalfOpen→Closed 状态机。
 				cbErr := a.cbSet.Execute(deviceID, func() error {
@@ -1658,15 +1866,29 @@ func (a *Agent) checkFileRootWhitelist(path string) error {
 	return fmt.Errorf("path %q not under any allowed root (whitelist: %s)", path, wl)
 }
 
+// clampExitCode 把退出码收敛到 int32 值域并返回，避免 int→int32 窄化溢出回绕
+// （Windows 退出码可能是完整 32 位 DWORD）。
+func clampExitCode(exitCode int) int32 {
+	if exitCode > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if exitCode < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(exitCode)
+}
+
 // reportResult 把执行结果经 gRPC ReportResult 上报控制面（TD-60 任务域切流：转发到 task-svc TaskService）。
 func (a *Agent) reportResult(ctx context.Context, t proto.Task, res proto.TaskResult) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	// ExitCode 来自子进程等待状态（int）：收敛到 int32 值域，避免窄化转换溢出回绕
+	// （Windows 退出码可能是完整 32 位 DWORD）。
 	req := &taskv1.ReportResultRequest{
 		Result: &taskv1.TaskResult{
 			TaskId:     res.TaskID,
 			AgentId:    res.AgentID,
-			ExitCode:   int32(res.ExitCode),
+			ExitCode:   clampExitCode(res.ExitCode),
 			Stdout:     res.Stdout,
 			Stderr:     res.Stderr,
 			DurationMs: res.DurationMs,

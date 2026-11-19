@@ -3,17 +3,21 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	eventspkg "github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	authpkg "github.com/Levango7/OpsMesh/pkg/auth"
 )
 
@@ -58,6 +62,12 @@ type Config struct {
 	// agent 通过 balancer 选择控制面实例，连接失败时自动 failover 到下一个。
 	// 为空时回退到 ControlAddrs / ControlAddr（向后兼容）。
 	ControlplaneEndpoints string
+	// 服务发现后端：memory（默认，进程内注册表）| static（--controlplane-endpoints 静态地址）|
+	// file（JSON 文件，--discovery-file）。非法值在 Validate 中拒绝启动。
+	DiscoveryBackend string
+	// DiscoveryFile 是 file 后端的 JSON 持久化路径（--discovery-file）；
+	// --discovery-backend=file 时必填，Validate 中 fail-fast。
+	DiscoveryFile string
 	// 负载均衡策略：round-robin（轮询）| failover（主备切换，默认）。
 	// 单控制面地址时退化为始终用该地址（不破坏现有行为）。
 	LBStrategy      string
@@ -143,6 +153,11 @@ type Config struct {
 	Replicas int
 	// 生产模式：开启后默认 require-auth=true 且对 store=memory 强告警（生产基线）。
 	Production bool
+	// AllowInsecureStore 显式接受「持久化 store + 匿名读 API」的危险组合（仅限隔离 dev lab）。
+	// --store=mysql 等持久化后端在未开启 --production/--require-auth 时会把读 API
+	// （如 GET /api/v1/devices）暴露给匿名请求；默认 fail-fast，本开关把它降级为启动 WARN。
+	// 对应 --allow-insecure-store / env OPSMESH_ALLOW_INSECURE_STORE。
+	AllowInsecureStore bool
 	// 注册安全：是否允许公开注册。
 	// true（默认，向后兼容）=允许 /api/v1/auth/register 公开调用，但新用户 Status="pending" 须管理员审批；
 	// false=关闭公开注册接口（仅管理员可通过 POST /api/v1/users 创建用户）。
@@ -478,6 +493,68 @@ type Config struct {
 	// 默认 30s；<=0 时按 30s 兜底（startAutomationEvalLoop 内处理）。
 	AutomationEvalInterval time.Duration // --automation-eval-interval 自动化规则评估周期（默认 30s）
 
+	// ABACShadow：ABAC 影子模式（批次50）。开启后对 /api/v1/* 的变更方法
+	// （POST/PUT/DELETE/PATCH）内联调用服务端 ABAC 引擎做**观察**：只记录决策与
+	// 命中策略，绝不阻断/改写请求与响应。用于从不强制到强制的灰度评估。
+	// 默认 false（零开销：中间件构造时直接返回 next）。
+	ABACShadow bool // --abac-shadow / env OPSMESH_ABAC_SHADOW
+
+	// ABACEnforce：ABAC 定向强制白名单（批次53）。条目形如
+	// "METHOD /path/pattern"（如 "POST /api/v1/devices/{id}/reboot"），
+	// 只允许变更方法 POST/PUT/PATCH/DELETE；`{id}` 形式的分段按单段通配。
+	// 空列表 = kill switch：中间件在构造期直接返回 next，不做任何强制。
+	// 命中白名单的请求由 ABAC 引擎决策：allow 放行，deny/default-deny 403。
+	ABACEnforce []string // --abac-enforce / env OPSMESH_ABAC_ENFORCE（逗号分隔）
+	// ABACEnforcePreset：命名预置（当前仅 high-risk），展开后并入 ABACEnforce。
+	// 非法预置名由 Validate 拒绝（启动 fail-fast）。
+	ABACEnforcePreset string // --abac-enforce-preset / env OPSMESH_ABAC_ENFORCE_PRESET
+
+	// ABACBundleSigningKey：ABAC 策略包（GET /api/v1/agent/abac-bundle）的 Ed25519
+	// 签发私钥，base64 标准编码的 64 字节。空=端点返回 503（不阻断启动，便于先部署后配钥）；
+	// 非法值同样 503（启动期不回显密钥内容）。
+	ABACBundleSigningKey string // --abac-bundle-signing-key / env OPSMESH_ABAC_BUNDLE_SIGNING_KEY
+	// ABACBundleKeyID：写入每个 bundle 的 keyId（agent 据此选公钥，支持双钥轮换）。
+	ABACBundleKeyID string // --abac-bundle-key-id（默认 k1）/ env OPSMESH_ABAC_BUNDLE_KEY_ID
+	// ABACBundleTTL：策略包有效期（IssuedAt + TTL = ExpiresAt）。默认 24h。
+	ABACBundleTTL time.Duration // --abac-bundle-ttl / env OPSMESH_ABAC_BUNDLE_TTL
+
+	// ABACDecisionRetention：agent 回传的 ABAC 决策审计日志保留期（M3）。
+	// 控制面每 24h 删除 received_at 早于 now-retention 的记录；<=0 时回退默认 720h（30d）。
+	ABACDecisionRetention time.Duration // --abac-decision-retention / env OPSMESH_ABAC_DECISION_RETENTION
+
+	// agent 侧 ABAC 策略包拉取（M1，见 internal/agent/abac_bundle_client.go）：
+	//   - ABACBundleEnabled：是否启用 agent 拉取/缓存策略包。默认 false（零行为差异）。
+	//   - ABACBundlePublicKeys：验签公钥条目 `keyID:base64(32字节 Ed25519 公钥)`，
+	//     逗号分隔；允许 2 把以上并存以支持 keyId 轮换（旧钥验旧包、新钥验新包）。
+	//   - ABACBundleCachePath：last-known-good 缓存文件路径（0600）；空=见 Load 中默认
+	//     `<data-dir>/abac-bundle.json`（与 agent.id/agent.key 同目录）。
+	//   - ABACBundleRefreshInterval：轮询间隔，默认 10m（<=0 时由客户端回退默认值）。
+	//   - ABACBundleBaseURL：ABAC HTTP 通道（bundle/decisions）的控制面基地址；
+	//     空=从 ControlAddr 派生（旧行为）。compose 等 gRPC/HTTP 端口分离的部署用它
+	//     指向 controlplane 的 HTTP 端口（如 http://controlplane:8080）。
+	ABACBundleEnabled         bool          // --abac-bundle-enabled / env OPSMESH_ABAC_BUNDLE_ENABLED
+	ABACBundlePublicKeys      []string      // --abac-bundle-public-keys / env OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS
+	ABACBundleCachePath       string        // --abac-bundle-cache-path / env OPSMESH_ABAC_BUNDLE_CACHE_PATH
+	ABACBundleRefreshInterval time.Duration // --abac-bundle-refresh-interval / env OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL
+	ABACBundleBaseURL         string        // --abac-bundle-base-url / env OPSMESH_ABAC_BUNDLE_BASE_URL（空=用 ControlAddr）
+	// ABACDecisionReport：agent 侧决策审计回传开关（M3），默认 true；
+	// 仅当 ABACBundleEnabled=true 时生效（回传凭证与策略包共用）。
+	ABACDecisionReport bool // --abac-decision-report / env OPSMESH_ABAC_DECISION_REPORT
+
+	// ABAC 设备侧决策引擎 M4 机制开关（默认 off，零行为差异）：
+	//   - ABACDeviceMode：off|shadow|enforce。off=完全绕过（不评估、不记录）；
+	//     shadow=本地评估但始终放行（记录 would-be 决策）；enforce=按本地决策
+	//     阻断 task:execute（bundle 缺失/过期时 mutating 动作 fail-closed）。
+	//   - ABACDeviceSelector：逗号分隔 `field=value` 精确匹配；支持 segment/os/arch/
+	//     hostname/agent_id（DeviceInfo 字段，设备无 labels）。空=所有设备命中。
+	//   - ABACDeviceKillSwitch：一键回滚开关；true 时无论 mode 为何都按 off 处理。
+	//   - ABACDeviceDisabledIDs：逗号分隔设备 ID 列表，命中设备始终 bypass
+	//     （per-device kill switch）。
+	ABACDeviceMode        string // --abac-device-mode / env OPSMESH_ABAC_DEVICE_MODE（默认 off）
+	ABACDeviceSelector    string // --abac-device-selector / env OPSMESH_ABAC_DEVICE_SELECTOR（空=全部设备）
+	ABACDeviceKillSwitch  bool   // --abac-device-kill-switch / env OPSMESH_ABAC_DEVICE_KILL_SWITCH
+	ABACDeviceDisabledIDs string // --abac-device-disabled-ids / env OPSMESH_ABAC_DEVICE_DISABLED_IDS
+
 	// H2/H3 配套开关：是否允许 SQL 后端继续使用 P1-P6 桩存储。
 	// 背景：SQLStore 对 15 个领域（见 stubStoreDomains 清单）曾为桩实现，写入不持久化；
 	// 生产模式（--production=true）+ --store=mysql 时默认拒绝启动（fail-fast），
@@ -486,6 +563,12 @@ type Config struct {
 	// Validate 中的拒绝启动分支被跳过，本开关保留向后兼容（未来新桩领域可复用）。
 	// memory 后端与 demo/开发模式不受影响；运行期由 store 层 stub_guard 限频告警兜底。
 	AllowStubStores bool // --allow-stub-stores 允许 SQL 后端桩存储（生产默认 false=拒绝启动）
+
+	// AI Gateway（/ai/chat、/ai/embed、/ai/rag）与 AIOps 是两条独立 LLM 链路。
+	// Providers 为 JSON 数组，元素同 aigateway.ProviderConfig；密钥只应经环境变量传入。
+	// 空串=不注册 Provider（向后兼容）；非法配置在 NewServer 启动时 fail-fast。
+	AIGatewayProviders     string // --ai-gateway-providers / env OPSMESH_AI_GATEWAY_PROVIDERS
+	AIGatewayEmbedProvider string // --ai-gateway-embed-provider / env OPSMESH_AI_GATEWAY_EMBED_PROVIDER；空=openai，单 Provider 时取该 Provider
 
 	// AIOps（故障根因分析 + 智能修复生成 + 自然语言运维）。
 	// 默认关闭（向后兼容）；开启后控制面接入 LLM（Kilo Gateway / OpenAI 兼容接口）做 AIOps。
@@ -510,6 +593,9 @@ func Load() *Config {
 	// 优先级：--controlplane-endpoints > --control-addrs > --control-addr。
 	// 显式设置 --controlplane-endpoints 时覆盖 --control-addrs；或 env OPSMESH_CONTROLPLANE_ENDPOINTS。
 	controlplaneEndpoints := flag.String("controlplane-endpoints", "", "服务发现：多控制面地址（逗号分隔，如 cp1:9090,cp2:9090）；与 --control-addrs 同义，作为服务发现入口；优先级高于 --control-addrs；空则回退 --control-addrs/--control-addr；或 env OPSMESH_CONTROLPLANE_ENDPOINTS")
+	// 服务发现后端选择：memory（默认，进程内注册表）| static（静态地址）| file（JSON 文件）。
+	discoveryBackend := flag.String("discovery-backend", "memory", "服务发现后端: memory（默认，进程内） | static（--controlplane-endpoints 静态地址） | file（JSON 文件）；非法值启动失败；或 env OPSMESH_DISCOVERY_BACKEND")
+	discoveryFile := flag.String("discovery-file", "", "服务发现 file 后端的 JSON 文件路径（--discovery-backend=file 时必填）；或 env OPSMESH_DISCOVERY_FILE")
 	// 负载均衡策略：round-robin | failover（默认 failover，向后兼容现有 多控制面依次重试行为）。
 	lbStrategy := flag.String("lb-strategy", "failover", "负载均衡策略：round-robin（轮询）| failover（主备切换，默认）；单控制面地址时退化为始终用该地址；或 env OPSMESH_LB_STRATEGY")
 	segment := flag.String("segment", "default", "agent 所属网段")
@@ -698,6 +784,12 @@ func Load() *Config {
 	quotaMaxAlerts := flag.Int("quota-max-alerts", 0, "默认最大告警数（未显式设置配额的租户回退到此值；0=不限，默认）；或 env OPSMESH_QUOTA_MAX_ALERTS")
 	// H2/H3 配套开关：SQL 后端桩存储放行开关（生产模式 + --store=mysql 时默认拒绝启动）。
 	allowStubStores := flag.Bool("allow-stub-stores", false, "H2/H3 止血：允许 SQL 后端继续使用 P1-P6 桩存储（15 个领域写入不持久化，见启动日志清单）；生产模式（--production=true）+ --store=mysql 时默认 false=拒绝启动，须显式 true 确认接受桩限制；memory 后端不受影响；或 env OPSMESH_ALLOW_STUB_STORES")
+	// 启动守卫豁免：持久化 store + 未开启 require-auth 时默认 fail-fast；
+	// 本开关显式确认「持久化 store 匿名读 API」的风险（仅限隔离 dev lab）。
+	allowInsecureStore := flag.Bool("allow-insecure-store", false, "显式接受持久化 store（--store=mysql 等）在未开启 require-auth 时的匿名读 API 风险（仅限隔离 dev lab）：默认 fail-fast，本开关降级为启动 WARN；或 env OPSMESH_ALLOW_INSECURE_STORE")
+	// AI Gateway Provider 装配：JSON 数组；与下方 AIOps 独立，互不复用开关。
+	aiGatewayProviders := flag.String("ai-gateway-providers", "", "AI Gateway Provider JSON 数组（openai/anthropic/ollama/dashscope；空=不装配，向后兼容）；推荐经 env OPSMESH_AI_GATEWAY_PROVIDERS 传入，避免命令行暴露 apiKey")
+	aiGatewayEmbedProvider := flag.String("ai-gateway-embed-provider", "", "Embed/RAG 默认 Provider 名（空=openai；仅装配一个 Provider 时自动取该 Provider）；或 env OPSMESH_AI_GATEWAY_EMBED_PROVIDER")
 	// AIOps（故障根因分析 + 智能修复生成 + 自然语言运维）：接入 Kilo Gateway / OpenAI 兼容接口。
 	aiopsEnabled := flag.Bool("aiops-enabled", false, "启用 AIOps 引擎（故障根因分析+智能修复+自然语言运维）；默认 false（向后兼容）；或 env OPSMESH_AIOPS_ENABLED")
 	aiopsProvider := flag.String("aiops-provider", "kilo", "AIOps LLM 提供商：kilo|openai|anthropic（默认 kilo，走 Kilo Gateway 路由免费模型）；或 env OPSMESH_AIOPS_PROVIDER")
@@ -707,6 +799,28 @@ func Load() *Config {
 	aiopsTemperature := flag.Float64("aiops-temperature", 0.3, "AIOps LLM 采样温度（0.0~1.0，越低越确定性；默认 0.3；或 env OPSMESH_AIOPS_TEMPERATURE）")
 	aiopsMaxTokens := flag.Int("aiops-max-tokens", 4096, "AIOps LLM 最大输出 token 数（默认 4096；或 env OPSMESH_AIOPS_MAX_TOKENS）")
 	aiopsTimeout := flag.Int("aiops-timeout", 30, "AIOps LLM 调用超时秒（默认 30；或 env OPSMESH_AIOPS_TIMEOUT）")
+	// ABAC 影子模式（批次50）：只观察、不强制。
+	abacShadow := flag.Bool("abac-shadow", false, "ABAC 影子模式：对 /api/v1/* 变更请求内联评估 ABAC 策略并记录决策（不阻断、不改写响应）；默认 false；或 env OPSMESH_ABAC_SHADOW")
+	// ABAC 定向强制（批次53）：只对显式列出的高风险路由强制，默认空 = kill switch。
+	abacEnforce := flag.String("abac-enforce", "", "ABAC 定向强制白名单：逗号分隔的 \"METHOD /path/pattern\"（如 \"DELETE /api/v1/devices/{id}\"）；空=不强制（kill switch）；或 env OPSMESH_ABAC_ENFORCE")
+	abacEnforcePreset := flag.String("abac-enforce-preset", "", "ABAC 定向强制命名预置：high-risk（展开为仓库真实高风险路由）；非法值启动失败；或 env OPSMESH_ABAC_ENFORCE_PRESET")
+	// ABAC 策略包签发（M1）：空私钥=端点 503（不阻断启动）。
+	abacBundleSigningKey := flag.String("abac-bundle-signing-key", "", "ABAC 策略包 Ed25519 签发私钥（base64 标准编码，64 字节）；空=端点返回 503；或 env OPSMESH_ABAC_BUNDLE_SIGNING_KEY")
+	abacBundleKeyID := flag.String("abac-bundle-key-id", "k1", "ABAC 策略包签名密钥 ID（写入 bundle.keyId，供 agent 选公钥）；或 env OPSMESH_ABAC_BUNDLE_KEY_ID")
+	abacBundleTTL := flag.Duration("abac-bundle-ttl", 24*time.Hour, "ABAC 策略包有效期（IssuedAt+TTL=ExpiresAt，默认 24h）；或 env OPSMESH_ABAC_BUNDLE_TTL")
+	abacDecisionRetention := flag.Duration("abac-decision-retention", 720*time.Hour, "ABAC 决策审计日志保留期（控制面每 24h 清理 received_at 早于 now-retention 的记录，默认 720h=30d）；或 env OPSMESH_ABAC_DECISION_RETENTION")
+	// agent 侧 ABAC 策略包拉取（M1）：默认关闭，启用后 agent 先加载本地 LKG 再周期拉取。
+	abacBundleEnabled := flag.Bool("abac-bundle-enabled", false, "agent 侧 ABAC 策略包拉取/缓存（M1）；默认 false（零行为差异）；或 env OPSMESH_ABAC_BUNDLE_ENABLED")
+	abacBundlePublicKeys := flag.String("abac-bundle-public-keys", "", "ABAC 策略包验签公钥：逗号分隔的 keyID:base64pubkey（Ed25519 公钥 32 字节），可配置 2 把以上支持 keyId 轮换；或 env OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS")
+	abacBundleCachePath := flag.String("abac-bundle-cache-path", "", "agent 侧 ABAC 策略包 LKG 缓存路径（写入权限 0600）；空=<data-dir>/abac-bundle.json；或 env OPSMESH_ABAC_BUNDLE_CACHE_PATH")
+	abacBundleRefreshInterval := flag.Duration("abac-bundle-refresh-interval", 10*time.Minute, "agent 侧 ABAC 策略包轮询间隔（默认 10m；<=0 回退默认）；或 env OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL")
+	abacBundleBaseURL := flag.String("abac-bundle-base-url", "", "ABAC HTTP 通道（bundle/decisions）控制面基地址（如 http://controlplane:8080）；空=从 --control-addr 派生；或 env OPSMESH_ABAC_BUNDLE_BASE_URL")
+	abacDecisionReport := flag.Bool("abac-decision-report", true, "agent 侧 ABAC 决策审计回传（M3）；默认 true，仅在 --abac-bundle-enabled 时生效；或 env OPSMESH_ABAC_DECISION_REPORT")
+	// ABAC 设备侧决策引擎（M4）：默认 off（零行为差异）。
+	abacDeviceMode := flag.String("abac-device-mode", ABACDeviceModeOff, "设备侧 ABAC 决策模式：off|shadow|enforce（默认 off=完全不介入；shadow=只评估不阻断；enforce=按本地策略阻断 task:execute）；或 env OPSMESH_ABAC_DEVICE_MODE")
+	abacDeviceSelector := flag.String("abac-device-selector", "", "设备侧 ABAC 选择器：逗号分隔 field=value（支持 segment,os,arch,hostname,agent_id 精确匹配）；空=所有设备命中；或 env OPSMESH_ABAC_DEVICE_SELECTOR")
+	abacDeviceKillSwitch := flag.Bool("abac-device-kill-switch", false, "设备侧 ABAC 一键关停：true 时无论 --abac-device-mode 为何都按 off 处理（回滚杠杆）；或 env OPSMESH_ABAC_DEVICE_KILL_SWITCH")
+	abacDeviceDisabledIDs := flag.String("abac-device-disabled-ids", "", "设备侧 ABAC 单设备豁免列表：逗号分隔设备 ID，命中设备始终 bypass（per-device kill switch）；或 env OPSMESH_ABAC_DEVICE_DISABLED_IDS")
 	// 自动化引擎评估周期。
 	automationEvalInterval := flag.Duration("automation-eval-interval", 30*time.Second, "自动化引擎评估周期：周期评估 enabled 自动化规则并执行命中动作（默认 30s；或 env OPSMESH_AUTOMATION_EVAL_INTERVAL）")
 	flag.Parse()
@@ -754,12 +868,16 @@ func Load() *Config {
 		return float64Env(envKey, fv)
 	}
 
+	abacEnforcePresetName := strings.ToLower(strings.TrimSpace(val("abac-enforce-preset", *abacEnforcePreset, "OPSMESH_ABAC_ENFORCE_PRESET")))
+
 	cfg := &Config{
 		Mode:                     val("mode", *mode, "OPSMESH_MODE"),
 		Addr:                     val("addr", *addr, "OPSMESH_ADDR"),
 		ControlAddr:              val("control-addr", *controlAddr, "OPSMESH_CONTROL_ADDR"),
 		ControlAddrs:             val("control-addrs", *controlAddrs, "OPSMESH_CONTROL_ADDRS"),
 		ControlplaneEndpoints:    val("controlplane-endpoints", *controlplaneEndpoints, "OPSMESH_CONTROLPLANE_ENDPOINTS"),
+		DiscoveryBackend:         strings.ToLower(strings.TrimSpace(val("discovery-backend", *discoveryBackend, "OPSMESH_DISCOVERY_BACKEND"))),
+		DiscoveryFile:            val("discovery-file", *discoveryFile, "OPSMESH_DISCOVERY_FILE"),
 		LBStrategy:               val("lb-strategy", *lbStrategy, "OPSMESH_LB_STRATEGY"),
 		Segment:                  val("segment", *segment, "OPSMESH_SEGMENT"),
 		HTTPPort:                 valInt("http-port", *httpPort, "OPSMESH_HTTP_PORT"),
@@ -912,6 +1030,9 @@ func Load() *Config {
 		QuotaMaxTasks:          valInt("quota-max-tasks", *quotaMaxTasks, "OPSMESH_QUOTA_MAX_TASKS"),
 		QuotaMaxAlerts:         valInt("quota-max-alerts", *quotaMaxAlerts, "OPSMESH_QUOTA_MAX_ALERTS"),
 		AllowStubStores:        valBool("allow-stub-stores", *allowStubStores, "OPSMESH_ALLOW_STUB_STORES"),
+		AllowInsecureStore:     valBool("allow-insecure-store", *allowInsecureStore, "OPSMESH_ALLOW_INSECURE_STORE"),
+		AIGatewayProviders:     val("ai-gateway-providers", *aiGatewayProviders, "OPSMESH_AI_GATEWAY_PROVIDERS"),
+		AIGatewayEmbedProvider: val("ai-gateway-embed-provider", *aiGatewayEmbedProvider, "OPSMESH_AI_GATEWAY_EMBED_PROVIDER"),
 		AIOpsEnabled:           valBool("aiops-enabled", *aiopsEnabled, "OPSMESH_AIOPS_ENABLED"),
 		AIOpsProvider:          val("aiops-provider", *aiopsProvider, "OPSMESH_AIOPS_PROVIDER"),
 		AIOpsModel:             val("aiops-model", *aiopsModel, "OPSMESH_AIOPS_MODEL"),
@@ -921,6 +1042,27 @@ func Load() *Config {
 		AIOpsMaxTokens:         valInt("aiops-max-tokens", *aiopsMaxTokens, "OPSMESH_AIOPS_MAX_TOKENS"),
 		AIOpsTimeout:           valInt("aiops-timeout", *aiopsTimeout, "OPSMESH_AIOPS_TIMEOUT"),
 		AutomationEvalInterval: valDur("automation-eval-interval", *automationEvalInterval, "OPSMESH_AUTOMATION_EVAL_INTERVAL"),
+		ABACShadow:             valBool("abac-shadow", *abacShadow, "OPSMESH_ABAC_SHADOW"),
+		ABACEnforce:            parseABACEnforceEntries(val("abac-enforce", *abacEnforce, "OPSMESH_ABAC_ENFORCE"), abacEnforcePresetName),
+		ABACEnforcePreset:      abacEnforcePresetName,
+		ABACBundleSigningKey:   val("abac-bundle-signing-key", *abacBundleSigningKey, "OPSMESH_ABAC_BUNDLE_SIGNING_KEY"),
+		ABACBundleKeyID:        val("abac-bundle-key-id", *abacBundleKeyID, "OPSMESH_ABAC_BUNDLE_KEY_ID"),
+		ABACBundleTTL:          valDur("abac-bundle-ttl", *abacBundleTTL, "OPSMESH_ABAC_BUNDLE_TTL"),
+		ABACDecisionRetention:  valDur("abac-decision-retention", *abacDecisionRetention, "OPSMESH_ABAC_DECISION_RETENTION"),
+		ABACBundleEnabled:      valBool("abac-bundle-enabled", *abacBundleEnabled, "OPSMESH_ABAC_BUNDLE_ENABLED"),
+		ABACBundlePublicKeys:   parseABACBundlePublicKeys(val("abac-bundle-public-keys", *abacBundlePublicKeys, "OPSMESH_ABAC_BUNDLE_PUBLIC_KEYS")),
+		ABACBundleCachePath:    val("abac-bundle-cache-path", *abacBundleCachePath, "OPSMESH_ABAC_BUNDLE_CACHE_PATH"),
+		ABACBundleRefreshInterval: valDur("abac-bundle-refresh-interval", *abacBundleRefreshInterval,
+			"OPSMESH_ABAC_BUNDLE_REFRESH_INTERVAL"),
+		ABACBundleBaseURL:  val("abac-bundle-base-url", *abacBundleBaseURL, "OPSMESH_ABAC_BUNDLE_BASE_URL"),
+		ABACDecisionReport: valBool("abac-decision-report", *abacDecisionReport, "OPSMESH_ABAC_DECISION_REPORT"),
+		ABACDeviceMode: strings.ToLower(strings.TrimSpace(
+			val("abac-device-mode", *abacDeviceMode, "OPSMESH_ABAC_DEVICE_MODE"))),
+		ABACDeviceSelector: strings.TrimSpace(
+			val("abac-device-selector", *abacDeviceSelector, "OPSMESH_ABAC_DEVICE_SELECTOR")),
+		ABACDeviceKillSwitch: valBool("abac-device-kill-switch", *abacDeviceKillSwitch, "OPSMESH_ABAC_DEVICE_KILL_SWITCH"),
+		ABACDeviceDisabledIDs: strings.TrimSpace(
+			val("abac-device-disabled-ids", *abacDeviceDisabledIDs, "OPSMESH_ABAC_DEVICE_DISABLED_IDS")),
 	}
 	// --log-store 作为 --log-backend 别名：显式设置 --log-store（或 OPSMESH_LOG_STORE）时覆盖 LogBackend，
 	// 使现有 LogBackend 校验/路由逻辑无缝复用；最终 LogStore 与 LogBackend 保持同值。
@@ -938,6 +1080,11 @@ func Load() *Config {
 		cfg.ControlAddrs = cfg.ControlplaneEndpoints
 	}
 	cfg.ControlplaneEndpoints = cfg.ControlAddrs
+	// agent 侧 ABAC 策略包 LKG 缓存（M1）：未显式配置路径时默认落到
+	// <data-dir>/abac-bundle.json——与 agent.id/agent.key 同一受控目录（0600）。
+	if strings.TrimSpace(cfg.ABACBundleCachePath) == "" && strings.TrimSpace(cfg.DataDir) != "" {
+		cfg.ABACBundleCachePath = filepath.Join(cfg.DataDir, "abac-bundle.json")
+	}
 	// 负载均衡策略校验：非法值回退到默认 failover（不 fail-fast，保持启动友好）。
 	switch cfg.LBStrategy {
 	case "round-robin", "roundrobin", "rr", "failover", "fo", "":
@@ -1306,6 +1453,16 @@ func (c *Config) Validate() error {
 	if c.Production && c.EncryptionKey == "" {
 		return fmt.Errorf("生产模式（--production=true）必须配置 --encryption-key（或 OPSMESH_ENCRYPTION_KEY）：kubeconfig 明文存储不满足等保三级要求；建议 openssl rand 32 | base64 生成 32 字节 AES-256 密钥")
 	}
+	// 服务发现后端校验：未知值启动即失败（不静默回退到 memory）；
+	// file 后端必须提供 --discovery-file。
+	switch c.DiscoveryBackend {
+	case "", "memory", "static", "file":
+	default:
+		return fmt.Errorf("非法 --discovery-backend=%q（应为 memory | static | file）", c.DiscoveryBackend)
+	}
+	if c.DiscoveryBackend == "file" && strings.TrimSpace(c.DiscoveryFile) == "" {
+		return fmt.Errorf("--discovery-backend=file 但 --discovery-file 为空（需要 JSON 文件路径）")
+	}
 	// 日志检索后端校验：非法值或缺失必要 endpoint 直接 fail-fast。
 	switch c.LogBackend {
 	case "memory", "sql", "loki", "es":
@@ -1495,7 +1652,273 @@ func (c *Config) Validate() error {
 	if c.EventBus == "kafka" && !eventspkg.KafkaSupported() {
 		return fmt.Errorf("event-bus=kafka requires binary built with -tags kafka")
 	}
+	// ABAC 定向强制（批次53）：预置名与每条白名单都必须在启动期校验。
+	// 非法条目宁可拒绝启动，也不允许「配了但静默不生效」——高风险路由的强制
+	// 开关如果拼错而无人察觉，会长期停留在未强制状态。
+	if _, err := ExpandABACEnforcePreset(c.ABACEnforcePreset); err != nil {
+		return err
+	}
+	for i, entry := range c.ABACEnforce {
+		if _, _, err := ParseABACEnforceEntry(entry); err != nil {
+			return fmt.Errorf("非法 --abac-enforce 条目 #%d %q: %w", i+1, entry, err)
+		}
+	}
+	// 设备侧 ABAC 决策引擎（M4）：mode 与 selector 均启动期 fail-fast。
+	// 灰度/强制开关拼错却静默不生效，会让设备侧长期停留在未启用状态。
+	if _, err := NormalizeABACDeviceMode(c.ABACDeviceMode); err != nil {
+		return err
+	}
+	if _, err := ParseABACDeviceSelector(c.ABACDeviceSelector); err != nil {
+		return fmt.Errorf("非法 --abac-device-selector=%q: %w", c.ABACDeviceSelector, err)
+	}
 	return nil
+}
+
+// 设备侧 ABAC 决策模式（M4）。默认 off；shadow 只观察；enforce 参与阻断。
+const (
+	ABACDeviceModeOff     = "off"
+	ABACDeviceModeShadow  = "shadow"
+	ABACDeviceModeEnforce = "enforce"
+)
+
+// NormalizeABACDeviceMode 规范化并校验设备侧 ABAC 模式。
+// 空串视为 off（程序化构造 Config 的默认值）；未知取值返回 error（Validate 拒绝启动）。
+func NormalizeABACDeviceMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "":
+		return ABACDeviceModeOff, nil
+	case ABACDeviceModeOff, ABACDeviceModeShadow, ABACDeviceModeEnforce:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("非法 --abac-device-mode=%q（应为 off | shadow | enforce）", raw)
+	}
+}
+
+// abacDeviceSelectorFields 是设备侧 ABAC 选择器支持的字段白名单。
+// 这些字段全部来自 DeviceInfo（设备无 labels，故不提供 label 选择器）。
+var abacDeviceSelectorFields = map[string]struct{}{
+	"segment":  {},
+	"os":       {},
+	"arch":     {},
+	"hostname": {},
+	"agent_id": {},
+}
+
+// ParseABACDeviceSelector 解析 `field=value[,field=value...]` 选择器。
+// 空串=无选择器（所有设备命中）。未知字段/缺 '='/空值均返回 error。
+func ParseABACDeviceSelector(raw string) (map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	out := make(map[string]string)
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("条目 %q 缺少 '='（应为 field=value）", entry)
+		}
+		field := strings.ToLower(strings.TrimSpace(parts[0]))
+		value := strings.TrimSpace(parts[1])
+		if _, ok := abacDeviceSelectorFields[field]; !ok {
+			return nil, fmt.Errorf("不支持的字段 %q（支持 segment, os, arch, hostname, agent_id）", field)
+		}
+		if value == "" {
+			return nil, fmt.Errorf("条目 %q 的值为空", entry)
+		}
+		out[field] = value
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// ParseABACDeviceDisabledIDs 解析逗号分隔的设备 ID 豁免列表。
+// 空串返回空集合；条目去空白、忽略空项。
+func ParseABACDeviceDisabledIDs(raw string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, entry := range strings.Split(raw, ",") {
+		if id := strings.TrimSpace(entry); id != "" {
+			out[id] = struct{}{}
+		}
+	}
+	return out
+}
+
+// ABACEnforcePresetHighRisk 是唯一受支持的 ABAC 定向强制预置名。
+const ABACEnforcePresetHighRisk = "high-risk"
+
+// abacEnforceHighRiskRoutes 是 high-risk 预置展开的真实路由白名单。
+//
+// 每条都在仓库内可核对（注册点 → 执行点）：
+//   - DELETE /api/v1/devices/{id}    设备退役/删除（server_lifecycle.go:76 → server_devices.go:241）
+//   - DELETE /api/v1/system/users    userdel -r（server_lifecycle.go:209 → system_ops.go:153）
+//   - POST   /api/v1/system/firewall iptables/firewalld 规则添加（server_lifecycle.go:211 → system_ops.go:277）
+//   - DELETE /api/v1/system/firewall 防火墙规则删除（同上）
+//   - DELETE /api/v1/tenants/{id}    租户删除（含七域级联清理）（server_lifecycle.go:407 → tenant.go:117）
+//   - POST   /api/v1/fileshare/mount NFS 挂载/卸载（op=mount|umount）（fileshare_ops.go:441 → :454）
+//
+// 刻意不含：设备 reboot/poweroff（仓库无此 HTTP 路由；host 重启未以 API 暴露）。
+var abacEnforceHighRiskRoutes = []string{
+	"DELETE /api/v1/devices/{id}",
+	"DELETE /api/v1/system/users",
+	"POST /api/v1/system/firewall",
+	"DELETE /api/v1/system/firewall",
+	"DELETE /api/v1/tenants/{id}",
+	"POST /api/v1/fileshare/mount",
+}
+
+// ExpandABACEnforcePreset 返回命名预置展开后的白名单条目副本。
+// 空名返回 (nil, nil)；未知名称返回 error（Validate 据此拒绝启动）。
+func ExpandABACEnforcePreset(name string) ([]string, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
+	case "":
+		return nil, nil
+	case ABACEnforcePresetHighRisk:
+		return append([]string(nil), abacEnforceHighRiskRoutes...), nil
+	default:
+		return nil, fmt.Errorf("非法 --abac-enforce-preset=%q（支持 high-risk）", name)
+	}
+}
+
+// ParseABACEnforceEntry 校验并拆分 "METHOD /path/pattern" 条目。
+//
+// 语法约束（与 middleware 的匹配实现一致，不使用任何正则）：
+//   - 恰好两个以空白分隔的字段：方法 + 路径；
+//   - 方法只能是 POST/PUT/PATCH/DELETE；
+//   - 路径以 "/" 开头，不含 query/fragment、空分段或 `*`；
+//   - `{name}` 只能作为完整分段出现（如 /devices/{id}），表示匹配一个非空分段。
+func ParseABACEnforceEntry(entry string) (method, path string, err error) {
+	fields := strings.Fields(entry)
+	if len(fields) != 2 {
+		return "", "", fmt.Errorf("应为 \"METHOD /path/pattern\" 两个字段，得到 %d 个", len(fields))
+	}
+	method, path = fields[0], fields[1]
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
+		return "", "", fmt.Errorf("非法方法 %q（只允许 POST/PUT/PATCH/DELETE）", method)
+	}
+	if !strings.HasPrefix(path, "/") {
+		return "", "", fmt.Errorf("路径 %q 必须以 / 开头", path)
+	}
+	if strings.ContainsAny(path, "?#") {
+		return "", "", fmt.Errorf("路径 %q 不得包含 query 或 fragment", path)
+	}
+	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for _, seg := range segments {
+		if seg == "" {
+			return "", "", fmt.Errorf("路径 %q 含空分段", path)
+		}
+		if strings.ContainsAny(seg, "*") {
+			return "", "", fmt.Errorf("路径 %q 含通配符 *（仅支持 {name} 单段占位）", path)
+		}
+		if strings.ContainsAny(seg, "{}") {
+			if !strings.HasPrefix(seg, "{") || !strings.HasSuffix(seg, "}") || len(seg) <= 2 {
+				return "", "", fmt.Errorf("路径分段 %q 的占位符格式非法（应为 {name}）", seg)
+			}
+			if strings.ContainsAny(seg[1:len(seg)-1], "{}") {
+				return "", "", fmt.Errorf("路径分段 %q 的占位符格式非法（应为 {name}）", seg)
+			}
+		}
+	}
+	return method, path, nil
+}
+
+// parseABACEnforceEntries 合并预置与显式条目，去重并保持出现顺序。
+// 未知预置名不在此处报错（Load 不能返回 error）；Validate 会独立拒绝。
+// parseABACBundlePublicKeys 解析 agent 侧验签公钥列表
+// （逗号分隔的 `keyID:base64pubkey` 条目）。只做形态拆分与去空白，
+// base64/长度校验在 internal/agent 构造客户端时进行（非法条目告警跳过，
+// 不阻断 agent 启动——先部署后配钥是 M1 的明确运维路径）。
+func parseABACBundlePublicKeys(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func parseABACEnforceEntries(raw, preset string) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(entry string) {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return
+		}
+		if _, ok := seen[entry]; ok {
+			return
+		}
+		seen[entry] = struct{}{}
+		out = append(out, entry)
+	}
+	if routes, err := ExpandABACEnforcePreset(preset); err == nil {
+		for _, route := range routes {
+			add(route)
+		}
+	}
+	for _, entry := range strings.Split(raw, ",") {
+		add(entry)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// StoreIsPersistent 报告 Store 是否指向持久化后端。
+// 约定：空值与 "memory" 为进程内后端（demo/单测/本地开发），其余任何值
+// （mysql/postgres/sqlite 等）都视为持久化后端——新增后端无需改本判断。
+func (c *Config) StoreIsPersistent() bool {
+	s := strings.ToLower(strings.TrimSpace(c.Store))
+	return s != "" && s != "memory"
+}
+
+// ValidateAuthStoreSafety 是控制面启动期的鉴权/存储组合守卫。
+//
+// 审计背景：--require-auth 默认 false，仅 --production 会自动开启（见 Load）。
+// 运维执行 --store=mysql 却漏了 --production 时，所有读 API（如 GET /api/v1/devices）
+// 对匿名请求开放——这是部署纪律陷阱。守卫分两级：
+//   - ERROR（fail-fast）：持久化 store + Production=false + RequireAuth=false，
+//     除非显式 --allow-insecure-store / env OPSMESH_ALLOW_INSECURE_STORE（隔离 dev lab）。
+//   - WARN：持久化 store + RequireAuth=false（不论 Production），始终输出结构化启动日志，
+//     字段 store/requireAuth/production 便于日志检索。
+//
+// 非持久化 store（memory/空）不干预，demo 与既有单测构造的配置不受影响。
+func (c *Config) ValidateAuthStoreSafety() error {
+	if !c.StoreIsPersistent() || c.RequireAuth {
+		return nil
+	}
+	logx.Warn(context.Background(),
+		"持久化 store 未开启 require-auth：读 API 对匿名请求开放",
+		"store", c.Store,
+		"requireAuth", c.RequireAuth,
+		"production", c.Production,
+		"allowInsecureStore", c.AllowInsecureStore,
+	)
+	if c.Production || c.AllowInsecureStore {
+		// --production 已在 Load 中默认开启 require-auth；主流程只有显式
+		// --require-auth=false 才会到这里（尊重显式降级，仅告警）。
+		return nil
+	}
+	return fmt.Errorf("--store=%s: persistent store without --production leaves read APIs anonymous; pass --production (or --require-auth) to proceed; for isolated dev labs pass --allow-insecure-store (or env OPSMESH_ALLOW_INSECURE_STORE) to downgrade this to a warning", c.Store)
 }
 
 // 通知渠道配置

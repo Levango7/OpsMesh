@@ -8,7 +8,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
@@ -154,24 +153,14 @@ func (s *StubTaskServiceClient) ListTasks(ctx context.Context, req *taskv1.ListT
 }
 
 // ClaimTask 存根实现。
+// 无预置任务时返回 (nil, nil)，语义为“当前无工作”：调用方据此进入空闲退避，
+// 不得伪造合成任务（否则 drainTasks 会无限领取并执行）。
 func (s *StubTaskServiceClient) ClaimTask(ctx context.Context, req *taskv1.ClaimTaskRequest) (*taskv1.Task, error) {
-	// 返回一个测试用的任务
-	return &taskv1.Task{
-		TaskId:     "test-task-id",
-		AgentId:    "test-agent",
-		TenantId:   "test-tenant",
-		Type:       "shell",
-		Command:    "echo test",
-		Content:    "",
-		Path:       "",
-		Status:     "pending",
-		ClaimedBy:  "test-agent",
-		ClaimedAt:  timestamppb.New(time.Now()),
-		CreatedAt:  timestamppb.New(time.Now()),
-		RetryCount: 0,
-		DeadLetter: false,
-		ClaimEpoch: 1,
-	}, nil
+	for id, task := range s.tasks {
+		delete(s.tasks, id)
+		return task, nil
+	}
+	return nil, nil
 }
 
 // ReportResult 存根实现。

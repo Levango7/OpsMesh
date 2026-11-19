@@ -135,6 +135,7 @@ if [ "$FIX_HINT" -eq 1 ]; then
       printf '  crane digest %s\n' "$img"
     done
   fi
+  # shellcheck disable=SC2016 # 字面反引号是 markdown 内联代码样式（不是命令替换）
   printf 'Renovate: pinDigests is already enabled; run `npx renovate` (or wait for automated PRs).\n'
 fi
 

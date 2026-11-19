@@ -266,6 +266,16 @@ describe('useAuthStore', () => {
       expect(store.hasPerm('device:read')).toBe(true)
     })
 
+    it('复合权限串（/ 分隔）为 OR：持有任一即返回 true', () => {
+      const store = useAuthStore()
+      store.user = { id: 1, permissions: ['provision:execute'] }
+      expect(store.hasPerm('device:delete/provision:execute')).toBe(true)
+      store.user = { id: 1, permissions: ['device:delete'] }
+      expect(store.hasPerm('device:delete/provision:execute')).toBe(true)
+      store.user = { id: 1, permissions: ['device:read'] }
+      expect(store.hasPerm('device:delete/provision:execute')).toBe(false)
+    })
+
     it('用户不拥有所需权限时返回 false', () => {
       const store = useAuthStore()
       store.user = { id: 1, permissions: ['device:read'] }

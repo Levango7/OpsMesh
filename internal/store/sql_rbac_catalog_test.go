@@ -114,12 +114,12 @@ func TestRolePermissions_DerivationEffects(t *testing.T) {
 	if operator["ai:write"] {
 		t.Error("operator 不应获得 ai:write（Agent 可驱动远程 shell，写权限待工具侧校验收口）")
 	}
-	for _, p := range []string{"gpu:read", "runbook:read", "incident:read", "k8s:read"} {
+	for _, p := range []string{"gpu:read", "runbook:read", "incident:read", "k8s:read", "abac:read"} {
 		if !operator[p] {
 			t.Errorf("operator 应随 operatorReadOnlyGroups 获得只读权限 %q（否则低于 viewer，角色层级倒挂）", p)
 		}
 	}
-	for _, p := range []string{"gpu:write", "runbook:write", "incident:write", "k8s:write"} {
+	for _, p := range []string{"gpu:write", "runbook:write", "incident:write", "k8s:write", "abac:write"} {
 		if operator[p] {
 			t.Errorf("operator 不应获得 %q（operatorReadOnlyGroups 只授 read，write 下放未决）", p)
 		}

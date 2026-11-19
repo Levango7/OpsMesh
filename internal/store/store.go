@@ -14,7 +14,10 @@
 // 本文件保留全部编译期断言（引用具体后端类型，必须对本包可见）。
 package store
 
-import "github.com/Levango7/OpsMesh/internal/store/model"
+import (
+	"github.com/Levango7/OpsMesh/internal/cost"
+	"github.com/Levango7/OpsMesh/internal/store/model"
+)
 
 // 契约别名回导：model 中性层的契约以降级别名暴露给外部 import 方与后端实现。
 //
@@ -61,6 +64,13 @@ type (
 	CloudResource         = model.CloudResource
 	CloudAccountStore     = model.CloudAccountStore
 	CloudResourceStore    = model.CloudResourceStore
+	BudgetStore           = cost.BudgetStore
+	TokenBudget           = cost.TokenBudget
+	BudgetAlert           = cost.BudgetAlert
+	ABACPolicyStore       = model.ABACPolicyStore
+	ABACPolicyRecord      = model.ABACPolicyRecord
+	ABACDecisionStore     = model.ABACDecisionStore
+	ABACDecisionLog       = model.ABACDecisionLog
 	Store                 = model.Store
 )
 
@@ -104,6 +114,9 @@ var (
 	_ BillingStore          = (*MemoryStore)(nil)
 	_ CloudAccountStore     = (*MemoryStore)(nil)
 	_ CloudResourceStore    = (*MemoryStore)(nil)
+	_ BudgetStore           = (*MemoryStore)(nil)
+	_ ABACPolicyStore       = (*MemoryStore)(nil)
+	_ ABACDecisionStore     = (*MemoryStore)(nil)
 	_ Store                 = (*MemoryStore)(nil)
 
 	_ DeviceStore           = (*SQLStore)(nil)
@@ -143,6 +156,9 @@ var (
 	_ BillingStore          = (*SQLStore)(nil)
 	_ CloudAccountStore     = (*SQLStore)(nil)
 	_ CloudResourceStore    = (*SQLStore)(nil)
+	_ BudgetStore           = (*SQLStore)(nil)
+	_ ABACPolicyStore       = (*SQLStore)(nil)
+	_ ABACDecisionStore     = (*SQLStore)(nil)
 	_ Store                 = (*SQLStore)(nil)
 
 	// MultiSchemaStore 全量断言：确保多租户 schema 隔离实现满足各领域小接口。
@@ -184,5 +200,7 @@ var (
 	_ BillingStore          = (*MultiSchemaStore)(nil)
 	_ CloudAccountStore     = (*MultiSchemaStore)(nil)
 	_ CloudResourceStore    = (*MultiSchemaStore)(nil)
+	_ ABACPolicyStore       = (*MultiSchemaStore)(nil)
+	_ ABACDecisionStore     = (*MultiSchemaStore)(nil)
 	_ Store                 = (*MultiSchemaStore)(nil)
 )

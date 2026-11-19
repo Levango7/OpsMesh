@@ -39,6 +39,9 @@ const { k8sState, mockFetchClusters, mockCreateCluster, mockRemoveCluster, mockT
   }
 })
 
+// 写权限门清尾：视图 setup 取 auth store（无 Pinia 会抛 [🍍]）。
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPerm: () => true }) }))
+
 vi.mock('@/i18n', () => ({
   t: (key, params) => (params ? key + JSON.stringify(params) : key),
   currentLang: { value: 'zh' },

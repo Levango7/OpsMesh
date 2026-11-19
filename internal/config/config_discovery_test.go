@@ -43,3 +43,35 @@ func TestConfig_ControlplaneEndpointsBackwardCompat(t *testing.T) {
 		t.Fatalf("向后兼容配置应通过 Validate: %v", err)
 	}
 }
+
+// TestConfig_DiscoveryBackendValidate 验证发现后端枚举：合法值通过，未知值被拒绝，
+// file 后端缺少 --discovery-file 时 fail-fast。
+func TestConfig_DiscoveryBackendValidate(t *testing.T) {
+	for _, backend := range []string{"", "memory", "static"} {
+		c := base()
+		c.DiscoveryBackend = backend
+		if err := c.Validate(); err != nil {
+			t.Fatalf("backend=%q 应通过 Validate: %v", backend, err)
+		}
+	}
+
+	c := base()
+	c.DiscoveryBackend = "file"
+	c.DiscoveryFile = "/tmp/opsmesh-discovery.json"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("backend=file + 路径应通过 Validate: %v", err)
+	}
+
+	c = base()
+	c.DiscoveryBackend = "file"
+	c.DiscoveryFile = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("backend=file 缺 --discovery-file 应被拒绝")
+	}
+
+	c = base()
+	c.DiscoveryBackend = "bogus"
+	if err := c.Validate(); err == nil {
+		t.Fatal("未知 backend 应被 Validate 拒绝")
+	}
+}

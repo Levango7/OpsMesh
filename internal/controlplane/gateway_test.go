@@ -132,11 +132,10 @@ func addGatewayRouteForTest(s *Server, rule *extension.RouteRule) {
 	if gw.routes[rule.TenantID] == nil {
 		gw.routes[rule.TenantID] = make(map[string]*gatewayRouteEntry)
 	}
-	gw.routes[rule.TenantID][rule.ID] = &gatewayRouteEntry{
-		rule:    rule,
-		limiter: extension.NewRateLimiter(rule.RateLimitPerSec),
-		breaker: extension.NewCircuitBreaker(), // TD-66 P2：与生产构造路径一致
-	}
+	gw.routes[rule.TenantID][rule.ID] = newGatewayRouteEntry(rule)
+	// 标记为已加载：本 helper 绕过 handler 直接注入，避免数据面再按需从
+	// （没有这条路由的）store 重载而把它覆盖掉。
+	gw.loaded[rule.TenantID] = true
 }
 
 // TestHandleGatewayProxy_ForwardsAndStats 验证 /gw/ 剥前缀转发到后端 + 统计真实计数。

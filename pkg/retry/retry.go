@@ -126,7 +126,7 @@ func applyJitter(delay time.Duration, jitter float64) time.Duration {
 	if jitter > 1 {
 		jitter = 1
 	}
-	delta := rand.Float64() * 2 * jitter // 0..2jitter
+	delta := rand.Float64() * 2 * jitter // #nosec G404 -- retry backoff jitter only; unpredictability is irrelevant to security here.
 	factor := 1.0 - jitter + delta       // (1-jitter)..(1+jitter)
 	return time.Duration(float64(delay) * factor)
 }

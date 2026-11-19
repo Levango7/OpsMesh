@@ -56,10 +56,13 @@ func (h *KnowledgeHandler) HandleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 同步会从外部源拉资料并覆盖文档库 ⇒ knowledge:write。
-	_, ok := h.authorize(w, r, "knowledge:write")
+	actx, ok := h.authorize(w, r, "knowledge:write")
 	if !ok {
 		return
 	}
+	// 写入必须落在调用方租户：SyncEngine 会带着该 ctx 直通 store.Upsert，
+	// 裸 r.Context() 无身份 ⇒ 所有租户的同步结果都会写进 default 租户。
+	ctx := authctx.NewContext(r.Context(), actx)
 
 	var req struct {
 		Source string `json:"source"` // empty = sync all
@@ -70,7 +73,7 @@ func (h *KnowledgeHandler) HandleSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Source == "" {
-		results, err := h.syncEng.SyncAll(r.Context())
+		results, err := h.syncEng.SyncAll(ctx)
 		if err != nil {
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -79,7 +82,7 @@ func (h *KnowledgeHandler) HandleSync(w http.ResponseWriter, r *http.Request) {
 			"results": results,
 		})
 	} else {
-		count, err := h.syncEng.SyncNow(r.Context(), KnowledgeSource(req.Source))
+		count, err := h.syncEng.SyncNow(ctx, KnowledgeSource(req.Source))
 		if err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -98,10 +101,13 @@ func (h *KnowledgeHandler) HandleSearch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// 检索读的是文档库正文（rerank 还会打一次模型）⇒ knowledge:read，不能匿名。
-	_, ok := h.authorize(w, r, "knowledge:read")
+	actx, ok := h.authorize(w, r, "knowledge:read")
 	if !ok {
 		return
 	}
+	// 检索同样必须带调用方租户：裸 r.Context() 无身份 ⇒ 只会命中 default 租户，
+	// 业务租户既看不到自己的文档，又会拿到平台租户的正文（跨租户读）。
+	ctx := authctx.NewContext(r.Context(), actx)
 
 	var req struct {
 		Query  string                 `json:"query"`
@@ -119,7 +125,7 @@ func (h *KnowledgeHandler) HandleSearch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	docs, err := h.retriever.Retrieve(r.Context(), req.Query, req.Filter)
+	docs, err := h.retriever.Retrieve(ctx, req.Query, req.Filter)
 	if err != nil {
 		paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -127,7 +133,7 @@ func (h *KnowledgeHandler) HandleSearch(w http.ResponseWriter, r *http.Request) 
 
 	// 重排序
 	if req.Rerank && len(docs) > 1 {
-		reranked, err := h.reranker.Rerank(r.Context(), req.Query, docs)
+		reranked, err := h.reranker.Rerank(ctx, req.Query, docs)
 		if err != nil {
 			paginate.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return

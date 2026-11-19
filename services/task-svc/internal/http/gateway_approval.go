@@ -261,8 +261,21 @@ func (g *Gateway) approvalSubmitRequest(w http.ResponseWriter, r *http.Request) 
 	if req.Status == "" {
 		req.Status = approval.StatusPending
 	}
-	if err := g.approvalEngine.Submit(&req); err != nil {
+	// 幂等键：body.idempotency_key 或 Idempotency-Key 头；同键重试返回首次请求。
+	if req.IdempotencyKey == "" {
+		req.IdempotencyKey = r.Header.Get("Idempotency-Key")
+	}
+	submitted, created, err := g.approvalEngine.SubmitIdempotent(&req)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if submitted != nil {
+		req = *submitted
+	}
+	if !created {
+		// 幂等命中：返回 200 OK（非 201），明确告知客户端未新建。
+		writeJSON(w, http.StatusOK, &req)
 		return
 	}
 	writeJSON(w, http.StatusCreated, &req)

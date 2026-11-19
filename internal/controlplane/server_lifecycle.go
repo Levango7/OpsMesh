@@ -39,6 +39,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/enterprise/assets/", s.handleEnterpriseAsset)
 	mux.HandleFunc("/api/v1/devices", s.handleDevices)
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)
+	// ABAC 策略包（M1）：agent 经 HTTP 拉取已签名策略；认证复用 per-agent HMAC 密钥
+	// （X-OpsMesh-Agent-* 头，见 abac_bundle_endpoint.go），租户取自 agent 注册身份。
+	mux.HandleFunc(abacBundleRoute, s.handleAgentABACBundle)
+	// ABAC 决策审计回传（M3）：agent 批量回传在线/离线评估决策；认证同 bundle
+	// （per-agent HMAC + body digest），租户取自 agent 注册身份。
+	mux.HandleFunc(abacDecisionsRoute, s.handleAgentABACDecisions)
 	mux.HandleFunc("/api/v1/me", s.handleMe)
 	// 商业授权状态（Open-Core）：社区版与授权版都能查，但需登录——
 	// 授权态含客户名与设备上限，属商务信息。端点本身不受 requireEnterpriseGate 约束，
@@ -516,8 +522,11 @@ func (s *Server) Start() error {
 							s.securityHeadersMiddleware( // 6 安全头
 								s.csrfOriginCheck( // 7 CSRF
 									s.defaultDenyMiddleware( // 8 默认拒绝（生产 /api/v1/* 统一要求身份）
-										bodyLimitMiddleware( // 9 请求体上限（413）
-											&paginate.JSONErrorMux{Inner: mux}))))))))), // 10 404/405 JSON → mux
+										s.abacEnforceMiddleware( // 9 ABAC 定向强制（仅 --abac-enforce 白名单；空=kill switch）
+											s.abacShadowMiddleware( // 10 ABAC 影子模式（对未强制路由只观察；命中强制白名单时让位）
+												bodyLimitMiddleware( // 11 请求体上限（413）
+													&paginate.JSONErrorMux{Inner: mux}))))))))))), // 12 404/405 JSON → mux
+
 		// 审计整改批次20：补全读写/空闲超时（此前只有 ReadHeaderTimeout，
 		// body 慢速上传与慢客户端会长期占用 goroutine/连接）。
 		// SSE 在 handler 内用 ResponseController 取消写超时（见 sse.go），不影响长连接。
@@ -578,6 +587,7 @@ func (s *Server) Start() error {
 	go s.monitorTaskTimeouts(ctx)       // Wave 4-D：任务超时监控，超时 running 任务自动取消（仅 leader）
 	go s.archiveLoop(ctx)               // F5 离线超龄自动归档（仅 leader）
 	go s.auditMaintenanceLoop(ctx)      // P1-3 审计归档保留 + 哈希链自检（仅 leader）
+	go s.abacDecisionRetentionLoop(ctx) // M3 ABAC 决策审计保留期清理：每 24h 删除超期日志（幂等）
 	go s.notifyLoop(ctx)                // M7 告警 Webhook 推送：周期检查新 critical 告警并推送到 webhook URL
 	go s.alertEngineLoop(ctx)           // M2 告警评估循环：alertengine.Engine、Silencer、Aggregator、Notifier
 	go s.autoProvisionLoop(ctx)         // 自动纳管：--discover + --auto-provision 时周期扫描网段并推送 agent
@@ -588,8 +598,10 @@ func (s *Server) Start() error {
 	if s.cmdbCollector != nil {
 		go s.cmdbCollector.Run(ctx) // CMDB 定时采集：周期从设备指标更新 CMDB CI（仅 leader）
 	}
-	s.startPipelineExecutor(ctx, 10*time.Second)                // pipeline 执行器：推进 pending→running→succeeded
-	go s.startAutomationEvalLoop(ctx, s.automationEvalInterval) // 自动化引擎评估循环：周期评估 enabled 规则并执行命中动作
+	s.startPipelineExecutor(ctx, 10*time.Second)                 // pipeline 执行器：推进 pending→running→succeeded
+	go s.startAutomationEvalLoop(ctx, s.automationEvalInterval)  // 自动化引擎评估循环：周期评估 enabled 规则并执行命中动作
+	s.startGatewayRouteRefresh(ctx, gatewayRouteRefreshInterval) // API 网关路由缓存：多副本周期回读 store 收敛（单 goroutine，ctx 取消即退出）
+	s.startABACPolicyRefresh(ctx, abacPolicyRefreshInterval)     // ABAC 策略缓存：多副本 5s 按 version 对齐（单 goroutine，ctx 取消即退出）
 
 	errCh := make(chan error, 3)
 	go func() {
@@ -597,6 +609,9 @@ func (s *Server) Start() error {
 			errCh <- fmt.Errorf("grpc: %w", err)
 		}
 	}()
+	// issue #121：gRPC server 已开始监听后再初始化 task-svc 客户端——消除
+	// "客户端早于 server 就绪" 的启动竞态。NewServer 阶段预装的存根在此被升级为真实连接。
+	s.initTaskClients()
 	go func() {
 		if err := metricsSrv.Serve(metricsLis); err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("metrics: %w", err)
@@ -799,6 +814,31 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// taskProxyPermission 返回 task 域 HTTP 代理所需的权限点。
+//
+// 必须与本地 handler 逐条对齐（server_tasks.go）：GET → task:read；
+// POST 创建/重试 → task:write；POST cancel → task:cancel；POST approve/reject
+// → task:approve；DELETE 死信清除 → task:write。此前代理层对**所有**方法统一
+// 要求 task:read，既让只读凭证可经代理建任务/取消/审批（权限放大），又让
+// 仅持写权限的调用方被 403（与本地行为相反）。
+func taskProxyPermission(method, path string) string {
+	switch method {
+	case http.MethodGet:
+		return "task:read"
+	case http.MethodPost:
+		switch {
+		case strings.HasSuffix(path, "/cancel"):
+			return "task:cancel"
+		case strings.HasSuffix(path, "/approve"), strings.HasSuffix(path, "/reject"):
+			return "task:approve"
+		default:
+			return "task:write"
+		}
+	default:
+		return "task:write"
+	}
+}
+
 // handleTaskProxy 代理任务 HTTP 请求到 task-svc gRPC 服务（TD-60 任务域 HTTP 切流）。
 func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 	// 检查租户上下文
@@ -806,7 +846,7 @@ func (s *Server) handleTaskProxy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := s.requireProd(w, r, "task:read"); !ok {
+	if _, ok := s.requireProd(w, r, taskProxyPermission(r.Method, r.URL.Path)); !ok {
 		return
 	}
 
