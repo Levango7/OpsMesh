@@ -975,6 +975,13 @@ func (a *Agent) drainTasks(ctx context.Context) {
 		}
 		t, err := a.claimTask(ctx)
 		if err != nil {
+			// 空队列是轮询**常态**：task-svc 对无 pending 任务回 NotFound（grpc codes.NotFound）。
+			// 它不是错误——按 Error 记会让每个 agent 每 2s 刷一条假错误（实测 2026-11-16：
+			// demo 栈单 agent 即每 2s 一条，一天 4 万+ 行），真错误被淹没、告警疲劳。
+			// 故 NotFound 静默返回（下一轮 ticker 继续），其余照常记 Error。
+			if isTaskQueueEmpty(err) {
+				return
+			}
 			logx.Error(ctx, "领取任务失败", err, "agentID", a.agentID)
 			return
 		}
@@ -1043,6 +1050,13 @@ func (a *Agent) cancelLoop(ctx context.Context) {
 			a.runMu.Unlock()
 		}
 	}
+}
+
+// isTaskQueueEmpty 判断 ClaimTask 的错误是否为「空队列」常态。
+// task-svc 对无 pending 任务回 grpc NotFound；它是轮询的正常分支，不构成错误。
+// 单独成函数以便钉测（NotFound 及其包装 → true；Unavailable/Internal 等真错误 → false）。
+func isTaskQueueEmpty(err error) bool {
+	return status.Code(err) == codes.NotFound
 }
 
 // claimTask 原子领取一条 pending 任务（task-svc ClaimTask 已翻转 pending→running，不会双领）。
