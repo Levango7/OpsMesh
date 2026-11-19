@@ -235,12 +235,18 @@ function startDrag(id, evt) {
   window.addEventListener('mouseup', endDrag)
 }
 
+// 拖拽边界：左/上 ≥ 0，右/下 ≤ 画布可视区。
+// 此前只钳左/上 ⇒ 节点可被拖出画布右/下之外且捞不回来（画布无滚动、无缩放，出界即丢失）。
 function onDragMove(evt) {
   if (!drag.active) return
+  const svg = canvasRef.value
   const cur = svgPoint(evt)
+  // 卡片约 160×48（含描边留 8px 余量）：钳到「至少露出一条边」而不是整个拖没
+  const maxX = Math.max(0, (svg ? svg.clientWidth : 0) - 168)
+  const maxY = Math.max(0, (svg ? svg.clientHeight : 0) - 56)
   store.nodePos[drag.id] = {
-    x: Math.max(0, Math.round(cur.x - drag.offX)),
-    y: Math.max(0, Math.round(cur.y - drag.offY)),
+    x: Math.min(Math.max(0, Math.round(cur.x - drag.offX)), maxX),
+    y: Math.min(Math.max(0, Math.round(cur.y - drag.offY)), maxY),
   }
 }
 
