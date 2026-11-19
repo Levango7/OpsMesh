@@ -23,6 +23,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+
+	"github.com/Levango7/OpsMesh/pkg/httpx"
 )
 
 // ==================== Global Limiter ====================
@@ -187,7 +189,7 @@ func Middleware() func(http.Handler) http.Handler {
 			if !globalLimiter.Allow() {
 				w.Header().Set("Retry-After", "1")
 				w.Header().Set("X-RateLimit-Limit", strconv.Itoa(globalRPS))
-				http.Error(w, "全局速率限制，请稍后重试", http.StatusTooManyRequests)
+				httpx.WriteError(w, http.StatusTooManyRequests, "全局速率限制，请稍后重试")
 				return
 			}
 
@@ -199,7 +201,7 @@ func Middleware() func(http.Handler) http.Handler {
 			if !ipLimiter.Allow(ip) {
 				w.Header().Set("Retry-After", "1")
 				w.Header().Set("X-RateLimit-Limit", strconv.Itoa(ipRPS))
-				http.Error(w, "IP 速率限制，请稍后重试", http.StatusTooManyRequests)
+				httpx.WriteError(w, http.StatusTooManyRequests, "IP 速率限制，请稍后重试")
 				return
 			}
 
@@ -211,7 +213,7 @@ func Middleware() func(http.Handler) http.Handler {
 			if !userLimiter.Allow(userID) {
 				w.Header().Set("Retry-After", "1")
 				w.Header().Set("X-RateLimit-Limit", strconv.Itoa(userRPS))
-				http.Error(w, "用户速率限制，请稍后重试", http.StatusTooManyRequests)
+				httpx.WriteError(w, http.StatusTooManyRequests, "用户速率限制，请稍后重试")
 				return
 			}
 

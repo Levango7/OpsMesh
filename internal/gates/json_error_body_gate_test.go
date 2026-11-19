@@ -32,10 +32,15 @@ import (
 // jsonErrorExempt 是「允许出现 http.Error 的文件」白名单：文件 → 允许的原因。
 // 仅两类可入账：① 明确不该 JSON 化的浏览器资产面；② 尚未收编的存量（收编后必须删行）。
 var jsonErrorExempt = map[string]string{
-	// 唯一一条永久豁免：浏览器资产面（embed 静态 UI），非 API 面。
+	// 两条永久豁免，都不是 API 面：
+	// ① 浏览器资产面；② Prometheus scrape 端点 —— 同函数成功路径就是
+	// `Content-Type: text/plain; version=0.0.4`，503 保持 text 才符合抓取语义。
 	// 全仓 56 处存量已由批 A（cmdb/logstore/orchestration，25 处）与批 B
-	// （deploy 20 处 + controlplane 的 device_metrics/federation/sse/system_ops 8 处）收编完毕。
+	// （deploy 20 处 + controlplane 的 device_metrics/federation/sse/system_ops 8 处）收编完毕；
+	// 2026-11-16 批 C 收编 pkg/ 的 20 处（auth/tenant/security/ratelimit 中间件，
+	// 此前 scanRoots 只扫 internal/ 与 services/，pkg/ 在面外）。
 	"internal/controlplane/enterprise_ui.go": "浏览器资产面（embed 静态 UI），405/503 保持 text/plain 便于浏览器直接显示",
+	"pkg/metrics/metrics.go":                 "Prometheus /metrics scrape 端点（同函数成功路径即 text/plain; version=0.0.4）",
 }
 
 // findHTTPErrorSites 返回 content 中**非注释**部分的 `http.Error(` 出现行号（1-based）。
@@ -152,7 +157,11 @@ func TestJSONErrorDetector(t *testing.T) {
 // 白名单外出现 `http.Error(` ⇒ 红；白名单里的文件一处都不剩 ⇒ 红（豁免过期）。
 func TestHTTPErrorOnlyInAllowlist(t *testing.T) {
 	root := repoRoot(t)
-	scanRoots := []string{filepath.Join(root, "internal"), filepath.Join(root, "services")}
+	// pkg/ 于 2026-11-16 纳入扫描面：这之前的 scanRoots 只有 internal/ 与 services/，
+	// 而 pkg/{auth,tenant,security,ratelimit} 的中间件在业务 handler **之前**短路，
+	// 它们写 text/plain 时客户端（前端 request.js 的 `j?.error || err.message`）
+	// 拿不到真实原因、只看到通用的 "Request failed with status code 401"。
+	scanRoots := []string{filepath.Join(root, "internal"), filepath.Join(root, "services"), filepath.Join(root, "pkg")}
 
 	scanned := 0
 	seenIn := map[string]int{}

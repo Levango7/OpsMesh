@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Levango7/OpsMesh/pkg/httpx"
 )
 
 // ==================== XSS Protection ====================
@@ -145,7 +147,7 @@ func IPRateLimit(requests int, window time.Duration) func(http.Handler) http.Han
 
 			if !sw.allow() {
 				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
-				http.Error(w, "请求过于频繁，请稍后重试", http.StatusTooManyRequests)
+				httpx.WriteError(w, http.StatusTooManyRequests, "请求过于频繁，请稍后重试")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -175,7 +177,7 @@ func UserRateLimit(requests int, window time.Duration) func(http.Handler) http.H
 
 			if !sw.allow() {
 				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
-				http.Error(w, "请求过于频繁，请稍后重试", http.StatusTooManyRequests)
+				httpx.WriteError(w, http.StatusTooManyRequests, "请求过于频繁，请稍后重试")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -209,7 +211,7 @@ func GlobalRateLimit(rps int) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 			default:
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "服务繁忙，请稍后重试", http.StatusTooManyRequests)
+				httpx.WriteError(w, http.StatusTooManyRequests, "服务繁忙，请稍后重试")
 			}
 		})
 	}
@@ -245,7 +247,7 @@ func ConnectionLimit(maxConcurrent int) func(http.Handler) http.Handler {
 				defer func() { <-semaphore }()
 				next.ServeHTTP(w, r)
 			default:
-				http.Error(w, "服务连接数已满，请稍后重试", http.StatusServiceUnavailable)
+				httpx.WriteError(w, http.StatusServiceUnavailable, "服务连接数已满，请稍后重试")
 			}
 		})
 	}
@@ -273,7 +275,7 @@ func SlowLorisProtection(timeout time.Duration) func(http.Handler) http.Handler 
 			select {
 			case <-done:
 			case <-time.After(timeout):
-				http.Error(w, "请求超时", http.StatusGatewayTimeout)
+				httpx.WriteError(w, http.StatusGatewayTimeout, "请求超时")
 			}
 		})
 	}
@@ -304,7 +306,7 @@ func (c CORSConfig) Middleware() func(http.Handler) http.Handler {
 
 			if origin != "" {
 				if !originSet[origin] {
-					http.Error(w, "CORS: 来源不被允许", http.StatusForbidden)
+					httpx.WriteError(w, http.StatusForbidden, "CORS: 来源不被允许")
 					return
 				}
 				w.Header().Set("Access-Control-Allow-Origin", origin)

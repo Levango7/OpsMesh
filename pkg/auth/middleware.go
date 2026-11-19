@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/Levango7/OpsMesh/pkg/httpx"
 )
 
 // authContextKey 用于在 request context 中存放已校验的 ServiceClaims。
@@ -26,12 +28,12 @@ func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, err := extractBearer(r.Header)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusUnauthorized)
+				httpx.WriteError(w, http.StatusUnauthorized, err.Error())
 				return
 			}
 			claims, err := ValidateServiceToken(token, secret)
 			if err != nil {
-				http.Error(w, ErrInvalidToken.Error(), http.StatusUnauthorized)
+				httpx.WriteError(w, http.StatusUnauthorized, ErrInvalidToken.Error())
 				return
 			}
 			ctx := context.WithValue(r.Context(), authenticatedClaimsKey, claims)
@@ -47,11 +49,11 @@ func RequirePermission(permission string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims, ok := r.Context().Value(authenticatedClaimsKey).(*ServiceClaims)
 			if !ok || claims == nil {
-				http.Error(w, "auth: 未认证", http.StatusUnauthorized)
+				httpx.WriteError(w, http.StatusUnauthorized, "auth: 未认证")
 				return
 			}
 			if !hasPermission(claims.Permissions, permission) {
-				http.Error(w, "auth: 权限不足", http.StatusForbidden)
+				httpx.WriteError(w, http.StatusForbidden, "auth: 权限不足")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -66,16 +68,16 @@ func ServiceAuthMiddleware(secret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, err := extractBearer(r.Header)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusUnauthorized)
+				httpx.WriteError(w, http.StatusUnauthorized, err.Error())
 				return
 			}
 			claims, err := ValidateServiceToken(token, secret)
 			if err != nil {
-				http.Error(w, ErrInvalidToken.Error(), http.StatusUnauthorized)
+				httpx.WriteError(w, http.StatusUnauthorized, ErrInvalidToken.Error())
 				return
 			}
 			if claims.ServiceID == "" {
-				http.Error(w, "auth: 服务身份缺失", http.StatusUnauthorized)
+				httpx.WriteError(w, http.StatusUnauthorized, "auth: 服务身份缺失")
 				return
 			}
 			ctx := context.WithValue(r.Context(), authenticatedClaimsKey, claims)
