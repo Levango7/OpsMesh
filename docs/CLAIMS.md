@@ -1437,3 +1437,9 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [CLAIM] 2026-11-18T16:40:00Z from=kilo ttl=8h scope=internal/gates/tenant_store_verdict_gate_test.go,docs/CLAIMS.md note=批次63 修复 HEAD 红点：为 PR #125 新增的 MemoryBudgetStore 补租户存储裁决登记；并释放狗粮/race 文档的过期认领09d883510f9af5e3c5cca6bce923a144
 [RELEASE] 2026-11-18T14:59:30Z from=kilo scope=docs/abac-m1-m3-dogfood-2026-11-18.md,docs/race-sweep-2026-11-18.md note=批次57 两文档已落 main，证据 8a181a95（dogfood 验收 443 行 + race 报告 138 行同一提交）；按本板 append-only 规则仅追加本行，不删改原行。
 [DONE] 2026-11-18T17:30:00Z from=kilo scope=services/auth-svc/,internal/controlplane/svcproxy/,internal/controlplane/contract_v1_test.go,internal/gates/,docs/api-versioning-policy.md note=批次61-63 收口（auth 切流准备 + v1 契约测试 + 门禁红点修复）
+
+[NOTE] 2026-11-19T06:45:00Z from=kilo 勘误：1437 行批次63 CLAIM 末尾误粘了哈希片段 `09d883510f9af5e3c5cca6bce923a144`（应为 note 文本，无 09d8835 该提交）；批次61-63 实际代码提交为 6f9d0696、DONE 回执为 4cbb62c0。按 append-only 仅追加本勘误，不删改原行。
+[CLAIM] 2026-11-19T06:45:00Z from=kilo ttl=8h scope=docs/auth-dualstack-rehearsal-2026-11-19.md,docs/abac-soak-s0-2026-11-19.md note=批次64 首日执行：auth 双栈 smoke 预演 + M4 soak S0（本地 shadow）首日报告；不改产品代码，发现问题仅记录并按最小修复
+
+[CLAIM] 2026-11-19T09:00:00Z from=kilo ttl=8h scope=services/auth-svc/,docker-compose.mysql.yml,internal/controlplane/auth_login.go,docs/projects/TD-60-cutover-schedule.md,internal/controlplane/abac_ops.go,internal/agent/,docs/abac-soak-s0-2026-11-19.md note=批次65 首日缺陷收口：auth 契约（重复键/别名/租户/过期字段）+ compose 端口 + ABAC deny 策略可经 API 创建 + 空队列日志降噪 + 上报 Stats 暴露 + 排期改为名单式切换
+[DONE] 2026-11-19T11:00:00Z from=kilo scope=docs/auth-dualstack-rehearsal-2026-11-19.md,docs/abac-soak-s0-2026-11-19.md,docs/projects/TD-60-cutover-schedule.md,internal/controlplane/abac_ops.go,internal/agent/ note=批次65a 收口（首日双栈预演 + soak S0 + ABAC 四项修复 + 排期改名单式） commit=6a267677
