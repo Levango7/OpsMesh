@@ -16,8 +16,6 @@ services:
       MYSQL_PASSWORD: opsmesh123
     volumes:
       - mysql-master-data:/var/lib/mysql
-    ports:
-      - "3306:3306"
     networks:
       - mysql-net
     healthcheck:
@@ -34,15 +32,11 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root1234
       MYSQL_ROOT_HOST: "%"
-    environment:
-      MYSQL_ROOT_PASSWORD: root1234
       MYSQL_REPLICATION_MODE: slave
       MYSQL_REPLICATION_MASTER_HOST: mysql-master
       MYSQL_REPLICATION_MASTER_PORT: 3306
       MYSQL_REPLICATION_MASTER_USER: root
       MYSQL_REPLICATION_MASTER_PASSWORD: root1234
-    ports:
-      - "3307:3306"
     depends_on:
       - mysql-master
     networks:
@@ -56,15 +50,11 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root1234
       MYSQL_ROOT_HOST: "%"
-    environment:
-      MYSQL_ROOT_PASSWORD: root1234
       MYSQL_REPLICATION_MODE: slave
       MYSQL_REPLICATION_MASTER_HOST: mysql-master
       MYSQL_REPLICATION_MASTER_PORT: 3306
       MYSQL_REPLICATION_MASTER_USER: root
       MYSQL_REPLICATION_MASTER_PASSWORD: root1234
-    ports:
-      - "3308:3306"
     depends_on:
       - mysql-master
     networks:

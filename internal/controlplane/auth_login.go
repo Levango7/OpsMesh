@@ -545,6 +545,18 @@ func (s *Server) handleAuthChangePassword(w http.ResponseWriter, r *http.Request
 		paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
+	// 2026-11-19 auth 双栈预演 D4：ChangePassword 只改库，`u` 仍是改密前的内存快照
+	// ⇒ 首登改密的响应顶层 mustChangePassword=false，嵌套 user 却还是 true，前端据
+	// 嵌套对象会继续弹改密框。这里重新读库（SQL store 下 u 不会被动更新）；读失败时
+	// 就地置 false 兜底——改密已成功，不能因此把 200 变成 5xx。
+	if refreshed, err := s.lookupUserByID(u.ID); err == nil && refreshed != nil {
+		u = refreshed
+	} else {
+		cp := *u
+		cp.PasswordHash = newHash
+		cp.MustChangePassword = false
+		u = &cp
+	}
 	// 携带 ctx 的 trace_id，使审计日志与链路追踪关联。
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: tenantOrDefault(u.TenantID), UserID: u.ID, Action: "user_change_password", Target: u.ID, Detail: sanitizeAuditDetail("username=" + u.Username),

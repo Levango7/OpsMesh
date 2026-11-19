@@ -64,13 +64,13 @@ func TestBuildABACScript_PolicyCreateQuotesPayload(t *testing.T) {
 	actionAttr := "delete-all"
 	context := "ctx' && echo pwned"
 
-	script, status, errMsg := buildABACScript("policy-create", subject, resource, actionAttr, context)
+	script, status, errMsg := buildABACScript("policy-create", subject, resource, actionAttr, "deny", context)
 	if errMsg != "" || status != 0 {
 		t.Fatalf("policy-create 应可下发，得到 status=%d err=%q", status, errMsg)
 	}
 
 	doc, err := json.Marshal(map[string]string{
-		"subject": subject, "resource": resource, "action": actionAttr, "context": context,
+		"subject": subject, "resource": resource, "action": actionAttr, "effect": "deny", "context": context,
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
@@ -88,7 +88,7 @@ func TestBuildABACScript_PolicyCreateQuotesPayload(t *testing.T) {
 }
 
 func TestBuildABACScript_EvaluateIsExplicit501(t *testing.T) {
-	script, status, errMsg := buildABACScript("evaluate", "s", "r", "a", "")
+	script, status, errMsg := buildABACScript("evaluate", "s", "r", "a", "allow", "")
 	if status != 501 {
 		t.Fatalf("evaluate 应显式 501（不再假 ALLOWED），得到 status=%d script=%q", status, script)
 	}
@@ -104,13 +104,13 @@ func TestBuildABACScript_EvaluateIsExplicit501(t *testing.T) {
 }
 
 func TestBuildABACScript_Rejections(t *testing.T) {
-	if _, status, errMsg := buildABACScript("policy-create", "", "r", "a", ""); status != 400 {
+	if _, status, errMsg := buildABACScript("policy-create", "", "r", "a", "allow", ""); status != 400 {
 		t.Fatalf("缺 subject 应 400，得到 %d %q", status, errMsg)
 	}
-	if _, status, errMsg := buildABACScript("no-such-action", "", "", "", ""); status != 400 {
+	if _, status, errMsg := buildABACScript("no-such-action", "", "", "", "", ""); status != 400 {
 		t.Fatalf("未知 action 应 400，得到 %d %q", status, errMsg)
 	}
-	if _, status, _ := buildABACScript("policy-list", "", "", "", ""); status != 0 {
+	if _, status, _ := buildABACScript("policy-list", "", "", "", "", ""); status != 0 {
 		t.Fatalf("policy-list 无需字段，应可下发")
 	}
 }

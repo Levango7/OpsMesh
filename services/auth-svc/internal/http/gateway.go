@@ -25,6 +25,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -659,22 +660,19 @@ func (g *Gateway) listUsers(w http.ResponseWriter, r *http.Request, caller *auth
 		return
 	}
 	tenant := tenantOrDefault(caller.GetTenantId())
-	// F6 字段名收口（板第七十九则）：此前这里把 proto 结构直接交给 writeJSON，
-	// 列表项于是是 protobuf 特有拼写——role_ids / created_at（还是 {"seconds":…}
-	// 对象，不是 RFC3339）/ must_change_password——而前端 UsersView 读的是驼峰
-	// roleIDs / createdAt ⇒ 切流到本服务后"角色列空白、时间列 Invalid Date"。
-	// 现逐项经 toPublicUser 收敛到 controlplane 契约（规范名 roleIDs/createdAt/
-	// mustChangePassword），并把本服务列表此前的拼写保留为过渡别名（零断裂）。
+	// F6 字段名收口（板第七十九则）：列表项逐项经 toPublicUser 输出 controlplane
+	// store.User 的 JSON 形状（id/username/email/tenantId/status/roleIDs/createdAt/
+	// mustChangePassword/permissions）。
+	// 2026-11-19 auth 双栈预演 D3：此前还叠加 role_ids / created_at（protobuf
+	// {"seconds":…} 对象）/ must_change_password 三组旧拼写，任何严格消费者都会
+	// 与规范名冲突（重复语义、类型漂移）。别名已整体删除——前端 UsersView 只读
+	// 规范名，故无消费方断裂。
 	users := make([]map[string]any, 0, len(resp.Users))
 	for _, u := range resp.Users {
 		if tenant != defaultTenantID && tenantOrDefault(u.GetTenantId()) != tenant {
 			continue
 		}
-		item := g.toPublicUser(u)
-		item["role_ids"] = u.GetRoleIds()
-		item["created_at"] = u.GetCreatedAt()
-		item["must_change_password"] = u.GetMustChangePassword()
-		users = append(users, item)
+		users = append(users, g.toPublicUser(u))
 	}
 	page, pageSize, active, err := paginate.ParsePaginationOptIn(r.URL.Query())
 	if err != nil {
@@ -1078,8 +1076,10 @@ func (g *Gateway) requirePermission(w http.ResponseWriter, r *http.Request, perm
 
 // toPublicUser proto User → 网关公开字段（不含敏感）。
 // F6 字段名收口（板第七十九则）：规范名 roleIDs（= controlplane store.User:26 的 json tag，
-// 前端 UsersView 读它）；roleIds 是本服务自 TD-60 起的旧拼写，双轨期保留为过渡别名
-// （谁只在 auth-svc 侧写过消费方都不会断），切流完成后可删——删时同步删本注释与该行。
+// 前端 UsersView 读它）。2026-11-19 auth 双栈预演 D2：此前同时输出 roleIds 别名，
+// 同一 JSON 对象出现两个等价键，严格解码器（PowerShell ConvertFrom-Json 等）直接拒绝
+// ⇒ 已删除别名，只保留前端实际消费的规范名。tenantId 与 /auth/me 同口径归一化（D5）：
+// 空租户按 store.DefaultTenantID 输出，不再出现登录 ""、/me "default" 的字节级不一致。
 // permissions 与 controlplane 登录/注册响应同形（B4 契约的对侧半边）：前端 stores/auth.js
 // 以 user.permissions 作侧栏/操作门控的数据源，缺了它切流后侧栏全线隐藏（/auth/me 可自愈，
 // 但首屏会先空一帧，且消费方不得不等第二个请求）。
@@ -1091,18 +1091,19 @@ func (g *Gateway) toPublicUser(u *authv1.User) map[string]any {
 		"id":                 u.Id,
 		"username":           u.Username,
 		"email":              u.Email,
-		"tenantId":           u.TenantId,
+		"tenantId":           tenantOrDefault(u.TenantId),
 		"status":             u.Status,
 		"roleIDs":            u.RoleIds,
-		"roleIds":            u.RoleIds,
 		"mustChangePassword": u.MustChangePassword,
 		"permissions":        g.effectivePermissions(u.RoleIds),
 	}
-	// createdAt 对齐 controlplane（store.User 的 time.Time → RFC3339 字符串）；
-	// proto 侧是 timestamppb 指针，空值时**不输出**（而非输出 null），与 omitempty 同义。
+	// createdAt 对齐 controlplane（store.User 的 time.Time → RFC3339 字符串）。
+	// 键必须恒存在（controlplane 侧无 omitempty）；proto 侧空值回退零值时间。
+	createdAt := time.Time{}
 	if u.CreatedAt != nil {
-		out["createdAt"] = u.CreatedAt.AsTime()
+		createdAt = u.CreatedAt.AsTime()
 	}
+	out["createdAt"] = createdAt
 	return out
 }
 
@@ -1112,7 +1113,7 @@ func (g *Gateway) toPublicUser(u *authv1.User) map[string]any {
 // 任何持有 user:read 的调用方都能拉取 cost-12 bcrypt 哈希离线爆破。
 // 这里用「显式列出允许字段」而非「序列化整个结构体」：即使将来有人删掉
 // store.User 上的 `json:"-"`，本函数也不会跟着一起泄露。
-// F6 字段名收口：roleIDs 为规范名、roleIds 为过渡别名（同 toPublicUser 注释）。
+// F6 字段名收口：只输出规范名 roleIDs（2026-11-19 预演 D2 删除 roleIds 重复键）。
 func toPublicStoreUser(u *store.User) map[string]any {
 	if u == nil {
 		return nil
@@ -1121,9 +1122,9 @@ func toPublicStoreUser(u *store.User) map[string]any {
 		"id":                 u.ID,
 		"username":           u.Username,
 		"email":              u.Email,
+		"tenantId":           tenantOrDefault(u.TenantID),
 		"status":             u.Status,
 		"roleIDs":            u.RoleIDs,
-		"roleIds":            u.RoleIDs,
 		"createdAt":          u.CreatedAt,
 		"mustChangePassword": u.MustChangePassword,
 	}
@@ -1141,7 +1142,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 // defaultTenantID 与 controlplane tenantguard.TenantOrDefault 的兜底值一致：
 // 空串归属为主租户，主租户调用方保有跨租户全量视图。
-const defaultTenantID = "default"
+const defaultTenantID = store.DefaultTenantID
 
 // tenantOrDefault 把空租户归一化为 default（与 controlplane auth_users.go:52
 // 使用的 tenantOrDefault 同语义）。

@@ -932,6 +932,51 @@ func TestChangePasswordSuccess(t *testing.T) {
 	}
 }
 
+// TestAuthLogin_ChangePasswordResponseRefreshesNestedUser 回归 2026-11-19 双栈预演 D4：
+// 首登改密成功后，响应顶层 mustChangePassword=false，但嵌套 user 若是改密前的内存快照
+// 仍是 true，客户端会继续弹改密框。嵌套对象必须反映新状态。
+func TestAuthLogin_ChangePasswordResponseRefreshesNestedUser(t *testing.T) {
+	s := newAuthTestServer(t)
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "admin123"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleAuthLogin(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first login = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var loginResp authResponse
+	if err := json.NewDecoder(rec.Body).Decode(&loginResp); err != nil {
+		t.Fatalf("decode login: %v", err)
+	}
+	if loginResp.ChangePasswordToken == "" {
+		t.Fatal("首登响应应带 changePasswordToken（夹具失效）")
+	}
+
+	cpReq := doWithAuth(http.MethodPost, "/api/v1/auth/change-password", "", map[string]string{
+		"oldPassword":         "admin123",
+		"newPassword":         "Admin@2025xy",
+		"changePasswordToken": loginResp.ChangePasswordToken,
+	})
+	cpRec := httptest.NewRecorder()
+	s.handleAuthChangePassword(cpRec, cpReq)
+	if cpRec.Code != http.StatusOK {
+		t.Fatalf("change password = %d, want 200; body=%s", cpRec.Code, cpRec.Body.String())
+	}
+	var cpResp authResponse
+	if err := json.NewDecoder(cpRec.Body).Decode(&cpResp); err != nil {
+		t.Fatalf("decode change-password: %v", err)
+	}
+	if cpResp.MustChangePassword {
+		t.Error("改密响应顶层 mustChangePassword=true，want false")
+	}
+	if cpResp.User == nil {
+		t.Fatal("改密响应缺嵌套 user（首登流应回签会话）")
+	}
+	if cpResp.User.MustChangePassword {
+		t.Fatal("改密响应嵌套 user.mustChangePassword 仍为 true（D4 过期快照）")
+	}
+}
+
 // TestChangePasswordWrongOld 验证旧密码错误 → 401。
 func TestChangePasswordWrongOld(t *testing.T) {
 	s := newAuthTestServer(t)

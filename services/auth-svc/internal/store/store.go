@@ -15,6 +15,11 @@ import (
 	"github.com/Levango7/OpsMesh/services/auth-svc/internal/auth"
 )
 
+// DefaultTenantID 平台默认租户（与 controlplane internal/store/model.DefaultTenantID
+// 同值）：users.tenant_id 为空的行归属此租户。登录响应、/auth/me 与租户过滤统一
+// 走这一常量，避免「登录空串、/me default」的字节级不一致（2026-11-19 预演 D5）。
+const DefaultTenantID = "default"
+
 // User represents a user in the store.
 //
 // P0 安全修复：PasswordHash 必须带 `json:"-"`。此前该字段无序列化屏蔽，

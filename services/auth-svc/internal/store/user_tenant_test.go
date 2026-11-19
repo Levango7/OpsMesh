@@ -101,3 +101,20 @@ func TestUserTenantIDRoundTripMySQL(t *testing.T) {
 		t.Fatal("ListUsers 未包含新建用户")
 	}
 }
+
+// TestSeedAdminWritesDefaultTenant 守护 D5 的播种侧：seeded admin 必须显式写入
+// DefaultTenantID，否则登录响应 tenantId="" 与 /auth/me 的 "default" 不一致。
+// （网关侧 tenantOrDefault 是读侧兜底；本测试钉住写侧，防止新库再次播种空租户。）
+func TestSeedAdminWritesDefaultTenant(t *testing.T) {
+	src, err := os.ReadFile("mysql.go")
+	if err != nil {
+		t.Fatalf("读 mysql.go: %v", err)
+	}
+	code := string(src)
+	if !strings.Contains(code, `"INSERT INTO users (id, tenant_id,`) {
+		t.Fatal("seed admin INSERT 不含 tenant_id —— 播种会落空租户（D5）")
+	}
+	if !strings.Contains(code, `"user-admin", DefaultTenantID`) {
+		t.Fatal("seed admin 未使用 DefaultTenantID 作为租户值（D5）")
+	}
+}

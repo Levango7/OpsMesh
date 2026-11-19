@@ -225,13 +225,15 @@ func (s *MySQLStore) seedDefaults() error {
 		// 播种 admin：bcrypt 失败必须显式失败（原 `hash, _ :=` 吞错误会把空哈希落库，
 		// admin 永远无法登录且无任何日志可见）。seedDefaults 返回 error 由 NewMySQLStore
 		// 以 "failed to seed defaults" 拒绝启动，播种失败可见。
+		// tenant_id 显式写 DefaultTenantID：此前省略该列（默认 ''）导致登录响应的
+		// tenantId="" 而 /auth/me 走 claims 兜底返回 "default"（2026-11-19 预演 D5）。
 		hash, err := auth.HashPassword("admin123")
 		if err != nil {
 			return fmt.Errorf("hash seed admin password: %w", err)
 		}
 		_, err = s.db.Exec(
-			"INSERT INTO users (id, username, email, password_hash, status, created_at, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			"user-admin", "admin", "admin@opsmesh.io", hash, "active", time.Now(), true,
+			"INSERT INTO users (id, tenant_id, username, email, password_hash, status, created_at, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			"user-admin", DefaultTenantID, "admin", "admin@opsmesh.io", hash, "active", time.Now(), true,
 		)
 		if err != nil {
 			return fmt.Errorf("seed admin user: %w", err)

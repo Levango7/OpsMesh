@@ -5,9 +5,9 @@
 //	· 请求 role_ids——auth_users.go:110/303 的 json tag，前端 UsersView 也按此发；
 //	· 响应 roleIDs / createdAt / mustChangePassword——store.User 的 json tag，前端按此读。
 //
-// auth-svc 的历史拼写保留为**过渡别名**（create: roleIDs；update: roleIds；list: role_ids/
-// created_at/must_change_password），双轨期零断裂；切流完成后可删——删时同步删本文几条
-// 别名断言与 gateway.go 里对应注释。
+// auth-svc 的历史拼写曾保留为**过渡别名**（create: roleIDs；update: roleIds；list: role_ids/
+// created_at/must_change_password）。2026-11-19 auth 双栈预演 D2/D3 起，响应侧别名全部删除
+// （严格 JSON 解码器拒绝重复键）；请求侧 role_ids/roleIds 双读保留以兼容旧调用方。
 //
 // 为什么必须有这些守卫（裂缝的三种形态，各配一条）：
 //
@@ -132,9 +132,11 @@ func TestListUsers_EmitsControlplaneFieldNames(t *testing.T) {
 		// 之前是 proto 的 {"seconds":…} 对象 ⇒ 前端 Invalid Date。按类型断言，别只看键名。
 		t.Fatalf("createdAt 必须是 RFC3339 字符串（收到 %T：%v）", created, created)
 	}
-	// 过渡别名保留（双轨期零断裂；切流完成后本段与生产代码同步删）。
-	if _, ok := item["role_ids"]; !ok {
-		t.Fatalf("列表项缺过渡别名 role_ids：%v", item)
+	// 2026-11-19 预演 D3：旧拼写别名已删除，严格消费者不得再看到重复语义键。
+	for _, legacy := range []string{"role_ids", "roleIds", "created_at", "must_change_password"} {
+		if _, ok := item[legacy]; ok {
+			t.Errorf("列表项仍输出旧别名 %q（D3 未收口）：%v", legacy, item)
+		}
 	}
 }
 
