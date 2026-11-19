@@ -1443,3 +1443,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [CLAIM] 2026-11-19T09:00:00Z from=kilo ttl=8h scope=services/auth-svc/,docker-compose.mysql.yml,internal/controlplane/auth_login.go,docs/projects/TD-60-cutover-schedule.md,internal/controlplane/abac_ops.go,internal/agent/,docs/abac-soak-s0-2026-11-19.md note=批次65 首日缺陷收口：auth 契约（重复键/别名/租户/过期字段）+ compose 端口 + ABAC deny 策略可经 API 创建 + 空队列日志降噪 + 上报 Stats 暴露 + 排期改为名单式切换
 [DONE] 2026-11-19T11:00:00Z from=kilo scope=docs/auth-dualstack-rehearsal-2026-11-19.md,docs/abac-soak-s0-2026-11-19.md,docs/projects/TD-60-cutover-schedule.md,internal/controlplane/abac_ops.go,internal/agent/ note=批次65a 收口（首日双栈预演 + soak S0 + ABAC 四项修复 + 排期改名单式） commit=6a267677
+[DONE] 2026-11-19T12:30:00Z from=kilo scope=services/auth-svc/,internal/controlplane/auth_login.go,docker-compose.mysql.yml note=批次65b 收口（auth 契约对齐 + compose 修复）
