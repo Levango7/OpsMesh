@@ -11,9 +11,23 @@ import (
 	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
+// abacNormalizeEffect 归一化策略 effect：空值默认 allow，大小写不敏感、去首尾空白。
+// 只接受 allow|deny；其他值返回错误（由 handler 映射为 400，避免未知 effect 落库后
+// 被设备侧当作 allow 的隐性放行）。
+func abacNormalizeEffect(raw string) (string, error) {
+	switch effect := strings.ToLower(strings.TrimSpace(raw)); effect {
+	case "":
+		return "allow", nil
+	case "allow", "deny":
+		return effect, nil
+	default:
+		return "", fmt.Errorf("effect must be allow or deny, got %q", strings.TrimSpace(raw))
+	}
+}
+
 // buildABACScript 把 action + 用户字段组装成下发脚本（纯函数，供变异反证测试直接调）。
 // 返回 (script, 0, "") 表示可下发；否则 ( "", status, errMsg) 表示拒绝。
-func buildABACScript(action, subject, resource, actionAttr, context string) (string, int, string) {
+func buildABACScript(action, subject, resource, actionAttr, effect, context string) (string, int, string) {
 	switch action {
 	case "policy-list":
 		return `echo "=== ABAC Policies ===" && echo "No ABAC policies configured (RBAC is the default)" && echo "---" && echo "To enable ABAC, configure policy rules in /etc/opsmesh/abac/policies.json"`, 0, ""
@@ -30,6 +44,7 @@ func buildABACScript(action, subject, resource, actionAttr, context string) (str
 			"subject":  subject,
 			"resource": resource,
 			"action":   actionAttr,
+			"effect":   effect,
 			"context":  context,
 		})
 		if err != nil {
@@ -97,6 +112,7 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 		Resource   string `json:"resource"`   // resource attributes (JSON)
 		ActionAttr string `json:"actionAttr"` // action attribute
 		Context    string `json:"context"`    // environment context (JSON)
+		Effect     string `json:"effect"`     // policy-create 生效方向：allow|deny（缺省 allow）
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -122,6 +138,18 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 	actx, ok := s.subsystemAuthorize(w, r, perm)
 	if !ok {
 		return
+	}
+
+	// policy-create 的 effect 在鉴权后校验：拒绝仍按 403（不得用 400 泄露策略字段约束）。
+	// 归一化规则：缺省/空白 => allow；allow|deny 大小写不敏感；未知值 => 400。
+	policyEffect := "allow"
+	if req.Action == "policy-create" {
+		effect, err := abacNormalizeEffect(req.Effect)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		policyEffect = effect
 	}
 
 	// 审计整改批次17：evaluate / policy-list(无 deviceID) 走服务端真实引擎；
@@ -211,7 +239,7 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	script, status, errMsg := buildABACScript(req.Action, req.Subject, req.Resource, req.ActionAttr, req.Context)
+	script, status, errMsg := buildABACScript(req.Action, req.Subject, req.Resource, req.ActionAttr, policyEffect, req.Context)
 	if errMsg != "" {
 		paginate.WriteJSON(w, status, map[string]string{"error": errMsg})
 		return
@@ -219,6 +247,7 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 
 	// policy-create：同步登记控制面策略镜像（供 evaluate 使用）。
 	// 批次47：写穿 store；落库失败返回 500 且不更新缓存，也不下发设备脚本。
+	// effect 由调用方选择（缺省 allow），deny 走 abac_engine 的 deny-overrides 路径。
 	if req.Action == "policy-create" {
 		if err := s.addABACPolicy(abacPolicy{
 			ID:       abacPolicyID(actx.TenantID, req.ActionAttr, req.Subject, req.Resource),
@@ -226,7 +255,7 @@ func (s *Server) handleABAC(w http.ResponseWriter, r *http.Request) {
 			Subject:  req.Subject,
 			Resource: req.Resource,
 			Action:   req.ActionAttr,
-			Effect:   "allow",
+			Effect:   policyEffect,
 		}); err != nil {
 			writeInternalError(r.Context(), w, "handleABAC.policy-create", err)
 			return

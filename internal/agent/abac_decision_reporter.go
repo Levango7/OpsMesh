@@ -67,10 +67,12 @@ type ABACDecisionRecord struct {
 
 // ABACDecisionReporterStats 是缓冲区与回传结果的只读快照。
 type ABACDecisionReporterStats struct {
-	Buffered int   // 当前待回传条数
-	Dropped  int64 // 因容量上限丢弃的最旧记录累计数
-	Accepted int64 // 服务端 202 接受并摘除的累计条数
-	Failed   int64 // Flush 最终失败（含认证/超时/非预期状态）的轮次
+	Buffered    int       // 当前待回传条数
+	Dropped     int64     // 因容量上限丢弃的最旧记录累计数
+	Accepted    int64     // 服务端 202 接受并摘除的累计条数
+	Failed      int64     // Flush 最终失败（含认证/超时/非预期状态）的轮次
+	LastFlushAt time.Time // 最近一次实际发送批次的完成时间（UTC；空缓冲不更新）
+	LastError   string    // 最近一次 Flush 的失败原因；成功后清空
 }
 
 // abacDecisionWire 是回传 body 的线上格式（occurredAt 固定 RFC3339，不带纳秒）。
@@ -128,6 +130,9 @@ type ABACDecisionReporter struct {
 	dropped  int64
 	accepted int64
 	failed   int64
+	// lastFlushAt/lastError 记录最近一次实际发送的完成时间与失败原因（Stats 导出）。
+	lastFlushAt time.Time
+	lastError   string
 	// bundleIDProvider 提供当前 LKG 包的 bundleId（RecordEvaluation 用）。
 	bundleIDProvider func() string
 }
@@ -256,10 +261,12 @@ func (r *ABACDecisionReporter) Stats() ABACDecisionReporterStats {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return ABACDecisionReporterStats{
-		Buffered: r.count,
-		Dropped:  r.dropped,
-		Accepted: r.accepted,
-		Failed:   r.failed,
+		Buffered:    r.count,
+		Dropped:     r.dropped,
+		Accepted:    r.accepted,
+		Failed:      r.failed,
+		LastFlushAt: r.lastFlushAt,
+		LastError:   r.lastError,
 	}
 }
 
@@ -305,7 +312,7 @@ func (r *ABACDecisionReporter) Start(ctx context.Context) {
 // 成功（202）时只摘除被服务端接受的前缀：飞行期间新 Record 的记录位于队尾，
 // 不会被误删；部分接受（accepted < 批次长度）时未接受部分留在缓冲区。
 // 失败（401/403/413 二次仍超限/5xx 重试耗尽/网络/非预期状态）一律保留缓冲区。
-func (r *ABACDecisionReporter) Flush(ctx context.Context) error {
+func (r *ABACDecisionReporter) Flush(ctx context.Context) (err error) {
 	if r == nil || !r.enabled {
 		return nil
 	}
@@ -318,6 +325,9 @@ func (r *ABACDecisionReporter) Flush(ctx context.Context) error {
 	if len(snapshot) == 0 {
 		return nil
 	}
+	// 只在实际发送批次后更新 lastFlushAt/lastError：空缓冲不算一次回传，
+	// 避免 soak 看板把空闲 tick 误读为成功回传。失败原因供 Stats 直接用于告警。
+	defer func() { r.recordFlushResult(err) }()
 	batch := make([]ABACDecisionRecord, len(snapshot))
 	for i, entry := range snapshot {
 		batch[i] = entry.rec
@@ -523,6 +533,18 @@ func (r *ABACDecisionReporter) markFailed() {
 	r.mu.Lock()
 	r.failed++
 	r.mu.Unlock()
+}
+
+// recordFlushResult 记录一次实际发送批次的完成时间与结果（成功则清空 lastError）。
+func (r *ABACDecisionReporter) recordFlushResult(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastFlushAt = r.nowUTC()
+	if err != nil {
+		r.lastError = err.Error()
+		return
+	}
+	r.lastError = ""
 }
 
 // marshalABACDecisionBatch 把记录序列化为线上 JSON（occurredAt 固定 RFC3339）。

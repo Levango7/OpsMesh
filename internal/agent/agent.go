@@ -851,6 +851,16 @@ func (a *Agent) register() error {
 			// 仅当注册从未提供密钥时才回退到 --grpc-signature-key。gRPC 密钥不受影响。
 			abacKey, abacKeySource := a.resolveABACSecret(ctx, resp.Secret)
 			a.abacSecret = abacKey
+			// 注册通道是 per-agent HMAC 密钥的**唯一**下发时机（控制面只在
+			// install token 认证 + TLS 时返回一次，且不落日志）。ABAC HTTP 通道
+			// （bundle 拉取 / decisions 回传）只认 store.AgentSecret；拿不到密钥时
+			// 继续启动只会得到持续的 401 与无限积压。这里显式失败，避免"看似启动
+			// 成功、实际 ABAC 全链路失效"的静默降级（soak A4）。错误消息不含密钥。
+			if a.cfg.ABACBundleEnabled && abacKey == "" {
+				return fmt.Errorf("ABAC 已启用，但注册响应未下发 per-agent HMAC 密钥且本机无 agent.key、" +
+					"也未配置 --grpc-signature-key：拒绝以空密钥启动 ABAC HTTP 通道" +
+					"（请用 install token + TLS 纳管，或从 agents.secret 预置 <data-dir>/agent.key）")
+			}
 			signed := key != ""
 			if !signed && a.cfg.GRPCRequireSignature {
 				// 控制面要求签名但 agent 三处都拿不到密钥：后续请求将被拒绝，提前告警。
@@ -1068,6 +1078,13 @@ func (a *Agent) claimTask(ctx context.Context) (*proto.Task, error) {
 		AgentId: a.agentID,
 	})
 	if err != nil {
+		// 空队列不是错误：task-svc 对 "无 pending 任务" 返回 gRPC NotFound。
+		// 映射为 (nil, nil) 的空闲语义，由 dispatchLoop 的 ticker 退避，避免每 1s
+		// 打一条 ERROR 把真实错误埋掉（soak A3）。debug 级保留可观测性且不打 ERROR。
+		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+			logx.Debug(ctx, "任务队列为空（ClaimTask NotFound），进入空闲", "agentID", a.agentID)
+			return nil, nil
+		}
 		return nil, err
 	}
 	// 空响应/空 taskId 表示“当前无待领取任务”（存根客户端或 task-svc 空队列）。

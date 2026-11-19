@@ -304,3 +304,99 @@ func TestABACChain_PolicyMirrorKeyTenantScoped(t *testing.T) {
 		t.Fatalf("删除 A 的策略不得影响 B 的镜像，decision=%v", got)
 	}
 }
+
+// abacPolicyCreateBodyWithEffect 构造带 effect 的 policy-create 请求体（同三元组 alice/vm:42/read）。
+func abacPolicyCreateBodyWithEffect(deviceID, effect string) string {
+	return `{"deviceID":"` + deviceID + `","action":"policy-create","subject":"alice","resource":"vm:42","actionAttr":"read","effect":"` + effect + `"}`
+}
+
+// policy-create 的 effect 必须贯穿镜像 / store / bundle，并在 evaluate 走 deny-overrides：
+// 通过 API 创建的 deny 策略必须真正拒绝（而非被硬编码成 allow 的静默放行）。
+func TestABACChain_PolicyCreateDenyEffectPersistsAndEvaluates(t *testing.T) {
+	s, h := newABACChainServer(t)
+	admin := abacChainToken(t, s, "abac-admin-a")
+
+	// 大小写不敏感 + 去首尾空白。
+	if rec := abacChainCall(h, admin, abacTenantA, abacPolicyCreateBodyWithEffect("abac-dev-a", "  DENY ")); rec.Code != http.StatusAccepted {
+		t.Fatalf("admin deny policy-create 应 202，得到 %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	list := s.listABACPolicies(abacTenantA)
+	if len(list) != 1 || list[0].Effect != "deny" {
+		t.Fatalf("镜像应携带 effect=deny，得到 %+v", list)
+	}
+
+	recs := s.store.ListABACPolicyRecords(abacTenantA)
+	if len(recs) != 1 || recs[0].Effect != "deny" {
+		t.Fatalf("store 应持久化 effect=deny，得到 %+v", recs)
+	}
+
+	bundlePolicies := abacBundlePolicies(list)
+	if len(bundlePolicies) != 1 || bundlePolicies[0].Effect != "deny" {
+		t.Fatalf("bundle 条目应携带 effect=deny，得到 %+v", bundlePolicies)
+	}
+
+	rec := abacChainCall(h, admin, abacTenantA, abacEvalBody(""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("evaluate 应 200，得到 %d body=%s", rec.Code, rec.Body.String())
+	}
+	resp := abacDecodeBody(t, rec)
+	if resp["decision"] != "deny" || resp["allowed"] != false {
+		t.Fatalf("API 创建的 deny 策略应拒绝，得到 decision=%v allowed=%v body=%s", resp["decision"], resp["allowed"], rec.Body.String())
+	}
+	if resp["matchedPolicyID"] != list[0].ID {
+		t.Fatalf("matchedPolicyID=%v, want %q", resp["matchedPolicyID"], list[0].ID)
+	}
+
+	// policy-list 必须展示 effect，供 soak 审计核对。
+	rec = abacChainCall(h, admin, abacTenantA, `{"action":"policy-list"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("policy-list 应 200，得到 %d body=%s", rec.Code, rec.Body.String())
+	}
+	policies, ok := abacDecodeBody(t, rec)["policies"].([]interface{})
+	if !ok || len(policies) != 1 {
+		t.Fatalf("policy-list policies=%v，want 1 条", abacDecodeBody(t, rec)["policies"])
+	}
+	first, ok := policies[0].(map[string]interface{})
+	if !ok || first["effect"] != "deny" {
+		t.Fatalf("policy-list 应展示 effect=deny，得到 %v", policies[0])
+	}
+}
+
+// effect 缺省与显式 allow 都允许；未知 effect 必须 400 且不得改变已有镜像/持久层。
+func TestABACChain_PolicyCreateEffectDefaultAndInvalid(t *testing.T) {
+	s, h := newABACChainServer(t)
+	admin := abacChainToken(t, s, "abac-admin-a")
+
+	if rec := abacChainCall(h, admin, abacTenantA, abacPolicyCreateBodyWithEffect("abac-dev-a", "Allow")); rec.Code != http.StatusAccepted {
+		t.Fatalf("显式 allow 应 202，得到 %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := abacDecodeBody(t, abacChainCall(h, admin, abacTenantA, abacEvalBody("")))["decision"]; got != "allow" {
+		t.Fatalf("显式 allow 策略应放行，decision=%v", got)
+	}
+
+	// 同三元组 upsert，不带 effect：默认 allow（既有语义不变）。
+	if rec := abacChainCall(h, admin, abacTenantA, abacPolicyCreateBody); rec.Code != http.StatusAccepted {
+		t.Fatalf("缺省 effect 应 202，得到 %d body=%s", rec.Code, rec.Body.String())
+	}
+	list := s.listABACPolicies(abacTenantA)
+	if len(list) != 1 || list[0].Effect != "allow" {
+		t.Fatalf("缺省 effect 应为 allow，得到 %+v", list)
+	}
+
+	before := s.store.ListABACPolicyRecords(abacTenantA)
+	rec := abacChainCall(h, admin, abacTenantA, abacPolicyCreateBodyWithEffect("abac-dev-a", "audit"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("未知 effect 应 400，得到 %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "allow or deny") {
+		t.Fatalf("400 消息应说明允许值，得到 %s", rec.Body.String())
+	}
+	after := s.store.ListABACPolicyRecords(abacTenantA)
+	if len(after) != len(before) || after[0].Effect != before[0].Effect {
+		t.Fatalf("非法 effect 不得改变持久层：before=%+v after=%+v", before, after)
+	}
+	if got := abacDecodeBody(t, abacChainCall(h, admin, abacTenantA, abacEvalBody("")))["decision"]; got != "allow" {
+		t.Fatalf("非法 effect 被拒后既有 allow 策略应保持，decision=%v", got)
+	}
+}

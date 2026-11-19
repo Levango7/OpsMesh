@@ -1,12 +1,20 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/Levango7/OpsMesh/internal/config"
+	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
 
 	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
@@ -103,5 +111,75 @@ func TestDispatchLoop_StubIdleNoSpin(t *testing.T) {
 	// 600ms / 50ms ≈ 12 次；给 CI 抖动留足余量，但必须远低于空转量级。
 	if claims > 40 {
 		t.Fatalf("ClaimTask 调用次数异常（疑似空转）：%d 次 / 600ms", claims)
+	}
+}
+
+// notFoundTaskClient 模拟 task-svc 空队列：ClaimTask 返回 gRPC NotFound。
+type notFoundTaskClient struct {
+	*StubTaskServiceClient
+	claims atomic.Int64
+}
+
+func (c *notFoundTaskClient) ClaimTask(context.Context, *taskv1.ClaimTaskRequest) (*taskv1.Task, error) {
+	c.claims.Add(1)
+	return nil, status.Error(codes.NotFound, "task not found")
+}
+
+// gRPC NotFound（空队列）必须映射为空闲 (nil, nil)，不能作为错误返回。
+func TestAgentClaimTask_NotFoundIsIdle(t *testing.T) {
+	client := &notFoundTaskClient{StubTaskServiceClient: NewStubTaskServiceClient()}
+	a := &Agent{agentID: "a1", taskServiceClient: client}
+
+	task, err := a.claimTask(context.Background())
+	if err != nil || task != nil {
+		t.Fatalf("ClaimTask NotFound 应视为空闲，得到 task=%v err=%v", task, err)
+	}
+	if got := client.claims.Load(); got != 1 {
+		t.Fatalf("单次 claimTask 应只调用一次 ClaimTask，得到 %d", got)
+	}
+}
+
+// 空队列不得每 tick 打 ERROR：debug 级可观测，且 ClaimTask 次数受 ticker 约束（不空转）。
+func TestDispatchLoop_NotFoundLogsNoErrorAndNoSpin(t *testing.T) {
+	var buf bytes.Buffer
+	logx.SetOutput(&buf)
+	logx.SetLevel(slog.LevelDebug)
+	defer func() {
+		logx.SetOutput(os.Stderr)
+		logx.SetLevel(slog.LevelInfo)
+	}()
+
+	client := &notFoundTaskClient{StubTaskServiceClient: NewStubTaskServiceClient()}
+	a := &Agent{
+		agentID:           "a1",
+		cfg:               &config.Config{TaskDispatchInterval: 20 * time.Millisecond},
+		taskCh:            make(chan proto.Task, 1),
+		taskServiceClient: client,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		a.dispatchLoop(ctx)
+		close(done)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+
+	if got := len(a.taskCh); got != 0 {
+		t.Fatalf("空队列不应入队任何任务，队列长度 = %d", got)
+	}
+	if strings.Contains(buf.String(), `"level":"ERROR"`) {
+		t.Fatalf("空队列不得产生 ERROR 日志，得到:\n%s", buf.String())
+	}
+	claims := client.claims.Load()
+	if claims == 0 {
+		t.Fatal("dispatchLoop 未执行任何 ClaimTask，ticker 可能未生效")
+	}
+	// 200ms / 20ms ≈ 10 次；给 CI 抖动留余量，但远低于空转量级。
+	if claims > 40 {
+		t.Fatalf("ClaimTask 调用次数异常（疑似空转）：%d 次 / 200ms", claims)
 	}
 }

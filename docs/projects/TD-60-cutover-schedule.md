@@ -13,6 +13,38 @@
 
 ---
 
+## 2026-11-19 预演结论（变更）
+
+> **依据**：`docs/auth-dualstack-rehearsal-2026-11-19.md`（真实 controlplane + auth-svc + 真实 MySQL 双栈预演，基线 commit `4cbb62c0`）。
+> **矩阵 22/22 PASS、0 FAIL**：本地基线、直连 auth-svc、users 列表与租户隔离、管理面保持本地、
+> 名册代理 login/me/logout 与停用恢复全部通过。但 **11-25 的「50/50 随机切流」判定 NO-GO**，
+> 改为**名册门控的二选一批量切流（方案 C/D）**。本节结论覆盖 §5 日历中原 11-25 auth 行；
+> task / device 日期不变（见 §5 注）。
+
+### 变更依据（预演实际证据）
+
+| 判定 | 证据 |
+|---|---|
+| 22/22 矩阵通过 | 预演 §3：A-E 五组（本地基线、直连 auth-svc、users 列表与租户隔离、管理面保持本地、名册代理与基线恢复）全部 PASS，0 FAIL |
+| 随机比例**未实现** | `AUTH_SVC_PROXY_RATIO` 只出现在 `internal/controlplane/svcproxy/proxy.go:93` 的注释里，没有任何 Go 代码读取；实际路由是二选一：`AUTH_SVC_PROXY_ENABLED` 总开关 + 名册匹配（`internal/controlplane/cutover/router.go:42-45,104-113`），login/me/logout 逐端点裁决 |
+| 会话**不可跨侧** | 两侧用户表在不同 schema（controlplane `opsmesh` vs auth-svc `opsmesh_auth`，预演 §1.1/D6），refresh token 与 session store 各自持有；随机把同一浏览器打到两侧会产生分裂会话：auth-svc 登录无法被 controlplane 刷新/校验，反之亦然（`docs/td60-auth-data-plane-proposal.md` §1；预演 §6） |
+| 合同缺陷会污染 A/B 信号 | auth-svc 登录响应重复 `roleIDs`/`roleIds`（D2），users 列表混用 `created_at`/`must_change_password`/`role_ids` 别名（D3）；50/50 会表现为随机客户端故障，而不是干净对照 |
+| 回退粒度不匹配 | 随机分流没有「批次」可摘，回退只能整域关闭；与 D+C 的逐批可摘原则冲突（`docs/projects/TD-60-domain-convergence-charter.md:84-88`） |
+
+**替代方案**：同一时刻一个用户要么全走 controlplane 本地、要么全走 auth-svc；按名册批次推进，
+逐批观察、逐批可摘。预演对方案 C/D 给的是 **conditional GO**，条件即 §3.1 的九项门禁。
+
+### 日历变更（只动 auth）
+
+| 日期 | 原计划 | 变更后 |
+|---|---|---|
+| 11-24 | auth Go/No-Go | **修复门禁（Fix Gate）**：§3.1 G1-G9 全绿并逐条签字；未过则 11-25 不切 |
+| 11-25 | auth 50/50 随机切换 | **名册批次 A（二选一）**：只切 **1 个非 admin 用户**；仅在 11-24 门禁全绿时写名册；否则占用 11-24 缓冲日修缺陷并 **HOLD**，不写名册、不重启切流 |
+| 11-25 ~ 11-27 | 观察窗口 | 保留，按批次 A 观察；11-27 17:00 签「继续/回退」 |
+| 11-30 起 | 100% | 保留，批次 A 稳定后按 runbook 追加批次；「50/50 阶段」= 名册累计覆盖约 50% 活跃用户，仍不引入请求级随机 |
+
+---
+
 ## 1. 排期原则
 
 1. **逐域串行**：一次只切一个域；不允许 task / device / auth 在同一次变更里一起切
@@ -68,6 +100,39 @@
 > 不覆盖字段级契约（D-1/D-2 即为此类）。`counts.p0=0` 的含义是「没有**未登记**的新增 P0」；
 > 审计剩余的 D-1/D-2/D-3 已在 baseline 中，必须按 P2 单独清零并签字。
 
+### 3.1 auth 修复门禁清单（2026-11-19 新增，11-24 逐条签字）
+
+> 依据 `docs/auth-dualstack-rehearsal-2026-11-19.md` §4 的缺陷与 §6 的 conditional GO 条件。
+> **九项全绿才允许写 11-25 批次 A 名册**；任一项未过，11-25 HOLD，用 11-24 缓冲日修复。
+
+| # | 缺陷 / 前置 | 验证命令 | 通过判据 | 责任 |
+|---|---|---|---|---|
+| G1 | 重复 JSON key（D2）：auth-svc 登录响应同时发 `roleIDs` 与 `roleIds`（`services/auth-svc/internal/http/gateway.go:1096-1097`） | `curl -s -X POST http://<auth-svc>:19690/api/v1/auth/login -H 'Content-Type: application/json' -d '{"username":"<user>","password":"<pwd>"}' -o login.json`，再用下方严格解码脚本 | 严格解码不报 `duplicate keys`；login 只保留 `roleIDs` | auth-svc 开发 |
+| G2 | users 列表混用别名（D3）：`created_at`（protobuf 对象）、`must_change_password`、`role_ids`、`roleIds`（`gateway.go:670-675`） | `curl -s -b cookies.txt 'http://<cp>:19680/api/v1/users?page=1&pageSize=2' -o users.json`；`python3 -c "import json;d=json.load(open('users.json'));bad=[k for u in d['users'] for k in ('created_at','must_change_password','role_ids','roleIds') if k in u];assert not bad,bad;print('OK')"` | 顶层键 ⊆ `users,page,pageSize,total,hasMore`；每个 user 不含上述四个别名键 | auth-svc 开发 |
+| G3 | change-password 返回过期嵌套 user（D4）：顶层 `mustChangePassword:false`，嵌套 `user.mustChangePassword` 仍为 `true`（`internal/controlplane/auth_login.go:567`） | 初始口令登录后 `curl -s -X POST http://<cp>:19680/api/v1/auth/change-password -b cookies.txt -H 'Content-Type: application/json' -d '{"oldPassword":"<old>","newPassword":"<new>"}' -o chpwd.json`；`python3 -c "import json;d=json.load(open('chpwd.json'));assert d['mustChangePassword'] is False and d['user']['mustChangePassword'] is False;print('OK')"` | 顶层与嵌套字段都为 `false` | controlplane auth 开发 |
+| G4 | 种子 admin 登录体 tenant 为空（D5）：登录体 `tenantId:""`，`/auth/me` 返回 `default`（`services/auth-svc/internal/store/mysql.go:234`；`gateway.go:1148-1152`） | `curl -s -X POST http://<auth-svc>:19690/api/v1/auth/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"<pwd>"}' -o login.json`；`python3 -c "import json;d=json.load(open('login.json'));assert d['tenantId']=='default',d['tenantId'];print('OK')"`；对 `/auth/me` 做同一断言 | login 与 me 的 `tenantId` 均为 `default`，响应字节一致 | auth-svc 开发 |
+| G5 | compose 重复 `ports`（D1）：`docker-compose.mysql.yml:9` 与 `:19` 重复定义，Compose v5.7 拒绝解析 | `docker compose -f docker-compose.mysql.yml config >/dev/null` | 退出码 0；`mysql-master` 仅一个 `ports` 块（同时清理 slaves 重复 `environment`） | 部署 owner |
+| G6 | schema 混用（D6）：auth-svc 绝不能指向 controlplane schema | `echo "$AUTH_SVC_DSN"` 必须含 `/opsmesh_auth?`；`mysql -h <host> -P <port> -u <user> -p -e "SHOW COLUMNS FROM opsmesh_auth.users LIKE 'must_change_password';"` | DSN 指向独立 `opsmesh_auth`；该查询返回 1 行，controlplane `opsmesh.users` 同查询返回 0 行 | 运维 |
+| G7 | Redis 撤销缺失（D7）：`AUTH_SVC_SESSION_STORE_ENABLED=false` 时登出只靠 jti/RT，`cutover-unroute` 无法即时吊销会话 | `redis-cli -h <redis> -p <port> ping`；启动 auth-svc 时置 `AUTH_SVC_SESSION_STORE_ENABLED=true`；登出后检查响应 `sessionRevocation` 字段 | `PONG`；logout 响应不含 `unavailable (Redis disabled)`；登出后旧 access token 访问 `/me` 返回 401 | 运维 |
+| G8 | OTP 预迁移与影子登录：批次用户必须先在 auth-svc 建好、审批、收到一次性口令，并完成一次直连影子登录 | `mysql -e "SELECT username,status FROM opsmesh_auth.users WHERE username IN ('<batch users>');"`；对每个用户 `curl -s -o /dev/null -w '%{http_code}' -X POST http://<auth-svc>:19690/api/v1/auth/login ...` | 全部 `status=active`；每人影子登录 200；OTP 与「需重登一次」通知同批送达 | 运维 + auth owner |
+| G9 | admin 不入册：`admin` 永不写入切流名册，loader 对保留账号 fail-fast | `grep -c '^admin$' "$AUTH_CUTOVER_ROSTER_FILE"`；`wc -l "$AUTH_CUTOVER_ROSTER_FILE"` | `grep` 输出 0；行数 = 批次 A 用户数（1），名册只含该非 admin 用户 | 切流执行人 |
+
+```bash
+# G1 严格 JSON 解码：出现重复 key 直接失败
+python3 - <<'PY'
+import json
+def strict(pairs):
+    keys = [k for k, _ in pairs]
+    assert len(keys) == len(set(keys)), f"duplicate keys: {keys}"
+    return dict(pairs)
+json.load(open("login.json", encoding="utf-8"), object_pairs_hook=strict)
+print("OK: no duplicate keys")
+PY
+```
+
+> G1-G4 是合同缺陷，G5-G7 是部署/环境缺陷，G8-G9 是切流卫生项；证据统一归档到
+> `docs/auth-dualstack-rehearsal-2026-11-19.md` 的后续复跑记录或同目录新增复跑日志。
+
 ---
 
 ## 4. 逐域顺序与理由（数字来自 2026-11-17 审计）
@@ -117,10 +182,11 @@
 | 日期 | 星期 | 域 | 阶段 | 关键动作 | 签收 |
 |---|---|---|---|---|---|
 | 2026-11-19 | 四 | 全部 | 准备开始 | 门禁基线、7 天指标冻结起点、角色填实、回退演练排期 | 项目 owner |
-| 2026-11-19 ~ 11-24 | 四~二 | auth | 准备 | 关闭/接受 A-1/A-2/A-3；打开 auth HTTP 网关；admin 改密；名册与 OTP 就绪；回退演练 | auth owner |
-| 2026-11-25 | 三 | auth | **50/50 切换** | 按 owner 批准的批次写入名册，阶段目标覆盖约 50% 活跃用户；10:00 前完成首批，14:00 前首轮抽验 | auth owner + 观察员 |
-| 2026-11-25 ~ 11-27 | 三~五 | auth | 观察窗口（3 个工作日） | 每小时记录；11-27 17:00 前签「继续/回退」 | auth owner |
-| 2026-11-30 | 一 | auth | **100% 切换** | 剩余用户入册；`AUTH_SVC_OWNS_NEW_ACCOUNTS=true` | auth owner |
+| 2026-11-19 ~ 11-23 | 四~一 | auth | 准备 / 修复 | 关闭/接受 A-1/A-2/A-3；按 §3.1 修复 G1-G9；打开 auth HTTP 网关；admin 改密；名册与 OTP 准备；回退演练 | auth owner |
+| 2026-11-24 | 二 | auth | **修复门禁（Fix Gate）** | §3.1 G1-G9 全绿并逐条签字 + §3 P1-P7/P10-P11；真栈冒烟；未过则 11-25 不写名册，用本日缓冲修缺陷 | 项目 owner + auth owner |
+| 2026-11-25 | 三 | auth | **名册批次 A（二选一）** | 仅门禁全绿时执行：**1 个非 admin 用户**写入 `AUTH_CUTOVER_ROSTER_FILE`；10:00 前完成首批，14:00 前首轮抽验；门禁未过则 **HOLD**，不重启切流 | auth owner + 观察员 |
+| 2026-11-25 ~ 11-27 | 三~五 | auth | 观察窗口（批次 A，3 个工作日） | 每小时记录；11-27 17:00 前签「继续/回退」 | auth owner |
+| 2026-11-30 | 一 | auth | **100% 切换** | 批次 A 通过后按 runbook 追加批次；剩余用户入册；`AUTH_SVC_OWNS_NEW_ACCOUNTS=true` | auth owner |
 | 2026-11-30 ~ 12-04 | 一~五 | auth | 观察窗口（5 个工作日） | 登录 5xx=0；429 不持续；12-04 17:00 签收 | auth owner |
 | 2026-12-07 ~ 12-08 | 一~二 | auth | 旧实现移除 | 删除 controlplane auth 登录/会话/本地 store 直写与后台循环；若 A-1 判定「管理面保持本地」，保留对应管理 handler 并在 runbook 标注；保留 cutover router、loginGuard | 执行 owner + 回退执行人 |
 | 2026-12-09 ~ 12-11 | 三~五 | auth | 移除后验证（3 个工作日） | build/test/lint/smoke；404/405 回归；12-11 17:00 签收 | auth owner |
@@ -145,9 +211,14 @@
 > 日历约 8~9 周，略高于章程 6~8 周的估算。原因是三域严格串行观察窗；压缩只能靠并行观察窗，
 > 那会违反 charter 的「不做跨域大爆炸切换」非目标。元旦（2027-01-01）不排任何切换动作。
 >
-> **auth 50/50 窗口的假设**：11-25~11-27 按「owner 批准较快批次节奏」排；若坚持 runbook 默认
+> **auth 批次窗口的假设**：11-25~11-27 按「owner 批准较快批次节奏」排；若坚持 runbook 默认
 > 「每批 ≥2 个工作日观察 + 累计 25% 后复评」，则 50% 阶段会超过 3 个工作日，后续日期整体顺延。
-> 该选择必须在 11-24 auth Go/No-Go 前由 owner 拍板（§11 第 1、2 项）。
+> 该选择必须在 11-24 修复门禁前由 owner 拍板（§11 第 1、2 项）。
+>
+> **11-25 是条件执行，不是默认执行**：只有 §3.1 九项全绿才写批次 A 名册；任一项未过即 HOLD，
+> 占用 11-24 缓冲日修复，后续 auth 日期从门禁实际通过日顺延。**task / device 日期不变**，
+> 但两者 Go/No-Go 必须重新确认共享环境（同一控制面、共享 MySQL/Redis、OTP/运维窗口）未受
+> auth 门禁失败影响；共享环境不满足时同样顺延，不得带病切域。
 >
 > **与章程 M4 的差异**：charter:127 的 M4 写的是「删除三域 handler / 后台循环 / 本地 store 直写」；本排期按任务要求
 > 拆成**逐域删除**——每域 100% 稳定满 5 个工作日后删除该域旧实现，其他域不受影响。
@@ -249,13 +320,14 @@
 | 11-20 | 五 | 核对开关方向 | staging：svcproxy 域加入 `OPSMESH_SERVICE_PROXY` 后确认回落本地、清空后确认转发；auth 另测 `AUTH_SVC_PROXY_ENABLED=false/true`；task 另测 `TASK_SVC_PROXY_ENABLED=false/true` 的 `/api/v1/tasks` 走向 | 回退执行人 | ☐ |
 | 11-20 | 五 | auth 运维前置 | `AUTH_SVC_HTTP_ENABLED=true`、`AUTH_SVC_URL`、对侧 admin 改密、名册文件路径、OTP 交付清单 | 运维 | ☐ |
 | 11-20 | 五 | auth 回退演练 | `bash deploy/scripts/smoke-cutover.sh` 第 10 节；记录软/硬回退秒数 | 回退执行人 | ☐ |
+| 11-20 ~ 11-23 | 五~一 | auth 缺陷修复 G1-G9 | 按 §3.1 逐项修复并留证；11-24 门禁前完成 | auth-svc 开发 + 部署 owner | ☐ |
 | 11-23 | 一 | device P0 红测试 | 为 D-1/D-2/D-3 写契约测试，当前必须红；分配给执行 owner | 开发 | ☐ |
 | 11-23 | 一 | task 适配层设计评审 | `rpcAgentService` 接口、幂等键、claim/report 语义、影子读对账方案 | 开发 + task owner | ☐ |
 | 11-23 | 一 | batch/canary 归属草案 | 二选一：task-svc 实现 / 明确本地；影响 T-2/T-4/T-8 | task owner | ☐ |
 | 11-24 | 二 | 真栈冒烟 | MySQL 8 + Redis 7；`smoke-cutover.sh` + `smoke-task-cutover.sh`；记录日志 | 执行 owner | ☐ |
 | 11-24 | 二 | device 冒烟缺口登记 | 确认 device 等价冒烟脚本尚未入库（审计 §7 第 5 条），排入准备阶段 | 执行 owner | ☐ |
-| 11-24 | 二 | auth Go/No-Go | §3 P1-P7、P10-P11 逐条签字；未过则 11-25 不切，顺延到下一个工作日 | 项目 owner | ☐ |
-| 11-25 | 三 | auth 50/50 切换（条件执行） | 10:00 前写名册；14:00 前完成首轮抽验；观察窗开始 | auth owner | ☐ |
+| 11-24 | 二 | auth 修复门禁 + Go/No-Go | §3.1 G1-G9 全绿 + §3 P1-P7、P10-P11 逐条签字；真栈冒烟；未过则 11-25 不写名册，用 11-24 缓冲修缺陷并 HOLD | 项目 owner | ☐ |
+| 11-25 | 三 | auth 名册批次 A（二选一，条件执行） | 仅 11-24 门禁全绿：1 个非 admin 用户写入名册；10:00 前完成；14:00 前首轮抽验；观察窗开始；门禁未过则 HOLD | auth owner | ☐ |
 
 ---
 

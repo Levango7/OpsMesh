@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -437,5 +438,60 @@ func TestABACDecisionRecordEvaluation(t *testing.T) {
 	}
 	if !rec.OccurredAt.Equal(fixed) {
 		t.Fatalf("occurredAt = %s, want %s", rec.OccurredAt, fixed)
+	}
+}
+
+// Stats 必须导出最近一次失败的时间与原因，并在下一次成功后清空 LastError：
+// soak 门禁据此区分"从未回传"与"回传失败中"，并读取 dropped 计算丢弃率。
+func TestABACDecisionReporterStats_LastFlushAtAndLastError(t *testing.T) {
+	var fail atomic.Bool
+	fail.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		decisions := verifyABACDecisionSignature(t, req, body, "agent-1", "test-secret")
+		if fail.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = fmt.Fprintf(w, `{"accepted":%d}`, len(decisions))
+	}))
+	defer srv.Close()
+
+	r := newTestABACDecisionReporter(srv.URL)
+	r.retryBackoffs = []time.Duration{time.Millisecond, time.Millisecond}
+	r.Record(ABACDecisionRecord{RequestID: "req-1"})
+
+	before := time.Now().UTC()
+	if err := r.Flush(context.Background()); err == nil {
+		t.Fatal("500 持续失败时 Flush 必须返回错误")
+	}
+	stats := r.Stats()
+	if stats.Failed != 1 {
+		t.Fatalf("Failed = %d, want 1", stats.Failed)
+	}
+	if stats.Buffered != 1 || stats.Dropped != 0 {
+		t.Fatalf("失败后 Buffered/Dropped = %d/%d, want 1/0", stats.Buffered, stats.Dropped)
+	}
+	if stats.LastFlushAt.IsZero() || stats.LastFlushAt.Before(before) {
+		t.Fatalf("LastFlushAt 应为本次失败时间（>= %v），得到 %v", before, stats.LastFlushAt)
+	}
+	if !strings.Contains(stats.LastError, "500") {
+		t.Fatalf("LastError 应包含状态码 500，得到 %q", stats.LastError)
+	}
+
+	fail.Store(false)
+	if err := r.Flush(context.Background()); err != nil {
+		t.Fatalf("恢复后 Flush 应成功: %v", err)
+	}
+	stats = r.Stats()
+	if stats.Accepted != 1 || stats.Buffered != 0 {
+		t.Fatalf("成功后 Accepted/Buffered = %d/%d, want 1/0", stats.Accepted, stats.Buffered)
+	}
+	if stats.LastError != "" {
+		t.Fatalf("成功后 LastError 应清空，得到 %q", stats.LastError)
+	}
+	if !stats.LastFlushAt.After(before) {
+		t.Fatalf("LastFlushAt 应随成功回传推进，得到 %v", stats.LastFlushAt)
 	}
 }
