@@ -9,17 +9,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	// 具名导入：既注册 database/sql 的 "mysql" 驱动，又供迁移幂等判定使用
-	// mysqlDriver.MySQLError 错误码（1050/1060/1061/1091）。
-	mysqlDriver "github.com/go-sql-driver/mysql"
+	// MySQL 与 PG 驱动的注册均由 dialect.go 的导入承担（包级副作用，
+	// sql.Open(driverName) 依赖它解析驱动名）。
+	// 注册 database/sql 的 "pgx" 驱动（PG 方言运行时装配；MySQL 路径不受影响）。
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Levango7/OpsMesh/internal/events"
@@ -31,6 +32,26 @@ import (
 
 //go:embed migrations/*.sql
 var migrationFS embed.FS
+
+//go:embed migrations/pg/*.sql
+var pgMigrationFS embed.FS
+
+// 两条迁移轨的「迁移文件所在目录」子 FS：Dialect.MigrationFS() 返回它们，
+// migrationFilesFromFS 直接 ReadDir(".") 即得 .sql 列表（embed.FS 的根含
+// migrations/ 前缀目录，PG 轨更是 migrations/pg/ 两层，须 fs.Sub 削到文件层）。
+var (
+	mysqlMigrationsFS = mustSubFS(migrationFS, "migrations")
+	pgMigrationsFS    = mustSubFS(pgMigrationFS, "migrations/pg")
+)
+
+// mustSubFS 取 embed.FS 的固定子目录（路径为编译期常量，失败即 panic）。
+func mustSubFS(fsys fs.FS, dir string) fs.FS {
+	sub, err := fs.Sub(fsys, dir)
+	if err != nil {
+		panic(fmt.Sprintf("embed sub FS %q: %v", dir, err))
+	}
+	return sub
+}
 
 // SQLStore 基于 MySQL + Redis 的持久化实现（数据本地化，私有部署）。
 //   - MySQL 为权威存储（四张表：agents / devices / tasks / task_results）。
@@ -48,6 +69,8 @@ type SQLStore struct {
 	rdb  *redis.Client
 	bus  events.Bus // 事件总线；可 nil（测试/默认 noop）
 	demo bool       // 演示模式：开启时注册预置 uname -a
+
+	dialect Dialect // SQL 方言：按 DSN scheme 推断（postgres:// ⇒ PG，其余 MySQL），构造后不可变。
 
 	instanceID string     // 本进程实例唯一标识（选主参与方）
 	mu         sync.Mutex // 保护 isLeader / leaseUntil / deviceMetrics 的读写
@@ -123,10 +146,14 @@ func (s *SQLStore) publish(e events.Event) {
 // NewSQLStore 打开 MySQL 连接并建表（幂等）。redisAddr 为空则跳过 Redis。
 // redisPassword 为空表示 Redis 未设 --requirepass（不发送 AUTH）。
 func NewSQLStore(dsn, redisAddr, redisPassword string) (*SQLStore, error) {
+	// 方言按 DSN scheme 推断（postgres://|postgresql://|pg:// ⇒ PG），NewSQLStore
+	// 签名不变，3 个调用点零改动；MySQL 为默认分支，DSN 形态与现状逐字等价。
+	d := dialectForDSN(dsn)
 	// 必须开启 parseTime，否则 DATETIME 列无法 Scan 进 time.Time。
-	db, err := sql.Open("mysql", ensureParseTime(dsn))
+	// （仅 MySQL 路径追加；PG DSN 不识别 parseTime/clientFoundRows 参数。）
+	db, err := sql.Open(d.DriverName(), d.PrepareDSN(dsn))
 	if err != nil {
-		return nil, fmt.Errorf("open mysql: %w", err)
+		return nil, fmt.Errorf("open %s: %w", d.DriverName(), err)
 	}
 	// 工程债治理：连接池上限（多租户 schema 隔离下每租户独立 *sql.DB，
 	// 无上限会导致连接数随租户数无界增长，最终打满 MySQL max_connections）。
@@ -137,7 +164,7 @@ func NewSQLStore(dsn, redisAddr, redisPassword string) (*SQLStore, error) {
 	db.SetConnMaxLifetime(30 * time.Minute)
 	// Ping 失败不阻塞启动（MVP 允许延迟连接），仅日志提示。
 	if err := db.Ping(); err != nil {
-		storefail.Record("[store] mysql ping 失败（将延迟重连）: %v", err)
+		storefail.Record("[store] %s ping 失败（将延迟重连）: %v", d.DriverName(), err)
 	}
 
 	var rdb *redis.Client
@@ -154,6 +181,7 @@ func NewSQLStore(dsn, redisAddr, redisPassword string) (*SQLStore, error) {
 
 	s := &SQLStore{
 		db: db, rdb: rdb, instanceID: instID, secret: storekit.MustRandHex(32),
+		dialect:          d,
 		deviceMetrics:    make(map[string]*storekit.MetricsRing),
 		agentSecretCache: make(map[string]string),
 	}
@@ -296,14 +324,14 @@ func migrationLockWaitSec() int {
 	return 15
 }
 
-// acquireMigrationLock 用 MySQL 咨询锁（GET_LOCK）串行化迁移（P0-5）。
+// acquireMigrationLock 用数据库咨询锁（MySQL GET_LOCK / PG pg_try_advisory_lock）串行化迁移（P0-5）。
 //
 // 为什么需要：runMigrations 在每个 *SQLStore 构造时执行（控制面 + 各微服务 + 每租户 schema），
 // 多副本/多服务并发启动时会同时读到「未应用」并同时执行同一 DDL。MySQL 的 DDL 不是事务性的，
 // 并发 ADD COLUMN 的结果是一方 1060 失败——旧实现直接判定迁移失败（且失败还被静默降级）。
 //
-// 锁名含库名：同一 MySQL 实例可能承载多个 schema（MultiSchemaStore 的租户库），
-// 不同库的迁移互不阻塞。MySQL 咨询锁是会话级的，故获取与释放必须在同一连接上。
+// 锁名含库名：同一数据库实例可能承载多个 schema（MultiSchemaStore 的租户库），
+// 不同库的迁移互不阻塞。咨询锁是会话级的，故获取与释放必须在同一连接上。
 // 返回的 release 幂等且自带超时（调用方 ctx 可能已取消/超时，锁仍须释放）。
 func (s *SQLStore) acquireMigrationLock(ctx context.Context) (*sql.Conn, func(), error) {
 	return s.acquireMigrationLockTimeout(ctx, migrationLockTimeoutSec)
@@ -317,16 +345,9 @@ func (s *SQLStore) acquireMigrationLockTimeout(ctx context.Context, timeoutSec i
 		return nil, nil, fmt.Errorf("get conn for migration lock: %w", err)
 	}
 	lockName := migrationLockName(s.databaseName(ctx, conn))
-	var got sql.NullInt64
-	if err := conn.QueryRowContext(ctx,
-		`SELECT GET_LOCK(?, ?)`, lockName, timeoutSec).Scan(&got); err != nil {
+	if err := s.dialect.AcquireMigrationLock(ctx, conn, lockName, timeoutSec); err != nil {
 		_ = conn.Close()
-		return nil, nil, fmt.Errorf("acquire migration lock %s: %w", lockName, err)
-	}
-	// GET_LOCK 语义：1=获得，0=超时，NULL=出错。
-	if !got.Valid || got.Int64 != 1 {
-		_ = conn.Close()
-		return nil, nil, fmt.Errorf("acquire migration lock %s: 等待 %ds 未获得（另一实例正在迁移）", lockName, timeoutSec)
+		return nil, nil, err
 	}
 	released := false
 	release := func() {
@@ -336,8 +357,8 @@ func (s *SQLStore) acquireMigrationLockTimeout(ctx context.Context, timeoutSec i
 		released = true
 		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if _, err := conn.ExecContext(rctx, `SELECT RELEASE_LOCK(?)`, lockName); err != nil {
-			storefail.Record("[store] 释放迁移锁 %s 失败（连接关闭时由 MySQL 自动释放）: %v", lockName, err)
+		if err := s.dialect.ReleaseMigrationLock(rctx, conn, lockName); err != nil {
+			storefail.Record("[store] 释放迁移锁 %s 失败（连接关闭时由库自动释放）: %v", lockName, err)
 		}
 		_ = conn.Close()
 	}
@@ -358,7 +379,7 @@ func migrationLockName(dbName string) string {
 // 查询失败或未选库时返回 "unknown"（锁名退化为全局单锁，语义仍正确——只是跨库串行）。
 func (s *SQLStore) databaseName(ctx context.Context, conn *sql.Conn) string {
 	var name sql.NullString
-	if err := conn.QueryRowContext(ctx, `SELECT DATABASE()`).Scan(&name); err != nil || !name.Valid || name.String == "" {
+	if err := conn.QueryRowContext(ctx, s.dialect.CurrentDatabaseQuery()).Scan(&name); err != nil || !name.Valid || name.String == "" {
 		return "unknown"
 	}
 	return name.String
@@ -396,21 +417,20 @@ func (s *SQLStore) runMigrations() error {
 	}
 	defer release()
 	if _, err := migConn.ExecContext(ctx,
-		fmt.Sprintf("SET SESSION lock_wait_timeout=%d", migrationLockWaitSec())); err != nil {
+		s.dialect.SetLockWaitTimeoutStmt(migrationLockWaitSec())); err != nil {
 		return fmt.Errorf("set migration lock_wait_timeout: %w", err)
 	}
 
 	// 1. 确保 schema_migrations 表存在（复用历史定义，sql.go 原 initSchema 已建此表）。
 	//    G5 / ：增加 checksum 列记录迁移文件 sha256 摘要，启动时校验防篡改。
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-		version INT PRIMARY KEY,
-		applied_at DATETIME,
-		checksum VARCHAR(64) NOT NULL DEFAULT ''
-	)`); err != nil {
+	if _, err := s.db.ExecContext(ctx, s.dialect.SchemaMigrationsDDL()); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 	// 兼容老库：schema_migrations 已存在但缺 checksum 列时补列（G5 /）。
-	s.alterColumnIfMissing(ctx, "schema_migrations", "checksum", "VARCHAR(64) NOT NULL DEFAULT ''")
+	// PG 方言无迁移框架前的老库（HasLegacyFixups=false），DDL 已含 checksum 列，跳过。
+	if s.dialect.HasLegacyFixups() {
+		s.alterColumnIfMissing(ctx, "schema_migrations", "checksum", "VARCHAR(64) NOT NULL DEFAULT ''")
+	}
 
 	// 2. 读取已应用版本号及其 checksum。
 	applied, err := s.appliedMigrations(ctx)
@@ -419,7 +439,7 @@ func (s *SQLStore) runMigrations() error {
 	}
 
 	// 3. 读取嵌入的迁移文件并按版本号排序。
-	files, err := migrationFiles()
+	files, err := migrationFilesFromFS(s.dialect.MigrationFS())
 	if err != nil {
 		return fmt.Errorf("list migration files: %w", err)
 	}
@@ -518,14 +538,21 @@ func (s *SQLStore) appliedMigrations(ctx context.Context) (map[int]migrationReco
 	return applied, rows.Err()
 }
 
-// migrationFiles 从 embed.FS 读取 migrations/*.sql，解析文件名前缀版本号，按版本升序排序。
+// migrationFiles 是 MySQL 轨的零参包装器（migration_test.go 等既有调用点依赖此形态，
+// 测试文件不在本批改动范围）。PG 轨经 migrationFilesFromFS(s.dialect.MigrationFS()) 走。
+func migrationFiles() ([]migrationFile, error) {
+	return migrationFilesFromFS(mysqlMigrationsFS)
+}
+
+// migrationFilesFromFS 从方言给定的迁移根 FS 读取迁移 SQL（根目录即 .sql 文件所在层，
+// MySQL: migrations/；PG: migrations/pg/ 双轨），解析文件名前缀版本号，按版本升序排序。
 // 文件名约定：NNN_description.sql，其中 NNN 为零填充版本号（001、002...）。
 //
 // G5 / ：跳过 NNN_*.down.sql 回滚占位文件（仅作为未来回滚接口的占位，
-// 不参与正向迁移执行；embed 指令 migrations/*.sql 会同时嵌入 .down.sql，
+// 不参与正向迁移执行；embed 指令会同时嵌入 .down.sql，
 // 此处显式过滤避免被误当作正向迁移）。
-func migrationFiles() ([]migrationFile, error) {
-	entries, err := migrationFS.ReadDir("migrations")
+func migrationFilesFromFS(fsys fs.FS) ([]migrationFile, error) {
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +578,7 @@ func migrationFiles() ([]migrationFile, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse version %q from %q: %w", base[:i], e.Name(), err)
 		}
-		content, err := migrationFS.ReadFile(path.Join("migrations", e.Name()))
+		content, err := fs.ReadFile(fsys, e.Name())
 		if err != nil {
 			return nil, err
 		}
@@ -583,8 +610,7 @@ func (s *SQLStore) applyMigration(ctx context.Context, migConn *sql.Conn, mf mig
 				return hErr
 			}
 			if !handled {
-				var me *mysqlDriver.MySQLError
-				if errors.As(err, &me) && me.Number == 1205 {
+				if s.dialect.IsLockTimeoutError(err) {
 					return fmt.Errorf("MDL 等待超时（lock_wait_timeout=%ds）：有长事务持有目标表的元数据锁，"+
 						"ALTER 无法获得——被堵住的业务写入已随之恢复。请在无长事务的维护窗口重试，"+
 						"或经 OPSMESH_MIGRATION_LOCK_WAIT_SEC 调大上限: %w", migrationLockWaitSec(), err)
@@ -594,7 +620,7 @@ func (s *SQLStore) applyMigration(ctx context.Context, migConn *sql.Conn, mf mig
 		}
 	}
 	if _, err := migConn.ExecContext(ctx,
-		`INSERT INTO schema_migrations (version, applied_at, checksum) VALUES (?, ?, ?)`,
+		s.dialect.ConvertPlaceholders(`INSERT INTO schema_migrations (version, applied_at, checksum) VALUES (?, ?, ?)`),
 		mf.version, time.Now().UTC(), migrationChecksum(mf.content)); err != nil {
 		return fmt.Errorf("record migration: %w", err)
 	}
@@ -608,18 +634,14 @@ func (s *SQLStore) applyMigration(ctx context.Context, migConn *sql.Conn, mf mig
 //   - handled=false, err=nil：非幂等类错误（交由调用方原样返回）；
 //   - err!=nil：核实过程本身失败（或目标状态与预期不符），按致命错误返回。
 //
-// 严谨性：不盲目吞掉 1060/1061/1050/1091——必须解析出语句的目标对象并用
+// 严谨性：不盲目吞掉「对象已存在/不存在」类错误——必须解析出语句的目标对象并用
 // information_schema 确认它确实存在（ADD/CREATE）或确实不存在（DROP）。
 // 例如 ALTER TABLE ADD COLUMN 报 1060 但列不存在（不该发生）时返回错误而不是放行。
 func (s *SQLStore) tolerateIdempotentDDLError(ctx context.Context, mf migrationFile, stmt string, err error) (bool, error) {
-	var me *mysqlDriver.MySQLError
-	if !errors.As(err, &me) {
+	if !s.dialect.IsIdempotentDDLError(err) {
 		return false, nil
 	}
-	if !idempotentDDLErrorCodes[me.Number] {
-		return false, nil
-	}
-	target, ok := parseIdempotentDDL(stmt)
+	target, ok := parseIdempotentDDLQuoted(stmt, s.dialect.IdentifierQuote())
 	if !ok {
 		// 语句形态不认识（如复合 ALTER）→ 不吞错，避免把真故障当幂等放行。
 		return false, nil
@@ -668,7 +690,13 @@ var ddlAddNonColumnKeywords = map[string]bool{
 	"FOREIGN": true, "CONSTRAINT": true, "CHECK": true, "PARTITION": true,
 }
 
-// parseIdempotentDDL 从 DDL 语句解析目标对象（仅覆盖本仓迁移实际使用的形态）：
+// parseIdempotentDDL 是 MySQL 形态入口（反引号引用，migration_test.go 钉死此签名）。
+func parseIdempotentDDL(stmt string) (idempotentDDL, bool) {
+	return parseIdempotentDDLQuoted(stmt, '`')
+}
+
+// parseIdempotentDDLQuoted 从 DDL 语句解析目标对象（仅覆盖本仓迁移实际使用的形态，
+// 标识符引号字符由方言给）：
 //
 //	CREATE TABLE [IF NOT EXISTS] t ...      → table t（期望存在）
 //	ALTER TABLE t ADD [COLUMN] c ...        → column t.c（期望存在）
@@ -677,8 +705,8 @@ var ddlAddNonColumnKeywords = map[string]bool{
 //	CREATE [UNIQUE] INDEX i ON t ...        → index t.i（期望存在）
 //
 // 无法识别的形态返回 false（调用方按原错误处理，不吞错）。
-func parseIdempotentDDL(stmt string) (idempotentDDL, bool) {
-	toks := ddlTokens(stmt)
+func parseIdempotentDDLQuoted(stmt string, quote byte) (idempotentDDL, bool) {
+	toks := ddlTokens(stmt, quote)
 	at := func(i int) string {
 		if i >= len(toks) {
 			return ""
@@ -739,12 +767,13 @@ func parseIdempotentDDL(stmt string) (idempotentDDL, bool) {
 	return idempotentDDL{}, false
 }
 
-// ddlTokens 把语句切成去反引号/去分号的 token 列表（大小写不敏感比较在调用侧做）。
-func ddlTokens(stmt string) []string {
+// ddlTokens 把语句切成去标识符引号/去分号的 token 列表（引号字符由方言给，
+// 大小写不敏感比较在调用侧做）。
+func ddlTokens(stmt string, quote byte) []string {
 	raw := strings.Fields(stmt)
 	out := make([]string, 0, len(raw))
 	for _, t := range raw {
-		t = strings.Trim(t, "`;")
+		t = strings.Trim(t, string(quote)+";")
 		if t == "" {
 			continue
 		}
@@ -753,28 +782,14 @@ func ddlTokens(stmt string) []string {
 	return out
 }
 
-// ddlTargetExists 用 information_schema 核实目标对象当前是否存在。
+// ddlTargetExists 用 information_schema（PG 方言索引用 pg_indexes）核实目标对象当前是否存在。
 func (s *SQLStore) ddlTargetExists(ctx context.Context, t idempotentDDL) (bool, error) {
-	const (
-		qColumn = `SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?`
-		qIndex  = `SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=?`
-		qTable  = `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?`
-	)
-	var (
-		cnt int
-		err error
-	)
-	switch t.kind {
-	case ddlColumn:
-		err = s.db.QueryRowContext(ctx, qColumn, t.table, t.name).Scan(&cnt)
-	case ddlIndex:
-		err = s.db.QueryRowContext(ctx, qIndex, t.table, t.name).Scan(&cnt)
-	case ddlTable:
-		err = s.db.QueryRowContext(ctx, qTable, t.table).Scan(&cnt)
-	default:
+	q, args := s.dialect.DDLTargetExistsQuery(t)
+	if q == "" {
 		return false, fmt.Errorf("unknown ddl target kind %q", t.kind)
 	}
-	if err != nil {
+	var cnt int
+	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&cnt); err != nil {
 		return false, err
 	}
 	return cnt > 0, nil
@@ -810,7 +825,8 @@ func legacyCRLFChecksum(content string) string {
 // rebaselineChecksum 把某条已应用迁移的记录改写为规范指纹。
 // 只改 checksum 列——不碰任何 DDL/数据，因此幂等；旧值已打进 WARN 日志，可追溯。
 func (s *SQLStore) rebaselineChecksum(ctx context.Context, version int, sum string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE schema_migrations SET checksum=? WHERE version=?`, sum, version)
+	_, err := s.db.ExecContext(ctx,
+		s.dialect.ConvertPlaceholders(`UPDATE schema_migrations SET checksum=? WHERE version=?`), sum, version)
 	return err
 }
 
@@ -849,6 +865,11 @@ func splitSQLStatements(content string) []string {
 // 的老库补结构。迁移框架上线后，新库由 001_initial.sql 一次性建齐；老库仍需这些补丁
 // 才能升级到最新结构。此处保留全部补丁逻辑，待后续以 002+ 正式迁移形式纳入后可移除。
 func (s *SQLStore) applyLegacyColumnFixups(ctx context.Context) {
+	// PG 方言无迁移框架前的老库（HasLegacyFixups=false），整体 no-op：
+	// PG 轨首库由 migrations/pg/001_initial.sql 一次建齐。
+	if !s.dialect.HasLegacyFixups() {
+		return
+	}
 	// 增量迁移：为已存在但缺 tenant_id 的 tasks 表补列（MySQL 不支持 ADD COLUMN IF NOT EXISTS，
 	// 故检查 information_schema 后按需 ALTER，重复列名错误忽略）。
 	var cnt int

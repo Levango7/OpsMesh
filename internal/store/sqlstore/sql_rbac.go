@@ -362,7 +362,7 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 	for i, ps := range rbacPermSpecs {
 		pid := fmt.Sprintf("perm-%s-%02d", ps.Group, i+1)
 		if _, err := s.db.ExecContext(ctx,
-			`INSERT IGNORE INTO permissions (id, name, description, group_name) VALUES (?, ?, ?, ?)`,
+			s.dialect.InsertIgnore("permissions", []string{"id", "name", "description", "group_name"}),
 			pid, ps.Name, ps.Desc, ps.Group); err != nil {
 			return err
 		}
@@ -385,7 +385,7 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 	for _, r := range roles {
 		perms, _ := json.Marshal(r.perms)
 		if _, err := s.db.ExecContext(ctx,
-			`INSERT IGNORE INTO roles (id, name, description, permissions, created_at) VALUES (?, ?, ?, ?, ?)`,
+			s.dialect.InsertIgnore("roles", []string{"id", "name", "description", "permissions", "created_at"}),
 			r.id, r.name, r.desc, perms, now); err != nil {
 			return err
 		}
@@ -426,21 +426,22 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 		// must_change_password 复活成 1，登录只能拿到 changePasswordToken、拿不到会话 token
 		// （2026-09-26 用真的 v0.9.0 二进制建库 → 升 0.9.2 → 重启，实测复现）。
 		var stored string
-		qerr := s.db.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id = ?`, us.id).Scan(&stored)
+		qerr := s.db.QueryRowContext(ctx,
+			s.dialect.ConvertPlaceholders(`SELECT password_hash FROM users WHERE id = ?`), us.id).Scan(&stored)
 		switch {
 		case qerr == nil:
 			if bcrypt.CompareHashAndPassword([]byte(stored), []byte(us.password)) == nil {
 				if _, err := s.db.ExecContext(ctx,
-					`UPDATE users SET must_change_password = 1 WHERE id = ?`, us.id); err != nil {
+					s.dialect.ConvertPlaceholders(`UPDATE users SET must_change_password = ? WHERE id = ?`), true, us.id); err != nil { // bool 参数：PG BOOLEAN 列不收字面量 1
 					return err
 				}
 			}
 		case errors.Is(qerr, sql.ErrNoRows):
 			// INSERT IGNORE：多副本同时首启时，后到者撞主键也不报错（保持原 upsert 的并发语义）。
 			if _, err := s.db.ExecContext(ctx,
-				`INSERT IGNORE INTO users (id, username, email, password_hash, status, role_ids, created_at, must_change_password, tenant_id)
-				 VALUES (?, ?, ?, ?, 'active', ?, ?, 1, ?)`,
-				us.id, us.name, us.email, string(hash), roleIDs, now, DefaultTenantID); err != nil {
+				// status 与 must_change_password 一并参数化（PG BOOLEAN 列不收字面量 1；MySQL 侧行为等价）。
+				s.dialect.InsertIgnore("users", []string{"id", "username", "email", "password_hash", "status", "role_ids", "created_at", "must_change_password", "tenant_id"}),
+				us.id, us.name, us.email, string(hash), "active", roleIDs, now, true, DefaultTenantID); err != nil {
 				return err
 			}
 		default:
@@ -455,7 +456,8 @@ func (s *SQLStore) seedRBAC(ctx context.Context) error {
 // 比带着坏 JSON 让角色永远 403 好）。
 func (s *SQLStore) refreshPresetRolePermissions(ctx context.Context, roleID string, computed []string) (bool, error) {
 	var storedJSON string
-	err := s.db.QueryRowContext(ctx, `SELECT permissions FROM roles WHERE id = ?`, roleID).Scan(&storedJSON)
+	err := s.db.QueryRowContext(ctx,
+		s.dialect.ConvertPlaceholders(`SELECT permissions FROM roles WHERE id = ?`), roleID).Scan(&storedJSON)
 	if err != nil {
 		return false, fmt.Errorf("read role %s permissions: %w", roleID, err)
 	}
@@ -475,7 +477,7 @@ func (s *SQLStore) refreshPresetRolePermissions(ctx context.Context, roleID stri
 		return false, fmt.Errorf("marshal merged permissions for %s: %w", roleID, err)
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE roles SET permissions = ? WHERE id = ?`, mergedJSON, roleID); err != nil {
+		s.dialect.ConvertPlaceholders(`UPDATE roles SET permissions = ? WHERE id = ?`), mergedJSON, roleID); err != nil {
 		return false, fmt.Errorf("update role %s permissions: %w", roleID, err)
 	}
 	return true, nil
