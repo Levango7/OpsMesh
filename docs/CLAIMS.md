@@ -1449,3 +1449,5 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [RELEASE] 2026-11-19T12:40:00Z from=kilo scope=internal/controlplane/contract_v1_test.go reason=批次62 v1 契约测试已落 main，证据 6f9d0696（contract_v1_test.go 新增，HEAD 存在）
 [RELEASE] 2026-11-19T12:40:01Z from=kilo scope=internal/gates/tenant_store_verdict_gate_test.go,docs/CLAIMS.md reason=批次63 租户裁决登记已落 main，证据 6f9d0696（tenantStoreVerdicts 补 MemoryBudgetStore，HEAD 门禁绿）
 [RELEASE] 2026-11-19T12:40:02Z from=kilo scope=services/auth-svc/,internal/controlplane/svcproxy/,internal/controlplane/service_proxy_test.go,internal/controlplane/auth_users.go,internal/controlplane/auth_login.go reason=批次61 TD-60 auth 切流准备已落 main，证据 6f9d0696（users 分页/非 active 语义/管理面本地代理）
+
+[DONE] 2026-11-20T11:00:00Z from=kilo scope=docs/auth-dualstack-rehearsal-2026-11-19-r2.md,docs/projects/TD-60-cutover-schedule.md note=批次66 收口（r2 G1-G9 全 PASS + 矩阵 30/30 + 门禁命令校正 + 11-25 条件 GO）
