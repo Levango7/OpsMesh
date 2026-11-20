@@ -32,7 +32,8 @@
 | 回退粒度不匹配 | 随机分流没有「批次」可摘，回退只能整域关闭；与 D+C 的逐批可摘原则冲突（`docs/projects/TD-60-domain-convergence-charter.md:84-88`） |
 
 **替代方案**：同一时刻一个用户要么全走 controlplane 本地、要么全走 auth-svc；按名册批次推进，
-逐批观察、逐批可摘。预演对方案 C/D 给的是 **conditional GO**，条件即 §3.1 的九项门禁。
+逐批观察、逐批可摘。预演对方案 C/D 给的是 **conditional GO**，条件即 §3.1 的九项门禁；
+r2 复验（2026-11-20）九项已全 PASS，11-25 维持 conditional GO，剩余前置见下方 r2 节。
 
 ### 日历变更（只动 auth）
 
@@ -42,6 +43,44 @@
 | 11-25 | auth 50/50 随机切换 | **名册批次 A（二选一）**：只切 **1 个非 admin 用户**；仅在 11-24 门禁全绿时写名册；否则占用 11-24 缓冲日修缺陷并 **HOLD**，不写名册、不重启切流 |
 | 11-25 ~ 11-27 | 观察窗口 | 保留，按批次 A 观察；11-27 17:00 签「继续/回退」 |
 | 11-30 起 | 100% | 保留，批次 A 稳定后按 runbook 追加批次；「50/50 阶段」= 名册累计覆盖约 50% 活跃用户，仍不引入请求级随机 |
+
+---
+
+## 2026-11-20 r2 复验结果
+
+> **依据**：`docs/auth-dualstack-rehearsal-2026-11-19-r2.md`（真实 controlplane + auth-svc + 真实 MySQL 8 + Redis 7，基线 `main@c2bcd884`、修复 `256d759c`）。
+> **结论**：§3.1 九项门禁 **9 PASS / 0 FAIL / 0 NOT-DONE**，round-1 矩阵复跑 **30/30 PASS**，拆除干净、无产品代码改动。
+> 两条门禁命令在 r2 中被证明失效（G6 判别列、G9 计数），已在 §3.1 校正；门禁本身以更强证据通过。
+
+| # | 结果 | 一行证据（r2 §2） |
+|---|---|---|
+| G1 | PASS | 严格解码 `duplicates=[]`；login/user 键集合只含 `roleIDs`，`roleIds present=False`（首登与改密后登录均验） |
+| G2 | PASS | auth-svc 与 controlplane users 顶层键均 `['users']`、`alias_hits=[]`、每人 9 个规范键；信封键恰为 `hasMore,page,pageSize,total,users` |
+| G3 | PASS | 首登改密后 `top_mustChangePassword=False`、`nested_mustChangePassword=False`（D4 修复后回读用户） |
+| G4 | PASS | 种子 admin `login user.tenantId=default`、`/me tenantId=default`（嵌套层级不同，值一致） |
+| G5 | PASS | `docker compose -f docker-compose.mysql.yml config` 退出 0；`mysql-master` 仅一个端口条目，slaves 无重复 `environment` |
+| G6 | PASS | DSN 分别为 `/opsmesh_auth?` 与 `/opsmesh?`；`opsmesh_auth` 有 `user_roles`/`role_permissions`，`opsmesh` 二者均无；同一用户名两侧独立成行（判别列已换，见 §3.1） |
+| G7 | PASS | `redis-cli ping=PONG`；登录后 `session:<sha256(at)>` 存在，登出 `sessionRevocation=revoked` 且键被删，旧 token `/me`→401 |
+| G8 | PASS | `cutover-migrate --users batch-a-user` 新建 1、OTP 写 `credentials.txt`；`opsmesh_auth.users` 为 active/`must_change_password=1`；独立影子登录 200（`changePasswordToken` len 445） |
+| G9 | PASS | 名册 `admin` 精确命中 0、非注释条目 1、loader `count=1`；含 `admin` 的名册启动退出 1（fail-fast）；路由日志 3 行全为 `batch-a-user`、admin 0 行 |
+
+**矩阵复跑**：A-E 五组 **30/30 PASS**（本地基线、直连 auth-svc、users 分页与租户隔离、管理面保持本地、名册代理与基线恢复）；结束时已恢复 proxy off / 空名册基线。
+
+### 11-25 判定（r2 更新）
+
+| 方案 | 判定 | 依据 |
+|---|---|---|
+| 50/50 按请求随机切流 | **NO-GO（维持）** | `AUTH_SVC_PROXY_RATIO` 仍无 Go 代码读取；两侧会话分属不同 schema，随机分流会产生分裂会话 |
+| 名册批次 A（1 个非 admin 用户） | **conditional GO** | G1-G9 在真实进程/库/Redis 上全绿；仅在下列四项 r2 剩余前置全部签认时才写名册 |
+
+r2 剩余前置（任一未满足即 11-25 **HOLD**，用 11-24 缓冲日修复，不写名册、不重启切流）：
+
+1. **OTP 交付 + 目标环境影子登录**：批次 A 用户已在 auth-svc 预建为 `active`，一次性口令与「需重登一次」通知按批准渠道送达，并在目标环境完成一次影子登录（r2 只证明产物可生成，未证明人已收到）。
+2. **Redis 撤销启用**：生产 auth-svc 置 `AUTH_SVC_SESSION_STORE_ENABLED=true` 并纳入监控；出现 `Redis SessionStore disabled` 即失去 G7 的即时吊销保证。
+3. **7 天基线指标冻结**：§3 P5 的 5xx / p99 / 核心动作成功率 / 429 / leader / stale task / batch 计数基线已回溯导出并冻结。
+4. **回退演练完成**：本批 `cutover-unroute` 软回退演练已执行并记录耗时（runbook 参考 20~23s）。
+
+> G6/G9 命令校正见 §3.1：G6 不再用 `must_change_password` 判别（两侧 schema 现均有该列），改查 `user_roles`/`role_permissions` 表形状；G9 不再用 `wc -l`（会计入 `cutover-migrate` 注释头），改用 `grep -v '^#' | grep -c .` 的非注释条目数。
 
 ---
 
@@ -112,10 +151,10 @@
 | G3 | change-password 返回过期嵌套 user（D4）：顶层 `mustChangePassword:false`，嵌套 `user.mustChangePassword` 仍为 `true`（`internal/controlplane/auth_login.go:567`） | 初始口令登录后 `curl -s -X POST http://<cp>:19680/api/v1/auth/change-password -b cookies.txt -H 'Content-Type: application/json' -d '{"oldPassword":"<old>","newPassword":"<new>"}' -o chpwd.json`；`python3 -c "import json;d=json.load(open('chpwd.json'));assert d['mustChangePassword'] is False and d['user']['mustChangePassword'] is False;print('OK')"` | 顶层与嵌套字段都为 `false` | controlplane auth 开发 |
 | G4 | 种子 admin 登录体 tenant 为空（D5）：登录体 `tenantId:""`，`/auth/me` 返回 `default`（`services/auth-svc/internal/store/mysql.go:234`；`gateway.go:1148-1152`） | `curl -s -X POST http://<auth-svc>:19690/api/v1/auth/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"<pwd>"}' -o login.json`；`python3 -c "import json;d=json.load(open('login.json'));assert d['tenantId']=='default',d['tenantId'];print('OK')"`；对 `/auth/me` 做同一断言 | login 与 me 的 `tenantId` 均为 `default`，响应字节一致 | auth-svc 开发 |
 | G5 | compose 重复 `ports`（D1）：`docker-compose.mysql.yml:9` 与 `:19` 重复定义，Compose v5.7 拒绝解析 | `docker compose -f docker-compose.mysql.yml config >/dev/null` | 退出码 0；`mysql-master` 仅一个 `ports` 块（同时清理 slaves 重复 `environment`） | 部署 owner |
-| G6 | schema 混用（D6）：auth-svc 绝不能指向 controlplane schema | `echo "$AUTH_SVC_DSN"` 必须含 `/opsmesh_auth?`；`mysql -h <host> -P <port> -u <user> -p -e "SHOW COLUMNS FROM opsmesh_auth.users LIKE 'must_change_password';"` | DSN 指向独立 `opsmesh_auth`；该查询返回 1 行，controlplane `opsmesh.users` 同查询返回 0 行 | 运维 |
+| G6 | schema 混用（D6）：auth-svc 绝不能指向 controlplane schema | `echo "$AUTH_SVC_DSN"` 必须含 `/opsmesh_auth?`；`mysql -h <host> -P <port> -u <user> -p -N -e "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('opsmesh','opsmesh_auth') AND table_name IN ('user_roles','role_permissions') ORDER BY table_schema, table_name;"` | DSN 指向独立 `opsmesh_auth`；结果里 `opsmesh_auth` 恰 2 行（`user_roles`、`role_permissions`），`opsmesh` 0 行。**不要用 `must_change_password` 判别——两侧 schema 现均有该列（2026-11-20 r2 校正）** | 运维 |
 | G7 | Redis 撤销缺失（D7）：`AUTH_SVC_SESSION_STORE_ENABLED=false` 时登出只靠 jti/RT，`cutover-unroute` 无法即时吊销会话 | `redis-cli -h <redis> -p <port> ping`；启动 auth-svc 时置 `AUTH_SVC_SESSION_STORE_ENABLED=true`；登出后检查响应 `sessionRevocation` 字段 | `PONG`；logout 响应不含 `unavailable (Redis disabled)`；登出后旧 access token 访问 `/me` 返回 401 | 运维 |
 | G8 | OTP 预迁移与影子登录：批次用户必须先在 auth-svc 建好、审批、收到一次性口令，并完成一次直连影子登录 | `mysql -e "SELECT username,status FROM opsmesh_auth.users WHERE username IN ('<batch users>');"`；对每个用户 `curl -s -o /dev/null -w '%{http_code}' -X POST http://<auth-svc>:19690/api/v1/auth/login ...` | 全部 `status=active`；每人影子登录 200；OTP 与「需重登一次」通知同批送达 | 运维 + auth owner |
-| G9 | admin 不入册：`admin` 永不写入切流名册，loader 对保留账号 fail-fast | `grep -c '^admin$' "$AUTH_CUTOVER_ROSTER_FILE"`；`wc -l "$AUTH_CUTOVER_ROSTER_FILE"` | `grep` 输出 0；行数 = 批次 A 用户数（1），名册只含该非 admin 用户 | 切流执行人 |
+| G9 | admin 不入册：`admin` 永不写入切流名册，loader 对保留账号 fail-fast | `grep -c '^admin$' "$AUTH_CUTOVER_ROSTER_FILE"`；`grep -v '^#' "$AUTH_CUTOVER_ROSTER_FILE" \| grep -c .` | `grep` 输出 0；非注释条目数 = 批次 A 用户数（1），名册只含该非 admin 用户。**不要用 `wc -l`——会把 `cutover-migrate` 写的注释头数进去（2026-11-20 r2 校正）** | 切流执行人 |
 
 ```bash
 # G1 严格 JSON 解码：出现重复 key 直接失败
@@ -131,7 +170,8 @@ PY
 ```
 
 > G1-G4 是合同缺陷，G5-G7 是部署/环境缺陷，G8-G9 是切流卫生项；证据统一归档到
-> `docs/auth-dualstack-rehearsal-2026-11-19.md` 的后续复跑记录或同目录新增复跑日志。
+> `docs/auth-dualstack-rehearsal-2026-11-19.md` 的后续复跑记录或同目录新增复跑日志（r2 即
+> `docs/auth-dualstack-rehearsal-2026-11-19-r2.md`）。
 
 ---
 
