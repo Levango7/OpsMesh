@@ -1,19 +1,23 @@
 name: ci
 on:
   push:
-    branches: ["**"]
-    # tag 推送触发 release job（goreleaser 发布）。
+    # 特性分支的 CI 由 pull_request 独占：此前 branches:["**"] + pull_request 让同一提交
+    # 产生两条 run（push 与 PR 各一条，github.ref 不同 ⇒ 按 ref 的并发组互斥不到），
+    # 抢同一 runner 资源放大 flake（2026-11-19 PR #129 实测两条 ci run 并行 50min）。
+    # 只保留 main 的 push 门禁（含 Kilo 直推）；tag 推送仍触发 release job。
+    branches: [main]
     # v* 时 build-test/integration/security 正常跑，release needs 全绿后执行。
     tags: ["v*"]
   pull_request:
 
-# 同一 ref 的重复 run 互斥：2026-11-19 实测最近 30 条 run 里有 4 组「同一 SHA + event=push」
-# 各跑了两遍，两条并发 run 抢同一 runner 资源，放大 flake（Race detector 并发时 52.5min，
-# 串行同批次 38.2min）。后来的 run 取代未完成的旧 run，保留最新提交的那条。
+# 按 head SHA 归组而非 ref：同一提交的 push / pull_request 两条 run 会互斥，后者取代前者；
+# 与上面 push 收窄到 main 叠加后，正常路径下每个提交只产生一条 ci run。
+# 背景：2026-11-19 实测同一 SHA+push 曾各跑两遍、PR #129 又出现 push+PR 双跑，
+# 并发抢 runner 资源放大 flake（Race detector 并发 52.5min vs 串行 38.2min）。
 # release.yml 用独立 group 且 cancel-in-progress:false（镜像/Release 不能推一半被掐断），
 # 与本组互不影响。
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 # Docker Hub 凭据（可选）：匿名拉取按 IP 限流，配置后配额显著提升（TD-89）。
