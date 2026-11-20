@@ -1451,3 +1451,7 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [RELEASE] 2026-11-19T12:40:02Z from=kilo scope=services/auth-svc/,internal/controlplane/svcproxy/,internal/controlplane/service_proxy_test.go,internal/controlplane/auth_users.go,internal/controlplane/auth_login.go reason=批次61 TD-60 auth 切流准备已落 main，证据 6f9d0696（users 分页/非 active 语义/管理面本地代理）
 
 [DONE] 2026-11-20T11:00:00Z from=kilo scope=docs/auth-dualstack-rehearsal-2026-11-19-r2.md,docs/projects/TD-60-cutover-schedule.md note=批次66 收口（r2 G1-G9 全 PASS + 矩阵 30/30 + 门禁命令校正 + 11-25 条件 GO）
+
+[RELEASE] 2026-11-20T14:00:00Z from=kilo scope=docs/auth-dualstack-rehearsal-2026-11-19.md,docs/abac-soak-s0-2026-11-19.md note=批次65a 首日证据已落 main，证据 c6e67636（docs/auth-dualstack-rehearsal + docs/abac-soak-s0）；按 append-only 仅追加本行。
+[RELEASE] 2026-11-20T14:00:01Z from=kilo scope=services/auth-svc/,docker-compose.mysql.yml,internal/controlplane/auth_login.go,docs/projects/TD-60-cutover-schedule.md,internal/controlplane/abac_ops.go,internal/agent/,docs/abac-soak-s0-2026-11-19.md note=批次65 首日缺陷收口已落 main，证据 256d759c（auth 契约）与 6f9d0696（abac_ops deny）；按 append-only 仅追加本行。
+[RELEASE] 2026-11-20T14:00:02Z from=kilo scope=docs/auth-dualstack-rehearsal-2026-11-19-r2.md,docs/projects/TD-60-cutover-schedule.md note=批次66 r2 复验已落 main，证据 65077de3（G1-G9 全 PASS + 矩阵 30/30）；按 append-only 仅追加本行。
