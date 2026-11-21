@@ -608,6 +608,15 @@ func buildDBInstanceScript(vreq validatedDBInstance) string {
 
 // registerDBRoutes 注册数据库运维路由。
 func (s *Server) registerDBRoutes(mux *http.ServeMux) {
+	// PostgreSQL 高级运维：扩展生命周期 / MVCC 与表膨胀。
+	mux.HandleFunc("/api/v1/db/postgresql/extensions", s.handleDBPGExtensions)
+	mux.HandleFunc("/api/v1/db/postgresql/mvcc", s.handleDBPGMVCC)
+	mux.HandleFunc("/api/v1/db/postgresql/repl", s.handleDBPGRepl)
+	mux.HandleFunc("/api/v1/db/postgresql/partition", s.handleDBPGPartition)
+	mux.HandleFunc("/api/v1/db/postgresql/fdw", s.handleDBPGFDW)
+	mux.HandleFunc("/api/v1/db/postgresql/types", s.handleDBPGTypes)
+	mux.HandleFunc("/api/v1/db/postgresql/gis", s.handleDBPGGIS)
+	mux.HandleFunc("/api/v1/db/postgresql/monitor", s.handleDBPGMonitor)
 	// 固定路径优先：/api/v1/db/{type}/instance
 	mux.HandleFunc("/api/v1/db/postgresql/instance", s.handleDBInstancePostgreSQL)
 	mux.HandleFunc("/api/v1/db/oracle/instance", s.handleDBInstanceOracle)

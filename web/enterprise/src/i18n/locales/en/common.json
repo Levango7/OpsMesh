@@ -23,6 +23,7 @@
     "osopt": "OS Optimize",
     "system_ops": "System Ops",
     "infra_console": "Infra Console",
+    "db_ops": "DB Advanced Ops",
     "mwdep": "Middleware",
     "k8s": "K8s",
     "k8s_clusters": "K8s Clusters",
@@ -438,5 +439,19 @@
     "path": "The URL in the address bar does not resolve to any page.",
     "go_home": "Back to Overview",
     "go_back": "Go Back"
+  }
+,
+  "db_ops": {
+    "title": "DB Advanced Ops",
+    "subtitle": "PostgreSQL advanced operations",
+    "db": "Database",
+    "tab_extensions": "Extensions",
+    "tab_mvcc": "MVCC",
+    "tab_partition": "Partition",
+    "tab_replication": "Replication",
+    "tab_fdw": "FDW",
+    "tab_types": "Types",
+    "tab_gis": "GIS",
+    "tab_monitor": "Monitor"
   }
 }

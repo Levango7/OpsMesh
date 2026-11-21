@@ -23,6 +23,7 @@
     "osopt": "OS 优化",
     "system_ops": "系统运维",
     "infra_console": "基础设施运维台",
+    "db_ops": "数据库高级运维",
     "mwdep": "中间件部署",
     "k8s": "K8s 管理",
     "k8s_clusters": "K8s 集群",
@@ -438,5 +439,19 @@
     "path": "地址栏里的路径不指向任何页面。",
     "go_home": "返回概览",
     "go_back": "返回上一页"
+  }
+,
+  "db_ops": {
+    "title": "数据库高级运维",
+    "subtitle": "PostgreSQL 高级运维操作",
+    "db": "数据库",
+    "tab_extensions": "扩展",
+    "tab_mvcc": "MVCC",
+    "tab_partition": "分区",
+    "tab_replication": "复制",
+    "tab_fdw": "FDW",
+    "tab_types": "类型",
+    "tab_gis": "GIS",
+    "tab_monitor": "监控"
   }
 }
