@@ -24,6 +24,7 @@
     "system_ops": "System Ops",
     "infra_console": "Infra Console",
     "db_ops": "DB Advanced Ops",
+    "oracle_ops": "Oracle Advanced Ops",
     "mwdep": "Middleware",
     "k8s": "K8s",
     "k8s_clusters": "K8s Clusters",
@@ -453,5 +454,19 @@
     "tab_types": "Types",
     "tab_gis": "GIS",
     "tab_monitor": "Monitor"
+  },
+  "oracle_ops": {
+    "title": "Oracle Advanced Ops",
+    "subtitle": "Oracle advanced operations",
+    "db": "Database",
+    "tab_ext": "Ext",
+    "tab_ha": "HA",
+    "tab_backup": "Backup",
+    "tab_replication": "Replication",
+    "tab_perf": "Perf",
+    "tab_security": "Security",
+    "tab_upgrade": "Upgrade",
+    "tab_migration": "Migration",
+    "tab_rac": "RAC"
   }
 }

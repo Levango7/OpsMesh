@@ -82,6 +82,40 @@ var MiddlewareTemplates = []MiddlewareTemplate{
 		},
 	},
 	{
+		ID:          "oracle",
+		Name:        "Oracle",
+		Category:    "database",
+		Version:     "21c",
+		Description: "Oracle Database 高级关系型数据库，支持 RAC 与企业级 SQL",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "oracle", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "1521", Required: true, Type: "int"},
+			{Name: "password", Description: "Oracle 密码", Default: "", Required: true, Type: "string"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/oracle", Required: true, Type: "string"},
+			{Name: "sid", Description: "Oracle SID", Default: "XE", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:1521 -e ORACLE_PASSWORD={password} -v {datadir}:/opt/oracle/oradata --restart unless-stopped {image}",
+				Verify:    "docker exec {name} sqlplus -L system/{password}@//localhost:1521/{sid}",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "yum install -y oracle-database-xe",
+				Verify:    "systemctl is-active oracle-xe",
+				Uninstall: "systemctl stop oracle-xe && yum remove -y oracle-database-xe",
+			},
+		},
+		Risk: "high",
+		Tags: []string{"database", "sql", "oracle", "rac"},
+		Versions: []MiddlewareVersion{
+			{Version: "21c", DockerImage: "gvenzl/oracle-xe:21-slim", Default: true},
+			{Version: "19c", DockerImage: "gvenzl/oracle-xe:19-slim"},
+			{Version: "18c", DockerImage: "gvenzl/oracle-xe:18-slim"},
+		},
+	},
+	{
 		ID:          "patroni",
 		Name:        "Patroni",
 		Category:    "database",

@@ -24,6 +24,7 @@
     "system_ops": "系统运维",
     "infra_console": "基础设施运维台",
     "db_ops": "数据库高级运维",
+    "oracle_ops": "Oracle 高级运维",
     "mwdep": "中间件部署",
     "k8s": "K8s 管理",
     "k8s_clusters": "K8s 集群",
@@ -443,15 +444,29 @@
 ,
   "db_ops": {
     "title": "数据库高级运维",
-    "subtitle": "PostgreSQL 高级运维操作",
+    "subtitle": "PostgreSQL 高级运维",
     "db": "数据库",
     "tab_extensions": "扩展",
     "tab_mvcc": "MVCC",
     "tab_partition": "分区",
     "tab_replication": "复制",
-    "tab_fdw": "FDW",
+    "tab_fdw": "外部表",
     "tab_types": "类型",
     "tab_gis": "GIS",
     "tab_monitor": "监控"
+  },
+  "oracle_ops": {
+    "title": "Oracle 高级运维",
+    "subtitle": "Oracle 高级运维",
+    "db": "数据库",
+    "tab_ext": "扩展",
+    "tab_ha": "高可用",
+    "tab_backup": "备份",
+    "tab_replication": "复制",
+    "tab_perf": "性能",
+    "tab_security": "安全",
+    "tab_upgrade": "升级",
+    "tab_migration": "迁移",
+    "tab_rac": "RAC"
   }
 }
