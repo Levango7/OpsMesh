@@ -101,7 +101,7 @@ const form = ref(null)
 
 function openCreate() {
   formError.value = ''
-  form.value = { id: null, name: '', description: '', stepsRaw: '' }
+  form.value = { id: null, name: '', description: '', triggerType: 'shell', enabled: true, stepsRaw: '' }
 }
 
 function openEdit(row) {
@@ -110,6 +110,8 @@ function openEdit(row) {
     id: row.id,
     name: row.name || '',
     description: row.description || '',
+    triggerType: row.triggerType || 'shell',
+    enabled: row.enabled !== false,
     stepsRaw: formatSteps(row.steps)
   }
 }
@@ -135,7 +137,16 @@ async function onSave() {
     const body = {
       name: form.value.name,
       description: form.value.description,
-      steps
+      triggerType: form.value.triggerType || 'shell',
+      enabled: form.value.enabled !== false,
+      steps: steps.map((step, index) => ({
+        // 后端要求 ID/Order/Mode/Approvers；示例 JSON 只给 name/order 时补齐稳定默认。
+        id: step.id || `step-${index + 1}`,
+        name: step.name || `Step ${index + 1}`,
+        order: step.order ?? index + 1,
+        mode: step.mode || 'sequential',
+        approvers: step.approvers || [],
+      }))
     }
     if (form.value.id) await store.updateFlow(form.value.id, body)
     else await store.createFlow(body)
