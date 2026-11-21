@@ -1,7 +1,6 @@
-const CACHE_VERSION = 'v1'
+const CACHE_VERSION = 'v2'
 const STATIC_CACHE = `opsmesh-static-${CACHE_VERSION}`
 const DYNAMIC_CACHE = `opsmesh-dynamic-${CACHE_VERSION}`
-const API_CACHE = `opsmesh-api-${CACHE_VERSION}`
 
 const STATIC_ASSETS = [
   '/enterprise/',
@@ -11,9 +10,6 @@ const STATIC_ASSETS = [
 ]
 
 const STATIC_EXTENSIONS = /\.(js|css|woff2?|ttf|otf|svg|png|jpe?g|webp|avif|gif)$/
-
-const API_TTL = 5 * 60 * 1000
-const MAX_API_ENTRIES = 100
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -26,7 +22,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys
-          .filter((k) => k.startsWith('opsmesh-') && k !== STATIC_CACHE && k !== DYNAMIC_CACHE && k !== API_CACHE)
+          .filter((k) => k.startsWith('opsmesh-') && k !== STATIC_CACHE && k !== DYNAMIC_CACHE)
           .map((k) => caches.delete(k))
       )
     ).then(() => self.clients.claim())
@@ -41,7 +37,15 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return
 
   if (isAPIRequest(url)) {
-    event.respondWith(networkFirstWithTTL(request))
+    // 身份、租户数据与 SSE 一律直连：不能按 URL 缓存后串给其他用户/租户。
+    // 离线需求若未来成为硬要求，再单独设计不含身份信息的只读白名单。
+    event.respondWith(fetch(request))
+    return
+  }
+
+  if (request.mode === 'navigate') {
+    // index.html 必须网络优先，避免旧 HTML 引用已删除的 hash 资源。
+    event.respondWith(networkFirst(request, DYNAMIC_CACHE))
     return
   }
 
@@ -81,46 +85,24 @@ async function cacheFirst(request, cacheName) {
   }
 }
 
-async function networkFirstWithTTL(request) {
-  const cache = await caches.open(API_CACHE)
-  const cached = await cache.match(request)
-
-  if (cached) {
-    const dateHeader = cached.headers.get('sw-cached-at')
-    const age = dateHeader ? Date.now() - parseInt(dateHeader, 10) : Infinity
-    if (age < API_TTL) {
-      return cached
-    }
-  }
-
+async function networkFirst(request, cacheName) {
   try {
     const response = await fetch(request)
     if (response.ok) {
-      const headers = new Headers(response.headers)
-      headers.set('sw-cached-at', Date.now().toString())
-      const modified = new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers
-      })
-      await cache.put(request, modified)
-      trimCache(cache, MAX_API_ENTRIES)
+      const cache = await caches.open(cacheName)
+      // 先 clone 再写缓存；原始 response 必须原样返回，body 不能被提前消费。
+      await cache.put(request, response.clone())
     }
     return response
   } catch {
+    const cached = await caches.match(request)
     if (cached) return cached
-    return new Response(JSON.stringify({ error: 'offline' }), {
-      status: 503,
-      headers: { 'Content-Type': 'application/json' }
-    })
+    if (request.mode === 'navigate') {
+      const offline = await caches.match('/enterprise/offline.html')
+      if (offline) return offline
+    }
+    return new Response('Offline', { status: 503, statusText: 'Service Unavailable' })
   }
-}
-
-async function trimCache(cache, maxEntries) {
-  const keys = await cache.keys()
-  if (keys.length <= maxEntries) return
-  const toDelete = keys.slice(0, keys.length - maxEntries)
-  await Promise.all(toDelete.map((k) => cache.delete(k)))
 }
 
 self.addEventListener('message', (event) => {
