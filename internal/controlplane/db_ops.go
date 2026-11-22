@@ -609,6 +609,21 @@ func buildDBInstanceScript(vreq validatedDBInstance) string {
 // registerDBRoutes 注册数据库运维路由。
 func (s *Server) registerDBRoutes(mux *http.ServeMux) {
 	// PostgreSQL 高级运维：扩展生命周期 / MVCC 与表膨胀。
+	mux.HandleFunc("/api/v1/db/mysql/ext", s.handleMySQLExt)
+	mux.HandleFunc("/api/v1/db/mongodb/ext", s.handleMongoExt)
+	mux.HandleFunc("/api/v1/db/graph/ext", s.handleGraphExt)
+	mux.HandleFunc("/api/v1/db/vector/ext", s.handleVectorExt)
+	mux.HandleFunc("/api/v1/db/tsdb/ext", s.handleTSDBExt)
+	mux.HandleFunc("/api/v1/db/hadoop/ext", s.handleHadoopExt)
+	mux.HandleFunc("/api/v1/db/webserver/ext", s.handleWebServerExt)
+	mux.HandleFunc("/api/v1/db/redis/ext", s.handleRedisExt)
+	mux.HandleFunc("/api/v1/db/elasticsearch/ext", s.handleESExt)
+	mux.HandleFunc("/api/v1/db/mq/ext", s.handleMQExt)
+	mux.HandleFunc("/api/v1/db/mysql/ha", s.handleMySQLHA)
+	mux.HandleFunc("/api/v1/db/tidb/ext", s.handleTiDBExt)
+	mux.HandleFunc("/api/v1/db/oceanbase/ext", s.handleOceanBaseExt)
+	mux.HandleFunc("/api/v1/db/cassandra/ext", s.handleCassandraExt)
+	mux.HandleFunc("/api/v1/db/pinot/ext", s.handlePinotExt)
 	mux.HandleFunc("/api/v1/db/oracle/ext", s.handleOracleExt)
 	mux.HandleFunc("/api/v1/db/oracle/ha", s.handleOracleHA)
 	mux.HandleFunc("/api/v1/db/postgresql/extensions", s.handleDBPGExtensions)
