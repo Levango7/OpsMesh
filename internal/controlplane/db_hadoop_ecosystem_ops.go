@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 var hadoopEcoNameRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,62}$`)
@@ -91,7 +93,7 @@ func (s *Server) handleHadoopEcosystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'hadoop ecosystem %s %s done'\n", ecoType, action)
+	script := buildHadoopEcosystemScript(ecoType, action, req)
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, "hadoop_ecosystem_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.hadoop.ecosystem", err)
@@ -102,4 +104,114 @@ func (s *Server) handleHadoopEcosystem(w http.ResponseWriter, r *http.Request) {
 		Target: ecoType, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + ecoType + " action=" + action),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
+}
+
+func buildHadoopEcosystemScript(ecoType, action string, req map[string]interface{}) string {
+	var b strings.Builder
+	b.WriteString("set -e\n")
+	name := getStr(req, "name")
+	if name == "" {
+		name = getStr(req, "jobName")
+	}
+	if name == "" {
+		name = "default"
+	}
+	table := getStr(req, "table")
+	if table == "" {
+		table = getStr(req, "tableName")
+	}
+	if table == "" {
+		table = "default_table"
+	}
+	id := getStr(req, "id")
+	if id == "" {
+		id = getStr(req, "notebookID")
+	}
+	if id == "" {
+		id = "notebook"
+	}
+	switch action {
+	// Ranger
+	case "status":
+		b.WriteString("curl -s http://localhost:6080/service/public/v2/api/servicedefs\n")
+	case "policy-list":
+		b.WriteString("curl -s http://localhost:6080/service/public/v2/api/policy\n")
+	case "policy-create":
+		b.WriteString("curl -s -X POST -H 'Content-Type: application/json' -d '{\"service\":\"hdfs\",\"name\":\"policy1\",\"policyType\":0}' http://localhost:6080/service/public/v2/api/policy\n")
+	case "policy-delete":
+		fmt.Fprintf(&b, "curl -s -X DELETE http://localhost:6080/service/public/v2/api/policy/%s\n", shellquote.Quote(name))
+	case "audit":
+		b.WriteString("curl -s http://localhost:6080/service/public/v2/api/audit\n")
+	case "user-sync":
+		b.WriteString("curl -s -X POST http://localhost:6080/service/xusers/users\n")
+	// Atlas
+	case "entity-search":
+		b.WriteString("curl -s 'http://localhost:21000/api/atlas/v2/search/basic?query=*'\n")
+	case "lineage":
+		b.WriteString("curl -s http://localhost:21000/api/atlas/v2/lineage\n")
+	case "type-def":
+		b.WriteString("curl -s http://localhost:21000/api/atlas/v2/types/typedefs\n")
+	case "classification":
+		b.WriteString("curl -s http://localhost:21000/api/atlas/v2/classification\n")
+	// Knox
+	case "topology-list":
+		b.WriteString("curl -s http://localhost:8443/gateway/admin/api/v1/topologies\n")
+	case "topology-create":
+		b.WriteString("curl -s -X POST -H 'Content-Type: application/xml' -d '<topology></topology>' http://localhost:8443/gateway/admin/api/v1/topologies\n")
+	case "service-list":
+		b.WriteString("curl -s http://localhost:8443/gateway/admin/api/v1/services\n")
+	case "ldap-config":
+		b.WriteString("curl -s http://localhost:8443/gateway/admin/api/v1/ldap\n")
+	// Sqoop
+	case "import":
+		fmt.Fprintf(&b, "sqoop import --connect jdbc:mysql://localhost/%s --table %s --target-dir /user/sqoop/%s\n", "db", shellquote.Quote(table), shellquote.Quote(table))
+	case "export":
+		fmt.Fprintf(&b, "sqoop export --connect jdbc:mysql://localhost/db --table %s --export-dir /user/sqoop/%s\n", shellquote.Quote(table), shellquote.Quote(table))
+	case "job-list":
+		b.WriteString("sqoop job --list\n")
+	case "job-create":
+		fmt.Fprintf(&b, "sqoop job --create %s -- import --connect jdbc:mysql://localhost/db --table %s\n", shellquote.Quote(name), shellquote.Quote(table))
+	case "job-delete":
+		fmt.Fprintf(&b, "sqoop job --delete %s\n", shellquote.Quote(name))
+	case "job-exec":
+		fmt.Fprintf(&b, "sqoop job --exec %s\n", shellquote.Quote(name))
+	// Flume
+	case "agent-status":
+		b.WriteString("flume-ng version\n")
+	case "flow-list":
+		b.WriteString("find /etc/flume-ng/conf -name '*.conf' 2>/dev/null || echo 'no flume conf'\n")
+	case "flow-deploy":
+		b.WriteString("flume-ng agent -n agent -f /etc/flume-ng/conf/flume.conf -Dflume.root.logger=INFO,console\n")
+	case "flow-stop":
+		b.WriteString("pkill -f flume-ng || true\n")
+	// Hue
+	case "user-list":
+		b.WriteString("curl -s http://localhost:8888/api/users\n")
+	case "query-history":
+		b.WriteString("curl -s http://localhost:8888/api/query/history\n")
+	// Oozie
+	case "workflow-list":
+		b.WriteString("oozie jobs -jobtype wf\n")
+	case "workflow-submit":
+		b.WriteString("oozie job -submit oozie-workflow.xml\n")
+	case "workflow-kill":
+		fmt.Fprintf(&b, "oozie job -kill %s\n", shellquote.Quote(id))
+	case "coordinator-list":
+		b.WriteString("oozie jobs -jobtype coordinator\n")
+	case "bundle-list":
+		b.WriteString("oozie jobs -jobtype bundle\n")
+	// Zeppelin
+	case "notebook-list":
+		b.WriteString("curl -s http://localhost:8080/api/notebook\n")
+	case "notebook-run":
+		fmt.Fprintf(&b, "curl -s -X PUT http://localhost:8080/api/notebook/%s/run\n", shellquote.Quote(id))
+	case "interpreter-list":
+		b.WriteString("curl -s http://localhost:8080/api/interpreter\n")
+	case "interpreter-restart":
+		b.WriteString("curl -s -X PUT http://localhost:8080/api/interpreter/restart/spark\n")
+	default:
+		fmt.Fprintf(&b, "echo 'hadoop ecosystem %s %s done'\n", ecoType, action)
+	}
+	fmt.Fprintf(&b, "echo 'hadoop ecosystem %s %s done'\n", ecoType, action)
+	return b.String()
 }

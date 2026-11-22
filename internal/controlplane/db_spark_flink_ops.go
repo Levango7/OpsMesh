@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 var sparkFlinkNameRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,62}$`)
@@ -81,7 +83,7 @@ func (s *Server) handleSparkFlink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'sparkflink %s %s done'\n", sfType, action)
+	script := buildSparkFlinkScript(sfType, action, req)
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, "sparkflink_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.sparkflink", err)
@@ -92,4 +94,87 @@ func (s *Server) handleSparkFlink(w http.ResponseWriter, r *http.Request) {
 		Target: sfType, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + sfType + " action=" + action),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
+}
+
+func buildSparkFlinkScript(sfType, action string, req map[string]interface{}) string {
+	var b strings.Builder
+	b.WriteString("set -e\n")
+	id := getStr(req, "id")
+	if id == "" {
+		id = getStr(req, "appID")
+	}
+	if id == "" {
+		id = getStr(req, "jobID")
+	}
+	if id == "" {
+		id = "application_0"
+	}
+	jar := getStr(req, "jar")
+	if jar == "" {
+		jar = "/opt/spark/app.jar"
+	}
+	query := getStr(req, "query")
+	if query == "" {
+		query = "SHOW DATABASES"
+	}
+	switch action {
+	// Spark
+	case "status":
+		b.WriteString("spark-submit --version\n")
+	case "submit":
+		fmt.Fprintf(&b, "spark-submit --master yarn --deploy-mode cluster %s\n", shellquote.Quote(jar))
+	case "kill":
+		fmt.Fprintf(&b, "spark-submit --kill %s\n", shellquote.Quote(id))
+	case "logs":
+		fmt.Fprintf(&b, "yarn logs -applicationId %s\n", shellquote.Quote(id))
+	case "app-list":
+		b.WriteString("yarn application -list | grep -i spark\n")
+	case "app-status":
+		fmt.Fprintf(&b, "yarn application -status %s\n", shellquote.Quote(id))
+	case "history-server":
+		b.WriteString("curl -s http://localhost:18080\n")
+	case "spark-shell":
+		b.WriteString("spark-shell --version\n")
+	case "sql":
+		fmt.Fprintf(&b, "spark-sql -e %s\n", shellquote.Quote(query))
+	case "thrift-server":
+		b.WriteString("/opt/spark/sbin/start-thriftserver.sh\n")
+	case "streaming":
+		fmt.Fprintf(&b, "spark-submit --master yarn --deploy-mode cluster %s\n", shellquote.Quote(jar))
+	case "structured-streaming":
+		fmt.Fprintf(&b, "spark-submit --master yarn --deploy-mode cluster %s\n", shellquote.Quote(jar))
+	case "checkpoint-status":
+		b.WriteString("hdfs dfs -ls /spark-checkpoint 2>/dev/null || echo 'no checkpoint dir'\n")
+	case "executor-list":
+		b.WriteString("curl -s http://localhost:4040/api/v1/applications\n")
+	case "executor-kill":
+		fmt.Fprintf(&b, "curl -s -X DELETE http://localhost:4040/api/v1/applications/%s/executors/%s\n", shellquote.Quote(id), "0")
+	case "config":
+		b.WriteString("cat /opt/spark/conf/spark-defaults.conf\n")
+	case "monitoring":
+		b.WriteString("curl -s http://localhost:4040/metrics/json\n")
+	// Flink
+	case "job-list":
+		b.WriteString("flink list\n")
+	case "job-status":
+		b.WriteString("flink list -r\n")
+	case "savepoint":
+		fmt.Fprintf(&b, "flink savepoint %s hdfs:///flink/savepoints\n", shellquote.Quote(id))
+	case "restore":
+		fmt.Fprintf(&b, "flink run -s hdfs:///flink/savepoints/%s %s\n", shellquote.Quote(id), shellquote.Quote(jar))
+	case "checkpoint-list":
+		fmt.Fprintf(&b, "curl -s http://localhost:8081/jobs/%s/checkpoints\n", shellquote.Quote(id))
+	case "taskmanager-list":
+		b.WriteString("curl -s http://localhost:8081/taskmanagers\n")
+	case "taskmanager-kill":
+		fmt.Fprintf(&b, "curl -s -X DELETE http://localhost:8081/taskmanagers/%s\n", shellquote.Quote(id))
+	case "web-ui":
+		b.WriteString("curl -s http://localhost:8081/overview\n")
+	case "sql-client":
+		b.WriteString("sql-client.sh embedded -e \"SHOW CATALOGS\"\n")
+	default:
+		fmt.Fprintf(&b, "echo 'sparkflink %s %s done'\n", sfType, action)
+	}
+	fmt.Fprintf(&b, "echo 'sparkflink %s %s done'\n", sfType, action)
+	return b.String()
 }
