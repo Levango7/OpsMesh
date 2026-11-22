@@ -148,28 +148,28 @@ func buildDBPGPartitionScript(action, db, tableName, partitionName, boundSpec, s
 	switch action {
 	case "list-partitions":
 		if tableName != "" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT inhrelid::regclass AS partition_name, pg_get_expr(pg_class.relpartbound, inhrelid) AS bound FROM pg_inherits JOIN pg_class ON pg_class.oid = inhrelid WHERE inhparent = %s::regclass;\"\n", dbQ, shellQuote(tableName)))
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT inhrelid::regclass AS partition_name, pg_get_expr(pg_class.relpartbound, inhrelid) AS bound FROM pg_inherits JOIN pg_class ON pg_class.oid = inhrelid WHERE inhparent = %s::regclass;\"\n", dbQ, shellQuote(tableName))
 		} else {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT schemaname, tablename, partitionname FROM pg_partitions ORDER BY schemaname, tablename;\"\n", dbQ))
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT schemaname, tablename, partitionname FROM pg_partitions ORDER BY schemaname, tablename;\"\n", dbQ)
 		}
 	case "create-range":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE TABLE %s PARTITION OF %s FOR VALUES %s;\"\n", dbQ, partitionName, tableName, bs))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE TABLE %s PARTITION OF %s FOR VALUES %s;\"\n", dbQ, partitionName, tableName, bs)
 	case "create-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE TABLE %s PARTITION OF %s FOR VALUES IN %s;\"\n", dbQ, partitionName, tableName, bs))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE TABLE %s PARTITION OF %s FOR VALUES IN %s;\"\n", dbQ, partitionName, tableName, bs)
 	case "create-hash":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE TABLE %s PARTITION OF %s FOR VALUES WITH (MODULUS 4, REMAINDER 0);\"\n", dbQ, partitionName, tableName))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE TABLE %s PARTITION OF %s FOR VALUES WITH (MODULUS 4, REMAINDER 0);\"\n", dbQ, partitionName, tableName)
 	case "attach":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"ALTER TABLE %s ATTACH PARTITION %s %s;\"\n", dbQ, tableName, partitionName, bs))
+		fmt.Fprintf(&b, "psql -d %s -c \"ALTER TABLE %s ATTACH PARTITION %s %s;\"\n", dbQ, tableName, partitionName, bs)
 	case "detach":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"ALTER TABLE %s DETACH PARTITION %s;\"\n", dbQ, tableName, partitionName))
+		fmt.Fprintf(&b, "psql -d %s -c \"ALTER TABLE %s DETACH PARTITION %s;\"\n", dbQ, tableName, partitionName)
 	case "drop-partition":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"DROP TABLE IF EXISTS %s;\"\n", dbQ, partitionName))
+		fmt.Fprintf(&b, "psql -d %s -c \"DROP TABLE IF EXISTS %s;\"\n", dbQ, partitionName)
 	case "partman-status":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT * FROM partman.part_config ORDER BY parent_table;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT * FROM partman.part_config ORDER BY parent_table;\"\n", dbQ)
 	case "partman-create":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT partman.create_parent('public.%s', 'created_at', 'native', '1 day');\"\n", dbQ, tableName))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT partman.create_parent('public.%s', 'created_at', 'native', '1 day');\"\n", dbQ, tableName)
 	case "partman-run":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT partman.run_maintenance_proc();\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT partman.run_maintenance_proc();\"\n", dbQ)
 	}
 	fmt.Fprintf(&b, "echo 'postgresql partition %s done'\n", action)
 	return b.String()

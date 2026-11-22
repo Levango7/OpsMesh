@@ -28,12 +28,12 @@ func (s *Server) handleMQExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	deviceID, _ := req["deviceID"].(string)
+	deviceID := getStr(req, "deviceID")
 	if deviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	mqType, _ := req["type"].(string)
+	mqType := getStr(req, "type")
 	if mqType == "" {
 		mqType = "kafka"
 	}
@@ -41,7 +41,7 @@ func (s *Server) handleMQExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + mqType})
 		return
 	}
-	action, _ := req["action"].(string)
+	action := getStr(req, "action")
 	if action == "" || !extSafeRe.MatchString(action) || mqExtDenied[action] {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return

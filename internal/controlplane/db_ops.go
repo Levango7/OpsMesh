@@ -615,6 +615,11 @@ func (s *Server) registerDBRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/db/vector/ext", s.handleVectorExt)
 	mux.HandleFunc("/api/v1/db/tsdb/ext", s.handleTSDBExt)
 	mux.HandleFunc("/api/v1/db/hadoop/ext", s.handleHadoopExt)
+	mux.HandleFunc("/api/v1/db/bigdata/cluster", s.handleBigDataCluster)
+	mux.HandleFunc("/api/v1/db/bigdata/ha", s.handleBigDataHA)
+	mux.HandleFunc("/api/v1/db/bigdata/security", s.handleBigDataSecurity)
+	mux.HandleFunc("/api/v1/db/sparkflink/ext", s.handleSparkFlink)
+	mux.HandleFunc("/api/v1/db/hadoop/ecosystem", s.handleHadoopEcosystem)
 	mux.HandleFunc("/api/v1/db/webserver/ext", s.handleWebServerExt)
 	mux.HandleFunc("/api/v1/db/redis/ext", s.handleRedisExt)
 	mux.HandleFunc("/api/v1/db/elasticsearch/ext", s.handleESExt)
@@ -641,6 +646,7 @@ func (s *Server) registerDBRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/db/oceanbase/instance", s.handleDBInstanceOceanBase)
 	mux.HandleFunc("/api/v1/db/mssql/instance", s.handleDBInstanceMSSQL)
 	// 泛路由：GET /api/v1/db/{deviceID} / POST /api/v1/db/{type}/{action} / POST /api/v1/db/deploy
+	mux.HandleFunc("/api/v1/db/diststorage/ext", s.handleDistStorage)
 	mux.HandleFunc("/api/v1/db/deploy", s.handleDBDeploy)
 	mux.HandleFunc("/api/v1/db/", s.handleDBRouting)
 }

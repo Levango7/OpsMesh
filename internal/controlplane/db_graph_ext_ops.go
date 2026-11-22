@@ -36,12 +36,12 @@ func (s *Server) handleGraphExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	deviceID, _ := req["deviceID"].(string)
+	deviceID := getStr(req, "deviceID")
 	if deviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	gType, _ := req["type"].(string)
+	gType := getStr(req, "type")
 	if gType == "" {
 		gType = "neo4j"
 	}
@@ -49,7 +49,7 @@ func (s *Server) handleGraphExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + gType})
 		return
 	}
-	action, _ := req["action"].(string)
+	action := getStr(req, "action")
 	if action == "" || !extSafeRe.MatchString(action) || !graphExtActions[action] {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return

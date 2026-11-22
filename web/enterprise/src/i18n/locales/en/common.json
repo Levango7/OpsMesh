@@ -25,6 +25,8 @@
     "infra_console": "Infra Console",
     "db_ops": "DB Advanced Ops",
     "oracle_ops": "Oracle Advanced Ops",
+    "bigdata_ops": "Big Data Ops",
+    "diststorage_ops": "Dist Storage Ops",
     "mwdep": "Middleware",
     "k8s": "K8s",
     "k8s_clusters": "K8s Clusters",
@@ -468,5 +470,38 @@
     "tab_upgrade": "Upgrade",
     "tab_migration": "Migration",
     "tab_rac": "RAC"
+  },
+  "bigdata_ops": {
+    "title": "Big Data Ops",
+    "subtitle": "Big data cluster operations",
+    "device": "Target Device",
+    "tab_ambari": "Ambari",
+    "tab_cloudera": "Cloudera",
+    "tab_hadoop-ha": "Hadoop HA",
+    "tab_kerberos": "Kerberos",
+    "tab_spark": "Spark",
+    "tab_flink": "Flink",
+    "tab_ranger": "Ranger",
+    "tab_atlas": "Atlas",
+    "tab_knox": "Knox",
+    "tab_sqoop": "Sqoop",
+    "tab_flume": "Flume",
+    "tab_hue": "Hue",
+    "tab_oozie": "Oozie",
+    "tab_zeppelin": "Zeppelin"
+  },
+  "diststorage_ops": {
+    "title": "Dist Storage Ops",
+    "subtitle": "Distributed storage operations",
+    "device": "Target Device",
+    "tab_moosefs": "MooseFS",
+    "tab_juicefs": "JuiceFS",
+    "tab_lustre": "Lustre",
+    "tab_beegfs": "BeeGFS",
+    "tab_cephfs": "CephFS",
+    "tab_glusterfs": "GlusterFS",
+    "tab_seaweedfs": "SeaweedFS",
+    "tab_nfs": "NFS",
+    "tab_samba": "Samba"
   }
 }

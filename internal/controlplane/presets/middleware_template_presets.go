@@ -2507,6 +2507,507 @@ var MiddlewareTemplates = []MiddlewareTemplate{
 			{Version: "2.2", DockerImage: "mindspore/mindspore:2.2.0"},
 		},
 	},
+	{
+		ID:          "ambari",
+		Name:        "Apache Ambari",
+		Category:    "bigdata",
+		Version:     "2.7.5",
+		Description: "Apache Ambari Hadoop 集群管理平台",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "ambari", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "8080", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/ambari", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:8080 -v {datadir}:/var/lib/ambari --restart unless-stopped {image}",
+				Verify:    "docker exec {name} curl -sf http://127.0.0.1:8080",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "yum install -y ambari-server ambari-agent && ambari-server setup -s && systemctl start ambari-server",
+				Verify:    "systemctl is-active ambari-server",
+				Uninstall: "systemctl stop ambari-server && yum remove -y ambari-server ambari-agent",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"bigdata", "hadoop", "ambari", "cluster"},
+		Versions: []MiddlewareVersion{
+			{Version: "2.7.5", DockerImage: "apache/ambari:2.7.5", Default: true},
+			{Version: "2.7.4", DockerImage: "apache/ambari:2.7.4"},
+		},
+	},
+	{
+		ID:          "cloudera-manager",
+		Name:        "Cloudera Manager",
+		Category:    "bigdata",
+		Version:     "7.11",
+		Description: "Cloudera Manager CDH/CDP 集群管理",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "cloudera-manager", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "7180", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/cm", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:7180 -v {datadir}:/var/lib/cloudera --restart unless-stopped {image}",
+				Verify:    "docker exec {name} curl -sf http://127.0.0.1:7180",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "yum install -y cloudera-manager-server && systemctl enable cloudera-scm-server && systemctl start cloudera-scm-server",
+				Verify:    "systemctl is-active cloudera-scm-server",
+				Uninstall: "systemctl stop cloudera-scm-server && yum remove -y cloudera-manager-server",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"bigdata", "cloudera", "cdh", "cdp", "cluster"},
+		Versions: []MiddlewareVersion{
+			{Version: "7.11", DockerImage: "cloudera/cm:7.11", Default: true},
+			{Version: "7.10", DockerImage: "cloudera/cm:7.10"},
+		},
+	},
+	{
+		ID:          "spark",
+		Name:        "Apache Spark",
+		Category:    "bigdata",
+		Version:     "3.5.1",
+		Description: "Apache Spark 统一分析引擎",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "spark", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "8080", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/spark", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:8080 -v {datadir}:/opt/spark/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} /opt/spark/bin/spark-submit --version",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "tar -xzf spark.tgz -C /opt && ln -s /opt/spark* /opt/spark && systemctl enable spark-master",
+				Verify:    "systemctl is-active spark-master",
+				Uninstall: "systemctl stop spark-master && rm -rf /opt/spark",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"bigdata", "spark", "compute"},
+		Versions: []MiddlewareVersion{
+			{Version: "3.5.1", DockerImage: "apache/spark:3.5.1", Default: true},
+			{Version: "3.4.2", DockerImage: "apache/spark:3.4.2"},
+		},
+	},
+	{
+		ID:          "flink",
+		Name:        "Apache Flink",
+		Category:    "bigdata",
+		Version:     "1.19.0",
+		Description: "Apache Flink 流批处理引擎",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "flink", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "8081", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/flink", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:8081 -v {datadir}:/opt/flink/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} curl -sf http://127.0.0.1:8081",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "tar -xzf flink.tgz -C /opt && ln -s /opt/flink* /opt/flink && systemctl enable flink-jobmanager",
+				Verify:    "systemctl is-active flink-jobmanager",
+				Uninstall: "systemctl stop flink-jobmanager && rm -rf /opt/flink",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"bigdata", "flink", "streaming"},
+		Versions: []MiddlewareVersion{
+			{Version: "1.19.0", DockerImage: "apache/flink:1.19.0", Default: true},
+			{Version: "1.18.1", DockerImage: "apache/flink:1.18.1"},
+		},
+	},
+	{
+		ID:          "zeppelin",
+		Name:        "Apache Zeppelin",
+		Category:    "bigdata",
+		Version:     "0.11.1",
+		Description: "Apache Zeppelin 交互式笔记本",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "zeppelin", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "8080", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/zeppelin", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:8080 -v {datadir}:/opt/zeppelin/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} curl -sf http://127.0.0.1:8080",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "tar -xzf zeppelin.tgz -C /opt && ln -s /opt/zeppelin* /opt/zeppelin && systemctl enable zeppelin",
+				Verify:    "systemctl is-active zeppelin",
+				Uninstall: "systemctl stop zeppelin && rm -rf /opt/zeppelin",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"bigdata", "zeppelin", "notebook"},
+		Versions: []MiddlewareVersion{
+			{Version: "0.11.1", DockerImage: "apache/zeppelin:0.11.1", Default: true},
+			{Version: "0.10.1", DockerImage: "apache/zeppelin:0.10.1"},
+		},
+	},
+	{
+		ID:          "oozie",
+		Name:        "Apache Oozie",
+		Category:    "bigdata",
+		Version:     "5.2.1",
+		Description: "Apache Oozie 工作流调度",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "oozie", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "11000", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/oozie", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:11000 -v {datadir}:/opt/oozie/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} curl -sf http://127.0.0.1:11000/oozie",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "tar -xzf oozie.tgz -C /opt && ln -s /opt/oozie* /opt/oozie && systemctl enable oozie",
+				Verify:    "systemctl is-active oozie",
+				Uninstall: "systemctl stop oozie && rm -rf /opt/oozie",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"bigdata", "oozie", "workflow"},
+		Versions: []MiddlewareVersion{
+			{Version: "5.2.1", DockerImage: "apache/oozie:5.2.1", Default: true},
+			{Version: "5.2.0", DockerImage: "apache/oozie:5.2.0"},
+		},
+	},
+	{
+		ID:          "ranger",
+		Name:        "Apache Ranger",
+		Category:    "bigdata",
+		Version:     "2.4.0",
+		Description: "Apache Ranger 安全策略管理",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "ranger", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "6080", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/ranger", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:6080 -v {datadir}:/opt/ranger/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} curl -sf http://127.0.0.1:6080",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "tar -xzf ranger.tgz -C /opt && ln -s /opt/ranger* /opt/ranger && systemctl enable ranger-admin",
+				Verify:    "systemctl is-active ranger-admin",
+				Uninstall: "systemctl stop ranger-admin && rm -rf /opt/ranger",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"bigdata", "ranger", "security"},
+		Versions: []MiddlewareVersion{
+			{Version: "2.4.0", DockerImage: "apache/ranger:2.4.0", Default: true},
+			{Version: "2.3.0", DockerImage: "apache/ranger:2.3.0"},
+		},
+	},
+	{
+		ID:          "atlas",
+		Name:        "Apache Atlas",
+		Category:    "bigdata",
+		Version:     "2.3.0",
+		Description: "Apache Atlas 元数据治理",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "atlas", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "21000", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/atlas", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:21000 -v {datadir}:/opt/atlas/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} curl -sf http://127.0.0.1:21000",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "tar -xzf atlas.tgz -C /opt && ln -s /opt/atlas* /opt/atlas && systemctl enable atlas",
+				Verify:    "systemctl is-active atlas",
+				Uninstall: "systemctl stop atlas && rm -rf /opt/atlas",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"bigdata", "atlas", "metadata"},
+		Versions: []MiddlewareVersion{
+			{Version: "2.3.0", DockerImage: "apache/atlas:2.3.0", Default: true},
+			{Version: "2.2.0", DockerImage: "apache/atlas:2.2.0"},
+		},
+	},
+	{
+		ID:          "knox",
+		Name:        "Apache Knox",
+		Category:    "bigdata",
+		Version:     "2.0.0",
+		Description: "Apache Knox 网关",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "knox", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "8443", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/knox", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:8443 -v {datadir}:/opt/knox/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} curl -sk https://127.0.0.1:8443",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "tar -xzf knox.tgz -C /opt && ln -s /opt/knox* /opt/knox && systemctl enable knox",
+				Verify:    "systemctl is-active knox",
+				Uninstall: "systemctl stop knox && rm -rf /opt/knox",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"bigdata", "knox", "gateway"},
+		Versions: []MiddlewareVersion{
+			{Version: "2.0.0", DockerImage: "apache/knox:2.0.0", Default: true},
+			{Version: "1.6.1", DockerImage: "apache/knox:1.6.1"},
+		},
+	},
+	{
+		ID:          "sqoop",
+		Name:        "Apache Sqoop",
+		Category:    "bigdata",
+		Version:     "1.4.7",
+		Description: "Apache Sqoop 数据导入导出",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "sqoop", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "16000", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/sqoop", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -v {datadir}:/opt/sqoop/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} sqoop version",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "tar -xzf sqoop.tgz -C /opt && ln -s /opt/sqoop* /opt/sqoop",
+				Verify:    "sqoop version",
+				Uninstall: "rm -rf /opt/sqoop",
+			},
+		},
+		Risk: "low",
+		Tags: []string{"bigdata", "sqoop", "etl"},
+		Versions: []MiddlewareVersion{
+			{Version: "1.4.7", DockerImage: "apache/sqoop:1.4.7", Default: true},
+		},
+	},
+	{
+		ID:          "flume",
+		Name:        "Apache Flume",
+		Category:    "bigdata",
+		Version:     "1.11.0",
+		Description: "Apache Flume 日志采集",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "flume", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "41414", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/flume", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:41414 -v {datadir}:/opt/flume/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} flume-ng version",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "tar -xzf flume.tgz -C /opt && ln -s /opt/flume* /opt/flume && systemctl enable flume",
+				Verify:    "systemctl is-active flume",
+				Uninstall: "systemctl stop flume && rm -rf /opt/flume",
+			},
+		},
+		Risk: "low",
+		Tags: []string{"bigdata", "flume", "ingestion"},
+		Versions: []MiddlewareVersion{
+			{Version: "1.11.0", DockerImage: "apache/flume:1.11.0", Default: true},
+			{Version: "1.9.0", DockerImage: "apache/flume:1.9.0"},
+		},
+	},
+	{
+		ID:          "hue",
+		Name:        "Hue",
+		Category:    "bigdata",
+		Version:     "4.11.0",
+		Description: "Hue 大数据 Web UI",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "hue", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "8888", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/hue", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:8888 -v {datadir}:/usr/share/hue/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} curl -sf http://127.0.0.1:8888",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "pip install hue && systemctl enable hue && systemctl start hue",
+				Verify:    "systemctl is-active hue",
+				Uninstall: "systemctl stop hue && pip uninstall -y hue",
+			},
+		},
+		Risk: "low",
+		Tags: []string{"bigdata", "hue", "ui"},
+		Versions: []MiddlewareVersion{
+			{Version: "4.11.0", DockerImage: "gethue/hue:4.11.0", Default: true},
+			{Version: "4.10.0", DockerImage: "gethue/hue:4.10.0"},
+		},
+	},
+	// moosefs (storage, high) — MooseFS 分布式文件系统
+	{
+		ID:          "moosefs",
+		Name:        "MooseFS",
+		Category:    "storage",
+		Version:     "4.56.0",
+		Description: "MooseFS 分布式文件系统，适用于 master/chunkserver/metalogger/quota/snapshot/repair/rebalance",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "moosefs", Required: true, Type: "string"},
+			{Name: "masterport", Description: "Master 端口", Default: "9420", Required: true, Type: "int"},
+			{Name: "chunkport", Description: "Chunkserver 端口", Default: "9422", Required: false, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/moosefs", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name}-master -p {masterport}:9420 -v {datadir}:/var/lib/mfs --restart unless-stopped {image} master",
+				Verify:    "docker exec {name}-master mfscli -S",
+				Uninstall: "docker stop {name}-master && docker rm {name}-master",
+			},
+			"systemd": {
+				Deploy:    "yum install -y moosefs-master moosefs-chunkserver moosefs-client && systemctl enable moosefs-master && systemctl start moosefs-master",
+				Verify:    "systemctl is-active moosefs-master",
+				Uninstall: "systemctl stop moosefs-master && yum remove -y moosefs-master moosefs-chunkserver moosefs-client",
+			},
+		},
+		Risk: "high",
+		Tags: []string{"storage", "distributed", "moosefs", "dfs"},
+		Versions: []MiddlewareVersion{
+			{Version: "4.56.0", DockerImage: "moosefs/moosefs:4.56.0", Default: true},
+			{Version: "4.55.0", DockerImage: "moosefs/moosefs:4.55.0"},
+		},
+	},
+	// juicefs (storage, medium) — JuiceFS 分布式文件系统
+	{
+		ID:          "juicefs",
+		Name:        "JuiceFS",
+		Category:    "storage",
+		Version:     "1.2.0",
+		Description: "JuiceFS 分布式文件系统，适用于 format/mount/fsck/gc/profile/quota/sync/warmup",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "juicefs", Required: true, Type: "string"},
+			{Name: "metaport", Description: "元数据端口", Default: "9406", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/juicefs", Required: true, Type: "string"},
+			{Name: "bucket", Description: "对象存储 Bucket", Default: "juicefs", Required: false, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {metaport}:9406 -v {datadir}:/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} juicefs status",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "curl -sSL https://d.juicefs.com/install | sh - && juicefs format --storage file --bucket {datadir} redis://127.0.0.1:6379/1 {name}",
+				Verify:    "systemctl is-active juicefs",
+				Uninstall: "systemctl stop juicefs && rm -f /usr/local/bin/juicefs",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"storage", "distributed", "juicefs", "dfs"},
+		Versions: []MiddlewareVersion{
+			{Version: "1.2.0", DockerImage: "juicedata/juicefs:1.2.0", Default: true},
+			{Version: "1.1.0", DockerImage: "juicedata/juicefs:1.1.0"},
+		},
+	},
+	// lustre (storage, high) — Lustre 分布式文件系统
+	{
+		ID:          "lustre",
+		Name:        "Lustre",
+		Category:    "storage",
+		Version:     "2.15.0",
+		Description: "Lustre 分布式文件系统，适用于 MGS/MDS/OSS/client mount/quota/lfs/striping/pool",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "lustre", Required: true, Type: "string"},
+			{Name: "mgsport", Description: "MGS 端口", Default: "988", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/lustre", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {mgsport}:988 -v {datadir}:/data --privileged --restart unless-stopped {image}",
+				Verify:    "docker exec {name} lctl list_nids",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "yum install -y lustre && systemctl enable lustre && systemctl start lustre",
+				Verify:    "systemctl is-active lustre",
+				Uninstall: "systemctl stop lustre && yum remove -y lustre",
+			},
+		},
+		Risk: "high",
+		Tags: []string{"storage", "distributed", "lustre", "dfs"},
+		Versions: []MiddlewareVersion{
+			{Version: "2.15.0", DockerImage: "lustre/lustre:2.15.0", Default: true},
+			{Version: "2.14.0", DockerImage: "lustre/lustre:2.14.0"},
+		},
+	},
+	// beegfs (storage, high) — BeeGFS 分布式文件系统
+	{
+		ID:          "beegfs",
+		Name:        "BeeGFS",
+		Category:    "storage",
+		Version:     "7.4.0",
+		Description: "BeeGFS 分布式文件系统，适用于 mgmtd/meta/storage/client mount/quota/ctl",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "beegfs", Required: true, Type: "string"},
+			{Name: "mgmtdport", Description: "Management 端口", Default: "8008", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/beegfs", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {mgmtdport}:8008 -v {datadir}:/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} beegfs-ctl --listnodes",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "yum install -y beegfs-mgmtd beegfs-meta beegfs-storage beegfs-client && systemctl enable beegfs-mgmtd && systemctl start beegfs-mgmtd",
+				Verify:    "systemctl is-active beegfs-mgmtd",
+				Uninstall: "systemctl stop beegfs-mgmtd && yum remove -y beegfs-mgmtd beegfs-meta beegfs-storage beegfs-client",
+			},
+		},
+		Risk: "high",
+		Tags: []string{"storage", "distributed", "beegfs", "dfs"},
+		Versions: []MiddlewareVersion{
+			{Version: "7.4.0", DockerImage: "beegfs/beegfs:7.4.0", Default: true},
+			{Version: "7.3.0", DockerImage: "beegfs/beegfs:7.3.0"},
+		},
+	},
 }
 
 // middlewareTemplateByID 按 ID 查找预置中间件模板，未找到返回 nil。
