@@ -139,10 +139,6 @@ func buildMySQLHAScript(action, db, host, port, user, password, standby, mode, d
 	if sb == "" {
 		sb = "replica"
 	}
-	md := mode
-	if md == "" {
-		md = "async"
-	}
 	switch action {
 	case "replication-status":
 		fmt.Fprintf(&b, "%s -e \"SHOW SLAVE STATUS\\G\"\n", cli)

@@ -35,12 +35,12 @@ func (s *Server) handleTSDBExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	deviceID, _ := req["deviceID"].(string)
+	deviceID := getStr(req, "deviceID")
 	if deviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	tType, _ := req["type"].(string)
+	tType := getStr(req, "type")
 	if tType == "" {
 		tType = "influxdb"
 	}
@@ -48,7 +48,7 @@ func (s *Server) handleTSDBExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + tType})
 		return
 	}
-	action, _ := req["action"].(string)
+	action := getStr(req, "action")
 	if action == "" || !extSafeRe.MatchString(action) || !tsdbExtActions[action] {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return

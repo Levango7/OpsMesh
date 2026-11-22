@@ -147,21 +147,21 @@ func buildDBPGFDWScript(action, db, serverName, fdwName, foreignTable, localTabl
 	}
 	switch action {
 	case "servers-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT srvname, srvowner, srvfdw FROM pg_foreign_server ORDER BY srvname;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT srvname, srvowner, srvfdw FROM pg_foreign_server ORDER BY srvname;\"\n", dbQ)
 	case "server-create":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE SERVER %s FOREIGN DATA WRAPPER %s OPTIONS (%s);\"\n", dbQ, serverName, fdwName, opts))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE SERVER %s FOREIGN DATA WRAPPER %s OPTIONS (%s);\"\n", dbQ, serverName, fdwName, opts)
 	case "server-drop":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"DROP SERVER IF EXISTS %s CASCADE;\"\n", dbQ, serverName))
+		fmt.Fprintf(&b, "psql -d %s -c \"DROP SERVER IF EXISTS %s CASCADE;\"\n", dbQ, serverName)
 	case "tables-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT foreign_table_schema, foreign_table_name, foreign_server_name FROM information_schema.foreign_tables ORDER BY foreign_table_name;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT foreign_table_schema, foreign_table_name, foreign_server_name FROM information_schema.foreign_tables ORDER BY foreign_table_name;\"\n", dbQ)
 	case "table-create":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE FOREIGN TABLE %s (id int) SERVER %s OPTIONS (%s);\"\n", dbQ, foreignTable, serverName, opts))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE FOREIGN TABLE %s (id int) SERVER %s OPTIONS (%s);\"\n", dbQ, foreignTable, serverName, opts)
 	case "table-drop":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"DROP FOREIGN TABLE IF EXISTS %s;\"\n", dbQ, foreignTable))
+		fmt.Fprintf(&b, "psql -d %s -c \"DROP FOREIGN TABLE IF EXISTS %s;\"\n", dbQ, foreignTable)
 	case "import-schema":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"IMPORT FOREIGN SCHEMA public FROM SERVER %s INTO public;\"\n", dbQ, serverName))
+		fmt.Fprintf(&b, "psql -d %s -c \"IMPORT FOREIGN SCHEMA public FROM SERVER %s INTO public;\"\n", dbQ, serverName)
 	case "mappings-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT umuser, umserver, umoptions FROM pg_user_mappings ORDER BY umserver;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT umuser, umserver, umoptions FROM pg_user_mappings ORDER BY umserver;\"\n", dbQ)
 	}
 	fmt.Fprintf(&b, "echo 'postgresql fdw %s done'\n", action)
 	return b.String()

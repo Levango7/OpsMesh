@@ -142,21 +142,21 @@ func buildDBPGTypesScript(action, db, typeName, typeKind, values, schema string)
 	dbQ := shellQuote(db)
 	switch action {
 	case "types-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT typname, typtype FROM pg_type WHERE typtype IN ('e','d','c') ORDER BY typname;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT typname, typtype FROM pg_type WHERE typtype IN ('e','d','c') ORDER BY typname;\"\n", dbQ)
 	case "enums-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT t.typname, e.enumlabel FROM pg_type t JOIN pg_enum e ON t.oid = e.enumtypid ORDER BY t.typname, e.enumsortorder;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT t.typname, e.enumlabel FROM pg_type t JOIN pg_enum e ON t.oid = e.enumtypid ORDER BY t.typname, e.enumsortorder;\"\n", dbQ)
 	case "domains-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT typname, pg_get_constraintdef(oid) FROM pg_type WHERE typtype='d' ORDER BY typname;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT typname, pg_get_constraintdef(oid) FROM pg_type WHERE typtype='d' ORDER BY typname;\"\n", dbQ)
 	case "type-create-enum":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE TYPE %s.%s AS ENUM (%s);\"\n", dbQ, schema, typeName, values))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE TYPE %s.%s AS ENUM (%s);\"\n", dbQ, schema, typeName, values)
 	case "type-create-domain":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE DOMAIN %s.%s AS text;\"\n", dbQ, schema, typeName))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE DOMAIN %s.%s AS text;\"\n", dbQ, schema, typeName)
 	case "type-create-composite":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE TYPE %s.%s AS (id int, name text);\"\n", dbQ, schema, typeName))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE TYPE %s.%s AS (id int, name text);\"\n", dbQ, schema, typeName)
 	case "type-drop":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"DROP TYPE IF EXISTS %s.%s CASCADE;\"\n", dbQ, schema, typeName))
+		fmt.Fprintf(&b, "psql -d %s -c \"DROP TYPE IF EXISTS %s.%s CASCADE;\"\n", dbQ, schema, typeName)
 	case "type-info":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT typname, typtype, typnotnull FROM pg_type WHERE typname=%s;\"\n", dbQ, shellQuote(typeName)))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT typname, typtype, typnotnull FROM pg_type WHERE typname=%s;\"\n", dbQ, shellQuote(typeName))
 	}
 	fmt.Fprintf(&b, "echo 'postgresql types %s done'\n", action)
 	return b.String()
