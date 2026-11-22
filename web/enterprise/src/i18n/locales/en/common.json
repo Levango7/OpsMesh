@@ -342,6 +342,8 @@
     "save": "Save",
     "cancel": "Cancel",
     "close": "Close",
+    "capability_unavailable_title": "Capability not enabled",
+    "capability_unavailable_desc": "The optional service or tool required by this feature is not deployed. Enable it to use this feature; other functions remain available.",
     "confirm": "Confirm",
     "write_denied": "You lack write permission for this page — create, edit and delete are disabled.",
     "ok": "OK",

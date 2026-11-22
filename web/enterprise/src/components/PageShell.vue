@@ -10,19 +10,28 @@
         <slot name="actions" />
       </div>
     </header>
-    <div v-if="error" class="poll-err" :data-testid="testid ? testid + '-error' : undefined">{{ error }}</div>
-    <slot />
+    <CapabilityNotice
+      v-if="capabilityUnavailable"
+      :message="error"
+      :testid="testid ? testid + '-capability' : undefined"
+    />
+    <div v-else-if="error" class="poll-err" :data-testid="testid ? testid + '-error' : undefined">{{ error }}</div>
+    <slot v-if="!capabilityUnavailable" />
   </section>
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import CapabilityNotice from '@/components/CapabilityNotice.vue'
+import { isCapabilityMessage } from '@/utils/capability'
+
 // 统一页面骨架（2026-10-27 布局专项）：标题/描述/操作区/错误横幅的唯一实现。
 // 用法：
 //   <PageShell :title="$t('x.title')" :desc="$t('x.subtitle')" testid="x" :error="store.error">
 //     <div class="btnbar">…</div>
 //     <DataTable … />
 //   </PageShell>
-defineProps({
+const props = defineProps({
   title: { type: String, required: true },
   desc: { type: String, default: '' },
   // data-testid 前缀：外层 section 用 testid 本身，标题用 testid-title，错误横幅 testid-error
@@ -30,4 +39,6 @@ defineProps({
   // 错误横幅文本（由调用方传入 store.error 等；为空则不渲染）
   error: { type: String, default: '' }
 })
+
+const capabilityUnavailable = computed(() => isCapabilityMessage(props.error))
 </script>

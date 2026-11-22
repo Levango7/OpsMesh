@@ -5,6 +5,7 @@
 // X-Tenant-ID / X-User / X-User-Roles 由前置网关注入，前端不主动设置。
 import axios from 'axios'
 import { toast } from '@/utils/toast'
+import { isCapabilityError } from '@/utils/capability'
 
 export const http = axios.create({
   baseURL: '/api/v1',
@@ -83,7 +84,7 @@ http.interceptors.response.use(
       else redirectToLogin(LOGIN_REASON_SESSION_EXPIRED)
     }
     // 全局错误 toast：非 401（401 走登录流程不提示）、非 silent、非 refresh 静默请求
-    if (s !== 401 && !original?.silent && !/\/auth\/refresh$/.test(original?.url || '')) {
+    if (s !== 401 && !original?.silent && !isCapabilityError(s, j) && !/\/auth\/refresh$/.test(original?.url || '')) {
       toast.error(j?.error || err.message || '请求失败')
     }
     return Promise.reject({ s, j })

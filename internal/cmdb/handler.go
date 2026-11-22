@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -662,6 +663,10 @@ func (h *Handler) handleCIRelationGraph(w http.ResponseWriter, r *http.Request, 
 	actx := authctx.FromHTTPHeader(r.Header)
 	graph, err := h.store.GetCIRelationGraph(r.Context(), ciID, actx.TenantID)
 	if err != nil {
+		if errors.Is(err, ErrCINotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": ErrCINotFound.Error()})
+			return
+		}
 		writeInternalError(w, "GetCIRelationGraph", err)
 		return
 	}
