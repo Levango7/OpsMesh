@@ -9,8 +9,8 @@
           <div class="agent-picker">
             <div class="agent-toolbar">
               <Input v-model="agentFilter" :placeholder="$t('batch.filter_placeholder')" />
-              <Button variant="ghost" size="small" @click="selectAllAgents">{{ $t('batch.select_all') }}</Button>
-              <Button variant="ghost" size="small" @click="agentIDs = []">{{ $t('batch.clear_selection') }}</Button>
+              <Button variant="ghost" size="sm" @click="selectAllAgents">{{ $t('batch.select_all') }}</Button>
+              <Button variant="ghost" size="sm" @click="agentIDs = []">{{ $t('batch.clear_selection') }}</Button>
               <span class="muted count">{{ agentIDs.length }} / {{ filteredAgents.length }}</span>
             </div>
             <div class="agent-list">
@@ -62,10 +62,10 @@
     <div v-if="store.current" class="card card--raised">
       <div class="flowbar">
         <h3>{{ $t('batch.status_title') }} · {{ store.current.batchID || '—' }}</h3>
-        <Button v-if="store.current.batchID" variant="ghost" size="small" @click="refreshCurrent">
+        <Button v-if="store.current.batchID" variant="ghost" size="sm" @click="refreshCurrent">
           <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
         </Button>
-        <Button variant="ghost" size="small" @click="store.clearCurrent()">{{ $t('common.close') }}</Button>
+        <Button variant="ghost" size="sm" @click="store.clearCurrent()">{{ $t('common.close') }}</Button>
       </div>
       <div class="stats">
         <div class="stat indigo">
@@ -112,7 +112,7 @@
           <span :class="['status-badge', 'status-' + value]">{{ value }}</span>
         </template>
         <template #cell-actions="{ row }">
-          <Button variant="ghost" size="small" @click="viewBatch(row.batchID)" data-testid="batch-view-btn">{{ $t('batch.view') }}</Button>
+          <Button variant="ghost" size="sm" @click="viewBatch(row.batchID)" data-testid="batch-view-btn">{{ $t('batch.view') }}</Button>
         </template>
       </Table>
     </div>

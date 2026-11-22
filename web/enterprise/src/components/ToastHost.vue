@@ -63,8 +63,10 @@ import { toasts, dismiss } from '@/utils/toast'
   border: none;
   background: transparent;
   color: var(--text-3);
-  padding: 0 2px;
-  font-size: 15px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 4px;
+  font-size: 16px;
   line-height: 1;
   border-radius: 4px;
 }

@@ -2,21 +2,21 @@
   <transition name="drawer">
     <div v-if="open" class="drawer-overlay" @click.self="close">
       <aside
-      ref="drawerRef"
-      class="drawer"
-      role="dialog"
-      aria-modal="true"
-      :aria-labelledby="titleId"
-      :aria-describedby="bodyId"
-      tabindex="-1"
-    >
-      <header class="drawer-head">
-        <h3 :id="titleId">{{ title }}</h3>
-        <button type="button" class="xs outline drawer-close" aria-label="Close" @click="emit('close')">✕</button>
-      </header>
-      <div :id="bodyId" class="drawer-body">
-        <slot />
-      </div>
+        ref="drawerRef"
+        class="drawer"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="titleId"
+        :aria-describedby="bodyId"
+        tabindex="-1"
+      >
+        <header class="drawer-head">
+          <h3 :id="titleId">{{ title }}</h3>
+          <button type="button" class="xs outline drawer-close" aria-label="Close" @click="emit('close')">✕</button>
+        </header>
+        <div :id="bodyId" class="drawer-body">
+          <slot />
+        </div>
       </aside>
     </div>
   </transition>
