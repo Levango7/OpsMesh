@@ -43,6 +43,7 @@ const routes = [
   { path: '/infra-console', name: 'infra-console', component: () => import('@/views/InfraConsoleView.vue'), meta: { title: 'nav.infra_console', group: '运维管理', icon: 'deploy', requirePerm: 'device:read' } },
   { path: '/db-ops', name: 'db-ops', component: () => import('@/views/DBOpsView.vue'), meta: { title: 'nav.db_ops', group: '运维管理', icon: 'database', requirePerm: 'device:read' } },
   { path: '/oracle-ops', name: 'oracle-ops', component: () => import('@/views/OracleOpsView.vue'), meta: { title: 'nav.oracle_ops', group: '运维管理', icon: 'database', requirePerm: 'device:read' } },
+  { path: '/bigdata-ops', name: 'bigdata-ops', component: () => import('@/views/BigDataOpsView.vue'), meta: { title: 'nav.bigdata_ops', group: '运维管理', icon: 'database', requirePerm: 'device:read' } },
   { path: '/middleware', name: 'middleware', component: () => import('@/views/MiddlewareDeployView.vue'), meta: { title: 'nav.mwdep', group: '运维管理', icon: 'deploy', requirePerm: 'deploy:read' } },
   // K8s 管理（运维管理）：拆分为「集群管理 / 资源管理」两个子页面
   // /k8s 保留为入口，重定向到集群管理；子页面通过 meta.navKey 归并回同一个侧栏条目。

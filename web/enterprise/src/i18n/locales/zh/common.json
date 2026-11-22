@@ -25,6 +25,7 @@
     "infra_console": "基础设施运维台",
     "db_ops": "数据库高级运维",
     "oracle_ops": "Oracle 高级运维",
+    "bigdata_ops": "大数据运维",
     "mwdep": "中间件部署",
     "k8s": "K8s 管理",
     "k8s_clusters": "K8s 集群",
@@ -468,5 +469,24 @@
     "tab_upgrade": "升级",
     "tab_migration": "迁移",
     "tab_rac": "RAC"
+  },
+  "bigdata_ops": {
+    "title": "大数据运维",
+    "subtitle": "大数据集群运维",
+    "device": "目标设备",
+    "tab_ambari": "Ambari",
+    "tab_cloudera": "Cloudera",
+    "tab_hadoop-ha": "Hadoop HA",
+    "tab_kerberos": "Kerberos",
+    "tab_spark": "Spark",
+    "tab_flink": "Flink",
+    "tab_ranger": "Ranger",
+    "tab_atlas": "Atlas",
+    "tab_knox": "Knox",
+    "tab_sqoop": "Sqoop",
+    "tab_flume": "Flume",
+    "tab_hue": "Hue",
+    "tab_oozie": "Oozie",
+    "tab_zeppelin": "Zeppelin"
   }
 }
