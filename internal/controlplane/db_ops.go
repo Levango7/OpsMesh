@@ -615,6 +615,8 @@ func (s *Server) registerDBRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/db/vector/ext", s.handleVectorExt)
 	mux.HandleFunc("/api/v1/db/tsdb/ext", s.handleTSDBExt)
 	mux.HandleFunc("/api/v1/db/hadoop/ext", s.handleHadoopExt)
+	mux.HandleFunc("/api/v1/db/hdfs/advanced", s.handleHDFSAdvanced)
+	mux.HandleFunc("/api/v1/db/objstorage/ext", s.handleObjStorage)
 	mux.HandleFunc("/api/v1/db/bigdata/cluster", s.handleBigDataCluster)
 	mux.HandleFunc("/api/v1/db/bigdata/ha", s.handleBigDataHA)
 	mux.HandleFunc("/api/v1/db/bigdata/security", s.handleBigDataSecurity)
