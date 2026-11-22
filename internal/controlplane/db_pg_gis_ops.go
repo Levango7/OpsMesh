@@ -152,33 +152,36 @@ func buildDBPGGISScript(action, db, schema, tableName, geomColumn, srid, indexTy
 	if it == "" {
 		it = "gist"
 	}
-	sridInt, _ := strconv.Atoi(srid)
+	sridInt, err := strconv.Atoi(srid)
+	if err != nil {
+		sridInt = 0 // 保留既有行为：非法/空 SRID 回落到 4326。
+	}
 	if sridInt == 0 {
 		sridInt = 4326
 	}
 	switch action {
 	case "postgis-check":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT PostGIS_Full_Version();\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT PostGIS_Full_Version();\"\n", dbQ)
 	case "extension-install":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE EXTENSION IF NOT EXISTS postgis;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE EXTENSION IF NOT EXISTS postgis;\"\n", dbQ)
 	case "spatial-columns":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT f_table_schema, f_table_name, f_geometry_column, coord_dimension, srid, type FROM geometry_columns WHERE f_table_schema=%s;\"\n", dbQ, shellQuote(schema)))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT f_table_schema, f_table_name, f_geometry_column, coord_dimension, srid, type FROM geometry_columns WHERE f_table_schema=%s;\"\n", dbQ, shellQuote(schema))
 	case "spatial-index-create":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE INDEX %s_%s_idx ON %s.%s USING %s (%s);\"\n", dbQ, tableName, geomColumn, schema, tableName, it, geomColumn))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE INDEX %s_%s_idx ON %s.%s USING %s (%s);\"\n", dbQ, tableName, geomColumn, schema, tableName, it, geomColumn)
 	case "spatial-index-drop":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"DROP INDEX IF EXISTS %s_%s_idx;\"\n", dbQ, tableName, geomColumn))
+		fmt.Fprintf(&b, "psql -d %s -c \"DROP INDEX IF EXISTS %s_%s_idx;\"\n", dbQ, tableName, geomColumn)
 	case "geometry-type":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT DISTINCT GeometryType(%s) FROM %s.%s;\"\n", dbQ, geomColumn, schema, tableName))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT DISTINCT GeometryType(%s) FROM %s.%s;\"\n", dbQ, geomColumn, schema, tableName)
 	case "srid-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT srid, auth_name, auth_srid, srtext FROM spatial_ref_sys ORDER BY srid LIMIT 50;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT srid, auth_name, auth_srid, srtext FROM spatial_ref_sys ORDER BY srid LIMIT 50;\"\n", dbQ)
 	case "spatial-query-sample":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT %s, ST_AsText(%s) FROM %s.%s LIMIT 10;\"\n", dbQ, geomColumn, geomColumn, schema, tableName))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT %s, ST_AsText(%s) FROM %s.%s LIMIT 10;\"\n", dbQ, geomColumn, geomColumn, schema, tableName)
 	case "geometry-validate":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT count(*) FILTER (WHERE NOT ST_IsValid(%s)) AS invalid FROM %s.%s;\"\n", dbQ, geomColumn, schema, tableName))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT count(*) FILTER (WHERE NOT ST_IsValid(%s)) AS invalid FROM %s.%s;\"\n", dbQ, geomColumn, schema, tableName)
 	case "geometry-transform":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT ST_Transform(%s, %d) FROM %s.%s LIMIT 5;\"\n", dbQ, geomColumn, sridInt, schema, tableName))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT ST_Transform(%s, %d) FROM %s.%s LIMIT 5;\"\n", dbQ, geomColumn, sridInt, schema, tableName)
 	case "spatial-stats":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT count(*) AS total, ST_Extent(%s) AS extent FROM %s.%s;\"\n", dbQ, geomColumn, schema, tableName))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT count(*) AS total, ST_Extent(%s) AS extent FROM %s.%s;\"\n", dbQ, geomColumn, schema, tableName)
 	}
 	fmt.Fprintf(&b, "echo 'postgresql gis %s done'\n", action)
 	return b.String()
