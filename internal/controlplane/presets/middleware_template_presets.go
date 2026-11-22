@@ -2878,6 +2878,136 @@ var MiddlewareTemplates = []MiddlewareTemplate{
 			{Version: "4.10.0", DockerImage: "gethue/hue:4.10.0"},
 		},
 	},
+	// moosefs (storage, high) — MooseFS 分布式文件系统
+	{
+		ID:          "moosefs",
+		Name:        "MooseFS",
+		Category:    "storage",
+		Version:     "4.56.0",
+		Description: "MooseFS 分布式文件系统，适用于 master/chunkserver/metalogger/quota/snapshot/repair/rebalance",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "moosefs", Required: true, Type: "string"},
+			{Name: "masterport", Description: "Master 端口", Default: "9420", Required: true, Type: "int"},
+			{Name: "chunkport", Description: "Chunkserver 端口", Default: "9422", Required: false, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/moosefs", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name}-master -p {masterport}:9420 -v {datadir}:/var/lib/mfs --restart unless-stopped {image} master",
+				Verify:    "docker exec {name}-master mfscli -S",
+				Uninstall: "docker stop {name}-master && docker rm {name}-master",
+			},
+			"systemd": {
+				Deploy:    "yum install -y moosefs-master moosefs-chunkserver moosefs-client && systemctl enable moosefs-master && systemctl start moosefs-master",
+				Verify:    "systemctl is-active moosefs-master",
+				Uninstall: "systemctl stop moosefs-master && yum remove -y moosefs-master moosefs-chunkserver moosefs-client",
+			},
+		},
+		Risk: "high",
+		Tags: []string{"storage", "distributed", "moosefs", "dfs"},
+		Versions: []MiddlewareVersion{
+			{Version: "4.56.0", DockerImage: "moosefs/moosefs:4.56.0", Default: true},
+			{Version: "4.55.0", DockerImage: "moosefs/moosefs:4.55.0"},
+		},
+	},
+	// juicefs (storage, medium) — JuiceFS 分布式文件系统
+	{
+		ID:          "juicefs",
+		Name:        "JuiceFS",
+		Category:    "storage",
+		Version:     "1.2.0",
+		Description: "JuiceFS 分布式文件系统，适用于 format/mount/fsck/gc/profile/quota/sync/warmup",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "juicefs", Required: true, Type: "string"},
+			{Name: "metaport", Description: "元数据端口", Default: "9406", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/juicefs", Required: true, Type: "string"},
+			{Name: "bucket", Description: "对象存储 Bucket", Default: "juicefs", Required: false, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {metaport}:9406 -v {datadir}:/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} juicefs status",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "curl -sSL https://d.juicefs.com/install | sh - && juicefs format --storage file --bucket {datadir} redis://127.0.0.1:6379/1 {name}",
+				Verify:    "systemctl is-active juicefs",
+				Uninstall: "systemctl stop juicefs && rm -f /usr/local/bin/juicefs",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"storage", "distributed", "juicefs", "dfs"},
+		Versions: []MiddlewareVersion{
+			{Version: "1.2.0", DockerImage: "juicedata/juicefs:1.2.0", Default: true},
+			{Version: "1.1.0", DockerImage: "juicedata/juicefs:1.1.0"},
+		},
+	},
+	// lustre (storage, high) — Lustre 分布式文件系统
+	{
+		ID:          "lustre",
+		Name:        "Lustre",
+		Category:    "storage",
+		Version:     "2.15.0",
+		Description: "Lustre 分布式文件系统，适用于 MGS/MDS/OSS/client mount/quota/lfs/striping/pool",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "lustre", Required: true, Type: "string"},
+			{Name: "mgsport", Description: "MGS 端口", Default: "988", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/lustre", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {mgsport}:988 -v {datadir}:/data --privileged --restart unless-stopped {image}",
+				Verify:    "docker exec {name} lctl list_nids",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "yum install -y lustre && systemctl enable lustre && systemctl start lustre",
+				Verify:    "systemctl is-active lustre",
+				Uninstall: "systemctl stop lustre && yum remove -y lustre",
+			},
+		},
+		Risk: "high",
+		Tags: []string{"storage", "distributed", "lustre", "dfs"},
+		Versions: []MiddlewareVersion{
+			{Version: "2.15.0", DockerImage: "lustre/lustre:2.15.0", Default: true},
+			{Version: "2.14.0", DockerImage: "lustre/lustre:2.14.0"},
+		},
+	},
+	// beegfs (storage, high) — BeeGFS 分布式文件系统
+	{
+		ID:          "beegfs",
+		Name:        "BeeGFS",
+		Category:    "storage",
+		Version:     "7.4.0",
+		Description: "BeeGFS 分布式文件系统，适用于 mgmtd/meta/storage/client mount/quota/ctl",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "beegfs", Required: true, Type: "string"},
+			{Name: "mgmtdport", Description: "Management 端口", Default: "8008", Required: true, Type: "int"},
+			{Name: "datadir", Description: "数据目录（宿主机路径）", Default: "/data/beegfs", Required: true, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {mgmtdport}:8008 -v {datadir}:/data --restart unless-stopped {image}",
+				Verify:    "docker exec {name} beegfs-ctl --listnodes",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "yum install -y beegfs-mgmtd beegfs-meta beegfs-storage beegfs-client && systemctl enable beegfs-mgmtd && systemctl start beegfs-mgmtd",
+				Verify:    "systemctl is-active beegfs-mgmtd",
+				Uninstall: "systemctl stop beegfs-mgmtd && yum remove -y beegfs-mgmtd beegfs-meta beegfs-storage beegfs-client",
+			},
+		},
+		Risk: "high",
+		Tags: []string{"storage", "distributed", "beegfs", "dfs"},
+		Versions: []MiddlewareVersion{
+			{Version: "7.4.0", DockerImage: "beegfs/beegfs:7.4.0", Default: true},
+			{Version: "7.3.0", DockerImage: "beegfs/beegfs:7.3.0"},
+		},
+	},
 }
 
 // middlewareTemplateByID 按 ID 查找预置中间件模板，未找到返回 nil。

@@ -647,6 +647,7 @@ func (s *Server) registerDBRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/db/oceanbase/instance", s.handleDBInstanceOceanBase)
 	mux.HandleFunc("/api/v1/db/mssql/instance", s.handleDBInstanceMSSQL)
 	// 泛路由：GET /api/v1/db/{deviceID} / POST /api/v1/db/{type}/{action} / POST /api/v1/db/deploy
+	mux.HandleFunc("/api/v1/db/diststorage/ext", s.handleDistStorage)
 	mux.HandleFunc("/api/v1/db/deploy", s.handleDBDeploy)
 	mux.HandleFunc("/api/v1/db/", s.handleDBRouting)
 }

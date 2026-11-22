@@ -26,6 +26,7 @@
     "db_ops": "数据库高级运维",
     "oracle_ops": "Oracle 高级运维",
     "bigdata_ops": "大数据运维",
+    "diststorage_ops": "分布式存储运维",
     "mwdep": "中间件部署",
     "k8s": "K8s 管理",
     "k8s_clusters": "K8s 集群",
@@ -488,5 +489,19 @@
     "tab_hue": "Hue",
     "tab_oozie": "Oozie",
     "tab_zeppelin": "Zeppelin"
+  },
+  "diststorage_ops": {
+    "title": "分布式存储运维",
+    "subtitle": "分布式存储运维",
+    "device": "目标设备",
+    "tab_moosefs": "MooseFS",
+    "tab_juicefs": "JuiceFS",
+    "tab_lustre": "Lustre",
+    "tab_beegfs": "BeeGFS",
+    "tab_cephfs": "CephFS",
+    "tab_glusterfs": "GlusterFS",
+    "tab_seaweedfs": "SeaweedFS",
+    "tab_nfs": "NFS",
+    "tab_samba": "Samba"
   }
 }
