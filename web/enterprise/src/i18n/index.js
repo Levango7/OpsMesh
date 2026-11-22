@@ -63,6 +63,7 @@ export const ROUTE_DOMAIN_MAP = {
   batch: 'ops',
   'batch-exec': 'ops',
   'batch-detail': 'ops',
+  'diststorage-ops': 'ops',
   // 资产配置 → assets
   cmdb: 'assets',
   // 交付中心 → delivery

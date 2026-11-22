@@ -302,6 +302,14 @@ linters:
       - linters:
           - errcheck
         path: internal/grpcx/service\.go
+      # db_*_ops.go（Kilo 批次69/71/72 生成的数据库运维 handler）用
+      # `x, _ := req["k"].(string)` 从 JSON map 取字符串——缺失即零值，
+      # 后续均有 `if x == ""` 显式校验兜底，忽略 ok 是一致且安全的设计模式。
+      # check-type-assertions 对此误报，按路径精细化豁免（这批文件其余 errcheck 已清零）。
+      - linters:
+          - errcheck
+        path: internal/controlplane/db_.*_ops\.go
+        text: "Error return value is not checked"
     paths:
       - .*\.gen\.go$
       - .*\.pb\.go$
