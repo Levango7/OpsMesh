@@ -73,12 +73,12 @@ func (s *Server) handleObjStorage(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	deviceID, _ := req["deviceID"].(string)
+	deviceID := getStr(req, "deviceID")
 	if deviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	oType, _ := req["type"].(string)
+	oType := getStr(req, "type")
 	if oType == "" {
 		oType = "minio"
 	}
@@ -86,7 +86,7 @@ func (s *Server) handleObjStorage(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + oType})
 		return
 	}
-	action, _ := req["action"].(string)
+	action := getStr(req, "action")
 	if action == "" || !extSafeRe.MatchString(action) || !objStorageActions[action] {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return
