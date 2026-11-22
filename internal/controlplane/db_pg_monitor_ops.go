@@ -97,22 +97,22 @@ func buildDBPGMonitorScript(action, db, threshold string) string {
 	dbQ := shellQuote(db)
 	switch action {
 	case "stats":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT datname, numbackends, xact_commit, xact_rollback, blks_read, blks_hit, tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted, conflicts, temp_files, temp_bytes, deadlocks FROM pg_stat_database;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT datname, numbackends, xact_commit, xact_rollback, blks_read, blks_hit, tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted, conflicts, temp_files, temp_bytes, deadlocks FROM pg_stat_database;\"\n", dbQ)
 	case "locks":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT pid, locktype, relation::regclass, mode, granted FROM pg_locks;\"\n", dbQ))
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT blocked_locks.pid AS blocked_pid, blocking_locks.pid AS blocking_pid, blocked_activity.query AS blocked_query, blocking_activity.query AS blocking_query FROM pg_catalog.pg_locks blocked_locks JOIN pg_catalog.pg_stat_activity blocked_activity ON blocked_activity.pid = blocked_locks.pid JOIN pg_catalog.pg_locks blocking_locks ON blocking_locks.locktype = blocked_locks.locktype AND blocking_locks.pid <> blocked_locks.pid JOIN pg_catalog.pg_stat_activity blocking_activity ON blocking_activity.pid = blocking_locks.pid WHERE NOT blocked_locks.granted;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT pid, locktype, relation::regclass, mode, granted FROM pg_locks;\"\n", dbQ)
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT blocked_locks.pid AS blocked_pid, blocking_locks.pid AS blocking_pid, blocked_activity.query AS blocked_query, blocking_activity.query AS blocking_query FROM pg_catalog.pg_locks blocked_locks JOIN pg_catalog.pg_stat_activity blocked_activity ON blocked_activity.pid = blocked_locks.pid JOIN pg_catalog.pg_locks blocking_locks ON blocking_locks.locktype = blocked_locks.locktype AND blocking_locks.pid <> blocked_locks.pid JOIN pg_catalog.pg_stat_activity blocking_activity ON blocking_activity.pid = blocking_locks.pid WHERE NOT blocked_locks.granted;\"\n", dbQ)
 	case "long-running":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT pid, usename, state, query_start, (now() - query_start) AS duration, query FROM pg_stat_activity WHERE state = 'active' AND (now() - query_start) > interval '%s seconds' ORDER BY query_start;\"\n", dbQ, threshold))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT pid, usename, state, query_start, (now() - query_start) AS duration, query FROM pg_stat_activity WHERE state = 'active' AND (now() - query_start) > interval '%s seconds' ORDER BY query_start;\"\n", dbQ, threshold)
 	case "connections":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT state, count(*) AS count FROM pg_stat_activity GROUP BY state;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT state, count(*) AS count FROM pg_stat_activity GROUP BY state;\"\n", dbQ)
 	case "cache-hit":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT datname, (blks_hit::numeric / NULLIF(blks_hit + blks_read, 0)) * 100 AS cache_hit_ratio FROM pg_stat_database;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT datname, (blks_hit::numeric / NULLIF(blks_hit + blks_read, 0)) * 100 AS cache_hit_ratio FROM pg_stat_database;\"\n", dbQ)
 	case "replication-lag":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT pid, client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn, (sent_lsn - replay_lsn) AS replay_lag FROM pg_stat_replication;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT pid, client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn, (sent_lsn - replay_lsn) AS replay_lag FROM pg_stat_replication;\"\n", dbQ)
 	case "wal":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT wal_records, wal_fpi, wal_bytes, wal_buffers_full, wal_write, wal_sync, wal_write_time, wal_sync_time FROM pg_stat_wal;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT wal_records, wal_fpi, wal_bytes, wal_buffers_full, wal_write, wal_sync, wal_write_time, wal_sync_time FROM pg_stat_wal;\"\n", dbQ)
 	case "checkpoints":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT checkpoints_timed, checkpoints_req, checkpoint_write_time, checkpoint_sync_time, buffers_checkpoint, buffers_clean, maxwritten_clean, buffers_backend, buffers_backend_fsync, buffers_alloc FROM pg_stat_bgwriter;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT checkpoints_timed, checkpoints_req, checkpoint_write_time, checkpoint_sync_time, buffers_checkpoint, buffers_clean, maxwritten_clean, buffers_backend, buffers_backend_fsync, buffers_alloc FROM pg_stat_bgwriter;\"\n", dbQ)
 	}
 	fmt.Fprintf(&b, "echo 'postgresql monitor %s done'\n", action)
 	return b.String()
