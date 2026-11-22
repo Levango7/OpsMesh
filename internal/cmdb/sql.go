@@ -402,7 +402,7 @@ func scanCI(s scanner) (*CiItem, error) {
 		&attrsStr, &source, &agentID, &deviceID, &ci.Version, &createdAt, &updatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("CI not found")
+			return nil, ciNotFound("")
 		}
 		return nil, fmt.Errorf("scanCI: %w", err)
 	}
