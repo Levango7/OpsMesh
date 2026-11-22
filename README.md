@@ -119,9 +119,9 @@
 | 联邦 | gRPC (mTLS) | 9090 | 跨控制面任务转发/设备视图同步 |
 | Metrics | HTTP | 9091 | Prometheus 指标采集（HTTP 延迟/Go runtime） |
 
-### internal 包职责（43 个）
+### internal 包职责（44 个）
 
-> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 43 个 internal 包的职责简述。
+> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 44 个 internal 包的职责简述。
 >
 > ⚠️ 计数口径：**只数 `internal/` 下真实存在的目录**（CI 的 `Verify internal package count`
 > 门禁会拿 `find internal -maxdepth 1 -type d` 与本节标题里的数字对账，三处必须一致）。
@@ -156,6 +156,7 @@
 | `internal/orchestration` | 作业编排（M5）：DAG 调度 + store 阻塞→释放链路 + 画布 + 子工作流 + 条件分支 + 节点级超时重试 |
 | `internal/deploy` | 服务部署（M3）：计划 + fan-out 执行 + Reconcile + Rollback + 三策略（rolling/canary/bluegreen）+ 灰度自适应推进 + 多集群联邦发布 |
 | `internal/approval` | 审批引擎：审批流定义 + 请求提交 + approve/reject/cancel + 越权防护 |
+| `internal/taskvalidate` | 控制面 HTTP 与内嵌 gRPC TaskService 共用的命令长度和元字符校验，避免双入口规则漂移 |
 
 #### 运维能力域
 
@@ -1094,7 +1095,7 @@ server {
 
 ```
 cmd/opsmesh/              ← 入口 main：解析 --mode 分派 controlplane / agent
-internal/                 ← 43 个包，按 8 个领域分组（详见上文"internal 包职责"）
+internal/                 ← 44 个包，按 8 个领域分组（详见上文"internal 包职责"）
 ├── agent/                ← agent 运行时（注册/心跳/worker 池/执行器 + log_collect 日志采集 v2.0）
 ├── alertengine/          ← 告警规则引擎（多条件 + Z-Score/EWMA 异常检测 + 静默 + 抑制 + 聚合）
 ├── approval/             ← 审批引擎（审批流 + 请求 + approve/reject）
@@ -1131,6 +1132,7 @@ internal/                 ← 43 个包，按 8 个领域分组（详见上文"i
 ├── proto/                ← 共享数据类型（AgentInfo/DeviceInfo/Task/…）
 ├── secrets/              ← 密钥管理（env/file/Vault/KMS 多 provider）
 ├── store/                ← Store 接口 + MemoryStore + SQLStore（35 个领域子接口）
+├── taskvalidate/         ← HTTP/gRPC 双入口共享的任务命令校验
 ├── tlsutil/              ← gRPC TLS / mTLS 工具 + 证书热重载
 └── version/              ← 构建版本注入
 operator/                 ← K8s Operator 子模块（独立 go.mod，controller-runtime OpsMeshInstance CRD）

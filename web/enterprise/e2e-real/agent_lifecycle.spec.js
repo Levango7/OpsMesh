@@ -12,6 +12,9 @@ const ADMIN_USER = process.env.E2E_ADMIN_USER || 'admin'
 const ADMIN_PASS = process.env.E2E_ADMIN_PASS || 'admin123'
 const E2E_NEW_PASS = process.env.E2E_NEW_PASS || 'E2e-Real-2026!'
 const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:8080'
+// 本机 --demo 会播种假 agent；显式 ID 可把验收钉到本进程真实注册的节点。
+// CI compose 不传此变量，仍沿用原自动发现逻辑。
+const E2E_AGENT_ID = process.env.E2E_AGENT_ID || ''
 
 // 文件级 token 缓存：每个 spec 只真实登录一次（多用例共享），
 // 避免连续登录打满 loginGuard 令牌桶（每 IP 5 突发 + 每 6s 补 1）触发 429。
@@ -83,6 +86,7 @@ async function login(request) {
 // 立即查询会拿到空列表）。最长等 30s（每 2s 轮询），覆盖 CI 慢机器。
 async function firstAgentID(request, token) {
   const headers = { Authorization: `Bearer ${token}` }
+  if (E2E_AGENT_ID) return { id: E2E_AGENT_ID, headers }
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     const resp = await request.get(`${BASE}/api/v1/agents`, { headers }).catch(() => null)

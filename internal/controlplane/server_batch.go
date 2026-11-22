@@ -222,7 +222,7 @@ func (s *Server) handleBatchExec(w http.ResponseWriter, r *http.Request) {
 	// 本入口同样拒绝本地建任务并指引去 task-svc 侧（判据与 handleCreateTask 逐字同源，
 	// 见 server_tasks.go；本接续点由 peer 侧核验补上——批量执行/灰度创建**同样调用
 	// s.store.CreateTask**，漏拦等于开关只关了一半）。
-	if s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
+	if s.hasExternalTaskService() && s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
 		paginate.WriteJSON(w, http.StatusConflict, map[string]string{
 			"error": "new tasks are owned by task-svc (TASK_SVC_OWNS_NEW_TASKS=true); create it on the task-svc side",
 		})
@@ -430,7 +430,7 @@ func (s *Server) handleCanaryCreate(w http.ResponseWriter, r *http.Request) {
 	// 本入口同样拒绝本地建任务并指引去 task-svc 侧（判据与 handleCreateTask 逐字同源，
 	// 见 server_tasks.go；本接续点由 peer 侧核验补上——批量执行/灰度创建**同样调用
 	// s.store.CreateTask**，漏拦等于开关只关了一半）。
-	if s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
+	if s.hasExternalTaskService() && s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
 		paginate.WriteJSON(w, http.StatusConflict, map[string]string{
 			"error": "new tasks are owned by task-svc (TASK_SVC_OWNS_NEW_TASKS=true); create it on the task-svc side",
 		})

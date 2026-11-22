@@ -587,6 +587,13 @@ func (g *GrpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult
 	if err := g.verifyAgentSignature(ctx, res.AgentID, res); err != nil {
 		return nil, err
 	}
+	g.recordResult(ctx, res)
+	return &grpcx.Empty{}, nil
+}
+
+// recordResult 落任务结果及其日志、指标、事件副作用。调用方必须先完成租户与签名校验。
+// taskv1.TaskService 与旧 Registration.ReportResult 共用此实现，避免内嵌服务静默丢副作用。
+func (g *GrpcServerImpl) recordResult(ctx context.Context, res *proto.TaskResult) {
 	g.svc().SubmitResult(res)
 
 	// M6 日志检索：任务执行结果（stdout/stderr）自动落地为可检索日志。
@@ -648,7 +655,6 @@ func (g *GrpcServerImpl) ReportResult(ctx context.Context, res *proto.TaskResult
 			})
 		}
 	}
-	return &grpcx.Empty{}, nil
 }
 
 // CancelTask 取消任务（F3）：转发到 store.CancelTask（pending/running -> cancelled）。
