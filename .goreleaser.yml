@@ -16,6 +16,9 @@ project_name: opsmesh
 
 before:
   hooks:
+    # tar.gz 也必须含企业版前端；只做 go build 会把 placeholder 嵌进发布二进制。
+    # release job 已安装 Node，--clean 强制按 lockfile 构建，禁止复用不确定的旧 dist。
+    - bash deploy/docker/scripts/build-enterprise-web.sh --clean
     - go mod tidy
 
 builds:
