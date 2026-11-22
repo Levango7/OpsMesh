@@ -38,12 +38,12 @@ func (s *Server) handleWebServerExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	deviceID, _ := req["deviceID"].(string)
+	deviceID := getStr(req, "deviceID")
 	if deviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	wType, _ := req["type"].(string)
+	wType := getStr(req, "type")
 	if wType == "" {
 		wType = "nginx"
 	}
@@ -51,7 +51,7 @@ func (s *Server) handleWebServerExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + wType})
 		return
 	}
-	action, _ := req["action"].(string)
+	action := getStr(req, "action")
 	if action == "" || !extSafeRe.MatchString(action) || !webserverExtActions[action] {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return

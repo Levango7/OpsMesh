@@ -172,33 +172,33 @@ func buildDBPGReplScript(action, db, slotName, slotType, publicationName, subscr
 	dbQ := shellQuote(db)
 	switch action {
 	case "slots-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT slot_name, slot_type, active, restart_lsn FROM pg_replication_slots ORDER BY slot_name;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT slot_name, slot_type, active, restart_lsn FROM pg_replication_slots ORDER BY slot_name;\"\n", dbQ)
 	case "slot-create":
 		if slotType == "logical" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT pg_create_logical_replication_slot(%s, 'pgoutput');\"\n", dbQ, shellQuote(slotName)))
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT pg_create_logical_replication_slot(%s, 'pgoutput');\"\n", dbQ, shellQuote(slotName))
 		} else {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT pg_create_physical_replication_slot(%s);\"\n", dbQ, shellQuote(slotName)))
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT pg_create_physical_replication_slot(%s);\"\n", dbQ, shellQuote(slotName))
 		}
 	case "slot-drop":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT pg_drop_replication_slot(%s);\"\n", dbQ, shellQuote(slotName)))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT pg_drop_replication_slot(%s);\"\n", dbQ, shellQuote(slotName))
 	case "pubs-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT pubname, puballtables, pubinsert, pubupdate, pubdelete FROM pg_publication ORDER BY pubname;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT pubname, puballtables, pubinsert, pubupdate, pubdelete FROM pg_publication ORDER BY pubname;\"\n", dbQ)
 	case "pub-create":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE PUBLICATION %s;\"\n", dbQ, publicationName))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE PUBLICATION %s;\"\n", dbQ, publicationName)
 	case "pub-drop":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"DROP PUBLICATION IF EXISTS %s;\"\n", dbQ, publicationName))
+		fmt.Fprintf(&b, "psql -d %s -c \"DROP PUBLICATION IF EXISTS %s;\"\n", dbQ, publicationName)
 	case "subs-list":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT subname, subenabled, subconninfo, subslotname FROM pg_subscription ORDER BY subname;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT subname, subenabled, subconninfo, subslotname FROM pg_subscription ORDER BY subname;\"\n", dbQ)
 	case "sub-create":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE SUBSCRIPTION %s CONNECTION %s PUBLICATION %s;\"\n", dbQ, subscriptionName, shellQuote(connInfo), publicationName))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE SUBSCRIPTION %s CONNECTION %s PUBLICATION %s;\"\n", dbQ, subscriptionName, shellQuote(connInfo), publicationName)
 	case "sub-drop":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"DROP SUBSCRIPTION IF EXISTS %s;\"\n", dbQ, subscriptionName))
+		fmt.Fprintf(&b, "psql -d %s -c \"DROP SUBSCRIPTION IF EXISTS %s;\"\n", dbQ, subscriptionName)
 	case "sub-refresh":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"ALTER SUBSCRIPTION %s REFRESH PUBLICATION;\"\n", dbQ, subscriptionName))
+		fmt.Fprintf(&b, "psql -d %s -c \"ALTER SUBSCRIPTION %s REFRESH PUBLICATION;\"\n", dbQ, subscriptionName)
 	case "base-backup":
 		b.WriteString("pg_basebackup -D /tmp/pg_basebackup -Ft -z -P -X stream\n")
 	case "wal-archive-status":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT * FROM pg_stat_archiver;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT * FROM pg_stat_archiver;\"\n", dbQ)
 	case "restore-pitr":
 		b.WriteString("echo 'PITR restore: configure recovery settings and restart cluster'\n")
 	}

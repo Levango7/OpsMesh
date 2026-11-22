@@ -51,12 +51,12 @@ func (s *Server) handleHadoopEcosystem(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	deviceID, _ := req["deviceID"].(string)
+	deviceID := getStr(req, "deviceID")
 	if deviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	ecoType, _ := req["type"].(string)
+	ecoType := getStr(req, "type")
 	if ecoType == "" {
 		ecoType = "ranger"
 	}
@@ -64,7 +64,7 @@ func (s *Server) handleHadoopEcosystem(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + ecoType})
 		return
 	}
-	action, _ := req["action"].(string)
+	action := getStr(req, "action")
 	if action == "" || !hadoopEcoNameRe.MatchString(action) || !hadoopEcoActions[action] {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return

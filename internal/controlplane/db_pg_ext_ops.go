@@ -119,28 +119,28 @@ func buildDBPGExtensionsScript(action, ext, version, schema string) string {
 	dbQ := shellQuote(db)
 	switch action {
 	case "list-installed":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT extname, extversion FROM pg_extension ORDER BY extname;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT extname, extversion FROM pg_extension ORDER BY extname;\"\n", dbQ)
 	case "list-available":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT name, default_version, installed_version FROM pg_available_extensions ORDER BY name;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT name, default_version, installed_version FROM pg_available_extensions ORDER BY name;\"\n", dbQ)
 	case "install":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"CREATE EXTENSION IF NOT EXISTS %s WITH SCHEMA %s;\"\n", dbQ, ext, schemaV))
+		fmt.Fprintf(&b, "psql -d %s -c \"CREATE EXTENSION IF NOT EXISTS %s WITH SCHEMA %s;\"\n", dbQ, ext, schemaV)
 		if version != "" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"ALTER EXTENSION %s UPDATE TO %s;\"\n", dbQ, ext, shellQuote(version)))
+			fmt.Fprintf(&b, "psql -d %s -c \"ALTER EXTENSION %s UPDATE TO %s;\"\n", dbQ, ext, shellQuote(version))
 		}
 	case "upgrade":
 		if version != "" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"ALTER EXTENSION %s UPDATE TO %s;\"\n", dbQ, ext, shellQuote(version)))
+			fmt.Fprintf(&b, "psql -d %s -c \"ALTER EXTENSION %s UPDATE TO %s;\"\n", dbQ, ext, shellQuote(version))
 		} else {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"ALTER EXTENSION %s UPDATE;\"\n", dbQ, ext))
+			fmt.Fprintf(&b, "psql -d %s -c \"ALTER EXTENSION %s UPDATE;\"\n", dbQ, ext)
 		}
 	case "drop":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"DROP EXTENSION IF EXISTS %s;\"\n", dbQ, ext))
+		fmt.Fprintf(&b, "psql -d %s -c \"DROP EXTENSION IF EXISTS %s;\"\n", dbQ, ext)
 	case "info":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT extname, extversion, extrelocatable FROM pg_extension WHERE extname=%s;\"\n", dbQ, shellQuote(ext)))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT extname, extversion, extrelocatable FROM pg_extension WHERE extname=%s;\"\n", dbQ, shellQuote(ext))
 		// PostGIS 诊断
 		if ext == "postgis" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT PostGIS_Full_Version();\"\n", dbQ))
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT srid, auth_name, auth_srid, srtext FROM spatial_ref_sys LIMIT 5;\"\n", dbQ))
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT PostGIS_Full_Version();\"\n", dbQ)
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT srid, auth_name, auth_srid, srtext FROM spatial_ref_sys LIMIT 5;\"\n", dbQ)
 		}
 	}
 	fmt.Fprintf(&b, "echo 'postgresql extensions %s done'\n", action)

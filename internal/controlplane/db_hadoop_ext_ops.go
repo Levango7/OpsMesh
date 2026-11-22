@@ -38,12 +38,12 @@ func (s *Server) handleHadoopExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	deviceID, _ := req["deviceID"].(string)
+	deviceID := getStr(req, "deviceID")
 	if deviceID == "" {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
 		return
 	}
-	hType, _ := req["type"].(string)
+	hType := getStr(req, "type")
 	if hType == "" {
 		hType = "hadoop"
 	}
@@ -51,7 +51,7 @@ func (s *Server) handleHadoopExt(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + hType})
 		return
 	}
-	action, _ := req["action"].(string)
+	action := getStr(req, "action")
 	if action == "" || !extSafeRe.MatchString(action) || !hadoopExtActions[action] {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
 		return
@@ -132,13 +132,6 @@ func buildHadoopExtScript(action string, req map[string]interface{}) string {
 	}
 	if core == "" {
 		core = "core"
-	}
-	collection := getStr(req, "collection")
-	if collection == "" {
-		collection = id
-	}
-	if collection == "" {
-		collection = "collection"
 	}
 	query := getStr(req, "query")
 	if query == "" {
