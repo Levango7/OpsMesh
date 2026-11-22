@@ -18,11 +18,14 @@ const (
 
 // HistoryEntry 历史时间线条目。
 type HistoryEntry struct {
-	Timestamp time.Time // 发生时间
-	Action    string    // 动作类型（HistorySubmit/Approve/Reject/Cancel/Timeout/StepAdvance）
-	UserID    string    // 操作人 userID（submit=发起人，approve/reject=审批人，timeout=空）
-	StepID    string    // 关联步骤 ID（无步骤则为空）
-	Comment   string    // 备注
+	Timestamp time.Time `json:"timestamp"` // 发生时间
+	Action    string    `json:"action"`    // 动作类型（HistorySubmit/Approve/Reject/Cancel/Timeout/StepAdvance）
+	UserID    string    `json:"userId"`    // 操作人 userID（submit=发起人，approve/reject=审批人，timeout=空）
+	StepID    string    `json:"stepId"`    // 关联步骤 ID（无步骤则为空）
+	Comment   string    `json:"comment"`   // 备注
+	// Step / Approver 是当前历史页的 UI 兼容字段（分别对应 StepID/UserID）。
+	Step     string `json:"step"`
+	Approver string `json:"approver"`
 }
 
 // History 审批请求的完整历史时间线。
@@ -37,6 +40,8 @@ func (h *History) Append(entry HistoryEntry) {
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now()
 	}
+	entry.Step = entry.StepID
+	entry.Approver = entry.UserID
 	h.Timeline = append(h.Timeline, entry)
 	sort.SliceStable(h.Timeline, func(i, j int) bool {
 		return h.Timeline[i].Timestamp.Before(h.Timeline[j].Timestamp)

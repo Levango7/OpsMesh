@@ -97,7 +97,13 @@ func (s *Server) approvalCreateFlow(w http.ResponseWriter, r *http.Request) {
 			Action: "approval_flow_create", Target: f.ID, Level: events.LevelInfo,
 		})
 	}
-	paginate.WriteJSON(w, http.StatusCreated, &f)
+	// 返回引擎实际存储的 clone：CreatedAt/UpdatedAt 已填充，避免返回请求里的零时间。
+	stored, err := s.approvalEngine.GetFlow(f.ID)
+	if err != nil {
+		writeInternalError(r.Context(), w, "approval.getFlow", err)
+		return
+	}
+	paginate.WriteJSON(w, http.StatusCreated, stored)
 }
 
 // handleApprovalFlowRouting 处理 /api/v1/approval/flows/{id}（GET/PUT/DELETE）。
@@ -164,7 +170,12 @@ func (s *Server) approvalUpdateFlow(w http.ResponseWriter, r *http.Request, id s
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "approval_flow_update", Target: id,
 		Detail: "update approval flow",
 	})
-	paginate.WriteJSON(w, http.StatusOK, &f)
+	stored, err := s.approvalEngine.GetFlow(id)
+	if err != nil {
+		writeInternalError(r.Context(), w, "approval.getFlow", err)
+		return
+	}
+	paginate.WriteJSON(w, http.StatusOK, stored)
 }
 
 func (s *Server) approvalDeleteFlow(w http.ResponseWriter, r *http.Request, id string) {
@@ -458,7 +469,8 @@ func (s *Server) approvalGetHistory(w http.ResponseWriter, r *http.Request, id s
 			return
 		}
 	}
-	paginate.WriteJSON(w, http.StatusOK, h)
+	// 前端 store.fetchHistory 读取 r.history 数组；不要返回 {RequestID,Timeline} 包装对象。
+	paginate.WriteJSON(w, http.StatusOK, map[string]interface{}{"history": h.Timeline})
 }
 
 // ============================================================================

@@ -239,6 +239,10 @@ func (e *Engine) submit(req *ApprovalRequest) (*ApprovalRequest, bool, error) {
 	}
 
 	cp := *req
+	cp.FlowName = flow.Name
+	cp.Requester = cp.Operator
+	cp.ResourceType = cp.TriggerType
+	cp.ResourceID = cp.Target
 	cp.Status = StatusPending
 	cp.CurrentStep = 1
 	cp.Steps = make([]RequestStep, len(flow.Steps))
