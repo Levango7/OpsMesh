@@ -102,53 +102,49 @@ func buildDBPGMVCScript(action, db, table, schema string) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	dbQ := shellQuote(db)
-	tableIdent := table
-	if tableIdent == "" {
-		tableIdent = ""
-	}
 	switch action {
 	case "bloat-estimate":
 		if table != "" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT schemaname, relname, n_dead_tup, n_live_tup, pg_size_pretty(pg_total_relation_size(relid)) AS size FROM pg_stat_user_tables WHERE relname=%s;\"\n", dbQ, shellQuote(table)))
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT schemaname, relname, n_dead_tup, n_live_tup, pg_size_pretty(pg_total_relation_size(relid)) AS size FROM pg_stat_user_tables WHERE relname=%s;\"\n", dbQ, shellQuote(table))
 		} else {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT schemaname, relname, n_dead_tup, n_live_tup, pg_size_pretty(pg_total_relation_size(relid)) AS size FROM pg_stat_user_tables ORDER BY n_dead_tup DESC;\"\n", dbQ))
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT schemaname, relname, n_dead_tup, n_live_tup, pg_size_pretty(pg_total_relation_size(relid)) AS size FROM pg_stat_user_tables ORDER BY n_dead_tup DESC;\"\n", dbQ)
 		}
 	case "vacuum":
 		if table != "" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"VACUUM (VERBOSE) %s.%s;\"\n", dbQ, schema, table))
+			fmt.Fprintf(&b, "psql -d %s -c \"VACUUM (VERBOSE) %s.%s;\"\n", dbQ, schema, table)
 		} else {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"VACUUM (VERBOSE);\"\n", dbQ))
+			fmt.Fprintf(&b, "psql -d %s -c \"VACUUM (VERBOSE);\"\n", dbQ)
 		}
 	case "vacuum-full":
 		if table != "" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"VACUUM FULL %s.%s;\"\n", dbQ, schema, table))
+			fmt.Fprintf(&b, "psql -d %s -c \"VACUUM FULL %s.%s;\"\n", dbQ, schema, table)
 		} else {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"VACUUM FULL;\"\n", dbQ))
+			fmt.Fprintf(&b, "psql -d %s -c \"VACUUM FULL;\"\n", dbQ)
 		}
 	case "analyze":
 		if table != "" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"ANALYZE %s.%s;\"\n", dbQ, schema, table))
+			fmt.Fprintf(&b, "psql -d %s -c \"ANALYZE %s.%s;\"\n", dbQ, schema, table)
 		} else {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"ANALYZE;\"\n", dbQ))
+			fmt.Fprintf(&b, "psql -d %s -c \"ANALYZE;\"\n", dbQ)
 		}
 	case "autovacuum-settings":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT name, setting FROM pg_settings WHERE name LIKE 'autovacuum%%' ORDER BY name;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT name, setting FROM pg_settings WHERE name LIKE 'autovacuum%%' ORDER BY name;\"\n", dbQ)
 	case "freeze-age":
-		b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT datname, age(datfrozenxid) AS freeze_age FROM pg_database ORDER BY freeze_age DESC;\"\n", dbQ))
+		fmt.Fprintf(&b, "psql -d %s -c \"SELECT datname, age(datfrozenxid) AS freeze_age FROM pg_database ORDER BY freeze_age DESC;\"\n", dbQ)
 		if table != "" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT relname, age(relfrozenxid) AS freeze_age FROM pg_class WHERE relname=%s;\"\n", dbQ, shellQuote(table)))
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT relname, age(relfrozenxid) AS freeze_age FROM pg_class WHERE relname=%s;\"\n", dbQ, shellQuote(table))
 		}
 	case "reindex":
 		if table != "" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"REINDEX TABLE %s.%s;\"\n", dbQ, schema, table))
+			fmt.Fprintf(&b, "psql -d %s -c \"REINDEX TABLE %s.%s;\"\n", dbQ, schema, table)
 		} else {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"REINDEX DATABASE %s;\"\n", dbQ, db))
+			fmt.Fprintf(&b, "psql -d %s -c \"REINDEX DATABASE %s;\"\n", dbQ, db)
 		}
 	case "dead-tuples":
 		if table != "" {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT schemaname, relname, n_live_tup, n_dead_tup, last_vacuum, last_autovacuum FROM pg_stat_user_tables WHERE relname=%s;\"\n", dbQ, shellQuote(table)))
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT schemaname, relname, n_live_tup, n_dead_tup, last_vacuum, last_autovacuum FROM pg_stat_user_tables WHERE relname=%s;\"\n", dbQ, shellQuote(table))
 		} else {
-			b.WriteString(fmt.Sprintf("psql -d %s -c \"SELECT schemaname, relname, n_live_tup, n_dead_tup, last_vacuum, last_autovacuum FROM pg_stat_user_tables ORDER BY n_dead_tup DESC;\"\n", dbQ))
+			fmt.Fprintf(&b, "psql -d %s -c \"SELECT schemaname, relname, n_live_tup, n_dead_tup, last_vacuum, last_autovacuum FROM pg_stat_user_tables ORDER BY n_dead_tup DESC;\"\n", dbQ)
 		}
 	}
 	fmt.Fprintf(&b, "echo 'postgresql mvcc %s done'\n", action)
