@@ -1,7 +1,14 @@
 <template>
   <Teleport to="body">
     <transition name="modal">
-      <div v-if="modelValue" v-bind="$attrs" class="modal-overlay" :data-testid="$attrs['data-testid'] || testId" @click.self="onCancel">
+      <div
+        v-if="modelValue"
+        v-bind="$attrs"
+        class="modal-overlay"
+        :data-testid="testId"
+        :data-modal-testid="$attrs['data-testid'] || undefined"
+        @click.self="onCancel"
+      >
         <div
           ref="dialogRef"
           class="modal-box"
@@ -33,7 +40,8 @@
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { trapFocus } from '@/utils/a11y'
 
-// Teleport 根不自动继承 attrs；显式转发 data-testid 等页面定位/语义属性。
+// Teleport 根不自动继承 attrs。保留历史 data-testid=confirm-modal 供既有 E2E/调用方使用；
+// 页面传入的自定义值另存 data-modal-testid，避免两套选择器互相覆盖。
 defineOptions({ inheritAttrs: false })
 
 const props = defineProps({

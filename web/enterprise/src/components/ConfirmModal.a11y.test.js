@@ -44,9 +44,11 @@ describe('ConfirmModal 焦点与键盘契约', () => {
     expect(document.body.querySelector('[data-testid="confirm-modal"]')).toBeNull()
   })
 
-  it('原生 data-testid 也会显式转发到 Teleport 遮罩', () => {
+  it('保留统一选择器，自定义值另存 data-modal-testid', () => {
     mountConfirm({ modelValue: true }, { 'data-testid': 'native-delete-confirm' })
-    expect(document.body.querySelector('[data-testid="native-delete-confirm"]')).not.toBeNull()
+    const overlay = document.body.querySelector('[data-testid="confirm-modal"]')
+    expect(overlay).not.toBeNull()
+    expect(overlay.getAttribute('data-modal-testid')).toBe('native-delete-confirm')
   })
 
   it('info 模式仍困住焦点但 ESC 不关闭', async () => {
