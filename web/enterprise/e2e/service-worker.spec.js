@@ -1,7 +1,21 @@
 // 生产 Service Worker 缓存契约（真实控制面 + 真实登录，非 page.route mock）。
 import { test, expect } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
 
-const BASE = process.env.E2E_BASE_URL || 'http://127.0.0.1:4190'
+const BASE = 'http://127.0.0.1:4190'
+const BACKEND_SCRIPT = path.resolve(process.cwd(), '../../deploy/scripts/e2e-service-worker-backend.sh')
+
+// 默认 frontend job 只有 Vite；用固定环回脚本启动真实控制面，避免 ECONNREFUSED 假失败。
+test.beforeAll(() => {
+  execFileSync('bash', [BACKEND_SCRIPT, 'start'], { stdio: 'inherit' })
+})
+
+test.afterAll(() => {
+  execFileSync('bash', [BACKEND_SCRIPT, 'stop'], { stdio: 'inherit' })
+})
+
+test.setTimeout(180_000)
 
 // 仓内其他 mock 用例全局禁 SW；本专项必须显式启用，测生产真实行为。
 test.use({ serviceWorkers: 'allow' })
