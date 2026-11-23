@@ -1472,3 +1472,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-22T22:26:20Z from=kilo scope=internal/datatuning/sizing.go,internal/datatuning/sizing_test.go,internal/controlplane/data_tuning_ops.go,internal/controlplane/data_tuning_ops_test.go,internal/controlplane/server_lifecycle.go,CHANGELOG.md note=批次75 收口（大数据 sizing 调优引擎 + /data/tuning API；本地提交 01d71938，未推送）
 
 [CLAIM] 2026-11-23T11:05:00Z from=kilo ttl=8h scope=internal/governance/,internal/controlplane/data_governance_ops.go,internal/controlplane/data_governance_ops_test.go,internal/controlplane/server_lifecycle.go,internal/config/config.go,CHANGELOG.md,docs/CLAIMS.md note=批次76 数据治理面（DQ 规则/PII/保留策略/目录/Atlas 血缘）；本地提交不推送
+[DONE] 2026-11-23T16:00:00Z from=kilo scope=internal/governance/,internal/controlplane/data_governance_ops.go note=批次76 收口（数据治理平面：6 类 DQ 规则 + 5 类 PII 脱敏 + 3 类保留策略 + 目录 + Atlas 血缘代理）
