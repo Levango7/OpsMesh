@@ -26,10 +26,53 @@
 #   - 裸机：deploy/systemd/
 # ============================================================================
 # 服务拓扑：
-#   controlplane (HTTP 8080 / gRPC 9090 / metrics 9091) → mysql:3306 + redis:6379 + task-svc:50052
+#   controlplane (HTTP 8080 / gRPC 9090 / metrics 9091) → mysql:3306 + redis:6379 + task-svc:50052 + kafka:9092
 #   task-svc (gRPC 50052 / HTTP 8081，memory 单副本，TD-60 任务域)
 #   agent → controlplane:9090（注册/心跳/gRPC）+ task-svc:50052（claim/report，TD-60）
 services:
+  # Kafka 事件总线：broker 仅在 compose 内网暴露，控制面发布审计/告警事件。
+  kafka:
+    image: apache/kafka:4.1.1
+    environment:
+      KAFKA_NODE_ID: "0"
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  # topic 初始化是启动依赖：缺少它会让首批事件以 Unknown Topic Or Partition 失败。
+  kafka-init:
+    image: apache/kafka:4.1.1
+    command:
+      - /opt/kafka/bin/kafka-topics.sh
+      - --bootstrap-server
+      - kafka:9092
+      - --create
+      - --if-not-exists
+      - --topic
+      - opsmesh-audit
+      - --partitions
+      - "1"
+      - --replication-factor
+      - "1"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+
   # TD-60 任务域服务（TaskService/ResultService/LeaderElectorService，gRPC :50052）。
   # TD-60（7c5a835）直推后 dev 栈缺它 ⇒ agent claimTask 拨不到 task-svc ⇒ 领不到真实任务；
   # controlplane 的 task 域 HTTP 代理也无上游。单副本开发/演示形态用 memory store +
@@ -72,6 +115,11 @@ services:
     # 若当生产使用，务必注入 32 字节强随机密钥（openssl rand -hex 32）。
     environment:
       OPSMESH_JWT_SECRET: ${OPSMESH_JWT_SECRET:-}
+      # 审计/告警事件走 Kafka；会话黑名单、限流与改密令牌走 Redis 共享。
+      OPSMESH_EVENT_BUS: kafka
+      OPSMESH_KAFKA_BROKERS: kafka:9092
+      OPSMESH_KAFKA_TOPIC: opsmesh-audit
+      OPSMESH_SESSION_STORE: redis://redis:6379
       # TD-60 任务域切流：指向 task-svc（compose 内网）；缺失/拨号失败 ⇒ 控制面回退存根，
       # /api/v1/tasks 代理返回 503（fail-closed，见 Kilo 8fd679c）。
       OPSMESH_TASK_SVC_GRPC_ADDR: task-svc:50052
@@ -148,6 +196,9 @@ services:
         # task-svc 内存启动极快（<1s），用启动顺序保证 controlplane 5s 拨号窗口内可达；
         # 不发布端口、不做 healthcheck（debian-slim 无探活二进制，且控制面就绪检查已兜底）。
         condition: service_started
+      kafka-init:
+        # topic 初始化成功前不得启动控制面，避免首批审计事件丢失。
+        condition: service_completed_successfully
     # distroless/static-debian12 无 curl/wget/sh，无法用 CMD-SHELL 探 /healthz，
     # 也无法用 ["CMD-SHELL","exit 0"] 跳过（无 sh）。故采用 Go 二进制内置 --health
     # 子命令做真实 /healthz 探测（不依赖 curl/shell，仅依赖二进制自身）。
