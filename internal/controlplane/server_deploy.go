@@ -20,7 +20,9 @@ func (s *Server) deployReconcileLoop(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if s.store.IsLeader() {
+		leader := s.store.IsLeader()
+		s.recordLeaderGate("deploy", leader)
+		if leader {
 			s.deployHandler.ReconcileAll(ctx, "")
 		}
 		select {
@@ -43,7 +45,9 @@ func (s *Server) workflowScheduleLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
-		if !s.store.IsLeader() {
+		leader := s.store.IsLeader()
+		s.recordLeaderGate("workflow", leader)
+		if !leader {
 			continue
 		}
 		list, err := s.orchHandler.ListActive(ctx)

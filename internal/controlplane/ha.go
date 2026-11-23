@@ -93,6 +93,20 @@ func (s *Server) instanceHeartbeatLoop(ctx context.Context) {
 	}
 }
 
+// recordLeaderGate 记录一个 leader-only 后台循环本轮是否获准执行。
+// 只记录、不改变门控行为——门控判据是否该从 store.IsLeader() 改为 electorClient
+// 属于 TD-60 切流的 owner 裁决（见 docs/architecture-audit-2026-11-23.md §2.F）。
+func (s *Server) recordLeaderGate(loop string, leader bool) {
+	if s.metrics == nil {
+		return
+	}
+	result := "skipped"
+	if leader {
+		result = "ran"
+	}
+	s.metrics.IncLeaderGatedLoop(loop, result)
+}
+
 // haStatusResponse HA 状态响应。
 type haStatusResponse struct {
 	Leader      haInstanceInfo   `json:"leader"`
@@ -116,6 +130,7 @@ func (s *Server) haInstanceID() string {
 func (s *Server) haCurrentInstance() haInstanceInfo {
 	isLeader := false
 	leaderInstanceID := ""
+	leaderKnown := true
 	if s.electorClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -124,11 +139,16 @@ func (s *Server) haCurrentInstance() haInstanceInfo {
 		var lerr error
 		isLeader, leaderInstanceID, lerr = s.electorClient.IsLeader(ctx)
 		if lerr != nil {
+			leaderKnown = false // 选主结论不可确认：指标记 -1，不伪装成 follower
 			logx.Warn(ctx, "查询选主状态失败", "error", lerr)
 		}
 	} else {
 		// 回退：使用 store.IsLeader()（单副本/开发模式）
 		isLeader = s.store.IsLeader()
+	}
+	// 2026-11-23 审计 §2.F：把选主结论推到 /metrics，使「门控判据与选主脱节」可见。
+	if s.metrics != nil {
+		s.metrics.SetLeaderStatus(isLeader, leaderKnown)
 	}
 	role := "follower"
 	if isLeader {

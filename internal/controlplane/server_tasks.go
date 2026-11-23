@@ -310,7 +310,9 @@ func (s *Server) scheduleLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !s.store.IsLeader() {
+			leader := s.store.IsLeader()
+			s.recordLeaderGate("schedule", leader)
+			if !leader {
 				continue // 非 leader 不派生，避免多副本重复派生定时实例
 			}
 			n := s.store.FireDueSchedules(time.Now())
@@ -335,7 +337,9 @@ func (s *Server) archiveLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !s.store.IsLeader() {
+			leader := s.store.IsLeader()
+			s.recordLeaderGate("archive", leader)
+			if !leader {
 				continue
 			}
 			n := s.store.RetireStaleDevices(time.Duration(s.cfg.ArchiveAgeMin) * time.Minute)
@@ -362,7 +366,9 @@ func (s *Server) auditMaintenanceLoop(ctx context.Context) {
 	case <-time.After(10 * time.Second):
 	}
 	for {
-		if s.store.IsLeader() {
+		leader := s.store.IsLeader()
+		s.recordLeaderGate("audit", leader)
+		if leader {
 			s.runAuditMaintenance(ctx)
 		}
 		select {
@@ -410,7 +416,9 @@ func (s *Server) reclaimLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !s.store.IsLeader() {
+			leader := s.store.IsLeader()
+			s.recordLeaderGate("reclaim", leader)
+			if !leader {
 				continue // 非 leader 不回收，避免多副本重复复位 running 任务
 			}
 			n := s.store.ReclaimStaleTasks(time.Duration(s.cfg.TaskLeaseSec) * time.Second)
@@ -996,7 +1004,9 @@ func (s *Server) monitorTaskTimeouts(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !s.store.IsLeader() {
+			leader := s.store.IsLeader()
+			s.recordLeaderGate("timeout", leader)
+			if !leader {
 				continue
 			}
 			now := time.Now()
