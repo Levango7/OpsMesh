@@ -34,6 +34,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/controlplane/pluginhost"
 	"github.com/Levango7/OpsMesh/internal/cost"
 	"github.com/Levango7/OpsMesh/internal/cron"
+	"github.com/Levango7/OpsMesh/internal/dataetl"
 	"github.com/Levango7/OpsMesh/internal/deploy"
 	"github.com/Levango7/OpsMesh/internal/egress"
 	"github.com/Levango7/OpsMesh/internal/events"
@@ -90,6 +91,7 @@ type Server struct {
 	knowledgeHandler    *knowledge.KnowledgeHandler       // 知识库处理器
 	costHandler         *cost.CostHandler                 // 成本控制处理器
 	governanceStore     *governance.MemoryStore           // 数据治理存储（内存）
+	etlMemStore         *dataetl.MemoryStore              // ETL 作业存储（内存）
 	k8sLifecycleHandler *k8slifecycle.K8sLifecycleHandler // K8s 生命周期处理器
 	// 告警推送去重（notifyLoop 防重复）：按告警指纹（AlertID）记录已推送集合，
 	// 替代旧版全局单一时间高水位 lastAlertSent——时间水位对乱序插入/跨租户告警/
