@@ -21,7 +21,8 @@
 2. **架构级缺陷存在，且是根因级**：所谓「运维能力」= **服务端拼 shell 脚本 + 下发执行**。618 处派发任务后返 202，126 个 `build*Script`，635 处 `Fprintf` 拼脚本。平台**没有目标系统的状态模型**，因此无法幂等、无法漂移检测、无法收敛。
 3. **前端是全项目最强的一层**（4/5）：i18n 有守卫、权限门控系统化、91 个测试文件 + 10 个 e2e spec、TODO/FIXME 为 0。
 4. **产品方向对，证据不足**：信创私有化运维是真需求，但 5 条准入门槛（国产 DB / 多架构 / 国密 / 离线包 / 压测）**没有一条已经跨过**；其中 3 条已有工具或半成品，缺的是「流水线产物 + 验证报告」。
-5. **当前最该做的不是再加功能**：广度扩张（每批 +30~485 个 action）边际收益已接近零，只会放大维护面与攻击面。
+5. **本轮新发现（比指标空洞更硬）**：控制面 11 处 `s.store.IsLeader()` 门控中，只有 `readyz` 改走 electorClient；SQL 模式下 `SQLStore.IsLeader()` **恒 false**（leaderLoop 已移除、`RenewLeadership` 生产代码零调用），导致定时派生 / 租约回收 / 归档 / 审计自检等循环**静默不执行**。详见 §2.F。
+6. **当前最该做的不是再加功能**：广度扩张（每批 +30~485 个 action）边际收益已接近零，只会放大维护面与攻击面。
 
 ---
 
@@ -112,6 +113,31 @@ TD-60 的进展比口头评估时掌握的高：
 
 **仍真实的负债**：核心三域尚未完成切流。task 域堵点是 **agent gRPC 适配层（约 300 行新开发）+ leader 身份切换**；device 域 netsec/federation 需先下沉 `pkg` 再切。按仓库自己的稳妥序（auth → task leader → HTTP 切 → agent 适配 → device 下沉），收尾可删约 5,000 行、新开发约 500 行。这不是「推倒重来」，但也不是「已经完成」。
 
+### F. 控制面 leader-only 后台任务在 SQL 模式下静默失效（本轮新发现）
+
+**证据链**：
+
+1. `internal/controlplane/server_netsec.go:357-360` 注释明写：TD-60 后「控制面本地 leader_lease 不再续租（**leaderLoop 已移除**），**SQLStore.IsLeader() 恒 false**」。
+2. `internal/store/sqlstore/sql.go:1035/1049/1055`：`isLeader` 字段只在 `RenewLeadership` 中赋值；而 `RenewLeadership(` 在 controlplane 生产代码中 **0 次调用**（全仓命中只在 store 实现、测试和注释里）。
+3. `internal/controlplane` 仍有 **11 处** `s.store.IsLeader()` 门控。其中 `readyz`（`server_netsec.go:363-375`）已经改走 `electorClient`，**其余没有**：
+
+   | 文件:行 | 被门控的任务 |
+   |---|---|
+   | `server_tasks.go:313` | `scheduleLoop` 定时派生 |
+   | `server_tasks.go:413` | `reclaimLoop` 租约回收 |
+   | `server_tasks.go:338` | `archiveLoop` 离线归档 |
+   | `server_tasks.go:365` | `auditMaintenanceLoop` 审计链自检 |
+   | `server_tasks.go:999` | 灰度/批次相关 |
+   | `server_deploy.go:23,46` | `deployReconcileLoop` |
+   | `server_bootstrap.go:212` | 自动纳管触发 |
+   | `support_endpoints.go:523` | 诊断接口 `isLeader` 字段 |
+
+4. task-svc 已有 `LeaderElectorService`（K8s Lease / stub）并自带 schedule/reclaim/leader 三循环，但 **archive / audit / deploy / workflow 等控制面循环没有对应接管方**。
+
+**后果**：SQL 模式下上述控制面循环恒不执行；由它们写入的指标（如 `opsmesh_audit_chain_ok`）永远停在初始值。这不是「报错」，是**静默失效**——最危险的一类：监控面看不到，故障只能靠业务反馈发现。
+
+**修复方向**：把 11 处门控统一成一个 `s.isLeader(ctx)` helper（优先 `electorClient`，RPC 失败 fail-closed，与 readyz 同口径），并给每个循环加「本轮执行 / 跳过（非 leader）」计数指标。**严重度介于 P0 与 P1，需 owner 裁决**：若这属于 TD-60 切流的预期状态，就应删除死代码并显式标注接管方，而不是留着「看起来在跑」的循环。
+
 ---
 
 ## 3. 前端评估（4/5，全项目最强）
@@ -186,6 +212,7 @@ TD-60 的进展比口头评估时掌握的高：
 | 6 | **「拼 shell」→「能力适配器」** | 定义 `OpsAction`（validate → plan → execute → verify → 结构化 result）。不必一次全改，先挑 2~3 个域（PG / K8s / 中间件）做样板，让返回体从 stdout 变成对象。**这是从「命令执行器」变成「运维平台」的唯一路径。** |
 | 7 | **继续拆父包** | 245 文件 / 78,888 行仍是所有 CI 抖动与合并冲突的物理根源；至少把路由注册与 handler 分组抽成显式模块边界。TD-87 的 11 个子包证明这条路走得通。 |
 | 8 | **TD-60 收尾** | 按仓库自己的稳妥序：auth（零代码）→ task leader 切换 → HTTP 切 → agent 适配（约 300 行）→ device 下沉。收尾可删约 5,000 行、新开发约 500 行。现在 60% 的进度最怕「停在这里」。 |
+| 9 | **统一 leader 判据（§2.F）** | 11 处 `s.store.IsLeader()` 改成优先 `electorClient` 的 helper，与 readyz 同口径；每个循环加执行/跳过计数。先裁决「是 bug 还是预期死代码」，再决定修还是删。 |
 
 ### P2 — 补短板
 
