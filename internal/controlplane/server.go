@@ -43,6 +43,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/k8s"
 	"github.com/Levango7/OpsMesh/internal/k8slifecycle"
 	"github.com/Levango7/OpsMesh/internal/knowledge"
+	"github.com/Levango7/OpsMesh/internal/lakehouse"
 	"github.com/Levango7/OpsMesh/internal/logstore"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/metrics"
@@ -92,6 +93,7 @@ type Server struct {
 	costHandler         *cost.CostHandler                 // 成本控制处理器
 	governanceStore     *governance.MemoryStore           // 数据治理存储（内存）
 	etlMemStore         *dataetl.MemoryStore              // ETL 作业存储（内存）
+	lakehouseMemStore   *lakehouse.MemoryStore            // 湖仓存储（内存）
 	k8sLifecycleHandler *k8slifecycle.K8sLifecycleHandler // K8s 生命周期处理器
 	// 告警推送去重（notifyLoop 防重复）：按告警指纹（AlertID）记录已推送集合，
 	// 替代旧版全局单一时间高水位 lastAlertSent——时间水位对乱序插入/跨租户告警/
