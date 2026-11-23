@@ -450,8 +450,8 @@ func TestSQLGetCIRelationGraphCenterNotFound(t *testing.T) {
 	store, mock := newSQLMock(t)
 	mock.ExpectQuery("SELECT id, ci_type").WillReturnError(sql.ErrNoRows)
 	_, err := store.GetCIRelationGraph(context.Background(), "ci-missing", "t1")
-	if err == nil {
-		t.Error("expect error")
+	if !errors.Is(err, ErrCINotFound) {
+		t.Errorf("expect ErrCINotFound, got %v", err)
 	}
 }
 

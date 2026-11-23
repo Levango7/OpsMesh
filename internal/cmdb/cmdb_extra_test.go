@@ -299,8 +299,8 @@ func TestHandleCIRelationGraphNotFound(t *testing.T) {
 	req.Header.Set("X-Tenant-ID", "t1")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expect 500, got %d", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expect 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

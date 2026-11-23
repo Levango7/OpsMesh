@@ -67,6 +67,10 @@ spec:
           env:
             - name: OPSMESH_DATA_DIR
               value: {{ .Values.agent.dataDir | quote }}
+            - name: OPSMESH_TASK_SVC_GRPC_ADDR
+              # agent 与 controlplane 是不同 Pod，默认 localhost 永远不可达。
+              # 未启用独立 task-svc 时由控制面内嵌 TaskService；启用后走其 Service。
+              value: {{ if .Values.services.task_svc.enabled }}{{ include "opsmesh.fullname" . }}-task-svc:{{ .Values.services.task_svc.grpcPort }}{{ else }}{{ include "opsmesh.controlplane.serviceName" . }}:9090{{ end }}
             {{- with .Values.agent.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

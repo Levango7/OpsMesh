@@ -63,6 +63,7 @@ export const ROUTE_DOMAIN_MAP = {
   batch: 'ops',
   'batch-exec': 'ops',
   'batch-detail': 'ops',
+  'diststorage-ops': 'ops',
   // 资产配置 → assets
   cmdb: 'assets',
   // 交付中心 → delivery
@@ -173,8 +174,7 @@ export const ROUTE_DOMAIN_MAP = {
   // 数据库运维页共用 ops.json，漏登记会使整页翻译退化为裸键。
   'db-ops': 'ops',
   'oracle-ops': 'ops',
-  'bigdata-ops': 'ops',
-  'diststorage-ops': 'ops'
+  'bigdata-ops': 'ops'
 }
 
 // 预先收集所有功能域 json 模块（Vite 会为每个 json 生成单独 chunk，按需加载）
