@@ -1473,3 +1473,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 
 [CLAIM] 2026-11-23T11:05:00Z from=kilo ttl=8h scope=internal/governance/,internal/controlplane/data_governance_ops.go,internal/controlplane/data_governance_ops_test.go,internal/controlplane/server_lifecycle.go,internal/config/config.go,CHANGELOG.md,docs/CLAIMS.md note=批次76 数据治理面（DQ 规则/PII/保留策略/目录/Atlas 血缘）；本地提交不推送
 [CLAIM] 2026-11-23T16:30:00Z from=kilo ttl=8h scope=internal/dataetl/,internal/controlplane/data_etl_ops.go note=批次77 ETL 服务：EtlJob/EtlRun 模型 + 内存存储 + 适配器（SeaTunnel/DataX/Sqoop/Spark/Airflow/Kafka Connect/Flink-CDC/Canal）+ /api/v1/etl/{jobs,runs} API + 重试/调度/日志
+[DONE] 2026-11-23T17:00:00Z from=kilo scope=internal/dataetl/,internal/controlplane/data_etl_ops.go note=批次77 收口（ETL 作业模型 + 8 引擎适配器 + /api/v1/etl/{jobs,runs} API）
