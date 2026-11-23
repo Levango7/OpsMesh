@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ type Dialect interface {
 	// DriverName 返回 database/sql 驱动名（"mysql" | "pgx"）。
 	DriverName() string
 	// PrepareDSN 对方言专有 DSN 参数负责（MySQL 需 parseTime/clientFoundRows；
-	// PG DSN 不认识这些参数，原样透传）。
+	// PG URL DSN 强制 TimeZone=UTC）。
 	PrepareDSN(dsn string) string
 	// ConvertPlaceholders 把 ? 占位符编号为 $1/$2/...（字面量感知：字符串/标识符
 	// 内的 ? 不误转）。MySQL 方言恒等返回。
@@ -178,7 +179,21 @@ type postgresDialect struct{}
 
 func (postgresDialect) DriverName() string { return "pgx" }
 
-func (postgresDialect) PrepareDSN(dsn string) string { return dsn }
+func (postgresDialect) PrepareDSN(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return dsn
+	}
+	q := u.Query()
+	for key := range q {
+		if strings.EqualFold(key, "TimeZone") {
+			delete(q, key)
+		}
+	}
+	q.Set("TimeZone", "UTC")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
 
 func (postgresDialect) ConvertPlaceholders(query string) string {
 	return convertPlaceholdersPG(query)

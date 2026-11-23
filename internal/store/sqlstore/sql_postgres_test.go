@@ -67,6 +67,13 @@ func newPostgresTestStore(t *testing.T) (*SQLStore, string, func()) {
 		dropPGTestDB(t, adminDSN, dbName)
 		t.Fatalf("NewSQLStore(pg): %v", err)
 	}
+	var timezone string
+	if err := s.db.QueryRowContext(context.Background(), "SHOW TimeZone").Scan(&timezone); err != nil {
+		t.Fatalf("SHOW TimeZone: %v", err)
+	}
+	if timezone != "UTC" {
+		t.Fatalf("PG session TimeZone=%q, want UTC", timezone)
+	}
 	return s, dbName, func() {
 		_ = s.db.Close()
 		dropPGTestDB(t, adminDSN, dbName)

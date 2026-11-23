@@ -210,10 +210,21 @@ func TestPrepareDSN(t *testing.T) {
 	if !strings.Contains(out, "parseTime=true") {
 		t.Errorf("mysql PrepareDSN=%q, 应补 parseTime=true", out)
 	}
-	pgIn := "postgres://u:p@h/opsmesh?sslmode=disable"
-	p := postgresDialect{}
-	if p.PrepareDSN(pgIn) != pgIn {
-		t.Errorf("pg PrepareDSN=%q, 应恒等", p.PrepareDSN(pgIn))
+}
+
+func TestPostgresPrepareDSNForcesUTC(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"postgres://u:p@h/opsmesh?sslmode=disable", "postgres://u:p@h/opsmesh?TimeZone=UTC&sslmode=disable"},
+		{"postgres://u:p@h/opsmesh?TimeZone=Asia%2FShanghai&sslmode=disable", "postgres://u:p@h/opsmesh?TimeZone=UTC&sslmode=disable"},
+		{"postgresql://u:p@h/opsmesh?sslmode=disable&timezone=UTC", "postgresql://u:p@h/opsmesh?TimeZone=UTC&sslmode=disable"},
+	}
+	for _, tc := range cases {
+		if got := (postgresDialect{}).PrepareDSN(tc.in); got != tc.want {
+			t.Errorf("PrepareDSN(%q)=%q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
