@@ -1069,14 +1069,24 @@ func isTaskQueueEmpty(err error) bool {
 	return status.Code(err) == codes.NotFound
 }
 
+// signTaskContext 给 taskv1 请求附加与旧 Registration 通道一致的 HMAC 身份绑定。
+// 测试或早期构造阶段 grpc 尚未初始化时保持原上下文；正式 Run 在领取前必已初始化。
+func (a *Agent) signTaskContext(ctx context.Context, identity string, payload any) context.Context {
+	if a.grpc == nil {
+		return ctx
+	}
+	return a.grpc.signContext(ctx, identity, payload)
+}
+
 // claimTask 原子领取一条 pending 任务（task-svc ClaimTask 已翻转 pending→running，不会双领）。
 func (a *Agent) claimTask(ctx context.Context) (*proto.Task, error) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// TD-60 任务域切流：使用 task-svc ClaimTask 原子领取任务
-	resp, err := a.taskServiceClient.ClaimTask(cctx, &taskv1.ClaimTaskRequest{
-		AgentId: a.agentID,
-	})
+	req := &taskv1.ClaimTaskRequest{AgentId: a.agentID}
+	// 内嵌 TaskService 与独立 task-svc 使用同一 proto；控制面启用签名时，
+	// 复用注册通道持有的 per-agent 密钥，禁止新链路绕过既有身份绑定。
+	resp, err := a.taskServiceClient.ClaimTask(a.signTaskContext(cctx, a.agentID, req), req)
 	if err != nil {
 		// 空队列不是错误：task-svc 对 "无 pending 任务" 返回 gRPC NotFound。
 		// 映射为 (nil, nil) 的空闲语义，由 dispatchLoop 的 ticker 退避，避免每 1s
@@ -1094,20 +1104,35 @@ func (a *Agent) claimTask(ctx context.Context) (*proto.Task, error) {
 	}
 	// Convert taskv1.Task to proto.Task
 	return &proto.Task{
-		TaskID:     resp.TaskId,
-		AgentID:    resp.AgentId,
-		TenantID:   resp.TenantId,
-		Type:       resp.Type,
-		Command:    resp.Command,
-		Content:    resp.Content,
-		Path:       resp.Path,
-		Status:     resp.Status,
-		ClaimedBy:  resp.ClaimedBy,
-		ClaimedAt:  resp.ClaimedAt.AsTime(),
-		CreatedAt:  resp.CreatedAt.AsTime(),
-		RetryCount: int(resp.RetryCount),
-		DeadLetter: resp.DeadLetter,
-		ClaimEpoch: resp.ClaimEpoch,
+		TaskID:           resp.TaskId,
+		AgentID:          resp.AgentId,
+		TenantID:         resp.TenantId,
+		Type:             resp.Type,
+		Command:          resp.Command,
+		Content:          resp.Content,
+		Path:             resp.Path,
+		Status:           resp.Status,
+		ClaimedBy:        resp.ClaimedBy,
+		ClaimedAt:        resp.ClaimedAt.AsTime(),
+		CreatedAt:        resp.CreatedAt.AsTime(),
+		RetryCount:       int(resp.RetryCount),
+		MaxRetries:       int(resp.MaxRetries),
+		DeadLetter:       resp.DeadLetter,
+		ClaimEpoch:       resp.ClaimEpoch,
+		Timeout:          int(resp.Timeout),
+		RetryDelay:       int(resp.RetryDelay),
+		Schedule:         resp.Schedule,
+		ParentID:         resp.ParentId,
+		LastFiredAt:      resp.LastFiredAt.AsTime(),
+		DependsOn:        resp.DependsOn,
+		ApprovalRequired: resp.ApprovalRequired,
+		ApprovedBy:       resp.ApprovedBy,
+		ApprovedAt:       resp.ApprovedAt.AsTime(),
+		BatchID:          resp.BatchId,
+		Priority:         int(resp.Priority),
+		IdempotencyKey:   resp.IdempotencyKey,
+		StatusMachine:    resp.StatusMachine,
+		ScriptBody:       resp.ScriptBody,
 	}, nil
 }
 
@@ -1913,7 +1938,7 @@ func (a *Agent) reportResult(ctx context.Context, t proto.Task, res proto.TaskRe
 			ClaimEpoch: res.ClaimEpoch,
 		},
 	}
-	_, err := a.taskServiceClient.ReportResult(cctx, req)
+	_, err := a.taskServiceClient.ReportResult(a.signTaskContext(cctx, res.AgentID, req), req)
 	if err != nil {
 		logx.Error(ctx, "上报结果失败", err, "taskID", t.TaskID)
 		return

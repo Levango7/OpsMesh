@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/Levango7/OpsMesh/internal/logx"
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 // logFunc 与 logx.Info/Warn 同签名，便于测试注入。
@@ -53,7 +54,10 @@ func auditInterceptor(debug, warn logFunc, withPeer bool) grpc.UnaryServerInterc
 				args = append(args, "peer", p.Addr.String())
 			}
 		}
-		if code == codes.OK {
+		// ClaimTask 的 NotFound 是 agent 空队列轮询的常态，不是调用故障。
+		// 保留 Debug 审计，避免每个空闲 agent 每个周期都产生 WARN 淹没真异常。
+		idleClaim := info.FullMethod == taskv1.TaskService_ClaimTask_FullMethodName && code == codes.NotFound
+		if code == codes.OK || idleClaim {
 			debug(ctx, "grpc_call", args...)
 		} else {
 			args = append(args, "grpc_error", err.Error())
