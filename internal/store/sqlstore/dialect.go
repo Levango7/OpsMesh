@@ -14,9 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Dialect 屏蔽 MySQL / PostgreSQL 两族 SQL 方言差异。本批（A3-1 方言地基）只接
-// 本批有消费者的方法；无消费者的能力（LIMIT-OFFSET 分页、通用 Upsert、DDL 自增
-// 翻译）不入口，列 A3-2/A3-3，避免死键。
+// Dialect 屏蔽 MySQL / PostgreSQL 两族 SQL 方言差异。A3-1 建立方言地基，
+// A3-3 增加通用 Upsert；无消费者的能力（LIMIT-OFFSET 分页、DDL 自增翻译）
+// 不入口，避免死键。
 //
 // 设计约束：
 //   - MySQL 实现封装现状 SQL 文本，行为逐字节等价（ConvertPlaceholders 恒等）；
@@ -35,6 +35,10 @@ type Dialect interface {
 	// 语义差异如实登记：MySQL INSERT IGNORE 吞所有列级错误；PG ON CONFLICT DO NOTHING
 	// 只跳过唯一键冲突，其余错误照报。本仓 seed 场景的意图即「存在即跳过」，二者等价。
 	InsertIgnore(table string, cols []string) string
+	// Upsert 生成方言感知的 UPSERT。MySQL 使用 ON DUPLICATE KEY UPDATE，
+	// PG 使用 conflict 目标生成 ON CONFLICT (...) DO UPDATE。
+	// values 只接受 ?、受控常量与 NOW()，不得携带 SQL 注释。
+	Upsert(table string, cols, values, conflict, updateCols []string) string
 	// SchemaMigrationsDDL 建迁移登记表的 DDL。
 	SchemaMigrationsDDL() string
 	// SetLockWaitTimeoutStmt 设置迁移语句锁等待上限。
@@ -88,6 +92,11 @@ func (mysqlDialect) ConvertPlaceholders(query string) string { return query }
 func (mysqlDialect) InsertIgnore(table string, cols []string) string {
 	return fmt.Sprintf("INSERT IGNORE INTO %s (%s) VALUES (%s)",
 		table, strings.Join(cols, ", "), placeholdersMySQL(len(cols)))
+}
+
+func (mysqlDialect) Upsert(table string, cols, values, _ []string, updateCols []string) string {
+	return "INSERT INTO " + quoteIdentifier(table, '`') + " (" + quotedIdentifiers(cols, '`') + ") VALUES (" +
+		strings.Join(values, ", ") + ") ON DUPLICATE KEY UPDATE " + upsertAssignmentsMySQL(updateCols)
 }
 
 func (mysqlDialect) SchemaMigrationsDDL() string {
@@ -178,6 +187,13 @@ func (postgresDialect) ConvertPlaceholders(query string) string {
 func (postgresDialect) InsertIgnore(table string, cols []string) string {
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING",
 		table, strings.Join(cols, ", "), placeholdersPG(len(cols)))
+}
+
+func (postgresDialect) Upsert(table string, cols, values, conflict, updateCols []string) string {
+	query := "INSERT INTO " + quoteIdentifier(table, '"') + " (" + quotedIdentifiers(cols, '"') + ") VALUES (" +
+		strings.Join(values, ", ") + ") ON CONFLICT (" + quotedIdentifiers(conflict, '"') +
+		") DO UPDATE SET " + upsertAssignmentsPG(updateCols)
+	return convertPlaceholdersPG(query)
 }
 
 func (postgresDialect) SchemaMigrationsDDL() string {
@@ -322,4 +338,34 @@ func convertPlaceholdersPG(query string) string {
 		}
 	}
 	return b.String()
+}
+
+func quoteIdentifier(ident string, quote byte) string {
+	return string(quote) + strings.ReplaceAll(ident, string(quote), strings.Repeat(string(quote), 2)) + string(quote)
+}
+
+func quotedIdentifiers(idents []string, quote byte) string {
+	out := make([]string, len(idents))
+	for i, ident := range idents {
+		out[i] = quoteIdentifier(ident, quote)
+	}
+	return strings.Join(out, ", ")
+}
+
+func upsertAssignmentsMySQL(cols []string) string {
+	out := make([]string, len(cols))
+	for i, col := range cols {
+		q := quoteIdentifier(col, '`')
+		out[i] = q + "=VALUES(" + q + ")"
+	}
+	return strings.Join(out, ", ")
+}
+
+func upsertAssignmentsPG(cols []string) string {
+	out := make([]string, len(cols))
+	for i, col := range cols {
+		q := quoteIdentifier(col, '"')
+		out[i] = q + "=EXCLUDED." + q
+	}
+	return strings.Join(out, ", ")
 }
