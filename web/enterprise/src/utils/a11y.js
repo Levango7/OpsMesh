@@ -107,7 +107,8 @@ export function trapFocus(container, onEscape) {
     }
   }
 
-  container.addEventListener('keydown', onKeydown)
+  // 与既有 modal 的 window ESC 契约一致；Tab 回卷仍由下方 activeElement 限定在容器内。
+  window.addEventListener('keydown', onKeydown)
 
   // 初始化焦点到第一个可聚焦元素（或容器本身）
   const initialFocusables = container.querySelectorAll(focusableSelector)
@@ -119,7 +120,7 @@ export function trapFocus(container, onEscape) {
   }
 
   function destroy() {
-    container.removeEventListener('keydown', onKeydown)
+    window.removeEventListener('keydown', onKeydown)
     if (liveRegion && liveRegion.parentNode) {
       liveRegion.parentNode.removeChild(liveRegion)
     }
