@@ -1,26 +1,71 @@
 <template>
   <transition name="drawer">
-    <aside v-if="open" class="drawer">
-      <header class="drawer-head">
-        <h3>{{ title }}</h3>
-        <button class="xs outline" @click="$emit('close')">✕</button>
-      </header>
-      <div class="drawer-body">
-        <slot />
-      </div>
-    </aside>
+    <div v-if="open" class="drawer-overlay" @click.self="close">
+      <aside
+        ref="drawerRef"
+        class="drawer"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="titleId"
+        :aria-describedby="bodyId"
+        tabindex="-1"
+      >
+        <header class="drawer-head">
+          <h3 :id="titleId">{{ title }}</h3>
+          <button type="button" class="xs outline drawer-close" aria-label="Close" @click="emit('close')">✕</button>
+        </header>
+        <div :id="bodyId" class="drawer-body">
+          <slot />
+        </div>
+      </aside>
+    </div>
   </transition>
 </template>
 
 <script setup>
-defineProps({
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { trapFocus } from '@/utils/a11y'
+import { useScrollLock } from '@/composables/useScrollLock'
+
+const props = defineProps({
   open: { type: Boolean, default: false },
   title: { type: String, default: '' }
 })
-defineEmits(['close'])
+const emit = defineEmits(['close'])
+const drawerRef = ref(null)
+const uid = Math.random().toString(36).slice(2, 9)
+const titleId = `detail-drawer-title-${uid}`
+const bodyId = `detail-drawer-body-${uid}`
+let focusTrap = null
+const scrollLocked = ref(false)
+useScrollLock(scrollLocked)
+
+function close() {
+  emit('close')
+}
+
+watch(() => props.open, async (open) => {
+  scrollLocked.value = open
+  if (open) {
+    await nextTick()
+    focusTrap = trapFocus(drawerRef.value, close)
+  } else {
+    focusTrap?.destroy()
+    focusTrap = null
+  }
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  focusTrap?.destroy()
+  focusTrap = null
+})
 </script>
 
 <style scoped>
+.drawer-overlay {
+  position: fixed; inset: 0; z-index: 39;
+  background: rgba(15, 23, 42, .32);
+}
 .drawer {
   position: fixed; top: 0; right: 0;
   width: min(460px, 92vw); height: 100%;
@@ -30,6 +75,7 @@ defineEmits(['close'])
 }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .drawer-head h3 { margin: 0; }
+.drawer-close { min-width: 36px; min-height: 36px; }
 .drawer-body :deep(h4) { margin-top: 16px; }
 .drawer-body :deep(table) {
   border-collapse: separate; border-spacing: 0; width: 100%;
