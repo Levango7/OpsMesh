@@ -138,6 +138,54 @@ func TestAuditChainMetrics(t *testing.T) {
 	}
 }
 
+// TestLeaderMetrics 验证 leader 状态与 leader-only 循环可见性指标。
+// 这是 2026-11-23 审计 §2.F「SQL 模式静默失效」的监控面守卫：
+// 当 leader_status=1 而某循环 skipped 持续增长时，说明门控判据与选主结论脱节。
+func TestLeaderMetrics(t *testing.T) {
+	m := New()
+	out := m.Render()
+	// 冷启动：状态未知（-1），所有循环计数 0 值也输出。
+	for _, want := range []string{
+		"# TYPE opsmesh_leader_status gauge",
+		"opsmesh_leader_status -1\n",
+		"# TYPE opsmesh_leader_gated_loop_total counter",
+		`opsmesh_leader_gated_loop_total{loop="schedule",result="skipped"} 0`,
+		`opsmesh_leader_gated_loop_total{loop="reclaim",result="ran"} 0`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("冷启动缺少 %q\n---%s", want, out)
+		}
+	}
+
+	m.SetLeaderStatus(true, true)
+	m.IncLeaderGatedLoop("schedule", "ran")
+	m.IncLeaderGatedLoop("schedule", "ran")
+	m.IncLeaderGatedLoop("reclaim", "skipped")
+	// 未知标签折叠到固定集合，不产生新序列。
+	m.IncLeaderGatedLoop("unknown-loop-from-caller", "weird-result")
+	m.IncLeaderGatedLoop("schedule", "skipped")
+
+	out = m.Render()
+	for _, want := range []string{
+		"opsmesh_leader_status 1\n",
+		`opsmesh_leader_gated_loop_total{loop="schedule",result="ran"} 2`,
+		`opsmesh_leader_gated_loop_total{loop="reclaim",result="skipped"} 1`,
+		`opsmesh_leader_gated_loop_total{loop="unknown",result="skipped"} 1`,
+		`opsmesh_leader_gated_loop_total{loop="schedule",result="skipped"} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("缺少 %q\n---%s", want, out)
+		}
+	}
+
+	// 选主 RPC 失败：unknown 不得被当作 follower。
+	m.SetLeaderStatus(false, false)
+	out = m.Render()
+	if !strings.Contains(out, "opsmesh_leader_status -1\n") {
+		t.Fatalf("选主结论未知时应为 -1\n---%s", out)
+	}
+}
+
 // TestSplitHTTPKey 验证 method|path|status 键拆分正确性。
 func TestSplitHTTPKey(t *testing.T) {
 	method, path, status := splitHTTPKey("GET|/api/v1/devices|200")
