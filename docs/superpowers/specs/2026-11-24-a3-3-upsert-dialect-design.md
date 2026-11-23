@@ -163,8 +163,9 @@ PG 迁移顶部“全仓 UPDATE 均显式写 updated_at”的注释将订正为�
 
 `UpsertControlplaneInstance` 使用 `NOW()`；PG 的 `now()` 返回 `timestamptz`，写入 `timestamp without time zone` 时会按会话时区转换。为保证与 Go UTC 参数一致：
 
-- PG `PrepareDSN` 强制设置 `TimeZone=UTC`，覆盖用户 DSN 中的同名参数。不能复用现有 `ensureDSNParam`：它只在该参数不存在时追加，遇到已有 `TimeZone` 会保留原值。
-- 实现独立的 PG DSN 覆盖逻辑：URL 形态用结构化 query 解析，keyword/value 形态按 PostgreSQL DSN 规则替换 `timezone`，其余参数原样保留。
+- PG `PrepareDSN` 强制设置 `TimeZone=UTC`，覆盖 URL query 中的同名参数。不能复用现有 `ensureDSNParam`：它只在该参数不存在时追加，遇到已有 `TimeZone` 会保留原值。
+- 用 `net/url` 解析现有受支持的 URL 形态 DSN，替换 query 中的 `TimeZone`，其余参数原样保留。
+- 本批不扩展 PostgreSQL keyword/value DSN：现有 `dialectForDSN` 只识别 `postgres://`、`postgresql://`、`pg://`，测试夹具也只接受 URL；避免把 DSN 识别扩张混入 UPSERT 改造。
 - MySQL DSN 处理不变。
 - `dialect_test.go` 的 PG DSN 恒等契约相应改为“保留其余参数并强制 UTC”。
 - PG 真库测试执行 `SHOW TimeZone`，必须返回 `UTC`。
