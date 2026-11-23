@@ -83,7 +83,7 @@ task, err := s.createSystemTask(actx.TenantID, req.DeviceID, script, "db_pg_repl
 
 ### C. 数据层方言只做了半截
 
-- `sqlstore` 生产文件里 **95 处 `ON DUPLICATE KEY`**，分布在 **34 个文件**；生产代码合计 128 处。
+- `sqlstore` 生产文件里 `ON DUPLICATE KEY` 共 95 行命中，其中 **47 行是注释、47 行/48 处是真 SQL**，分布在 **33 个文件**（详见 `docs/pg-dialect-a3-2-a3-3-plan-2026-11-23.md`）；生产代码合计 128 行命中。
 - `dialect.go` 仅 325 行，注释自认：「只接本批有消费者的方法；无消费者的能力（LIMIT-OFFSET 分页、通用 Upsert、DDL 自增翻译）不入口，列 A3-2/A3-3」。
 - `pgx` 生产代码仅 6 处引用；`go.mod` 只有 `go-sql-driver/mysql` + `pgx/v5`，**没有达梦/金仓/openGauss 专用驱动**。
 - `internal/controlplane/domestic_ops.go` 里的 kingbase/达梦 是「对国产 DB 的运维动作脚本」（依赖目标机 CLI），不是存储层方言支持。
@@ -175,7 +175,7 @@ TD-60 的进展比口头评估时掌握的高：
 
 | 准入门槛 | 仓库现有证据 | 判定 |
 |---|---|---|
-| 国产数据库（达梦/金仓/openGauss） | `go.mod` 仅 mysql + pgx；sqlstore 95 处 MySQL 专有 UPSERT；`domestic_ops.go` 是运维脚本不是驱动 | ❌ 未跨过 |
+| 国产数据库（达梦/金仓/openGauss） | `go.mod` 仅 mysql + pgx；sqlstore 48 处真实 MySQL 专有 UPSERT；`domestic_ops.go` 是运维脚本不是驱动 | ❌ 未跨过 |
 | 多架构 / ARM64 | `.goreleaser.yml` 明确 `linux/amd64 + linux/arm64`（agent 二进制）；但 `release.yml` 的 buildx **无 `--platform`**，`Dockerfile.agent` 无 `TARGETARCH`；无 ARM64 真机纳管报告 | ◐ 二进制有，镜像/验证无 |
 | 国密 SM2/3/4 | 全仓 0 处实现 | ❌ 未跨过 |
 | 离线安装包 | `build-airgap-bundle.sh`（163 行）+ `install-airgap.sh` + selftest + `docs/airgap-install-sop.md` 齐全；但 `release.yml` 0 处 airgap，无已发布产物/CI 验证 | ◐ 工具在，产物/证据无 |
@@ -199,7 +199,7 @@ TD-60 的进展比口头评估时掌握的高：
 
 | # | 项 | 说明 |
 |---|---|---|
-| 1 | **PG 方言补完 + 国产 DB 真驱动** | 消灭 95 处 `ON DUPLICATE KEY`；补分页/Upsert/DDL 自增/`information_schema` 差异；接 openGauss → 达梦/金仓。**唯一同时卡住信创与自身 store 的项。** |
+| 1 | **PG 方言补完 + 国产 DB 真驱动** | 消灭 48 处真实 MySQL 专有 UPSERT（另 47 行是注释）；补分页/Upsert/DDL 自增/`information_schema` 差异；接 openGauss → 达梦/金仓。具体拆分见 `docs/pg-dialect-a3-2-a3-3-plan-2026-11-23.md`。**唯一同时卡住信创与自身 store 的项。** |
 | 2 | **发布证据链** | 容器镜像 `--platform linux/amd64,linux/arm64`；airgap bundle 进 release 并产出可下载产物；SBOM/签名已有基础，补「安装验收报告」。**工具大多已在，缺的是流水线产物。** |
 | 3 | **规模化压测** | 100/500/1000 agent 三档，p50/p99 + 资源曲线 + 版本 SHA；现有 50 VU 基线只能证明「单机 demo 不慢」。 |
 | 4 | **2FA** | 等保 B1，成本低、收益直接；当前 `needMFA` 只下发 token，不校验第二因子。 |
