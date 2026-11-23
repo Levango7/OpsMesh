@@ -97,6 +97,10 @@ jobs:
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ env.DOCKERHUB_TOKEN }}
+      # 多架构前置：runtime 阶段 alpine 的 apk 需按目标架构执行（arm64 需模拟）。
+      # build 阶段已在 Dockerfile.service 固定 BUILDPLATFORM + GOARCH 交叉编译，不走模拟。
+      - name: Set up QEMU（arm64 runtime 阶段）
+        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -142,11 +146,33 @@ jobs:
         run: |
           docker buildx build \
             --file Dockerfile.service \
+            --platform linux/amd64,linux/arm64 \
             --build-arg VERSION=${{ steps.meta.outputs.version }} \
             --build-arg SERVICE=${{ matrix.service }} \
             --tag ${{ steps.meta.outputs.image }}:${{ github.sha }} \
             --push \
             .
+
+      - name: 自验镜像确为双架构 manifest list
+        # 不假成功：--platform 写进 YAML 不代表产物真的有两个平台（buildx builder 异常、
+        # 平台被跳过时 job 仍可能绿）。直接读注册表 manifest 断言两种架构都在。
+        # GHCR 有写后读窗口，沿用本文件既有的 5 次退避判据，不放宽正确性。
+        run: |
+          set -euo pipefail
+          IMG="${{ steps.meta.outputs.image }}:${{ github.sha }}"
+          INSPECT=""
+          for i in 1 2 3 4 5; do
+            if INSPECT=$(docker buildx imagetools inspect "$IMG" 2>&1); then break; fi
+            if [ "$i" = 5 ]; then
+              echo "::error::读不到 ${IMG} 的 manifest：$INSPECT"
+              exit 1
+            fi
+            echo "第 ${i} 次读 manifest 失败（GHCR 写后读窗口），$((i * 10))s 后重试"
+            sleep $((i * 10))
+          done
+          echo "$INSPECT" | grep -q 'linux/amd64' || { echo "::error::${IMG} 缺少 linux/amd64 平台"; echo "$INSPECT"; exit 1; }
+          echo "$INSPECT" | grep -q 'linux/arm64' || { echo "::error::${IMG} 缺少 linux/arm64 平台"; echo "$INSPECT"; exit 1; }
+          echo "双架构自验通过：${IMG}"
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
