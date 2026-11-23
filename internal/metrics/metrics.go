@@ -115,6 +115,13 @@ type M struct {
 	// ABAC 定向强制决策计数（批次53）：键为 "decision|method"，标签均为固定小集合
 	// （见 abac_enforce.go）。只在白名单命中时增长。
 	abacEnforce map[string]uint64
+
+	// leader 判据与受其门控的循环可见性（2026-11-23 审计发现）：
+	// TD-60 后控制面本地 leader_lease 不再续租，SQL 模式下 store.IsLeader() 恒 false，
+	// 而多数后台循环仍以它为门控——静默失效。这两个序列让「谁是 leader」与
+	// 「每个循环本轮到底跑了没有」在 /metrics 上可见（见 leader_metrics.go）。
+	leaderStatus     int64             // -1=未知；0=follower；1=leader
+	leaderGatedLoops map[string]uint64 // "loop|result" -> count
 }
 
 // 验签指标的固定标签取值。渲染时按这些取值全量输出（计数为 0 也输出），
@@ -128,17 +135,19 @@ var (
 // New 构造空指标注册表。
 func New() *M {
 	return &M{
-		tasks:       make(map[string]int64),
-		httpReqs:    make(map[string]uint64),
-		httpHist:    make(map[string]*httpHistStats),
-		httpSeries:  make(map[string]struct{}),
-		sigVerifs:   make(map[string]uint64),
-		sigKeySrc:   make(map[string]uint64),
-		pluginHooks: make(map[string]uint64),
-		abacShadow:  make(map[string]uint64),
-		abacEnforce: make(map[string]uint64),
-		gatewayReqs: make(map[string]int64),
-		gatewayLat:  make(map[string]float64),
+		tasks:            make(map[string]int64),
+		httpReqs:         make(map[string]uint64),
+		httpHist:         make(map[string]*httpHistStats),
+		httpSeries:       make(map[string]struct{}),
+		sigVerifs:        make(map[string]uint64),
+		sigKeySrc:        make(map[string]uint64),
+		pluginHooks:      make(map[string]uint64),
+		abacShadow:       make(map[string]uint64),
+		abacEnforce:      make(map[string]uint64),
+		leaderGatedLoops: make(map[string]uint64),
+		leaderStatus:     leaderStatusUnknown,
+		gatewayReqs:      make(map[string]int64),
+		gatewayLat:       make(map[string]float64),
 	}
 }
 
@@ -374,6 +383,7 @@ func (m *M) Render() string {
 
 	b = m.appendHTTPMetrics(b)
 	b = m.appendAuditChainMetrics(b)
+	b = m.appendLeaderMetrics(b)
 	b = m.appendAgentSignatureMetrics(b)
 	b = m.appendPluginMetrics(b)
 	b = m.appendABACShadowMetrics(b)

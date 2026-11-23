@@ -7,9 +7,14 @@
 # context: .），服务名经 --build-arg SERVICE 注入，编译 ./services/<svc>。
 #
 # base image digest 由 Renovate 自动钉死（.github/renovate.json）。
-FROM golang:1.26-bookworm AS build
+# 多架构发布（2026-11-23）：build 阶段固定在 BUILDPLATFORM 上原生交叉编译，
+# 而不是靠 QEMU 模拟整条 Go 工具链（12 服务矩阵 × arm64 模拟会极慢且易超时）。
+# TARGETARCH 由 buildx 按 --platform 注入；CGO_ENABLED=0 的纯 Go 产物可直接在目标架构运行。
+# runtime 阶段（alpine + apk）仍需目标架构，由 release.yml 的 setup-qemu 提供模拟。
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
 ARG SERVICE=auth-svc
 ARG VERSION=dev
+ARG TARGETARCH
 ENV GOPROXY=https://goproxy.cn,direct
 # 关键：golang 官方镜像默认 WORKDIR=/go（即 GOPATH）。若不先切换 WORKDIR，
 # 下方 COPY ./ 会把 go.mod 写进 GOPATH（第 4 轮实测报 "warning: ignoring
@@ -65,7 +70,7 @@ RUN if [ "${SERVICE}" = "log-svc" ]; then \
     else \
       VERSION_LDFLAGS="-X github.com/Levango7/OpsMesh/internal/version.Version=${VERSION}"; \
     fi; \
-    CGO_ENABLED=0 GOOS=linux go build -tags kafka -trimpath \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -tags kafka -trimpath \
     -ldflags="-s -w ${VERSION_LDFLAGS}" \
     -o /svc ./cmd/${SERVICE}
 

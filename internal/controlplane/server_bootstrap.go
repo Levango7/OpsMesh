@@ -209,7 +209,9 @@ func (s *Server) autoProvisionLoop(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if s.store.IsLeader() && s.cfg.SegmentCIDR != "" {
+		leader := s.store.IsLeader()
+		s.recordLeaderGate("autoprovision", leader)
+		if leader && s.cfg.SegmentCIDR != "" {
 			// SSRF 防护：后台循环同样校验 CIDR 白名单。
 			// 白名单非空时 --segment-cidr 必须在白名单内，否则跳过本轮扫描并告警
 			// （不 fail-fast，避免后台循环崩溃；配置错误应由启动期 Validate 兜底）。
