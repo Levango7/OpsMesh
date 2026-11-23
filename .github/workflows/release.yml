@@ -170,8 +170,10 @@ jobs:
             echo "第 ${i} 次读 manifest 失败（GHCR 写后读窗口），$((i * 10))s 后重试"
             sleep $((i * 10))
           done
-          echo "$INSPECT" | grep -q 'linux/amd64' || { echo "::error::${IMG} 缺少 linux/amd64 平台"; echo "$INSPECT"; exit 1; }
-          echo "$INSPECT" | grep -q 'linux/arm64' || { echo "::error::${IMG} 缺少 linux/arm64 平台"; echo "$INSPECT"; exit 1; }
+          # 用 herestring 而非 `echo | grep -q`：pipefail 下后者命中也可能被 SIGPIPE 判成失败，
+          # 项目门禁 TestNoPipelineGrepQInDeliveryAssets 会直接判红（本 PR 首跑已实测踩中）。
+          grep -q 'linux/amd64' <<<"$INSPECT" || { echo "::error::${IMG} 缺少 linux/amd64 平台"; echo "$INSPECT"; exit 1; }
+          grep -q 'linux/arm64' <<<"$INSPECT" || { echo "::error::${IMG} 缺少 linux/arm64 平台"; echo "$INSPECT"; exit 1; }
           echo "双架构自验通过：${IMG}"
 
       - name: Run Trivy vulnerability scanner
