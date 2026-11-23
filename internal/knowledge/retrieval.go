@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 
 	gateway "github.com/Levango7/OpsMesh/internal/ai/gateway"
 	"github.com/Levango7/OpsMesh/internal/authctx"
@@ -294,6 +295,7 @@ func (ct *CitationTracker) FormatCitations(docs []KnowledgeDoc) string {
 // ============================================================================
 
 type InMemoryKnowledgeStore struct {
+	mu   sync.RWMutex
 	docs map[string]KnowledgeDoc
 }
 
@@ -301,16 +303,42 @@ func NewInMemoryKnowledgeStore() *InMemoryKnowledgeStore {
 	return &InMemoryKnowledgeStore{docs: make(map[string]KnowledgeDoc)}
 }
 
+// cloneKnowledgeDoc 隔离调用方与存储内的可变引用；Citation 也必须复制，
+// 否则 CitationTracker 在锁外补引用时会回写存储对象。
+func cloneKnowledgeDoc(doc KnowledgeDoc) KnowledgeDoc {
+	cp := doc
+	if doc.Embedding != nil {
+		cp.Embedding = make([]float64, len(doc.Embedding))
+		copy(cp.Embedding, doc.Embedding)
+	}
+	if doc.Metadata != nil {
+		cp.Metadata = make(map[string]interface{}, len(doc.Metadata))
+		for key, value := range doc.Metadata {
+			cp.Metadata[key] = value
+		}
+	}
+	if doc.Citation != nil {
+		citation := *doc.Citation
+		cp.Citation = &citation
+	}
+	return cp
+}
+
 func (s *InMemoryKnowledgeStore) Upsert(ctx context.Context, docs []KnowledgeDoc) error {
 	tenant := ctxTenant(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i := range docs {
-		docs[i].TenantID = tenant
-		s.docs[tenantKey(ctx, docs[i].ID)] = docs[i]
+		doc := cloneKnowledgeDoc(docs[i])
+		doc.TenantID = tenant
+		s.docs[tenantKey(ctx, doc.ID)] = doc
 	}
 	return nil
 }
 
 func (s *InMemoryKnowledgeStore) Search(ctx context.Context, query string, topK int, filter map[string]interface{}) ([]KnowledgeDoc, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var results []KnowledgeDoc
 	prefix := tenantPrefix(ctx)
 	currentTenant := ctxTenant(ctx)
@@ -330,6 +358,7 @@ func (s *InMemoryKnowledgeStore) Search(ctx context.Context, query string, topK 
 		if !matchKnowledgeFilter(doc.Metadata, filter) {
 			continue
 		}
+		doc = cloneKnowledgeDoc(doc)
 		doc.ID = bareID(key) // 出口还原裸 ID
 		if doc.TenantID == "" {
 			doc.TenantID = currentTenant
@@ -343,6 +372,8 @@ func (s *InMemoryKnowledgeStore) Search(ctx context.Context, query string, topK 
 }
 
 func (s *InMemoryKnowledgeStore) Delete(ctx context.Context, ids []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	currentTenant := ctxTenant(ctx)
 	idSet := make(map[string]bool, len(ids))
 	for _, id := range ids {
@@ -365,6 +396,8 @@ func (s *InMemoryKnowledgeStore) Delete(ctx context.Context, ids []string) error
 }
 
 func (s *InMemoryKnowledgeStore) Count(ctx context.Context) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	prefix := tenantPrefix(ctx)
 	currentTenant := ctxTenant(ctx)
 	n := 0
@@ -388,6 +421,8 @@ func (s *InMemoryKnowledgeStore) Count(ctx context.Context) (int, error) {
 // HTTP 面必须传正上限——旧版无 limit，`?source=<大源>` 一次拉回整源正文（含 content），
 // 单请求内存/带宽无上界，与同端点 Search 的 1000 条承诺自相矛盾（A2 审计 BB-05）。
 func (s *InMemoryKnowledgeStore) ListBySource(ctx context.Context, source KnowledgeSource, limit int) ([]KnowledgeDoc, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var results []KnowledgeDoc
 	prefix := tenantPrefix(ctx)
 	currentTenant := ctxTenant(ctx)
@@ -405,6 +440,7 @@ func (s *InMemoryKnowledgeStore) ListBySource(ctx context.Context, source Knowle
 			continue
 		}
 		if doc.Source == source {
+			doc = cloneKnowledgeDoc(doc)
 			doc.ID = bareID(key)
 			if doc.TenantID == "" {
 				doc.TenantID = currentTenant
