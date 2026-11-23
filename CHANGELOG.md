@@ -10,6 +10,10 @@
 - **2026-11-24 issue #149 — VectorStore/KnowledgeStore 并发崩溃修复**：两个生产共享内存存储的全部 map 读写路径补 RWMutex；Upsert/Search/ListBySource 隔离 embedding、metadata 与 citation 的调用方可变引用，避免锁外回写。新增并发与 alias 回归测试；未修版本及去锁/去复制变异均转红，修复后两包普通测试与 `-race` 全绿。持久化与跨副本语义不在本批改变。
 - **2026-11-24 安全基线 — OpenTelemetry v1.47.0**：修复 govulncheck 可达的 GO-2026-6975/6974（baggage 内存放大与属性长度限制绕过），同步根模块及全部 OTel 子模块的传递依赖与第三方许可证清单；全仓构建、OTel/tlsutil/AI 测试、模块校验与许可证门禁通过，task-svc 的 Linux `-tags kafka` 构建复现通过。CI Go 1.26.11 高于标准库修复线 1.26.9，本机 Go 1.26.6 的标准库报告不冒充 CI 结果。
 
+## [Unreleased] — 2026-11-23（批次76：数据治理平面）
+
+- **2026-11-23 批次76 — 数据治理平面**：新增 `internal/governance` 包（`DataRule`/`PiiPolicy`/`RetentionPolicy`/`CatalogAsset` 模型 + `GovernanceStore` 接口 + 内存实现 + 纯函数引擎）；DQ 规则 6 类（null/unique/range/regex/freshness/rowcount）+ PII 脱敏 5 类（email/phone/idcard/name/custom）+ 保留策略 3 动作（delete/archive/anonymize）+ 目录检索 + Atlas 血缘代理；API `/api/v1/governance/{rules,pii,retention,catalog,lineage}`，mutations task:write、reads task:read，租户隔离；保留 SQL 渲染与标识符校验；Atlas 未配置时 503。
+
 ## [Unreleased] — 2026-11-22（批次75：大数据 sizing 调优引擎 + /data/tuning API）
 
 - **2026-11-22 批次75 — 大数据 sizing 调优引擎**：新增纯函数包 `internal/datatuning`（`NodeSpec`/`Profile`/`Recommend` + 确定性 YAML 与 Kafka properties 渲染；工作负载 `batch|streaming|olap|oltp|mixed`；每节点预留 1 核 + 2 GiB，YARN 内存比 batch/olap 0.80、streaming/mixed 0.70、oltp 0.75；HDFS 块大小超 100TB 用 256m、OLTP 64m、其余 128m；Hive Tez 容器、Spark executor/driver/shuffle、HBase memstore/filesize/handler、Kafka 分区/保留/线程按规格推导，夹取项写入 notes）。新增 `/api/v1/data/tuning/profiles|recommend|apply` API（查询 task:read、下发 task:write，租户隔离；dry-run 返回渲染文本，非 dry-run 下发系统任务，先 `cp -a` 时间戳备份再写 `/etc/<component>/conf/opsmesh-tuning.properties`；组件白名单 yarn|hdfs|hive|spark|hbase|kafka）。新增 sizing 单测与 API 契约测试。

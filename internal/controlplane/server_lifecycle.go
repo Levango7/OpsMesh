@@ -240,6 +240,7 @@ func (s *Server) Start() error {
 	s.registerPulsarExtendedRoutes(mux)
 	s.registerDataRoutes(mux)
 	s.registerDataTuningRoutes(mux)
+	s.registerGovernanceRoutes(mux)
 	// 中间件部署：预置模板列表 + 详情 + 在指定 agent 上部署 + 已部署实例查询 + 卸载。
 	mux.HandleFunc("/api/v1/middleware-templates", s.handleMiddlewareTemplates)
 	mux.HandleFunc("/api/v1/middleware-templates/", s.handleMiddlewareTemplateDetail) // 子路径：{id} 和 {id}/deploy

@@ -37,6 +37,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/deploy"
 	"github.com/Levango7/OpsMesh/internal/egress"
 	"github.com/Levango7/OpsMesh/internal/events"
+	"github.com/Levango7/OpsMesh/internal/governance"
 	"github.com/Levango7/OpsMesh/internal/helm"
 	"github.com/Levango7/OpsMesh/internal/k8s"
 	"github.com/Levango7/OpsMesh/internal/k8slifecycle"
@@ -88,6 +89,7 @@ type Server struct {
 	agentHandler        *agent.AgentHandler               // AI Agent 编排处理器
 	knowledgeHandler    *knowledge.KnowledgeHandler       // 知识库处理器
 	costHandler         *cost.CostHandler                 // 成本控制处理器
+	governanceStore     *governance.MemoryStore           // 数据治理存储（内存）
 	k8sLifecycleHandler *k8slifecycle.K8sLifecycleHandler // K8s 生命周期处理器
 	// 告警推送去重（notifyLoop 防重复）：按告警指纹（AlertID）记录已推送集合，
 	// 替代旧版全局单一时间高水位 lastAlertSent——时间水位对乱序插入/跨租户告警/
@@ -538,6 +540,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		aiopsHandler:     aiops.NewHandler(aiops.NewEngine(cfg, st)),
 		aiopsEngine:      aiops.NewEngine(cfg, st),
 		costHandler:      newSharedCostHandler(),
+		governanceStore:  governance.NewMemoryStore(),
 		aiGatewayHandler: newBudgetedAIGatewayHandler(aiGWOpts),
 		agentHandler:     newBudgetedAgentHandler(aiGWOpts),
 		knowledgeHandler: newBudgetedKnowledgeHandler(aiGWOpts),
