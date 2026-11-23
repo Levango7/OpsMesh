@@ -19,6 +19,10 @@ data:
   OPSMESH_ARCHIVE_AGE_MIN: {{ .Values.controlplane.archiveAgeMin | quote }}
   OPSMESH_PRODUCTION: {{ .Values.controlplane.production | quote }}
   OPSMESH_REQUIRE_AUTH: {{ .Values.controlplane.requireAuth | quote }}
+  # 任务队列只能有一个所有者：独立 task-svc 开启时控制面 HTTP 与 agent 同走该服务；
+  # 关闭时控制面本地 HTTP/store 与内嵌 TaskService 配对，禁止本机自代理。
+  OPSMESH_TASK_SVC_GRPC_ADDR: {{ if .Values.services.task_svc.enabled }}{{ include "opsmesh.fullname" . }}-task-svc:{{ .Values.services.task_svc.grpcPort }}{{ else }}localhost:9090{{ end }}
+  TASK_SVC_PROXY_ENABLED: {{ .Values.services.task_svc.enabled | quote }}
   {{- if .Values.controlplane.advertiseAddr }}
   OPSMESH_ADVERTISE_ADDR: {{ .Values.controlplane.advertiseAddr | quote }}
   {{- end }}

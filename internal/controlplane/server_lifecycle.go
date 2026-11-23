@@ -704,6 +704,11 @@ func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
 	if s.cutoverRouter == nil {
 		taskSvcProxied = os.Getenv("TASK_SVC_PROXY_ENABLED") == "true"
 	}
+	// 本机 task-svc 地址就是控制面自身：即便误开代理总闸也强制本地路由，
+	// 防止 HTTP 自代理到只提供 agent claim/report 的内嵌服务。
+	if taskSvcProxied && !s.hasExternalTaskService() {
+		taskSvcProxied = false
+	}
 	if taskSvcProxied {
 		mux.HandleFunc("/api/v1/tasks", s.handleTaskProxy)                           // TD-60 根路由代理：GET 列表 / POST 下发
 		mux.HandleFunc("/api/v1/tasks/", s.handleTaskProxy)                          // 子路径：{id}/cancel、{id}/result、{id}/approve、{id}/reject、{id}/retry、{id}/dead-letter

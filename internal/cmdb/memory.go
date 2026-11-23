@@ -108,10 +108,10 @@ func (s *MemoryCiStore) GetCI(_ context.Context, id, tenantID string) (*CiItem, 
 	defer s.mu.RUnlock()
 	item, ok := s.items[id]
 	if !ok {
-		return nil, fmt.Errorf("CI %s not found", id)
+		return nil, ciNotFound(id)
 	}
 	if tenantID != "" && item.TenantID != tenantID {
-		return nil, fmt.Errorf("CI %s not found", id)
+		return nil, ciNotFound(id)
 	}
 	return &item, nil
 }

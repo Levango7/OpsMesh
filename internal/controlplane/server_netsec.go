@@ -24,6 +24,7 @@ import (
 	"github.com/Levango7/OpsMesh/internal/grpcx"
 	"github.com/Levango7/OpsMesh/internal/otelx"
 	"github.com/Levango7/OpsMesh/internal/plugin"
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 
 	grpcserver "github.com/Levango7/OpsMesh/internal/controlplane/grpc"
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -102,7 +103,7 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener, error) {
 		grpc.MaxSendMsgSize(16<<20),
 	)
 	gs := grpc.NewServer(opts...)
-	gs.RegisterService(&grpcx.Registration_ServiceDesc, &grpcserver.GrpcServerImpl{
+	grpcImpl := &grpcserver.GrpcServerImpl{
 		Store:       s.store,
 		RequireAuth: s.requireAuth,
 		Cfg:         s.cfg,
@@ -132,7 +133,11 @@ func (s *Server) buildGRPC() (*grpc.Server, net.Listener, error) {
 			}
 			return ""
 		}(),
-	})
+	}
+	gs.RegisterService(&grpcx.Registration_ServiceDesc, grpcImpl)
+	if grpcserver.ShouldEmbedTaskService(s.cfg) {
+		taskv1.RegisterTaskServiceServer(gs, &grpcserver.TaskServiceImpl{Store: s.store, Agent: grpcImpl})
+	}
 	return gs, lis, nil
 }
 

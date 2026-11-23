@@ -190,6 +190,25 @@ func TestFix1_BatchCanarySubpathsReturn200ViaMux(t *testing.T) {
 	}
 }
 
+func TestEmbeddedTaskServiceIgnoresProxyFlag(t *testing.T) {
+	t.Setenv("TASK_SVC_PROXY_ENABLED", "true")
+	s := rfServer(t, 1)
+	s.cfg.TaskSvcGRPCAddr = "localhost:9090"
+	s.cfg.GRPCPort = 9090
+	mux := rfMux(s)
+	rec := rfDo(t, mux, http.MethodPost, "/api/v1/tasks", `{"agentID":"dev-rf-0","type":"shell","command":"echo embedded-local"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("本机内嵌形态必须走本地创建，实际 %d: %s", rec.Code, rec.Body.String())
+	}
+	var created proto.Task
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.store.TaskByID(created.TaskID); got == nil {
+		t.Fatalf("本机创建未落入控制面共享 store: %s", created.TaskID)
+	}
+}
+
 // =============================================================================
 // FIX 2：GET /api/v1/tasks/{id} 任务详情
 // =============================================================================
@@ -203,6 +222,7 @@ func TestFix1_BatchCanarySubpathsReturn200ViaMux(t *testing.T) {
 func TestFix2_BareTaskDetailReturnsTaskJSON(t *testing.T) {
 	t.Setenv("TASK_SVC_PROXY_ENABLED", "true") // 总闸开启 ⇒ 走 handleTaskProxy（task-svc 代理路径）
 	s := rfServer(t, 2)
+	s.cfg.TaskSvcGRPCAddr = "task-svc:50052" // 显式外部队列；本机地址必须走本地路由
 	// 预置一个任务到 stub client，测试裸详情路由是否可达
 	stubClient := s.taskServiceClient.(*StubTaskServiceClient)
 	testTaskID := "test-task-" + fmt.Sprintf("%d", time.Now().UnixNano())

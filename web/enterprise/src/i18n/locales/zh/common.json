@@ -342,6 +342,8 @@
     "save": "保存",
     "cancel": "取消",
     "close": "关闭",
+    "capability_unavailable_title": "当前能力未启用",
+    "capability_unavailable_desc": "此功能依赖的可选服务或工具尚未部署。启用后即可使用，其他功能不受影响。",
     "confirm": "确认",
     "write_denied": "当前角色无本页写权限，新建/编辑/删除等写操作已禁用。",
     "ok": "确定",

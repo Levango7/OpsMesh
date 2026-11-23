@@ -50,24 +50,25 @@ const (
 // 一个审批流绑定（租户, 触发类型），描述该场景下的多级审批步骤。
 // 同一租户下同一 TriggerType 仅允许一个启用流（由 Engine 维护不变量）。
 type ApprovalFlow struct {
-	ID          string         // 全局唯一 ID
-	Name        string         // 流名称
-	TenantID    string         // 租户 ID
-	TriggerType string         // 触发类型（shell/batch_restart/config_change/k8s_delete/deploy）
-	Steps       []ApprovalStep // 审批步骤（按 Order 升序执行）
-	Enabled     bool           // 是否启用
-	CreatedAt   time.Time      // 创建时间
-	UpdatedAt   time.Time      // 最近更新时间
+	ID          string         `json:"id"`                    // 全局唯一 ID
+	Name        string         `json:"name"`                  // 流名称
+	Description string         `json:"description,omitempty"` // 人读说明（前端列表/编辑字段）
+	TenantID    string         `json:"tenantId"`              // 租户 ID
+	TriggerType string         `json:"triggerType"`           // 触发类型（shell/batch_restart/config_change/k8s_delete/deploy）
+	Steps       []ApprovalStep `json:"steps"`                 // 审批步骤（按 Order 升序执行）
+	Enabled     bool           `json:"enabled"`               // 是否启用
+	CreatedAt   time.Time      `json:"createdAt"`             // 创建时间
+	UpdatedAt   time.Time      `json:"updatedAt"`             // 最近更新时间
 }
 
 // ApprovalStep 审批步骤定义。
 type ApprovalStep struct {
-	ID        string        // 步骤 ID（流内唯一）
-	Name      string        // 步骤名称
-	Order     int           // 步骤顺序（1=第一级，2=第二级...）
-	Mode      StepMode      // 审批模式：sequential/countersign/anyof
-	Approvers []string      // 审批人 userID 列表
-	Timeout   time.Duration // 审批超时（<=0 表示不超时）
+	ID        string        `json:"id"`        // 步骤 ID（流内唯一）
+	Name      string        `json:"name"`      // 步骤名称
+	Order     int           `json:"order"`     // 步骤顺序（1=第一级，2=第二级...）
+	Mode      StepMode      `json:"mode"`      // 审批模式：sequential/countersign/anyof
+	Approvers []string      `json:"approvers"` // 审批人 userID 列表
+	Timeout   time.Duration `json:"timeout"`   // 审批超时（<=0 表示不超时）
 }
 
 // Validate 校验审批流定义合法性。

@@ -8,6 +8,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	taskv1 "github.com/Levango7/OpsMesh/services/task-svc/api/proto/v1"
 )
 
 type capturedLog struct {
@@ -57,6 +59,28 @@ func TestAuditInterceptorErrorUsesWarnWithCode(t *testing.T) {
 	}
 	assertHasField(t, warns[0].args, "grpc_code", codes.Unauthenticated.String())
 	assertHasField(t, warns[0].args, "grpc_error")
+}
+
+func TestAuditInterceptorIdleClaimUsesDebug(t *testing.T) {
+	var debugs, warns []capturedLog
+	spy := func(dst *[]capturedLog) logFunc {
+		return func(ctx context.Context, msg string, args ...any) {
+			*dst = append(*dst, capturedLog{msg: msg, args: args})
+		}
+	}
+	interceptor := auditInterceptor(spy(&debugs), spy(&warns), false)
+	info := &grpc.UnaryServerInfo{FullMethod: taskv1.TaskService_ClaimTask_FullMethodName}
+	_, err := interceptor(context.Background(), nil, info,
+		func(ctx context.Context, req interface{}) (interface{}, error) {
+			return nil, status.Error(codes.NotFound, "task not found")
+		})
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("NotFound 必须原样传给 agent 作空闲退避，实际 %v", err)
+	}
+	if len(debugs) != 1 || len(warns) != 0 {
+		t.Fatalf("空队列应为 1 debug / 0 warn，实际 %d / %d", len(debugs), len(warns))
+	}
+	assertHasField(t, debugs[0].args, "grpc_code", codes.NotFound.String())
 }
 
 func TestAuditInterceptorPlainErrorMapsUnknown(t *testing.T) {

@@ -31,6 +31,7 @@ func ownershipTestServer(t *testing.T, requireAuth bool) *Server {
 	t.Helper()
 	s, _ := newBenchServer()
 	s.requireAuth = requireAuth
+	s.cfg.TaskSvcGRPCAddr = "task-svc:50052" // 本组用例验证外部 task-svc 的增量归属门
 	// 空名册（两个来源都空 = 合法）：task 闸门与名册无关，这里只要 router 存在。
 	r, err := cutover.LoadRoster("", "")
 	if err != nil {
@@ -92,6 +93,20 @@ func TestTaskOwnershipGateCoversAllFourEntryPoints(t *testing.T) {
 		}
 		if !strings.Contains(rec.Body.String(), "task-svc") {
 			t.Errorf("%s 的 409 文案未指引去 task-svc 侧：%s", ep.name, rec.Body.String())
+		}
+	}
+}
+
+func TestTaskOwnershipGateDisabledForEmbeddedTaskService(t *testing.T) {
+	t.Setenv("TASK_SVC_OWNS_NEW_TASKS", "true")
+	t.Setenv("TASK_SVC_PROXY_ENABLED", "true")
+	t.Setenv(svcproxy.EnvKey, "")
+	s := ownershipTestServer(t, false)
+	s.cfg.TaskSvcGRPCAddr = "localhost:9090"
+	s.cfg.GRPCPort = 9090
+	for _, ep := range taskCreateEntryPoints() {
+		if rec := doTaskCreate(s, ep); rec.Code == http.StatusConflict {
+			t.Errorf("%s 本机内嵌形态不得拒绝本地建任务：%s", ep.name, strings.TrimSpace(rec.Body.String()))
 		}
 	}
 }
