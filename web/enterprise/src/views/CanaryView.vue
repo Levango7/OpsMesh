@@ -64,10 +64,10 @@
     <div v-if="store.current" class="card card--raised">
       <div class="flowbar">
         <h3>{{ $t('canary.status_title') }} · {{ store.current.canaryID || '—' }}</h3>
-        <Button v-if="store.current.canaryID" variant="ghost" size="small" @click="refreshCurrent">
+        <Button v-if="store.current.canaryID" variant="ghost" size="sm" @click="refreshCurrent">
           <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
         </Button>
-        <Button variant="ghost" size="small" @click="store.clearCurrent()">{{ $t('common.close') }}</Button>
+        <Button variant="ghost" size="sm" @click="store.clearCurrent()">{{ $t('common.close') }}</Button>
       </div>
 
       <div class="stats">
@@ -116,7 +116,7 @@
           <span class="dot baseline"></span> {{ $t('canary.legend_baseline') }} {{ baselinePercent }}%
         </div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="ghost" size="small" @click="openTrafficEdit" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="canary-traffic-edit-btn">{{ $t('canary.traffic_edit') }}</Button>
+          <Button variant="ghost" size="sm" @click="openTrafficEdit" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')" data-testid="canary-traffic-edit-btn">{{ $t('canary.traffic_edit') }}</Button>
         </div>
       </div>
       <form v-else class="traffic-form" @submit.prevent="onTrafficSave" :disabled="!canWrite" :title="canWrite ? '' : $t('common.write_denied')">
@@ -126,7 +126,7 @@
         </div>
         <div class="btnbar btnbar--bottom">
           <Button type="submit" variant="primary" :disabled="trafficSaving">{{ $t('common.save') }}</Button>
-          <Button type="button" variant="ghost" size="small" @click="trafficEdit = false">{{ $t('common.cancel') }}</Button>
+          <Button type="button" variant="ghost" size="sm" @click="trafficEdit = false">{{ $t('common.cancel') }}</Button>
         </div>
       </form>
     </div>
@@ -135,7 +135,7 @@
     <div v-if="store.current" class="card card--raised">
       <div class="flowbar">
         <h3>{{ $t('canary.metrics_title') }}</h3>
-        <Button v-if="store.current.canaryID" variant="ghost" size="small" @click="refreshMetrics">
+        <Button v-if="store.current.canaryID" variant="ghost" size="sm" @click="refreshMetrics">
           <Icon name="refresh" :size="13" /> {{ $t('common.refresh') }}
         </Button>
       </div>
@@ -180,7 +180,7 @@
           <span :class="['status-badge', 'status-' + value]">{{ value }}</span>
         </template>
         <template #cell-actions="{ row }">
-          <Button variant="ghost" size="small" @click="viewCanary(row.canaryID)" data-testid="canary-view-btn">{{ $t('canary.view') }}</Button>
+          <Button variant="ghost" size="sm" @click="viewCanary(row.canaryID)" data-testid="canary-view-btn">{{ $t('canary.view') }}</Button>
         </template>
       </Table>
     </div>

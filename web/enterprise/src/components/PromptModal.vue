@@ -2,15 +2,24 @@
   <Teleport to="body">
     <transition name="modal">
       <div v-if="modelValue" class="modal-overlay" :data-testid="testId" @click.self="onCancel">
-        <div class="modal-box">
-          <h3 class="modal-title">{{ title }}</h3>
-          <p v-if="message" class="modal-message modal-message--tight">{{ message }}</p>
+        <div
+          ref="dialogRef"
+          class="modal-box"
+          role="dialog"
+          aria-modal="true"
+          :aria-labelledby="titleId"
+          :aria-describedby="message ? messageId : undefined"
+          tabindex="-1"
+        >
+          <h3 :id="titleId" class="modal-title">{{ title }}</h3>
+          <p v-if="message" :id="messageId" class="modal-message modal-message--tight">{{ message }}</p>
           <input
             ref="inputRef"
             v-model="inputValue"
             class="modal-input"
             data-testid="prompt-modal-input"
             :placeholder="placeholder"
+            :aria-label="message || title"
             @keyup.enter="onConfirm"
           />
           <div class="modal-actions">
@@ -32,6 +41,7 @@
 // 通过 v-model 控制显示，emit confirm(value) / cancel
 // 打开时自动聚焦输入框并选中默认值，回车确认
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
+import { trapFocus } from '@/utils/a11y'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -48,7 +58,12 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'confirm', 'cancel'])
 
 const inputRef = ref(null)
+const dialogRef = ref(null)
 const inputValue = ref('')
+const uid = Math.random().toString(36).slice(2, 9)
+const titleId = `prompt-modal-title-${uid}`
+const messageId = `prompt-modal-message-${uid}`
+let focusTrap = null
 
 function close() {
   emit('update:modelValue', false)
@@ -65,33 +80,24 @@ function onCancel() {
   close()
 }
 
-function onEsc(e) {
-  if (e.key === 'Escape' && props.modelValue) {
-    onCancel()
+watch(() => props.modelValue, async (v) => {
+  if (typeof document === 'undefined') return
+  if (v) {
+    // 初次挂载即为打开态也要填默认值、建立焦点陷阱并绑定 ESC。
+    inputValue.value = props.defaultValue
+    await nextTick()
+    focusTrap = trapFocus(dialogRef.value, onCancel)
+    inputRef.value?.focus?.()
+    inputRef.value?.select?.()
+  } else {
+    focusTrap?.destroy()
+    focusTrap = null
   }
-}
-
-watch(
-  () => props.modelValue,
-  (v) => {
-    if (v) {
-      // 打开时填入默认值并聚焦
-      inputValue.value = props.defaultValue
-      nextTick(() => {
-        if (inputRef.value) {
-          inputRef.value.focus()
-          inputRef.value.select()
-        }
-      })
-      window.addEventListener('keydown', onEsc)
-    } else {
-      window.removeEventListener('keydown', onEsc)
-    }
-  }
-)
+}, { immediate: true })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onEsc)
+  focusTrap?.destroy()
+  focusTrap = null
 })
 </script>
 

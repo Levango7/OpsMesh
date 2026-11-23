@@ -6,7 +6,6 @@
       :class="maskClass"
       @click="handleMaskClick"
       :style="maskStyle"
-      aria-hidden="true"
     >
       <div
         ref="drawerRef"
@@ -49,6 +48,7 @@
           v-if="showBody"
           class="drawer__body"
           :class="bodyClass"
+          :id="descriptionId"
           ref="bodyRef"
         >
           <slot name="body" />
