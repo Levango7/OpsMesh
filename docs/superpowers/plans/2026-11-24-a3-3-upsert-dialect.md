@@ -161,7 +161,7 @@ func TestDialectUpsertSQL(t *testing.T) {
 再补三个子测试：
 
 1. `conflict=[]string{"tenant_id", "key_name"}` 时 PG 输出 `ON CONFLICT ("tenant_id", "key_name")`。
-2. `values=[]string{"'?'", "?", "\"?\""}` 时 PG 只转换第二个 `?` 为 `$2`。
+2. `values=[]string{"'?'", "?", "\"?\""}` 时 PG 只转换第二个 `?` 为 `$1`（首尾两个 `?` 分别在单引号字符串与双引号标识符内，字面量感知转换不为它们编号）。
 3. 标识符含双引号/反引号时按方言重复转义，例如 MySQL `` `a``b` ``、PG `"a""b"`。
 
 - [ ] **Step 2: 运行测试确认失败**

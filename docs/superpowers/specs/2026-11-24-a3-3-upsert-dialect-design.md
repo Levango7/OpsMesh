@@ -272,3 +272,11 @@ PG 迁移顶部“全仓 UPDATE 均显式写 updated_at”的注释将订正为�
 | 46 | `issueToken` | `install_tokens` | `token` | 通用 |
 | 47 | `CreatePolicy` | `traffic_policies` | `id` | 通用 |
 | 48 | `CreateWebhook` | `webhooks` | `id` | 通用 |
+
+## 9. 实现结果登记（2026-11-24，Task 13 收口）
+
+- 状态：实现完成。48 处真实 UPSERT = 45 处通用方言生成器调用 + 3 处语义特例（`upsert_special.go` 的 `upsertLeaderLease`/`upsertABACPolicy`/`upsertLifecycleJob`），业务生产文件裸 UPSERT SQL 为 0。
+- 全部验收口径（§7.4）逐项在本机双真库实测达成：MySQL 8.4.13 / PostgreSQL 15.19；48 条 PREPARE 双方言共 96 条全过；并发不双主、ABAC 版本递增、lifecycle 时间戳结果 PASS；四种窄变异（裸 SQL、错误 conflict target、漏 PG 唯一约束、空集合保护）各自转红、还原后转绿。
+- 完整命令、版本、PASS/skip 数与变异红绿对照见 `docs/pg-dialect-a3-2-a3-3-plan-2026-11-23.md` §6。
+- 边界不变：本批不解决 A3-2 其余读写面，不宣称 PG 全业务读写可用；UPSERT 的 `RowsAffected` 不参与 MySQL/PG 等价判定。
+- 计划文档订正：`docs/superpowers/plans/2026-11-24-a3-3-upsert-dialect.md` Task 2 的字面量问号示例由 `$2` 订正为 `$1`（引号内 `?` 不占占位符编号）；Task 9 的 PG leader-lease CASE 绑定 `$4`/`$5`/`$6` 三个不同下标（与实现一致，`upsert_special.go` 三处 CASE 分别绑定第 4/5/6 个 now 实参）。

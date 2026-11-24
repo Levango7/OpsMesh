@@ -147,3 +147,64 @@ git show --stat 2c61e02f
 ---
 
 *本文已按 owner 批准的“1 个 PR、内部分批提交”口径更新；最终 A3-3 设计见 `docs/superpowers/specs/2026-11-24-a3-3-upsert-dialect-design.md`。*
+
+---
+
+## 6. A3-3 实测段落（2026-11-24，Task 13 全量验证收口）
+
+> 本段所有数字均来自本批收口时在本机重跑的命令，不复制历史报告的读数。
+
+### 6.1 环境与 DSN 形态（不含密码）
+
+- MySQL：**8.4.13**（`MySQL Community Server - GPL`，Linux），容器 `opsmesh-a33-my`，`127.0.0.1:13306`，库 `opsmesh`。
+  - DSN 形态：`OPSMESH_TEST_MYSQL_DSN="root:<password>@tcp(127.0.0.1:13306)/opsmesh?parseTime=true"`（口令从容器 env `MYSQL_ROOT_PASSWORD` 内联提取，不落盘、不打印）。
+- PostgreSQL：**15.19**（`postgres:15-alpine`），容器 `opsmesh-a33-pg`，`127.0.0.1:15432`，库 `postgres`。
+  - DSN 形态：`OPSMESH_TEST_PG_DSN="postgres://postgres:<password>@127.0.0.1:15432/postgres?sslmode=disable&TimeZone=Asia%2FShanghai"`（口令从容器 env `POSTGRES_PASSWORD` 内联提取，不落盘、不打印；`TimeZone=Asia%2FShanghai` 按裁决必须显式携带）。
+  - PG 会话时区：`PrepareDSN` 强制 `TimeZone=UTC`，真库夹具在每次 `newPostgresTestStore` 开头断言 `SHOW TimeZone == UTC`（`TestPostgresPrepareDSNForcesUTC` PASS 亦覆盖 URL 形态）。
+
+### 6.2 执行的命令与 PASS/skip 数
+
+| 形态 | 命令 | 结果 |
+|---|---|---|
+| CI 形态（无 DSN） | `env -u OPSMESH_TEST_MYSQL_DSN -u OPSMESH_TEST_PG_DSN go test ./internal/store/sqlstore -count=1` | `ok … 0.795s`；`-v` 口径：406 RUN（379 顶层 + 27 子测试），顶层 327 PASS / 52 SKIP / 0 FAIL，子测试 7 PASS / 20 SKIP / 0 FAIL。52 个顶层 skip 全部为 DSN 门控（`OPSMESH_TEST_MYSQL_DSN not set` 33、`OPSMESH_TEST_PG_DSN not set` 12、tasks fixes 9、audit chain 8、P0.3 3 等）或报告模式（`OPSMESH_ARITY_REPORT=1`）的显式 skip。 |
+| 真库形态（双 DSN） | `OPSMESH_TEST_MYSQL_DSN=… OPSMESH_TEST_PG_DSN=… go test ./internal/store/sqlstore -count=1 -v` | `ok … 338.362s`，exit 0；406 RUN（379 顶层 + 27 子测试），顶层 378 PASS / 1 SKIP / 0 FAIL，子测试 26 PASS / 1 SKIP / 0 FAIL。**零 DSN 门控 skip**；仅剩 2 个预期 skip：`TestSelectArityReport`（报告模式，`设 OPSMESH_ARITY_REPORT=1 运行`）与 `TestSubmitResultStateTransitions/postgres`（A3-2 读路径边界，Task 11 裁决明示 skip：`SubmitResult 周围读路径属 A3-2，不在 A3-3 范围`）。 |
+
+- 构建/静态：`go build ./...` 退出 0；`go vet ./internal/store/sqlstore/...` 退出 0；`gofmt -w internal/store/sqlstore` 无改动；`python scripts/coord-gate.py` → `coord-gate: lead=kilo active=1 tasks=0 issues=0 conflict=0 blocked=0`（exit 0）；`git diff --check` 无输出。
+- coord-gate 运行后重写了 `docs/COORDINATION-BOARD.md`（把过期 opencode/kilo CLAIM 换成当前 qoder CLAIM），已按指令 `git checkout -- docs/COORDINATION-BOARD.md` 还原至 HEAD（`b613a988…`），未提交板面改写。
+
+### 6.3 48 条 UPSERT 收口与双库 PREPARE
+
+- 静态计数（本机重跑）：`grep -rn 'dialect\.Upsert(' internal/store/sqlstore/*.go`（排除 `_test.go`）= **45 处通用调用**（分布 33 个生产文件）；`upsertLeaderLease/upsertABACPolicy/upsertLifecycleJob` 业务接线 = **3 处特例**；合计 **48**，与原审计口径一致。
+- `TestUpsertCallsiteCountAndConflictParity` PASS（断言通用调用数恰为 45、每处冲突目标非空、MySQL 主键/唯一键集合 ⊆ PG 唯一约束集合、64 表双轨一致）。
+- `TestUpsertPrepareAllCallsites` PASS（7.37s）：`mysql` 子测试 5.52s / `postgres` 子测试 1.83s；对 45 通用 + 3 特例 = **48 条 UPSERT 在 MySQL 与 PG 真库逐条 `PREPARE`**（每方言 48 条，双方言共 96 条），服务端解析成功即证明表/列/冲突目标/占位符数量真实合法。
+- 业务生产 Go 文件裸 `ON DUPLICATE KEY UPDATE` / `ON CONFLICT` = **0**（`TestNoRawBusinessUpsertSQL` PASS）；原始方言 SQL 仅存于方言适配器 `upsert_special.go` 的三个特例函数（`TestSpecialUpsertAllowlist` PASS）。
+
+### 6.4 并发与语义结果
+
+- **并发不双主**：`TestRenewLeadershipConcurrentClaim` PASS（20.19s）——共享库上 5 实例 × 10 轮并发抢占，每轮恰好 1 个获胜、读回 holder 与获胜者一致、全程不双主；另含空表插入持租、本实例续租、他实例未过期拒绝、过期租约抢占、NULL 租约不误判。`TestPostgresRenewLeadership` PASS（1.63s）。
+- **ABAC 版本递增**：`TestABACPolicyConcurrentVersion` PASS（13.11s）——首次 `version=1`、重复写穿 `version=2`、字段覆盖且 `created_at` 不变；N 个 goroutine 并发写穿同一 `(tenant_id,id)` 全部成功后 `version=N+2` 且 `created_at` 不变（PG 侧 `"version" = "abac_policies"."version" + 1` 不丢更新）。
+- **lifecycle 时间戳**：`TestLifecycleUpsertTimestamp` PASS（12.70s；mysql 10.10s / postgres 2.60s）——首次创建、同 ID 更新、`updated_at` 推进；PG 侧由特例适配器显式补 `"updated_at"=now()`（实测日志：`PG no-op: updated_at … -> …（显式 now() 刷新，既有不要求）`），MySQL 侧保持列定义 `ON UPDATE CURRENT_TIMESTAMP(3)` 隐式刷新行为。
+- 共享行为回归：`TestUpsertInsertUpdateReadback`（7.53s）、`TestUpsertCompositeConflict`（7.07s）、`TestUpsertConstantsAndHeartbeat`（8.60s）、`TestUpsertCrossUniqueKeyIsStrictOnPostgres`（7.43s）、`TestUpsertTaskResultsWritePath`（7.10s）、`TestSubmitResultStateTransitions`（5.72s，MySQL 腿）全部 PASS。
+
+### 6.5 四种窄变异红在哪、还原后绿（本批重跑取证）
+
+设计要求三种 + 额外空集合保护，共四种窄变异，逐条注入→对应守卫 RED→还原→守卫 GREEN：
+
+| # | 变异 | 红在哪（守卫 / 判据） | 还原后 |
+|---|---|---|---|
+| 1 | `sql_alerts.go` 的 `ListAlertRules` SELECT 字符串尾部追加 ` ON DUPLICATE KEY UPDATE` | `TestNoRawBusinessUpsertSQL` FAIL：`upsert_ast_test.go:301 … sql_alerts.go:87:38: 业务文件禁止裸 UPSERT SQL` | `git checkout -- sql_alerts.go`，`git diff --exit-code` 干净，守卫 PASS |
+| 2 | `sql_cloud_resource.go` `CreateCloudResource` 的 conflict 改为 `[]string{"id"}` | `TestUpsertCallsiteCountAndConflictParity` FAIL：`Func=CreateCloudResource … Conflict=cloud_account_id,resource_type,resource_id 期望 1 处，实际 0 处` + `Conflict=id 期望 0 处，实际 1 处` | 还原后 `git diff --exit-code` 干净，守卫 PASS |
+| 3 | `migrations/pg/001_initial.sql` 删除 `CONSTRAINT "uk_cloud_resources_account_res" UNIQUE (...)` | `TestUpsertCallsiteCountAndConflictParity` FAIL：`PG 表 cloud_resources 缺少冲突目标唯一键 [cloud_account_id resource_type resource_id]（现有 [[id]]）` + `MySQL 主键/唯一键集合不是 PG 的子集` | 还原后 `git diff --exit-code` 干净，守卫 PASS |
+| 4（额外保护） | `upsert_pg_parity_test.go` 的 `postgresUniqueKeys` 首行加 `return map[string][][]string{}` | `TestUpsertUniqueKeyParsing` FAIL：`唯一键缺失: table=cloud_resources … mysql=[[id] [cloud_account_id resource_type resource_id]] pg=[]`（空解析 map 不再假绿） | 还原后 `git diff --exit-code` 干净，守卫 PASS |
+
+还原后四个守卫复跑：`TestNoRawBusinessUpsertSQL` / `TestUpsertCallsiteCountAndConflictParity` / `TestSpecialUpsertAllowlist` / `TestUpsertUniqueKeyParsing` 全 PASS（0.249s）。
+
+### 6.6 CI 与 PG 证据来源
+
+- **CI 未加 PostgreSQL service**：`.github/workflows/ci.yml` 的 services 仅 `mysql:8`（+ redis:7），本批未修改 `.github/workflows/`。PG 全部结果来自**本机 PG15 真库**（容器 `opsmesh-a33-pg`），非 skip、非 mock。
+- `RowsAffected` 差异：MySQL（`clientFoundRows=true`）插入 1 / 改变 2 / 未改变 1，PG 插入或更新均计 1；本批 48 处 UPSERT 均不消费 `RowsAffected`，故不把行数相等当验收条件，PR 说明中单列此差异。
+
+### 6.7 边界声明
+
+- 本批只收口 `internal/store/sqlstore` 的 UPSERT 写路径方言化；**A3-2 其余读写面（占位符、反引号、LIMIT-OFFSET 分页、DDL 自增翻译等）未在本批解决**。
+- PG 下业务写入仅本批 48 条 UPSERT 写路径可用；**不宣称 PG 全业务读写可用**。`SubmitResult` 等公共方法的周围读路径仍属 A3-2，PG 腿明示 skip。
