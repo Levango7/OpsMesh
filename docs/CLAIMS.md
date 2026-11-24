@@ -1476,3 +1476,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [CLAIM] 2026-11-23T17:30:00Z from=kilo ttl=8h scope=internal/lakehouse/,internal/controlplane/lakehouse_ops.go note=批次78 湖仓维护 + 批/流统一 job：Iceberg/Delta/Hudi compaction/snapshot-expiry/orphan-cleanup/manifest-rewrite + 统一 JobRun 模型（与 EtlRun 共享） + /api/v1/lakehouse/* API
 [DONE] 2026-11-23T18:00:00Z from=kilo scope=internal/lakehouse/,internal/controlplane/lakehouse_ops.go note=批次78 收口（湖仓维护 + 批/流统一 job + /api/v1/lakehouse/* API）
 [DONE] 2026-11-23T20:00:00Z from=kilo scope=web/enterprise/src/ note=批次79 收口（数据平台前端：4 视图 + 2 API + 路由 + i18n + 导航分组）
+[DONE] 2026-11-23T11:00:00Z from=kilo scope=internal/governance/,internal/controlplane/data_governance_ops.go note=批次76 收口（数据治理平面：6 类 DQ 规则 + 5 类 PII 脱敏 + 3 类保留策略 + 目录 + Atlas 血缘代理 + 迁移 037）
