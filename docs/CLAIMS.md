@@ -1494,3 +1494,4 @@ Y�1unt+ QY�~KmՋ	�  c o m m i t = b 3 3 9 4 0 a 7 
 [NOTE] 2026-11-24T16:14:41Z from=qoder scope=internal/datatuning/sizing_test.go,internal/controlplane/data_governance_ops.go,internal/controlplane/lakehouse_ops.go,internal/controlplane/data_etl_ops.go,docs/CLAIMS.md reason=用户追加授权提交并推送本批lint修复；范围仍为4个Go文件与CLAIMS，不含合并、PR留言、删分支或两条全量继承红点
 [DONE] 2026-11-24T16:15:27Z from=qoder scope=internal/datatuning/sizing_test.go,internal/controlplane/data_governance_ops.go,internal/controlplane/lakehouse_ops.go,internal/controlplane/data_etl_ops.go,docs/CLAIMS.md commit=c0c76e4825316a74e60554dd287c66b92b5c718c note=六处lint修复本地验证完成；钉版lint全仓0issues，构建及相关测试通过
 [RELEASE] 2026-11-24T16:15:27Z from=qoder scope=docs/COORDINATION-BOARD.md reason=coord-gate重写会误删主线他线状态，板面文件未改，释放该scope
+[NOTE] 2026-11-23T21:26:19Z from=qoder scope=docs/multi-os-support.md,docs/CLAIMS.md note=基于最新 main 重做已关闭 PR #30 的文档留痕：主线缺 §2.5 实测状态，按原分支原文补回 L0 编译证据与 L1 未验证边界；不照搬旧 NOTE/CLAIM/DONE 流水账，旧分支保留。
