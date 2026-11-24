@@ -1497,3 +1497,4 @@ Y�1unt+ QY�~KmՋ	�  c o m m i t = b 3 3 9 4 0 a 7 
 [CLAIM] 2026-11-24T16:50:57Z from=qoder ttl=4h scope=internal/gates/tenant_store_verdict_gate_test.go note=补登ETL治理湖仓三个租户分桶store的隔离裁决，修复全量测试继承红
 [CLAIM] 2026-11-24T16:50:57Z from=qoder ttl=4h scope=internal/store/sqlstore/migrations/pg/001_initial.sql note=按MySQL037治理DDL补齐PG初始库五张治理表，修复迁移表集合 parity
 [CLAIM] 2026-11-24T16:50:57Z from=qoder ttl=4h scope=docs/CLAIMS.md note=记录本轮两项CI继承红修复认领
+[DONE] 2026-11-24T17:11:32Z from=qoder scope=internal/gates/tenant_store_verdict_gate_test.go,internal/store/sqlstore/migrations/pg/001_initial.sql,docs/CLAIMS.md commit=6321f3fc78a6cc044d1ddf2798b67a75403fbcc8 note=补登三个租户分桶store裁决并补齐PG五张治理表；全量Go测试、钉版lint、构建通过，PG15真库执行69表DDL通过
