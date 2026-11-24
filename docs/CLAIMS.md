@@ -1501,3 +1501,4 @@ Y�1unt+ QY�~KmՋ	�  c o m m i t = b 3 3 9 4 0 a 7 
 b3adaa6f (docs(claims): 批次80 DONE 回执)
 
 [DONE] 2026-11-24T19:00:00Z from=kilo scope=web/enterprise/src/views/,web/enterprise/src/api/__tests__/api-usage.test.js,internal/controlplane/presets/,docs/projects/README.md note=批次81 收口（ops 视图格式化 + api-usage 账本清理 + 模板守卫扩展 + PG 项目登记）
+[DONE] 2026-11-22T19:00:00Z from=kilo scope=internal/controlplane/db_couchdb_ops.go,internal/controlplane/db_scylladb_ops.go,internal/controlplane/cache_ehcache_ops.go,internal/controlplane/elk_ext_ops.go,internal/controlplane/monitor_ext_ops.go note=批次74b 收口（genuinely missing components: CouchDB 32 + ScyllaDB 58 + Ehcache 13 + ELK 40 + Monitoring 80 = 223 actions）
