@@ -19,10 +19,11 @@
           </div>
         </div>
         <div class="btnbar btnbar--bottom">
-          <Button variant="primary" size="md" native-type="submit" :disabled="store.loading" data-testid="auto-provision-btn">
+          <Button v-if="authStore.hasPerm('provision:execute')" variant="primary" size="md" native-type="submit" :disabled="store.loading" data-testid="auto-provision-btn">
             <Icon name="success" :size="14" />
             {{ store.loading ? $t('common.loading') : $t('provision.submit') }}
           </Button>
+          <div v-else data-testid="write-denied-hint" class="muted">{{ $t('common.write_denied') }}</div>
         </div>
         <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
       </form>
@@ -76,6 +77,7 @@ import PageShell from '@/components/PageShell.vue'
 // 自动纳管页 — 触发表单（网段 + agent 版本）+ 结果展示（发现/纳管/失败数量 + 设备列表）
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useProvisionStore } from '@/stores/provision'
+import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
@@ -83,6 +85,7 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 import Button from "@/components/ui/Button.vue"
 
 const store = useProvisionStore()
+const authStore = useAuthStore()
 const msg = ref('')
 const msgOk = ref(false)
 const errorConfirm = reactive({ show: false, message: '' })

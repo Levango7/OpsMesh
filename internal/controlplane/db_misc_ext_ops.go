@@ -17,7 +17,6 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
-	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // ============================================================================
@@ -230,77 +229,6 @@ func (s *Server) handleHazelcast(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
-// 缓存扩展：Ehcache
-// ============================================================================
-
-// handleEhcache 处理 POST /api/v1/cache/ehcache
-func (s *Server) handleEhcache(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	var req struct {
-		DeviceID string `json:"deviceID"`
-		Action   string `json:"action"` // status/deploy/config/check
-		App      string `json:"app"`    // JVM 应用进程名
-		Path     string `json:"path"`   // ehcache 配置目录
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	app := req.App
-	if app == "" {
-		app = "java"
-	}
-	cfgPath := req.Path
-	if cfgPath == "" {
-		cfgPath = "/opt/app/ehcache.xml"
-	}
-	if err := shellquote.ValidatePath(cfgPath); err != nil {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path: " + err.Error()})
-		return
-	}
-	var script string
-	switch req.Action {
-	case "status":
-		script = fmt.Sprintf(`echo "=== Ehcache JVM Processes ===" && (ps aux | grep -i %s | grep -v grep | head -10 || echo "No JVM process") && echo "=== Heap ===" && (jstat -gc $(pgrep -f %s | head -1) 500 1 2>/dev/null | tail -1 || echo "jstat not available")`, shellQuote(app), shellQuote(app))
-	case "deploy":
-		script = fmt.Sprintf(`mkdir -p $(dirname %s) && if [ -f %s ]; then echo "ehcache.xml already present"; else cat > %s <<'XML'
-<?xml version="1.0" encoding="UTF-8"?>
-<ehcache xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:noNamespaceSchemaLocation="http://www.ehcache.org/ehcache.xsd">
-  <diskStore path="java.io.tmpdir"/>
-  <defaultCache maxEntriesLocalHeap="10000" eternal="false"
-                timeToIdleSeconds="120" timeToLiveSeconds="1200"
-                maxEntriesLocalDisk="10000000" diskExpiryThreadIntervalSeconds="120"
-                memoryStoreEvictionPolicy="LRU">
-    <persistence strategy="localTempSwap"/>
-  </defaultCache>
-  <cache name="opsmeshCache" maxEntriesLocalHeap="10000" maxEntriesLocalDisk="1000"
-         eternal="false" diskSpoolBufferSizeMB="20" timeToIdleSeconds="300"
-         timeToLiveSeconds="600" memoryStoreEvictionPolicy="LFU"
-         transactionalMode="off">
-    <persistence strategy="localTempSwap"/>
-  </cache>
-</ehcache>
-XML
-echo "ehcache.xml written to %s"; fi`, shellQuote(cfgPath), shellQuote(cfgPath), shellQuote(cfgPath), shellQuote(cfgPath))
-	case "config":
-		script = fmt.Sprintf(`if [ -f %s ]; then echo "=== ehcache.xml ===" && head -40 %s; else echo "ehcache.xml not found at %s"; fi`, shellQuote(cfgPath), shellQuote(cfgPath), shellQuote(cfgPath))
-	case "check":
-		script = fmt.Sprintf(`echo "=== XML Dry Parse ===" && (python3 -c "import xml.dom.minidom; xml.dom.minidom.parse('%s'); print('XML OK')" 2>&1 || xmllint --noout %s 2>&1 || echo "no XML parser available") && echo "=== Cache Metrics (JMX) ===" && (jcmd $(pgrep -f %s | head -1) VM.version 2>/dev/null | head -3 || echo "jcmd not available")`, shellQuote(cfgPath), shellQuote(cfgPath), shellQuote(app))
-	default:
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
-		return
-	}
-	taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "ehcache_"+req.Action)
-	if !ok {
-		return
-	}
-	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": taskID, "action": req.Action})
-}
-
 // ============================================================================
 // 搜索引擎：Meilisearch
 // ============================================================================
@@ -530,6 +458,7 @@ func (s *Server) registerMiscExtRoutes(mux *http.ServeMux) {
 	// 缓存补充：Hazelcast / Ehcache
 	mux.HandleFunc("/api/v1/cache/hazelcast", s.handleHazelcast)
 	mux.HandleFunc("/api/v1/cache/ehcache", s.handleEhcache)
+	mux.HandleFunc("/api/v1/cache/ehcache/ext", s.handleEhcache)
 	// 搜索引擎：Meilisearch / Typesense
 	mux.HandleFunc("/api/v1/search/meilisearch", s.handleMeilisearch)
 	mux.HandleFunc("/api/v1/search/typesense", s.handleTypesense)

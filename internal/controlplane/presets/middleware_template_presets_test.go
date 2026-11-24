@@ -14,7 +14,7 @@ import (
 
 // TestMiddlewareTemplates_Catalog 校验预置中间件目录的基础字段与 ID 唯一性。
 func TestMiddlewareTemplates_Catalog(t *testing.T) {
-	if len(MiddlewareTemplates) < 29 {
+	if len(MiddlewareTemplates) < 30 {
 		t.Fatalf("预置中间件模板数量 = %d, want >= 29", len(MiddlewareTemplates))
 	}
 	seen := make(map[string]bool, len(MiddlewareTemplates))
@@ -99,7 +99,102 @@ func TestMiddlewareTemplates_DockerDeployUsesImagePlaceholder(t *testing.T) {
 	}
 }
 
-// TestMiddlewareTemplates_DeployScriptsComplete 校验每个模板同时提供 docker 与 systemd 完整脚本。
+// TestMiddlewareTemplate_OracleExists 校验 oracle 模板存在且支持 docker/systemd 部署。
+func TestMiddlewareTemplate_OracleExists(t *testing.T) {
+	var found bool
+	for _, tpl := range MiddlewareTemplates {
+		if tpl.ID != "oracle" {
+			continue
+		}
+		found = true
+		hasDocker := false
+		hasSystemd := false
+		for _, dt := range tpl.DeployTypes {
+			if dt == "docker" {
+				hasDocker = true
+			}
+			if dt == "systemd" {
+				hasSystemd = true
+			}
+		}
+		if !hasDocker || !hasSystemd {
+			t.Errorf("oracle 模板部署方式 = %v, want docker & systemd", tpl.DeployTypes)
+		}
+		if _, ok := tpl.Scripts["docker"]; !ok {
+			t.Error("oracle 模板缺少 docker 脚本")
+		}
+		if _, ok := tpl.Scripts["systemd"]; !ok {
+			t.Error("oracle 模板缺少 systemd 脚本")
+		}
+	}
+	if !found {
+		t.Fatal("未找到 oracle 模板")
+	}
+}
+
+func TestMiddlewareTemplate_AmbariExists(t *testing.T) {
+	var found bool
+	for _, tpl := range MiddlewareTemplates {
+		if tpl.ID != "ambari" {
+			continue
+		}
+		found = true
+		hasDocker := false
+		hasSystemd := false
+		for _, dt := range tpl.DeployTypes {
+			if dt == "docker" {
+				hasDocker = true
+			}
+			if dt == "systemd" {
+				hasSystemd = true
+			}
+		}
+		if !hasDocker || !hasSystemd {
+			t.Errorf("ambari 模板部署方式 = %v, want docker & systemd", tpl.DeployTypes)
+		}
+		if _, ok := tpl.Scripts["docker"]; !ok {
+			t.Error("ambari 模板缺少 docker 脚本")
+		}
+		if _, ok := tpl.Scripts["systemd"]; !ok {
+			t.Error("ambari 模板缺少 systemd 脚本")
+		}
+	}
+	if !found {
+		t.Fatal("未找到 ambari 模板")
+	}
+}
+
+func TestMiddlewareTemplate_ClouderaManagerExists(t *testing.T) {
+	var found bool
+	for _, tpl := range MiddlewareTemplates {
+		if tpl.ID != "cloudera-manager" {
+			continue
+		}
+		found = true
+		hasDocker := false
+		hasSystemd := false
+		for _, dt := range tpl.DeployTypes {
+			if dt == "docker" {
+				hasDocker = true
+			}
+			if dt == "systemd" {
+				hasSystemd = true
+			}
+		}
+		if !hasDocker || !hasSystemd {
+			t.Errorf("cloudera-manager 模板部署方式 = %v, want docker & systemd", tpl.DeployTypes)
+		}
+		if _, ok := tpl.Scripts["docker"]; !ok {
+			t.Error("cloudera-manager 模板缺少 docker 脚本")
+		}
+		if _, ok := tpl.Scripts["systemd"]; !ok {
+			t.Error("cloudera-manager 模板缺少 systemd 脚本")
+		}
+	}
+	if !found {
+		t.Fatal("未找到 cloudera-manager 模板")
+	}
+}
 func TestMiddlewareTemplates_DeployScriptsComplete(t *testing.T) {
 	for _, tpl := range MiddlewareTemplates {
 		for _, dt := range []string{"docker", "systemd"} {
@@ -114,6 +209,21 @@ func TestMiddlewareTemplates_DeployScriptsComplete(t *testing.T) {
 		}
 		if len(tpl.DeployTypes) != 2 {
 			t.Errorf("模板 %q 的部署方式 = %v, want [docker systemd]", tpl.ID, tpl.DeployTypes)
+		}
+	}
+}
+
+func TestMiddlewareTemplate_MooseFSAndJuiceFSExist(t *testing.T) {
+	for _, id := range []string{"moosefs", "juicefs"} {
+		var found bool
+		for _, tpl := range MiddlewareTemplates {
+			if tpl.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("未找到 %s 模板", id)
 		}
 	}
 }

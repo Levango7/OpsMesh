@@ -125,9 +125,10 @@
             <input v-model.number="form.timeoutSec" type="number" min="1" />
           </div>
           <div class="btnbar btnbar--bottom">
-            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="federation-forward-btn">
+            <Button v-if="authStore.hasPerm('federation:write')" variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="federation-forward-btn">
               {{ submitting ? $t('common.loading') : $t('federation.forward') }}
             </Button>
+            <div v-else data-testid="write-denied-hint" class="muted">{{ $t('common.write_denied') }}</div>
           </div>
           <p v-if="msg" :class="['msg', msgOk ? 'ok' : 'err']">{{ msg }}</p>
         </form>
@@ -201,6 +202,7 @@
 import PageShell from '@/components/PageShell.vue'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useFederationStore } from '@/stores/federation'
+import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import Icon from '@/components/Icon.vue'
@@ -209,6 +211,7 @@ import { getFederationDevices, getFederationTaskStatus } from '@/api/federation'
 import Button from "@/components/ui/Button.vue"
 
 const store = useFederationStore()
+const authStore = useAuthStore()
 const activeTab = ref('peers')
 const submitting = ref(false)
 const msg = ref('')

@@ -12,6 +12,7 @@
 | **TD-66** API 网关数据面 | `/gw/` 最小反向代理升级为完整数据面（持久化、熔断、埋点、超时），或明确维持预览形态 | **待批准**（MVP 已落地；两处残余缺陷已修复（reload 漏装熔断器、多副本缓存不失效）） | 待定 | MVP 已交付（约 2.5 人日）；完整面待章程估算 | [TD-66 网关数据面立项书](./TD-66-gateway-dataplane-charter.md) |
 | **服务发现后端** | 在现有 `ServiceDiscovery` 接口后新增 etcd v3 / Consul 后端，补 TTL、健康语义、Watch 重连与后端开关 | **待批准**（M0/file 已落地（`--discovery-backend=memory\|static\|file`）；装配已入库（agent 按开关装配 memory/static/file，2026-11-17 批次44）；etcd/Consul 仍未立项） | 待定 | 11–18 人日 | [服务发现后端立项书](./discovery-backends-charter.md) |
 | **ABAC** 设备侧决策引擎 | 以服务端 ABAC 评估器为唯一权威语义源，为设备侧增加签名策略包 + 本地评估 + 决策审计回传；不替代 RBAC 强制层 | **已立项**（M1–M3 已完成（2026-11-17）；**M4 机制已完成（2026-11-18，默认 off）**：设备侧 guard + 四道回滚杠杆；**7 天 soak + 选择器 shadow→enforce 放量计划已批准**，生产放量未开始；**全站 ABAC 强制暂不启用**（需 RBAC→ABAC 基线完成 + 关键路径 shadow would-deny <1%）） | 待定 | 25–37 人日（M0 已完成，M1–M4 约 23–34 人日） | [立项书](./abac-device-engine-charter.md) / [M1 规格](./abac-device-engine-m1-bundle-spec.md) / [M4 Soak 计划](./abac-m4-soak-plan.md) |
+| **PG 高级运维** | PostgreSQL 扩展生命周期、MVCC/bloat 诊断与维护、分区/FDW/复制槽/逻辑复制、HA 工具、监控与 PostGIS | **已立项**（M1/M2 已启动：扩展生命周期与 MVCC handler；M3/M4 待 owner 拍板） | 待定 | 10–16 人日 | [立项书](./pg-advanced-ops-charter.md) |
 
 > TD-66 立项书由另一条工作线交付；本索引只做登记与链接，不复制其正文。
 > 若文件名调整，只需同步本表，不改其他项目。

@@ -9,6 +9,18 @@
 
 - **2026-11-24 issue #152 — 依赖故障与恢复一致性矩阵**：新增 `deploy/scripts/chaos-recovery-matrix.sh`（+ 离线 selftest + runbook），在真实 compose 栈对 MySQL/Redis/Kafka/网络分区做有界故障注入与恢复，钉「进程存活→有界降级→有界恢复→业务写读与数据一致性」全链；注入经 `ps -aq`+inspect 确认，杜绝在「未注入故障」的栈上空断言。实测四场景全 PASS，并记录三项发现：F-152-kafka-1（Kafka 故障期 bus 事件丢失，WAL 未接线、Publish err 被忽略；SQL 审计链独立不丢，恢复后新事件免重启送达）、F-152-healthz-1（/healthz 为深度检查、依赖断时 503，Helm 作 livenessProbe 会触发重启）、F-152-partition-1（network disconnect/connect 间歇丢失 compose 服务别名致 DNS 不收敛，须带别名重连）。本批只交付钻机与证据，不夹带产品修复。
 
+## [Unreleased] — 2026-11-22（批次75：补齐 genuinely missing components — Azkaban/DolphinScheduler/WebSphere/WebLogic/LakeFS/Iceberg/Delta/Hudi/Rust/C/C++/.NET/PHP/pnpm/NuGet/Composer）
+
+- **2026-11-22 批次75 — 补齐 genuinely missing components**：Azkaban（27 actions：project/flow/execution/schedule/sla/monitoring）、DolphinScheduler（20 actions：project/workflow/task/schedule/monitoring）、WebSphere（22 actions：server/app/jvm/jdbc/monitoring）、WebLogic（22 actions：server/app/jvm/jdbc/cluster/monitoring）、LakeFS（24 actions：repo/branch/commit/tag/object/monitoring）、Iceberg（15 actions：table/snapshot/expire/rewrite/remove/compaction/partition/monitoring）、Delta（10 actions：table/history/vacuum/optimize/describe/detail/monitoring）、Hudi（9 actions：table/timeline/compaction/cleaning/clustering/monitoring）、Rust（13 actions：build/test/fmt/clippy/cargo）、C/C++（8 actions：compile/link/make/cmake/monitoring）、C#/.NET（9 actions：build/test/publish/nuget/monitoring）、PHP（8 actions：composer/monitoring）、pnpm（7 actions）、NuGet（6 actions）、Composer（7 actions）。
+
+## [Unreleased] — 2026-11-22（批次74：补齐 genuinely missing components — CouchDB/ScyllaDB/Ehcache/Logstash/Kibana/Fluentd/FluentBit/Zabbix/Nightingale/SkyWalking/Nagios）
+
+- **2026-11-22 批次74 — 补齐 genuinely missing components**：CouchDB（32 actions：db/view/doc/index/replication/user/backup/monitoring）、ScyllaDB（58 actions：nodetool/cqlsh/keyspace/table/user/role/backup/snapshot/Scylla Manager）、Ehcache（13 actions：cache CRUD/stats/config/monitoring）、ELK 扩展（Logstash/Kibana/Fluentd/FluentBit 40 actions）、Monitoring 扩展（Zabbix/Nightingale/SkyWalking/Nagios 80 actions）。
+
+## [Unreleased] — 2026-11-24（批次81：前端 ops 视图格式化 + api-usage 账本清理 + 中间件模板守卫扩展 + PG 项目登记）
+
+- **2026-11-24 批次81 — 前端 ops 视图格式化 + api-usage 账本清理 + 中间件模板守卫扩展 + PG 项目登记**：web/enterprise/src/views/{ETL,Governance,Lakehouse,Tuning}View.vue 格式化；api-usage 账本清理移除 stale pipeline.js|getRun 条目；中间件模板守卫扩展覆盖 oracle/ambari/cloudera/moosefs/juicefs；docs/projects 登记 PG 高级运维项目。
+
 ## [Unreleased] — 2026-11-24（issue #149：AI 内存存储并发安全）
 
 - **2026-11-24 issue #149 — VectorStore/KnowledgeStore 并发崩溃修复**：两个生产共享内存存储的全部 map 读写路径补 RWMutex；Upsert/Search/ListBySource 隔离 embedding、metadata 与 citation 的调用方可变引用，避免锁外回写。新增并发与 alias 回归测试；未修版本及去锁/去复制变异均转红，修复后两包普通测试与 `-race` 全绿。持久化与跨副本语义不在本批改变。

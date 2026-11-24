@@ -40,6 +40,7 @@ const GATED = [
   ['secrets/SecretsView.vue', 'secrets:write'],
   // 批 2：死信处置门（task:write）——同批补了 purge 的 ConfirmModal
   ['DeadLetterView.vue', 'task:write'],
+  ['BatchView.vue', 'task:write'],
   // 先行批（留档，勿删）
   ['FluxView.vue', 'flux:write'],
   ['InfraConsoleView.vue', 'task:write'],
@@ -58,7 +59,7 @@ const GATED = [
   ['CMDBChangesView.vue', 'cmdb:write'],
   ['CMDBCollectView.vue', 'cmdb:write'],
   ['CMDBAttrTemplatesView.vue', 'cmdb:write'],
-  //   AIOpsView：POST analyze/remediate/remediate-nl/execute 门为 aiops:write（internal/aiops/handler.go:38-42）
+  ['ConfigHotpushView.vue', 'cmdb:write'],
   ['AIOpsView.vue', 'aiops:write'],
   // 批 2 已挂门（不许降级回 PENDING）：视图内已含 hasPerm + write-denied-hint
   ['AlertsView.vue', 'alert:ack/alert:silence'],
@@ -66,6 +67,7 @@ const GATED = [
   ['KnowledgeView.vue', 'knowledge:write'],
   ['MiddlewareDeployView.vue', 'middleware:write/execute'],
   ['NetworkDevicesView.vue', 'network:write'],
+  ['NetworkDiagnoseView.vue', 'network:write'],
   ['WorkflowsView.vue', 'workflow:write'],
   ['AIPromptsView.vue', 'ai:write'],
   ['AgentView.vue', 'ai:write'],
@@ -79,7 +81,10 @@ const GATED = [
   ['OSOptimizeView.vue', 'os:write/execute'],
   ['PlatformConfigView.vue', 'platform:write'],
   ['PluginView.vue', 'plugin:write'],
-  ['PortalView.vue', 'portal:write']
+  ['PortalView.vue', 'portal:write'],
+  ['AIRagView.vue', 'ai:write'],
+  ['AutoProvisionView.vue', 'provision:execute'],
+  ['FederationView.vue', 'federation:write']
 ]
 
 // —— 欠账（matrix 实测：调用写端点但视图内无对应 hasPerm）。每挂完一个视图，把它从这里挪到 GATED。
@@ -87,14 +92,8 @@ const GATED = [
 // 注：PermissionsView 与 DeviceDetailView 经核对为纯只读页（仅 GET listPermissions / fetchMetrics），
 // 无任何可变控件，故保留在 PENDING，不为了台账好看而添加无意义的 hasPerm。
 const PENDING = [
-  ['AIRagView.vue', 'ai:write'],
-  ['AutoProvisionView.vue', 'provision:execute'],
-  ['BatchView.vue', 'task:write'],
-  ['ConfigHotpushView.vue', 'cmdb:write'],
   ['DeviceDetailView.vue', 'device:delete/provision:execute'],
-  ['FederationView.vue', 'federation:write'],
   ['GitOpsDashboardView.vue', 'argocd:write/flux:write'],
-  ['NetworkDiagnoseView.vue', 'network:write'],
   ['NetworkTopologyView.vue', 'network:write'],
   ['OverviewView.vue', 'alert:ack/workflow:write'],
   ['PermissionsView.vue', 'role:write/user:write'],

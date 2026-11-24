@@ -693,6 +693,7 @@ func (s *Server) registerMonitorRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/monitor/skywalking/trace", s.handleSkyWalkingTrace)
 	// 泛路由：GET /api/v1/monitor/{deviceID} / POST /api/v1/monitor/{type}/{action} / POST /api/v1/monitor/deploy
 	mux.HandleFunc("/api/v1/monitor/deploy", s.handleMonitorDeploy)
+	mux.HandleFunc("/api/v1/monitor/ext", s.handleMonitorExt)
 	mux.HandleFunc("/api/v1/monitor/", s.handleMonitorRouting)
 }
 
