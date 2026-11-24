@@ -321,5 +321,7 @@ func (s *Server) registerNoSQLExtRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/db/cassandra", s.handleDBCassandra)
 	mux.HandleFunc("/api/v1/db/couchbase", s.handleDBCouchbase)
 	mux.HandleFunc("/api/v1/db/scylladb", s.handleDBScyllaDB)
+	mux.HandleFunc("/api/v1/db/scylladb/ext", s.handleScyllaDB)
 	mux.HandleFunc("/api/v1/db/couchdb", s.handleDBCouchDB)
+	mux.HandleFunc("/api/v1/db/couchdb/ext", s.handleCouchDB)
 }

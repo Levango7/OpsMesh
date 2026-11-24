@@ -306,7 +306,7 @@ func TestOpsRouteRatchetGate(t *testing.T) {
 // TestOpsRatchetJudgeSeesMissingGuard 是变异反证：把授权特征在内存里抹掉重算，
 // 台账口径必须立刻把相关路由重新记成未鉴权。没有这条，"全绿"可能只代表判据看不见闸的存在。
 // 两格分别钉住两条闸：
-//   - P1-A 四文件自带 `requireProd`（摘掉后必须回落到 6/5/3/3，合计 17）；
+//   - P1-A 四文件自带 `requireProd`（摘掉后必须回落到 6/7/3/3，合计 19）；
 //   - `pulsar_ops.go` 自己没有权限点，全靠派发口的 `subsystemAuthorize`（摘掉后必须全数回落）。
 func TestOpsRatchetJudgeSeesMissingGuard(t *testing.T) {
 	root := repoRoot(t)
@@ -331,7 +331,7 @@ func TestOpsRatchetJudgeSeesMissingGuard(t *testing.T) {
 		wantWrite int // 该文件的写路由条数（也是抹掉闸后应回落到的未鉴权数）
 	}{
 		{"db_cloud_managed_ops.go", 6},
-		{"db_nosql_ext_ops.go", 5},
+		{"db_nosql_ext_ops.go", 7},
 		{"apache_ext_ops2.go", 3},
 		{"elasticsearch_ops_ext.go", 3},
 	}
@@ -355,8 +355,8 @@ func TestOpsRatchetJudgeSeesMissingGuard(t *testing.T) {
 		}
 		total += after
 	}
-	if total != 17 {
-		t.Errorf("变异合计 %d 条，不等于 17 条止血面——写路由判定射程与 P1-A 清单对不上", total)
+	if total != 19 {
+		t.Errorf("变异合计 %d 条，不等于 19 条止血面——写路由判定射程与 P1-A 清单对不上", total)
 	}
 
 	// 派发口那一跳：该文件没有任何自带权限点，现状全绿只能靠 dispatchKafkaTask 的

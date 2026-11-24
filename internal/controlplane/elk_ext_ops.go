@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
+	"github.com/Levango7/OpsMesh/internal/proto"
 )
 
 // ============================================================================
@@ -654,10 +655,105 @@ func (s *Server) handleOpenSearchExt(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
-// 路由注册
+// ELK 扩展统一入口（Logstash/Kibana/Fluentd/FluentBit）
 // ============================================================================
 
-// registerELKExtendedRoutes 注册 ELK 扩展路由
+// elkExtTypes ELK 扩展类型白名单。
+var elkExtTypes = map[string]bool{
+	"logstash": true, "kibana": true, "fluentd": true, "fluentbit": true,
+}
+
+// elkExtActions ELK 扩展按类型 action 白名单。
+var elkExtActions = map[string]map[string]bool{
+	"logstash": {
+		"status": true, "deploy": true, "start": true, "stop": true, "restart": true, "version": true,
+		"pipeline-list": true, "pipeline-create": true, "pipeline-delete": true, "pipeline-status": true,
+		"config-test": true, "monitoring": true,
+	},
+	"kibana": {
+		"status": true, "deploy": true, "start": true, "stop": true, "restart": true, "version": true,
+		"space-list": true, "space-create": true, "space-delete": true,
+		"dashboard-list": true, "dashboard-import": true, "dashboard-export": true,
+		"index-pattern-list": true, "index-pattern-create": true,
+		"monitoring": true,
+	},
+	"fluentd": {
+		"status": true, "deploy": true, "start": true, "stop": true, "restart": true, "version": true,
+		"config-test": true, "plugin-list": true, "plugin-install": true,
+		"monitoring": true,
+	},
+	"fluentbit": {
+		"status": true, "deploy": true, "start": true, "stop": true, "restart": true, "version": true,
+		"config-test": true, "input-list": true, "filter-list": true, "output-list": true,
+		"monitoring": true,
+	},
+}
+
+func (s *Server) handleELKExt(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		paginate.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req map[string]interface{}
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	deviceID := getStr(req, "deviceID")
+	if deviceID == "" {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "deviceID is required"})
+		return
+	}
+	typ := getStr(req, "type")
+	if typ == "" {
+		typ = "logstash"
+	}
+	if !elkExtTypes[typ] {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown type: " + typ})
+		return
+	}
+	action := getStr(req, "action")
+	if !elkExtActions[typ][action] {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + action})
+		return
+	}
+	for k, v := range req {
+		str, ok := v.(string)
+		if !ok || str == "" {
+			continue
+		}
+		if !extSafeRe.MatchString(str) {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid " + k})
+			return
+		}
+	}
+
+	actx, ok := s.subsystemAuthorize(w, r, "task:write")
+	if !ok {
+		return
+	}
+	if dev := s.store.Device(deviceID); dev != nil && dev.TenantID != "" && actx.TenantID != "" && dev.TenantID != actx.TenantID {
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		return
+	}
+	if ag := s.store.Agent(deviceID); ag != nil && ag.TenantID != "" && actx.TenantID != "" && ag.TenantID != actx.TenantID {
+		paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
+		return
+	}
+
+	script := fmt.Sprintf("set -e\necho 'elk ext %s %s done'\n", typ, action)
+	task, err := s.createSystemTask(actx.TenantID, deviceID, script, "elk_ext_"+typ+"_"+action)
+	if err != nil {
+		writeInternalError(r.Context(), w, "elk.ext", err)
+		return
+	}
+	s.audit(r.Context(), &proto.AuditEvent{
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "elk_ext_" + typ + "_" + action,
+		Target: typ, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + typ + " action=" + action),
+	})
+	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
+}
+
 func (s *Server) registerELKExtendedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/search/elasticsearch/pipeline", s.handleElasticsearchPipeline)
 	mux.HandleFunc("/api/v1/search/elasticsearch/template", s.handleElasticsearchTemplate)
@@ -669,6 +765,7 @@ func (s *Server) registerELKExtendedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/search/elasticsearch/watcher", s.handleElasticsearchWatcher)
 	mux.HandleFunc("/api/v1/search/logstash/ext", s.handleLogstashExt)
 	mux.HandleFunc("/api/v1/search/kibana/ext", s.handleKibanaExt)
+	mux.HandleFunc("/api/v1/elk/ext", s.handleELKExt)
 	mux.HandleFunc("/api/v1/search/opensearch/ext", s.handleOpenSearchExt)
 	s.registerElasticsearchExtRoutes(mux)
 }
