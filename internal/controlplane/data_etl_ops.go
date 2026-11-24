@@ -180,7 +180,11 @@ func (s *Server) handleETLJobs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		run := dataetl.EtlRun{JobID: job.ID, TenantID: actx.TenantID, Status: dataetl.StatusPending}
-		run, _ = s.etlStore().CreateRun(run)
+		run, err = s.etlStore().CreateRun(run)
+		if err != nil {
+			writeInternalError(r.Context(), w, "etl_run", err)
+			return
+		}
 		script := "set -e\n" + cmd + "\necho 'etl run " + run.ID + " done'\n"
 		task, err := s.createSystemTask(actx.TenantID, deviceID, script, "etl_run_"+job.ID)
 		if err != nil {
