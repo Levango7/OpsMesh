@@ -1494,3 +1494,6 @@ Y�1unt+ QY�~KmՋ	�  c o m m i t = b 3 3 9 4 0 a 7 
 [NOTE] 2026-11-24T16:14:41Z from=qoder scope=internal/datatuning/sizing_test.go,internal/controlplane/data_governance_ops.go,internal/controlplane/lakehouse_ops.go,internal/controlplane/data_etl_ops.go,docs/CLAIMS.md reason=用户追加授权提交并推送本批lint修复；范围仍为4个Go文件与CLAIMS，不含合并、PR留言、删分支或两条全量继承红点
 [DONE] 2026-11-24T16:15:27Z from=qoder scope=internal/datatuning/sizing_test.go,internal/controlplane/data_governance_ops.go,internal/controlplane/lakehouse_ops.go,internal/controlplane/data_etl_ops.go,docs/CLAIMS.md commit=c0c76e4825316a74e60554dd287c66b92b5c718c note=六处lint修复本地验证完成；钉版lint全仓0issues，构建及相关测试通过
 [RELEASE] 2026-11-24T16:15:27Z from=qoder scope=docs/COORDINATION-BOARD.md reason=coord-gate重写会误删主线他线状态，板面文件未改，释放该scope
+[CLAIM] 2026-11-24T16:50:57Z from=qoder ttl=4h scope=internal/gates/tenant_store_verdict_gate_test.go note=补登ETL治理湖仓三个租户分桶store的隔离裁决，修复全量测试继承红
+[CLAIM] 2026-11-24T16:50:57Z from=qoder ttl=4h scope=internal/store/sqlstore/migrations/pg/001_initial.sql note=按MySQL037治理DDL补齐PG初始库五张治理表，修复迁移表集合 parity
+[CLAIM] 2026-11-24T16:50:57Z from=qoder ttl=4h scope=docs/CLAIMS.md note=记录本轮两项CI继承红修复认领

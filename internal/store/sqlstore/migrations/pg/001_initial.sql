@@ -1,8 +1,9 @@
 -- migrations/pg/001_initial.sql — PostgreSQL 15+ 初始 schema。
 --
--- 来源：以 MySQL 真库（migrations/001-036 全量应用后）SHOW CREATE TABLE 物化的
--- 权威 DDL（65 表）逐表翻译，形态与 MySQL 侧对齐。
+-- 来源：以 MySQL 真库（migrations/001-037 全量应用后）SHOW CREATE TABLE 物化的
+-- 权威 DDL（69 表）逐表翻译，形态与 MySQL 侧对齐。
 --   2026-11-20 重做补入：main 的 032-036 新增 5 表 + 3 热路径索引（见文件末尾补入段）。
+--   2026-11-24 补入：037 数据治理平面新增 5 表（见文件末尾补入段）。
 -- 翻译规则：
 --   - 类型：varchar(n)/char(n) 保留；text/mediumtext/longtext→text；json→json；
 --     int→int；bigint→bigint；double→double precision；datetime[(3)]→timestamp[(3)]
@@ -1041,6 +1042,75 @@ CREATE TABLE IF NOT EXISTS "abac_decision_logs" (
 
 CREATE INDEX IF NOT EXISTS "idx_abac_decision_logs_tenant_received" ON "abac_decision_logs" ("tenant_id", "received_at");
 CREATE INDEX IF NOT EXISTS "idx_abac_decision_logs_agent_received" ON "abac_decision_logs" ("agent_id", "received_at");
+
+-- 037_governance.sql 数据治理平面持久化（DQ 规则/结果/PII/保留/目录）。
+CREATE TABLE IF NOT EXISTS "gov_rules" (
+  "tenant_id" varchar(64) NOT NULL,
+  "id" varchar(64) NOT NULL,
+  "dataset" varchar(255) NOT NULL,
+  "col_name" varchar(255) NOT NULL DEFAULT '',
+  "kind" varchar(32) NOT NULL,
+  "expr" text,
+  "severity" varchar(16) NOT NULL DEFAULT 'warn',
+  "enabled" smallint NOT NULL DEFAULT 1,
+  "created_at" timestamp(6) NOT NULL,
+  "updated_at" timestamp(6) NOT NULL,
+  PRIMARY KEY ("tenant_id", "id")
+);
+CREATE INDEX IF NOT EXISTS "idx_gov_rules_tenant_created" ON "gov_rules" ("tenant_id", "created_at");
+
+CREATE TABLE IF NOT EXISTS "gov_rule_results" (
+  "id" varchar(64) NOT NULL,
+  "rule_id" varchar(64) NOT NULL,
+  "tenant_id" varchar(64) NOT NULL,
+  "passed" smallint NOT NULL,
+  "observed" text,
+  "detail" text,
+  "run_at" timestamp(6) NOT NULL,
+  PRIMARY KEY ("id")
+);
+CREATE INDEX IF NOT EXISTS "idx_gov_results_tenant_rule" ON "gov_rule_results" ("tenant_id", "rule_id", "run_at");
+
+CREATE TABLE IF NOT EXISTS "gov_pii_policies" (
+  "tenant_id" varchar(64) NOT NULL,
+  "id" varchar(64) NOT NULL,
+  "dataset" varchar(255) NOT NULL,
+  "col_name" varchar(255) NOT NULL,
+  "kind" varchar(32) NOT NULL,
+  "mask" varchar(255) NOT NULL DEFAULT '',
+  "enabled" smallint NOT NULL DEFAULT 1,
+  "created_at" timestamp(6) NOT NULL,
+  "updated_at" timestamp(6) NOT NULL,
+  PRIMARY KEY ("tenant_id", "id")
+);
+CREATE INDEX IF NOT EXISTS "idx_gov_pii_tenant_created" ON "gov_pii_policies" ("tenant_id", "created_at");
+
+CREATE TABLE IF NOT EXISTS "gov_retention_policies" (
+  "tenant_id" varchar(64) NOT NULL,
+  "id" varchar(64) NOT NULL,
+  "dataset" varchar(255) NOT NULL,
+  "retention_days" int NOT NULL,
+  "action" varchar(32) NOT NULL,
+  "enabled" smallint NOT NULL DEFAULT 1,
+  "created_at" timestamp(6) NOT NULL,
+  "updated_at" timestamp(6) NOT NULL,
+  PRIMARY KEY ("tenant_id", "id")
+);
+CREATE INDEX IF NOT EXISTS "idx_gov_retention_tenant_created" ON "gov_retention_policies" ("tenant_id", "created_at");
+
+CREATE TABLE IF NOT EXISTS "gov_catalog_assets" (
+  "tenant_id" varchar(64) NOT NULL,
+  "id" varchar(64) NOT NULL,
+  "kind" varchar(32) NOT NULL,
+  "name" varchar(255) NOT NULL,
+  "owner" varchar(255) NOT NULL DEFAULT '',
+  "tags_json" text,
+  "pii_level" varchar(16) NOT NULL DEFAULT 'none',
+  "updated_at" timestamp(6) NOT NULL,
+  PRIMARY KEY ("tenant_id", "id")
+);
+CREATE INDEX IF NOT EXISTS "idx_gov_catalog_tenant_updated" ON "gov_catalog_assets" ("tenant_id", "updated_at");
+CREATE INDEX IF NOT EXISTS "idx_gov_catalog_tenant_name" ON "gov_catalog_assets" ("tenant_id", "name");
 
 CREATE INDEX IF NOT EXISTS "idx_tasks_tenant_status_created" ON "tasks" ("tenant_id", "status", "created_at");
 CREATE INDEX IF NOT EXISTS "idx_tasks_status_claimed" ON "tasks" ("status", "claimed_at");
