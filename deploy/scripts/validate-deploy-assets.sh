@@ -749,12 +749,62 @@ sec "9. 提交内容里的『行内孤立 CR』（§6 抓不到、grep 也看不
 #      只处理行尾，行内 CR 会**原样进入 blob 并被推送**；markdown 渲染器把它当换行，
 #      于是一条 bullet 从句子中间断开——2026-09-26 在 CHANGELOG.md 实测抓到一处已推送的。
 #   ③ 检测口径：必须问 git 自己而不是读工作区文件。--cached 读**暂存 blob**（clean filter
-#      已应用），行尾 CRLF 归一化掉了，剩下的任何 CR 都必然是真杂质。实测对照：
-#      同一仓库工作区 335 个文件带正常 CRLF → 本门禁 0 误报；CHANGELOG.md 那 1 个行内 CR → 点名。
+#      已应用），UTF-8 行尾 CRLF 已归一化；历史台账里的 UTF-16 CRLF 是 CR NUL LF，必须放行。
+#      UTF-16 混合段用自测覆盖，真行内 CR 仍必须判红。
 #      反过来若在 Windows 工作区用 grep/awk 找 CR，MSYS 文本模式会吞 CR 而返回 0（见 §6 注释）。
 # 门禁后端缺席必须**判红而不是判绿**（本轮 actionlint/shellcheck 的教训）：
 # 因此下面显式区分 rc=1（无匹配，正常）与 rc≥2（PCRE 不可用/命令失败 = 门禁失明）。
-LONE_CR_OUT="$(git grep -IP --cached -e '\r(?!\n)' -- . 2>&1)"
+LONE_CR_PATTERN='\r(?!\n|\x00\n)'
+lone_cr_gate_selftest() {
+    local work out rc name status=0
+    work="$(mktemp -d)" || { bad "CR 门禁自测无法创建临时目录"; return 1; }
+    git -C "$work" init -q
+    git -C "$work" config core.autocrlf false
+    git -C "$work" config core.eol lf
+    git -C "$work" config core.safecrlf false
+    printf '*.txt text\nmixed-utf16le.txt -text\nmixed-utf16be.txt -text\n' > "$work/.gitattributes"
+    printf 'clean\n' > "$work/clean.txt"
+    printf 'crlf\r\n' > "$work/crlf.txt"
+    printf 'lone\rvalue\n' > "$work/lone.txt"
+    {
+        head -c 8192 /dev/zero | tr '\000' 'a'
+        printf '\n\377\376h\000i\000\r\000\n\000x\000'
+    } > "$work/mixed-utf16le.txt"
+    {
+        head -c 8192 /dev/zero | tr '\000' 'a'
+        printf '\n\376\377\000h\000i\000\r\000\n\000x'
+    } > "$work/mixed-utf16be.txt"
+    git -C "$work" add .
+    out="$(git -C "$work" grep -IP --cached -n -e "$LONE_CR_PATTERN" -- lone.txt 2>&1)"; rc=$?
+    if [[ $rc -ne 0 || "$out" != *"lone.txt:"* ]]; then
+        bad "CR 门禁自测未抓到 UTF-8 行内 CR（rc=${rc}）"
+        status=1
+    fi
+    for name in mixed-utf16le.txt mixed-utf16be.txt; do
+        git -C "$work" grep -IP --cached -n -e '\r(?!\n)' -- "$name" >/dev/null 2>&1; rc=$?
+        if [[ $rc -ne 0 ]]; then
+            bad "CR 门禁自测夹具未复现旧正则误报或已被 git 当二进制跳过：${name}（rc=${rc}）"
+            status=1
+        fi
+    done
+    for name in clean.txt crlf.txt mixed-utf16le.txt mixed-utf16be.txt; do
+        out="$(git -C "$work" grep -IP --cached -n -e "$LONE_CR_PATTERN" -- "$name" 2>&1)"; rc=$?
+        if [[ $rc -ne 1 ]]; then
+            bad "CR 门禁自测误判 ${name}（rc=${rc}）：${out}"
+            status=1
+        fi
+    done
+    rm -rf "$work"
+    if [[ $status -eq 0 ]]; then
+        ok "CR 检测器自测通过：归一化 UTF-8 CRLF 与 UTF-16LE/BE CRLF 放行，UTF-8 行内 CR 判红"
+    fi
+    return "$status"
+}
+if ! lone_cr_gate_selftest; then
+    bad "CR 门禁自测失败，后续扫描结果不可信"
+    exit 1
+fi
+LONE_CR_OUT="$(git grep -IP --cached -e "$LONE_CR_PATTERN" -- . 2>&1)"
 case $? in
     0)
         bad "以下文件的**已提交内容**含行内孤立 CR（会被 markdown/渲染器当换行，且 grep 在 Windows 上看不见）："
