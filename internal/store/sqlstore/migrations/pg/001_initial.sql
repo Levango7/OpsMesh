@@ -1039,6 +1039,76 @@ CREATE TABLE IF NOT EXISTS "abac_decision_logs" (
   PRIMARY KEY ("id")
 );
 
+-- 数据治理平面（对应 MySQL 轨 037_governance.sql）：DQ 规则/结果/PII/保留/目录。
+CREATE TABLE IF NOT EXISTS "gov_rules" (
+  "tenant_id" varchar(64) NOT NULL,
+  "id" varchar(64) NOT NULL,
+  "dataset" varchar(255) NOT NULL,
+  "col_name" varchar(255) NOT NULL DEFAULT '',
+  "kind" varchar(32) NOT NULL,
+  "expr" text,
+  "severity" varchar(16) NOT NULL DEFAULT 'warn',
+  "enabled" boolean NOT NULL DEFAULT true,
+  "created_at" timestamp NOT NULL,
+  "updated_at" timestamp NOT NULL,
+  PRIMARY KEY ("tenant_id", "id")
+);
+
+CREATE TABLE IF NOT EXISTS "gov_rule_results" (
+  "id" varchar(64) NOT NULL,
+  "rule_id" varchar(64) NOT NULL,
+  "tenant_id" varchar(64) NOT NULL,
+  "passed" boolean NOT NULL,
+  "observed" text,
+  "detail" text,
+  "run_at" timestamp NOT NULL,
+  PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "gov_pii_policies" (
+  "tenant_id" varchar(64) NOT NULL,
+  "id" varchar(64) NOT NULL,
+  "dataset" varchar(255) NOT NULL,
+  "col_name" varchar(255) NOT NULL,
+  "kind" varchar(32) NOT NULL,
+  "mask" varchar(255) NOT NULL DEFAULT '',
+  "enabled" boolean NOT NULL DEFAULT true,
+  "created_at" timestamp NOT NULL,
+  "updated_at" timestamp NOT NULL,
+  PRIMARY KEY ("tenant_id", "id")
+);
+
+CREATE TABLE IF NOT EXISTS "gov_retention_policies" (
+  "tenant_id" varchar(64) NOT NULL,
+  "id" varchar(64) NOT NULL,
+  "dataset" varchar(255) NOT NULL,
+  "retention_days" int NOT NULL,
+  "action" varchar(32) NOT NULL,
+  "enabled" boolean NOT NULL DEFAULT true,
+  "created_at" timestamp NOT NULL,
+  "updated_at" timestamp NOT NULL,
+  PRIMARY KEY ("tenant_id", "id")
+);
+
+CREATE TABLE IF NOT EXISTS "gov_catalog_assets" (
+  "tenant_id" varchar(64) NOT NULL,
+  "id" varchar(64) NOT NULL,
+  "kind" varchar(32) NOT NULL,
+  "name" varchar(255) NOT NULL,
+  "owner" varchar(255) NOT NULL DEFAULT '',
+  "tags_json" text,
+  "pii_level" varchar(16) NOT NULL DEFAULT 'none',
+  "updated_at" timestamp NOT NULL,
+  PRIMARY KEY ("tenant_id", "id")
+);
+
+CREATE INDEX IF NOT EXISTS "idx_gov_rules_tenant_created" ON "gov_rules" ("tenant_id", "created_at");
+CREATE INDEX IF NOT EXISTS "idx_gov_results_tenant_rule" ON "gov_rule_results" ("tenant_id", "rule_id", "run_at");
+CREATE INDEX IF NOT EXISTS "idx_gov_pii_tenant_created" ON "gov_pii_policies" ("tenant_id", "created_at");
+CREATE INDEX IF NOT EXISTS "idx_gov_retention_tenant_created" ON "gov_retention_policies" ("tenant_id", "created_at");
+CREATE INDEX IF NOT EXISTS "idx_gov_catalog_tenant_updated" ON "gov_catalog_assets" ("tenant_id", "updated_at");
+CREATE INDEX IF NOT EXISTS "idx_gov_catalog_tenant_name" ON "gov_catalog_assets" ("tenant_id", "name");
+
 CREATE INDEX IF NOT EXISTS "idx_abac_decision_logs_tenant_received" ON "abac_decision_logs" ("tenant_id", "received_at");
 CREATE INDEX IF NOT EXISTS "idx_abac_decision_logs_agent_received" ON "abac_decision_logs" ("agent_id", "received_at");
 
