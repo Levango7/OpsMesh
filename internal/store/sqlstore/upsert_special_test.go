@@ -101,7 +101,7 @@ func TestPostgresRenewLeadership(t *testing.T) {
 	if holder2 != instA {
 		t.Fatalf("续租后 holder=%q, want %q", holder2, instA)
 	}
-	if exp2.Before(exp1) {
+	if !exp2.After(exp1) {
 		t.Fatalf("续租后 expires_at=%v 未延长(旧 %v)", exp2, exp1)
 	}
 
