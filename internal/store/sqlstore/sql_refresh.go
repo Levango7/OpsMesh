@@ -66,13 +66,16 @@ func (s *SQLStore) SaveRefreshToken(rt *RefreshToken) error {
 	if rt.CreatedAt.IsZero() {
 		rt.CreatedAt = now
 	}
-	// INSERT ... ON DUPLICATE KEY UPDATE 实现 upsert（按 token_hash 幂等）。
+	// 方言感知 upsert（按 token_hash 幂等）。
 	// token_hash 为明文 token 的 SHA-256 摘要（明文不落库）。
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO refresh_tokens (token_hash, user_id, tenant_id, device_fp, expires_at, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), tenant_id=VALUES(tenant_id),
-		 device_fp=VALUES(device_fp), expires_at=VALUES(expires_at), created_at=VALUES(created_at)`,
+	query := s.dialect.Upsert(
+		"refresh_tokens",
+		[]string{"token_hash", "user_id", "tenant_id", "device_fp", "expires_at", "created_at"},
+		[]string{"?", "?", "?", "?", "?", "?"},
+		[]string{"token_hash"},
+		[]string{"user_id", "tenant_id", "device_fp", "expires_at", "created_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		rt.TokenHash, rt.UserID, rt.TenantID, rt.DeviceFP, rt.ExpiresAt, rt.CreatedAt); err != nil {
 		storefail.Record("store: SaveRefreshToken 失败: %v", err)
 		return fmt.Errorf("store: save refresh token: %w", err)

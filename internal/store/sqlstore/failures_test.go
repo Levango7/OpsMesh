@@ -30,7 +30,7 @@ func closedDB(t *testing.T) *sql.DB {
 // 不得再静默消失，必须出现在计数器、分类表与最近样本里。
 func TestUpsertDevice_WriteFailureIsRecorded(t *testing.T) {
 	storefail.ResetStoreFailures()
-	s := &SQLStore{db: closedDB(t)}
+	s := &SQLStore{db: closedDB(t), dialect: mysqlDialect{}}
 
 	s.UpsertDevice(&proto.DeviceInfo{DeviceID: "dev-fault-1", TenantID: "t-1"})
 

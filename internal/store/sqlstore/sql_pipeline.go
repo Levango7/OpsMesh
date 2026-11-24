@@ -154,11 +154,14 @@ func (s *SQLStore) CreateTemplate(tenantID string, t *PipelineTemplate) *Pipelin
 	}
 	t.UpdatedAt = now
 	paramsJSON := marshalPipelineParams(t.Parameters)
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO pipeline_templates (id, tenant_id, name, description, type, yaml, agent_id, parameters, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), type=VALUES(type),
-		 yaml=VALUES(yaml), agent_id=VALUES(agent_id), parameters=VALUES(parameters), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"pipeline_templates",
+		[]string{"id", "tenant_id", "name", "description", "type", "yaml", "agent_id", "parameters", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "description", "type", "yaml", "agent_id", "parameters", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		t.ID, t.TenantID, t.Name, t.Description, t.Type, t.YAML, t.AgentID, paramsJSON, t.CreatedAt, t.UpdatedAt); err != nil {
 		storefail.Record("[store] CreateTemplate 插入失败 (tenant=%s id=%s): %v", tenantID, t.ID, err)
 		return nil
@@ -247,13 +250,14 @@ func (s *SQLStore) CreateRun(tenantID string, r *PipelineRun) *PipelineRun {
 	if r.FinishedAt != nil {
 		finishedAt = sql.NullTime{Time: *r.FinishedAt, Valid: true}
 	}
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO pipeline_runs (id, tenant_id, template_id, template_name, status, parameters, logs,
-		 started_at, finished_at, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE template_id=VALUES(template_id), template_name=VALUES(template_name),
-		 status=VALUES(status), parameters=VALUES(parameters), logs=VALUES(logs),
-		 started_at=VALUES(started_at), finished_at=VALUES(finished_at)`,
+	query := s.dialect.Upsert(
+		"pipeline_runs",
+		[]string{"id", "tenant_id", "template_id", "template_name", "status", "parameters", "logs", "started_at", "finished_at", "created_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"template_id", "template_name", "status", "parameters", "logs", "started_at", "finished_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		r.ID, r.TenantID, r.TemplateID, r.TemplateName, r.Status, paramsJSON, r.Logs,
 		startedAt, finishedAt, r.CreatedAt); err != nil {
 		storefail.Record("[store] CreateRun 插入失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)

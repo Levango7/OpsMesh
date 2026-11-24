@@ -81,22 +81,27 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 
 	var err error
 	if hasSecretCol {
-		_, err = s.db.ExecContext(ctx,
-			"INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen, secret) "+
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "+
-				"ON DUPLICATE KEY UPDATE hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), "+
-				"addr=VALUES(addr), grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port), "+
-				"status=VALUES(status), `load`=VALUES(`load`), last_seen=VALUES(last_seen)", a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now, agentSecret)
+		query := s.dialect.Upsert(
+			"agents",
+			[]string{"agent_id", "hostname", "segment", "tenant_id", "addr", "grpc_port", "metrics_port", "status", "load", "last_seen", "secret"},
+			[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+			[]string{"agent_id"},
+			[]string{"hostname", "segment", "tenant_id", "addr", "grpc_port", "metrics_port", "status", "load", "last_seen"},
+		)
+		_, err = s.db.ExecContext(ctx, query,
+			a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now, agentSecret)
 		if err != nil {
 			storefail.Record("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
 		}
 	} else {
-		_, err = s.db.ExecContext(ctx,
-			"INSERT INTO agents (agent_id, hostname, segment, tenant_id, addr, grpc_port, metrics_port, status, `load`, last_seen) "+
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "+
-				"ON DUPLICATE KEY UPDATE hostname=VALUES(hostname), segment=VALUES(segment), tenant_id=VALUES(tenant_id), "+
-				"addr=VALUES(addr), grpc_port=VALUES(grpc_port), metrics_port=VALUES(metrics_port), "+
-				"status=VALUES(status), `load`=VALUES(`load`), last_seen=VALUES(last_seen)",
+		query := s.dialect.Upsert(
+			"agents",
+			[]string{"agent_id", "hostname", "segment", "tenant_id", "addr", "grpc_port", "metrics_port", "status", "load", "last_seen"},
+			[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+			[]string{"agent_id"},
+			[]string{"hostname", "segment", "tenant_id", "addr", "grpc_port", "metrics_port", "status", "load", "last_seen"},
+		)
+		_, err = s.db.ExecContext(ctx, query,
 			a.AgentID, a.Hostname, a.Segment, a.TenantID, a.Addr, a.GRPCPort, a.MetricsPort, a.Status, 1, now)
 		if err != nil {
 			storefail.Record("[store] Register upsert agents 失败 %s: %v", a.AgentID, err)
@@ -122,22 +127,29 @@ func (s *SQLStore) Register(a *proto.AgentInfo) *proto.AgentInfo {
 		if a.TenantID != "" && curTenant != "" && curTenant != a.TenantID {
 			logx.Warn(context.Background(), "store: Register onboard 拒绝跨租户翻转", "onboardDeviceID", a.OnboardDeviceID, "deviceTenant", curTenant, "agentTenant", a.TenantID)
 		} else {
-			_, err = s.db.ExecContext(ctx, `
-INSERT INTO devices (device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, hostname, os, arch)
-VALUES (?, ?, ?, ?, ?, 'online', 'idle', 1, ?, ?, ?)
-ON DUPLICATE KEY UPDATE segment=VALUES(segment), tenant_id=VALUES(tenant_id), ip=VALUES(ip), agent_id=VALUES(agent_id), state='online', task_state='idle', managed=1, hostname=VALUES(hostname), os=VALUES(os), arch=VALUES(arch)
-`, a.OnboardDeviceID, a.Segment, a.TenantID, a.Addr, a.AgentID, a.Hostname, a.OS, a.Arch)
+			query := s.dialect.Upsert(
+				"devices",
+				[]string{"device_id", "segment", "tenant_id", "ip", "agent_id", "state", "task_state", "managed", "hostname", "os", "arch"},
+				[]string{"?", "?", "?", "?", "?", "'online'", "'idle'", "1", "?", "?", "?"},
+				[]string{"device_id"},
+				[]string{"segment", "tenant_id", "ip", "agent_id", "state", "task_state", "managed", "hostname", "os", "arch"},
+			)
+			_, err = s.db.ExecContext(ctx, query,
+				a.OnboardDeviceID, a.Segment, a.TenantID, a.Addr, a.AgentID, a.Hostname, a.OS, a.Arch)
 			if err != nil {
 				storefail.Record("[store] Register onboard 设备失败 %s: %v", a.OnboardDeviceID, err)
 			}
 		}
 	} else {
-		_, err = s.db.ExecContext(ctx, `
-INSERT INTO devices (device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, hostname, os, arch)
-VALUES (?, ?, ?, ?, ?, 'online', 'idle', 1, ?, ?, ?)
-ON DUPLICATE KEY UPDATE
-	segment=VALUES(segment), tenant_id=VALUES(tenant_id), ip=VALUES(ip), state=VALUES(state), task_state=VALUES(task_state), managed=1, hostname=VALUES(hostname), os=VALUES(os), arch=VALUES(arch)
-`, "dev-"+a.AgentID, a.Segment, a.TenantID, a.Addr, a.AgentID, a.Hostname, a.OS, a.Arch)
+		query := s.dialect.Upsert(
+			"devices",
+			[]string{"device_id", "segment", "tenant_id", "ip", "agent_id", "state", "task_state", "managed", "hostname", "os", "arch"},
+			[]string{"?", "?", "?", "?", "?", "'online'", "'idle'", "1", "?", "?", "?"},
+			[]string{"device_id"},
+			[]string{"segment", "tenant_id", "ip", "state", "task_state", "managed", "hostname", "os", "arch"},
+		)
+		_, err = s.db.ExecContext(ctx, query,
+			"dev-"+a.AgentID, a.Segment, a.TenantID, a.Addr, a.AgentID, a.Hostname, a.OS, a.Arch)
 	}
 	if err != nil {
 		storefail.Record("[store] Register insert devices 失败 %s: %v", a.AgentID, err)
@@ -145,11 +157,15 @@ ON DUPLICATE KEY UPDATE
 
 	// 演示模式：仅 --demo 开启时预置 uname -a 示例任务，避免污染生产。
 	if s.demo {
-		_, err = s.db.ExecContext(ctx, `
-INSERT INTO tasks (task_id, agent_id, tenant_id, type, command, status, created_at)
-VALUES (?, ?, ?, ?, ?, 'pending', ?)
-ON DUPLICATE KEY UPDATE type=VALUES(type), command=VALUES(command), status=VALUES(status)
-`, "task-"+a.AgentID+"-1", a.AgentID, a.TenantID, "shell", "uname -a", now)
+		query := s.dialect.Upsert(
+			"tasks",
+			[]string{"task_id", "agent_id", "tenant_id", "type", "command", "status", "created_at"},
+			[]string{"?", "?", "?", "?", "?", "'pending'", "?"},
+			[]string{"task_id"},
+			[]string{"type", "command", "status"},
+		)
+		_, err = s.db.ExecContext(ctx, query,
+			"task-"+a.AgentID+"-1", a.AgentID, a.TenantID, "shell", "uname -a", now)
 		if err != nil {
 			storefail.Record("[store] Register insert tasks 失败 %s: %v", a.AgentID, err)
 		}
@@ -401,13 +417,15 @@ func (s *SQLStore) UpsertDevice(d *proto.DeviceInfo) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx, `
-INSERT INTO devices (device_id, segment, tenant_id, ip, agent_id, state, task_state, managed, last_result, last_result_at, retired)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON DUPLICATE KEY UPDATE segment=VALUES(segment), tenant_id=VALUES(tenant_id), ip=VALUES(ip),
-	agent_id=VALUES(agent_id), state=VALUES(state), task_state=VALUES(task_state),
-	managed=VALUES(managed), last_result=VALUES(last_result), last_result_at=VALUES(last_result_at), retired=VALUES(retired)
-`, d.DeviceID, d.Segment, d.TenantID, d.IP, d.AgentID, d.State, d.TaskState,
+	query := s.dialect.Upsert(
+		"devices",
+		[]string{"device_id", "segment", "tenant_id", "ip", "agent_id", "state", "task_state", "managed", "last_result", "last_result_at", "retired"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"device_id"},
+		[]string{"segment", "tenant_id", "ip", "agent_id", "state", "task_state", "managed", "last_result", "last_result_at", "retired"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
+		d.DeviceID, d.Segment, d.TenantID, d.IP, d.AgentID, d.State, d.TaskState,
 		boolToInt(d.Managed), nullString(d.LastResult), nullTime(d.LastResultAt), boolToInt(d.Retired)); err != nil {
 		storefail.Record("[store] UpsertDevice 失败 %s: %v", d.DeviceID, err)
 	}
