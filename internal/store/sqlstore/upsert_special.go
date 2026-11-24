@@ -79,7 +79,7 @@ func upsertABACPolicy(d Dialect) string {
 			"updated_at" = EXCLUDED."updated_at"`
 		return d.ConvertPlaceholders(query)
 	default:
-		return "INSERT INTO `abac_policies` (" + abacPolicyColumns + ") VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?) " +
+		return "INSERT INTO `abac_policies` (" + abacPolicyColumns(d) + ") VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?) " +
 			"ON DUPLICATE KEY UPDATE `version`=`version`+1, `subject`=VALUES(`subject`), " +
 			"`resource`=VALUES(`resource`), `action`=VALUES(`action`), `effect`=VALUES(`effect`), " +
 			"`updated_at`=VALUES(`updated_at`)"

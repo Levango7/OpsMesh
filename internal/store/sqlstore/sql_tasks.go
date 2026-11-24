@@ -287,13 +287,13 @@ func (s *SQLStore) SubmitResult(res *proto.TaskResult) {
 	var rc, mr sql.NullInt64
 	accepted := false
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT task_id, tenant_id, status, retry_count, max_retries FROM tasks WHERE task_id=?`, res.TaskID,
+		s.dialect.ConvertPlaceholders(`SELECT task_id, tenant_id, status, retry_count, max_retries FROM tasks WHERE task_id=?`), res.TaskID,
 	).Scan(&tid, &tenantID, &status, &rc, &mr); err == nil && tid != "" {
 		if status.String != "running" {
 			logx.Warn(context.Background(), "store: SubmitResult 忽略非 running 任务", "taskID", res.TaskID, "status", status.String, "exitCode", res.ExitCode)
 		} else if success {
 			if r, uerr := s.db.ExecContext(ctx,
-				`UPDATE tasks SET status='done' WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
+				s.dialect.ConvertPlaceholders(`UPDATE tasks SET status='done' WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch)),
 				claimEpochArgs(res.TaskID, res.ClaimEpoch)...); uerr != nil {
 				storefail.Record("[store] SubmitResult done 更新失败 %s: %v", res.TaskID, uerr)
 			} else if n, raErr := r.RowsAffected(); raErr == nil && n > 0 {
@@ -303,7 +303,7 @@ func (s *SQLStore) SubmitResult(res *proto.TaskResult) {
 			}
 		} else if rc.Int64 < mr.Int64 {
 			r, uerr := s.db.ExecContext(ctx,
-				`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL, retry_count=retry_count+1 WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
+				s.dialect.ConvertPlaceholders(`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL, retry_count=retry_count+1 WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch)),
 				claimEpochArgs(res.TaskID, res.ClaimEpoch)...)
 			if uerr != nil {
 				storefail.Record("[store] SubmitResult retry 更新失败 %s: %v", res.TaskID, uerr)
@@ -316,7 +316,7 @@ func (s *SQLStore) SubmitResult(res *proto.TaskResult) {
 			}
 		} else {
 			r, uerr := s.db.ExecContext(ctx,
-				`UPDATE tasks SET status='failed', dead_letter=1 WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch),
+				s.dialect.ConvertPlaceholders(`UPDATE tasks SET status='failed', dead_letter=1 WHERE task_id=? AND status='running'`+claimEpochCond(res.ClaimEpoch)),
 				claimEpochArgs(res.TaskID, res.ClaimEpoch)...)
 			if uerr != nil {
 				storefail.Record("[store] SubmitResult dead-letter 更新失败 %s: %v", res.TaskID, uerr)
@@ -350,7 +350,7 @@ func (s *SQLStore) SubmitResult(res *proto.TaskResult) {
 		taskState = "idle"
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`UPDATE devices SET task_state=?, last_result=?, last_result_at=? WHERE agent_id=?`,
+		s.dialect.ConvertPlaceholders(`UPDATE devices SET task_state=?, last_result=?, last_result_at=? WHERE agent_id=?`),
 		taskState, lastResult, time.Now().UTC(), res.AgentID); err != nil {
 		storefail.Record("[store] SubmitResult 更新 devices 失败 %s: %v", res.AgentID, err)
 	}
@@ -376,7 +376,7 @@ func (s *SQLStore) SubmitResult(res *proto.TaskResult) {
 // 旧实现仅在 success 时调用且要求 AllDepsDone，上游一失败下游就永久停在 blocked。
 func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT task_id, depends_on FROM tasks WHERE agent_id=? AND status='blocked'`, agentID)
+		s.dialect.ConvertPlaceholders(`SELECT task_id, depends_on FROM tasks WHERE agent_id=? AND status='blocked'`), agentID)
 	if err != nil {
 		return
 	}
@@ -404,7 +404,7 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 	}
 	// 取该 agent 全部任务状态，构建 byID 索引供 dag 判定。
 	all, err := s.db.QueryContext(ctx,
-		`SELECT task_id, status FROM tasks WHERE agent_id=?`, agentID)
+		s.dialect.ConvertPlaceholders(`SELECT task_id, status FROM tasks WHERE agent_id=?`), agentID)
 	if err != nil {
 		return
 	}
@@ -438,7 +438,7 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 		if failedDep, failed := dag.AnyDepFailed(t, byID); failed {
 			// 上游失败/取消 ⇒ 下游不可能再执行：置 failed + 死信，使其可见可处置。
 			if _, uerr := s.db.ExecContext(ctx,
-				`UPDATE tasks SET status='failed', dead_letter=1, claimed_by=NULL, claimed_at=NULL WHERE task_id=?`, b.id); uerr != nil {
+				s.dialect.ConvertPlaceholders(`UPDATE tasks SET status='failed', dead_letter=1, claimed_by=NULL, claimed_at=NULL WHERE task_id=?`), b.id); uerr != nil {
 				storefail.Record("[store] releaseDeps 标记失败 %s: %v", b.id, uerr)
 				continue
 			}
@@ -457,7 +457,7 @@ func (s *SQLStore) releaseDeps(ctx context.Context, agentID, doneTaskID string) 
 			continue
 		}
 		if _, err := s.db.ExecContext(ctx,
-			`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL WHERE task_id=?`, b.id); err == nil {
+			s.dialect.ConvertPlaceholders(`UPDATE tasks SET status='pending', claimed_by=NULL, claimed_at=NULL WHERE task_id=?`), b.id); err == nil {
 			s.publish(events.Event{Action: "task_released", Target: b.id, TenantID: "",
 				Detail: "deps done (trigger=" + doneTaskID + ")", Level: events.LevelInfo})
 		}
