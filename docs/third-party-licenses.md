@@ -1,7 +1,7 @@
 # 第三方依赖许可证清单（自动生成，勿手改）
 
 > 生成命令：`bash deploy/scripts/gen-third-party-licenses.sh`（CI 用 `--check` 阻止文档与 go.sum 漂移）  
-> 生成时间：2026-11-23T23:49:21Z
+> 生成时间：2026-11-24T00:56:38Z
 > 依赖来源：根模块 + `services/*/go.mod` + `operator/go.mod` 的全部 `go.sum`（183 个 module@version）
 > 许可证识别：读本地 Go 模块缓存里各模块自带的 LICENSE 文件，按签名表分类为常见 SPDX 名。
 
@@ -71,7 +71,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `google.golang.org/grpc` | v1.83.2 | `NOTICE.txt` |
 | `gopkg.in/yaml.v3` | v3.0.1 | `NOTICE` |
 
-## 同一模块存在多个版本（18 个）
+## 同一模块存在多个版本（12 个）
 
 上表**按模块取语义最高版本**判定许可证。以下是 `go.sum` 里同时出现多个版本的模块——
 低版本若许可证不同，本清单不会体现，故逐个列出供核对。
@@ -83,19 +83,13 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/go-openapi/jsonpointer` | v0.21.0, v1.0.0 | `v1.0.0` |
 | `github.com/go-openapi/jsonreference` | v0.20.2, v1.0.0 | `v1.0.0` |
 | `github.com/go-openapi/swag` | v0.23.0, v0.28.0 | `v0.28.0` |
-| `github.com/grpc-ecosystem/grpc-gateway/v2` | v2.29.0, v2.30.0 | `v2.30.0` |
-| `github.com/pmezard/go-difflib` | v1.0.0, v1.0.1-0.20181226105442-5d4384ee4fb2 | `v1.0.1-0.20181226105442-5d4384ee4fb2` |
 | `github.com/stretchr/testify` | v1.11.1, v1.12.1 | `v1.12.1` |
 | `go.opentelemetry.io/otel` | v1.45.0, v1.47.0 | `v1.47.0` |
-| `go.opentelemetry.io/otel/exporters/otlp/otlptrace` | v1.45.0, v1.47.0 | `v1.47.0` |
-| `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc` | v1.45.0, v1.47.0 | `v1.47.0` |
-| `go.opentelemetry.io/otel/exporters/stdout/stdouttrace` | v1.45.0, v1.47.0 | `v1.47.0` |
 | `go.opentelemetry.io/otel/metric` | v1.45.0, v1.47.0 | `v1.47.0` |
 | `go.opentelemetry.io/otel/sdk` | v1.45.0, v1.47.0 | `v1.47.0` |
 | `go.opentelemetry.io/otel/sdk/metric` | v1.45.0, v1.47.0 | `v1.47.0` |
 | `go.opentelemetry.io/otel/trace` | v1.45.0, v1.47.0 | `v1.47.0` |
 | `golang.org/x/sys` | v0.47.0, v0.49.0 | `v0.49.0` |
-| `google.golang.org/genproto/googleapis/api` | v0.0.0-20260803160001-6ac0973c030d, v0.0.0-20260928230214-8a89bd6388cc | `v0.0.0-20260928230214-8a89bd6388cc` |
 | `google.golang.org/genproto/googleapis/rpc` | v0.0.0-20260818201246-1b0934165a6f, v0.0.0-20260928230214-8a89bd6388cc | `v0.0.0-20260928230214-8a89bd6388cc` |
 | `google.golang.org/protobuf` | v1.36.11, v1.36.12 | `v1.36.12` |
 
