@@ -7,6 +7,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -149,6 +150,41 @@ func TestUpsertUniqueKeyParsingSyntheticDDL(t *testing.T) {
 	}
 }
 
+// TestUpsertParseColumnListSortDirection 钉死 parseColumnList 的剥离顺序：
+// 必须先（大小写不敏感地）剥离尾部 ASC/DESC，再剥离前缀长度 name(191)，
+// 最后去引号。旧实现先去引号，导致 “ `a` DESC “ 被按空白截断后
+// 残留反引号，误解析为 "`a`" 而非 "a"。
+func TestUpsertParseColumnListSortDirection(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"`a` DESC", []string{"a"}},
+		{"`a` ASC", []string{"a"}},
+		{"`a` desc", []string{"a"}},
+		{"\"a\" Desc", []string{"a"}},
+		{"name(191) ASC", []string{"name"}},
+		{"name(191) DESC", []string{"name"}},
+		{"`name`(191) desc", []string{"name"}},
+		// 无方向修饰时行为不变（回归保护）。
+		{"`a`", []string{"a"}},
+		{"name(191)", []string{"name"}},
+		{"a", []string{"a"}},
+		{"\"a\"", []string{"a"}},
+		// 多项列表保持声明顺序。
+		{"`a` DESC, `b` ASC", []string{"a", "b"}},
+		{"`a` DESC, name(191), `c` ASC", []string{"a", "name", "c"}},
+		// 空项/仅方向修饰项被跳过。
+		{"`a` DESC, , ", []string{"a"}},
+	}
+	for _, tc := range cases {
+		got := parseColumnList(tc.in)
+		if !equalStrings(got, tc.want) {
+			t.Errorf("parseColumnList(%q) = %v，want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestUpsertConflictParitySynthetic 用合成 upsertCallSpec 验证行为 parity
 // 守卫：合法冲突目标双轨都通过；空冲突、缺失唯一键必须报红；
 // schema_migrations 目标不参与业务比较。
@@ -215,28 +251,66 @@ var upsertParityInlineUniqueRe = regexp.MustCompile(`(?i)\bUNIQUE\b`)
 // upsertParityStringLitRe 匹配单引号字符串字面量。
 var upsertParityStringLitRe = regexp.MustCompile(`'(?:[^']|'')*'`)
 
+// 解析结果缓存：assertUpsertConflictParity 每调用一次就重解析两棵
+// 嵌入迁移 FS，Task 6-8 接入 45 个调用点后会退化为
+// O(调用点数 × DDL 体量)。迁移 DDL 在进程生命周期内不变，
+// 故用 sync.Once 各解析一次并缓存。
+//
+// 约束：缓存为包级共享，调用方不得原地修改返回值。
+// 因此两个公开辅助函数每次都返回深拷贝（只读视图语义），
+// 保持签名不变且跨测试不可变。
+var (
+	mysqlUniqueKeysOnce   sync.Once
+	mysqlUniqueKeysCached map[string][][]string
+
+	postgresUniqueKeysOnce   sync.Once
+	postgresUniqueKeysCached map[string][][]string
+)
+
+// cloneUniqueKeyMap 深拷贝 表名 → 列序列表 map，
+// 防止调用方修改污染共享缓存。
+func cloneUniqueKeyMap(m map[string][][]string) map[string][][]string {
+	out := make(map[string][][]string, len(m))
+	for table, keys := range m {
+		cp := make([][]string, len(keys))
+		for i, cols := range keys {
+			c := make([]string, len(cols))
+			copy(c, cols)
+			cp[i] = c
+		}
+		out[table] = cp
+	}
+	return out
+}
+
 // mysqlUniqueKeys 解析 MySQL 轨嵌入迁移 DDL，返回
 // 表名 → 主键/唯一键列序列表（含声明顺序）。
 // schema_migrations 不参与业务目标比较；结果为空立即 Fatalf。
+// 解析结果经 sync.Once 缓存，返回值每次深拷贝，调用方不得修改。
 func mysqlUniqueKeys(t *testing.T) map[string][][]string {
 	t.Helper()
-	m := parseMigrationUniqueKeys(t, mysqlMigrationsFS, ".")
-	if len(m) == 0 {
+	mysqlUniqueKeysOnce.Do(func() {
+		mysqlUniqueKeysCached = parseMigrationUniqueKeys(t, mysqlMigrationsFS, ".")
+	})
+	if len(mysqlUniqueKeysCached) == 0 {
 		t.Fatalf("MySQL 迁移 DDL 未解析出任何主键/唯一键（解析器失效？），不得返回空集合后假绿")
 	}
-	return m
+	return cloneUniqueKeyMap(mysqlUniqueKeysCached)
 }
 
 // postgresUniqueKeys 解析 PG 轨嵌入迁移 DDL，返回
 // 表名 → 主键/唯一键列序列表（含声明顺序）。
 // schema_migrations 不参与业务目标比较；结果为空立即 Fatalf。
+// 解析结果经 sync.Once 缓存，返回值每次深拷贝，调用方不得修改。
 func postgresUniqueKeys(t *testing.T) map[string][][]string {
 	t.Helper()
-	m := parseMigrationUniqueKeys(t, pgMigrationsFS, ".")
-	if len(m) == 0 {
+	postgresUniqueKeysOnce.Do(func() {
+		postgresUniqueKeysCached = parseMigrationUniqueKeys(t, pgMigrationsFS, ".")
+	})
+	if len(postgresUniqueKeysCached) == 0 {
 		t.Fatalf("PG 迁移 DDL 未解析出任何主键/唯一键（解析器失效？），不得返回空集合后假绿")
 	}
-	return m
+	return cloneUniqueKeyMap(postgresUniqueKeysCached)
 }
 
 // parseMigrationUniqueKeys 读取 embed FS 目录下全部 .sql 并解析唯一键。
@@ -365,8 +439,14 @@ func classifyConstraint(item string) (uniqueKeySpec, bool) {
 	return uniqueKeySpec{Columns: cols, Primary: primary}, true
 }
 
+// upsertParitySortDirRe 匹配列名后随的排序方向修饰
+// （ASC/DESC，大小写不敏感，前后可有空白）。
+var upsertParitySortDirRe = regexp.MustCompile(`(?i)\s+(?:ASC|DESC)\s*$`)
+
 // parseColumnList 解析括号内的列名列表，保持 DDL 顺序：
-// 去前缀长度 name(191)、去引号、去排序方向修饰。
+// 先去排序方向修饰、再去前缀长度 name(191)、最后去引号。
+// 顺序不可颠倒：若先去引号/先去前缀长度，`a` DESC 会在去引号前
+// 被按空白截断而残留反引号（“ `a` DESC “ 误解析为 "`a`"）。
 func parseColumnList(s string) []string {
 	var cols []string
 	for _, part := range splitTopLevelCommas(s) {
@@ -374,13 +454,17 @@ func parseColumnList(s string) []string {
 		if part == "" {
 			continue
 		}
+		// 1) 剥离排序方向修饰（ASC/DESC，大小写不敏感）。
+		part = strings.TrimSpace(upsertParitySortDirRe.ReplaceAllString(part, ""))
+		if part == "" {
+			continue
+		}
+		// 2) 剥离前缀长度 name(191) → name。
 		if i := strings.Index(part, "("); i >= 0 {
-			part = part[:i]
+			part = strings.TrimSpace(part[:i])
 		}
+		// 3) 标识符去引号。
 		col := unquoteIdentifier(part)
-		if j := strings.IndexAny(col, " \t"); j >= 0 {
-			col = col[:j]
-		}
 		if col != "" {
 			cols = append(cols, col)
 		}
