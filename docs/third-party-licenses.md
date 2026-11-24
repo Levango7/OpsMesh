@@ -1,8 +1,8 @@
 # 第三方依赖许可证清单（自动生成，勿手改）
 
 > 生成命令：`bash deploy/scripts/gen-third-party-licenses.sh`（CI 用 `--check` 阻止文档与 go.sum 漂移）  
-> 生成时间：2026-11-20T04:44:15Z  
-> 依赖来源：根模块 + `services/*/go.mod` + `operator/go.mod` 的全部 `go.sum`（167 个 module@version）  
+> 生成时间：2026-11-23T23:49:21Z
+> 依赖来源：根模块 + `services/*/go.mod` + `operator/go.mod` 的全部 `go.sum`（183 个 module@version）
 > 许可证识别：读本地 Go 模块缓存里各模块自带的 LICENSE 文件，按签名表分类为常见 SPDX 名。
 
 ## 本清单**不做**的事（必须人判）
@@ -15,8 +15,8 @@
 
 | 许可证 | 模块数 |
 |---|---|
-| `Apache-2.0` | 51 |
-| `MIT` | 51 |
+| `Apache-2.0` | 66 |
+| `MIT` | 52 |
 | `BSD-3-Clause` | 31 |
 | `MPL-2.0` | 24 |
 | `BSD-2-Clause` | 9 |
@@ -51,7 +51,7 @@
 | `MPL-2.0` | `github.com/shoenig/go-m1cpu` | v0.1.6 | 间接 | copyleft：可能有衍生/源码提供义务 |
 | `MPL-2.0` | `github.com/shoenig/test` | v0.6.4 | 间接 | copyleft：可能有衍生/源码提供义务 |
 
-## 上游自带 NOTICE 的模块（7 个）
+## 上游自带 NOTICE 的模块（11 个）
 
 Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分发的产物含上游 NOTICE 时，
 必须把其中的署名收进自己的 NOTICE。汇编命令：
@@ -60,14 +60,18 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | 模块 | 版本 | 上游 NOTICE 文件名 |
 |---|---|---|
 | `github.com/agext/levenshtein` | v1.2.2 | `NOTICE` |
+| `github.com/go-openapi/jsonpointer` | v1.0.0 | `NOTICE` |
+| `github.com/go-openapi/jsonreference` | v1.0.0 | `NOTICE` |
+| `github.com/go-openapi/testify/v2` | v2.6.0 | `NOTICE` |
 | `github.com/prometheus/client_golang` | v1.19.1 | `NOTICE` |
 | `github.com/prometheus/client_model` | v0.6.1 | `NOTICE` |
 | `github.com/prometheus/common` | v0.55.0 | `NOTICE` |
 | `github.com/prometheus/procfs` | v0.15.1 | `NOTICE` |
+| `go.yaml.in/yaml/v3` | v3.0.5 | `NOTICE` |
 | `google.golang.org/grpc` | v1.83.2 | `NOTICE.txt` |
 | `gopkg.in/yaml.v3` | v3.0.1 | `NOTICE` |
 
-## 同一模块存在多个版本（2 个）
+## 同一模块存在多个版本（18 个）
 
 上表**按模块取语义最高版本**判定许可证。以下是 `go.sum` 里同时出现多个版本的模块——
 低版本若许可证不同，本清单不会体现，故逐个列出供核对。
@@ -76,12 +80,28 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 
 | 模块 | go.sum 内全部版本 | 本清单判定用 |
 |---|---|---|
+| `github.com/go-openapi/jsonpointer` | v0.21.0, v1.0.0 | `v1.0.0` |
+| `github.com/go-openapi/jsonreference` | v0.20.2, v1.0.0 | `v1.0.0` |
+| `github.com/go-openapi/swag` | v0.23.0, v0.28.0 | `v0.28.0` |
+| `github.com/grpc-ecosystem/grpc-gateway/v2` | v2.29.0, v2.30.0 | `v2.30.0` |
 | `github.com/pmezard/go-difflib` | v1.0.0, v1.0.1-0.20181226105442-5d4384ee4fb2 | `v1.0.1-0.20181226105442-5d4384ee4fb2` |
+| `github.com/stretchr/testify` | v1.11.1, v1.12.1 | `v1.12.1` |
+| `go.opentelemetry.io/otel` | v1.45.0, v1.47.0 | `v1.47.0` |
+| `go.opentelemetry.io/otel/exporters/otlp/otlptrace` | v1.45.0, v1.47.0 | `v1.47.0` |
+| `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc` | v1.45.0, v1.47.0 | `v1.47.0` |
+| `go.opentelemetry.io/otel/exporters/stdout/stdouttrace` | v1.45.0, v1.47.0 | `v1.47.0` |
+| `go.opentelemetry.io/otel/metric` | v1.45.0, v1.47.0 | `v1.47.0` |
+| `go.opentelemetry.io/otel/sdk` | v1.45.0, v1.47.0 | `v1.47.0` |
+| `go.opentelemetry.io/otel/sdk/metric` | v1.45.0, v1.47.0 | `v1.47.0` |
+| `go.opentelemetry.io/otel/trace` | v1.45.0, v1.47.0 | `v1.47.0` |
 | `golang.org/x/sys` | v0.47.0, v0.49.0 | `v0.49.0` |
+| `google.golang.org/genproto/googleapis/api` | v0.0.0-20260803160001-6ac0973c030d, v0.0.0-20260928230214-8a89bd6388cc | `v0.0.0-20260928230214-8a89bd6388cc` |
+| `google.golang.org/genproto/googleapis/rpc` | v0.0.0-20260818201246-1b0934165a6f, v0.0.0-20260928230214-8a89bd6388cc | `v0.0.0-20260928230214-8a89bd6388cc` |
+| `google.golang.org/protobuf` | v1.36.11, v1.36.12 | `v1.36.12` |
 
 ## 全量清单
 
-### `Apache-2.0`（51）
+### `Apache-2.0`（66）
 
 | 模块 | 版本 | 依赖类型 |
 |---|---|---|
@@ -92,9 +112,23 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/go-logr/logr` | v1.4.4 | 间接 |
 | `github.com/go-logr/stdr` | v1.2.2 | 间接 |
 | `github.com/go-logr/zapr` | v1.3.0 | 间接 |
-| `github.com/go-openapi/jsonpointer` | v0.21.0 | 间接 |
-| `github.com/go-openapi/jsonreference` | v0.20.2 | 间接 |
-| `github.com/go-openapi/swag` | v0.23.0 | 间接 |
+| `github.com/go-openapi/jsonpointer` | v1.0.0 | 间接 |
+| `github.com/go-openapi/jsonreference` | v1.0.0 | 间接 |
+| `github.com/go-openapi/swag` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/cmdutils` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/conv` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/fileutils` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/jsonutils` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/jsonutils/fixtures_test` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/loading` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/mangling` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/netutils` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/pools` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/stringutils` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/typeutils` | v0.28.0 | 间接 |
+| `github.com/go-openapi/swag/yamlutils` | v0.28.0 | 间接 |
+| `github.com/go-openapi/testify/enable/yaml/v2` | v2.6.0 | 间接 |
+| `github.com/go-openapi/testify/v2` | v2.6.0 | 间接 |
 | `github.com/google/btree` | v1.1.3 | 间接 |
 | `github.com/google/gnostic-models` | v0.6.8 | 间接 |
 | `github.com/google/gofuzz` | v1.2.0 | 间接 |
@@ -112,19 +146,20 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/xdg-go/scram` | v1.1.2 | 间接 |
 | `github.com/xdg-go/stringprep` | v1.0.4 | 间接 |
 | `go.opentelemetry.io/auto/sdk` | v1.2.1 | 间接 |
-| `go.opentelemetry.io/otel` | v1.45.0 | 直接 |
-| `go.opentelemetry.io/otel/exporters/otlp/otlptrace` | v1.45.0 | 间接 |
-| `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc` | v1.45.0 | 直接 |
-| `go.opentelemetry.io/otel/exporters/stdout/stdouttrace` | v1.45.0 | 直接 |
-| `go.opentelemetry.io/otel/metric` | v1.45.0 | 间接 |
-| `go.opentelemetry.io/otel/sdk` | v1.45.0 | 直接 |
-| `go.opentelemetry.io/otel/sdk/metric` | v1.45.0 | 间接 |
-| `go.opentelemetry.io/otel/trace` | v1.45.0 | 直接 |
+| `go.opentelemetry.io/otel` | v1.47.0 | 直接 |
+| `go.opentelemetry.io/otel/exporters/otlp/otlptrace` | v1.47.0 | 间接 |
+| `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc` | v1.47.0 | 直接 |
+| `go.opentelemetry.io/otel/exporters/stdout/stdouttrace` | v1.47.0 | 直接 |
+| `go.opentelemetry.io/otel/log` | v1.47.0 | 间接 |
+| `go.opentelemetry.io/otel/metric` | v1.47.0 | 间接 |
+| `go.opentelemetry.io/otel/sdk` | v1.47.0 | 直接 |
+| `go.opentelemetry.io/otel/sdk/metric` | v1.47.0 | 间接 |
+| `go.opentelemetry.io/otel/trace` | v1.47.0 | 直接 |
 | `go.opentelemetry.io/proto/otlp` | v1.11.0 | 间接 |
 | `gomodules.xyz/jsonpatch/v2` | v2.4.0 | 间接 |
 | `google.golang.org/appengine` | v1.6.8 | 间接 |
-| `google.golang.org/genproto/googleapis/api` | v0.0.0-20260803160001-6ac0973c030d | 间接 |
-| `google.golang.org/genproto/googleapis/rpc` | v0.0.0-20260818201246-1b0934165a6f | 间接 |
+| `google.golang.org/genproto/googleapis/api` | v0.0.0-20260928230214-8a89bd6388cc | 间接 |
+| `google.golang.org/genproto/googleapis/rpc` | v0.0.0-20260928230214-8a89bd6388cc | 间接 |
 | `google.golang.org/grpc` | v1.83.2 | 直接 |
 | `k8s.io/api` | v0.32.0 | 直接 |
 | `k8s.io/apiextensions-apiserver` | v0.32.0 | 间接 |
@@ -163,7 +198,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/golang/protobuf` | v1.5.4 | 间接 |
 | `github.com/google/go-cmp` | v0.7.0 | 间接 |
 | `github.com/google/uuid` | v1.6.0 | 直接 |
-| `github.com/grpc-ecosystem/grpc-gateway/v2` | v2.29.0 | 间接 |
+| `github.com/grpc-ecosystem/grpc-gateway/v2` | v2.30.0 | 间接 |
 | `github.com/klauspost/compress` | v1.18.7 | 间接 |
 | `github.com/lufia/plan9stats` | v0.0.0-20211012122336-39d0f177ccd0 | 间接 |
 | `github.com/munnerz/goautoneg` | v0.0.0-20191010083416-a7dc8b61c822 | 间接 |
@@ -183,7 +218,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `golang.org/x/time` | v0.12.0 | 直接 |
 | `golang.org/x/tools` | v0.51.0 | 间接 |
 | `gonum.org/v1/gonum` | v0.17.0 | 间接 |
-| `google.golang.org/protobuf` | v1.36.11 | 直接 |
+| `google.golang.org/protobuf` | v1.36.12 | 直接 |
 | `gopkg.in/evanphx/json-patch.v4` | v4.12.0 | 间接 |
 | `gopkg.in/inf.v0` | v0.9.1 | 间接 |
 
@@ -193,7 +228,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 |---|---|---|
 | `github.com/davecgh/go-spew` | v1.1.2-0.20180830191138-d8f796af33cc | 间接 |
 
-### `MIT`（51）
+### `MIT`（52）
 
 | 模块 | 版本 | 依赖类型 |
 |---|---|---|
@@ -237,7 +272,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `github.com/power-devops/perfstat` | v0.0.0-20210106213030-5aafc221ea8c | 间接 |
 | `github.com/ryanuber/go-glob` | v1.0.0 | 间接 |
 | `github.com/segmentio/kafka-go` | v0.4.51 | 直接 |
-| `github.com/stretchr/testify` | v1.11.1 | 间接 |
+| `github.com/stretchr/testify` | v1.12.1 | 间接 |
 | `github.com/x448/float16` | v0.8.4 | 间接 |
 | `github.com/yusufpapurcu/wmi` | v1.2.4 | 间接 |
 | `github.com/zclconf/go-cty` | v1.14.4 | 间接 |
@@ -246,6 +281,7 @@ Apache-2.0 §4(d) 是**可机械核实**的义务（不是判断题）：再分�
 | `go.uber.org/goleak` | v1.3.0 | 间接 |
 | `go.uber.org/multierr` | v1.11.0 | 间接 |
 | `go.uber.org/zap` | v1.27.0 | 间接 |
+| `go.yaml.in/yaml/v3` | v3.0.5 | 间接 |
 | `gopkg.in/yaml.v3` | v3.0.1 | 间接 |
 | `sigs.k8s.io/yaml` | v1.4.0 | 间接 |
 

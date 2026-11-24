@@ -8,6 +8,7 @@
 ## [Unreleased] — 2026-11-24（issue #149：AI 内存存储并发安全）
 
 - **2026-11-24 issue #149 — VectorStore/KnowledgeStore 并发崩溃修复**：两个生产共享内存存储的全部 map 读写路径补 RWMutex；Upsert/Search/ListBySource 隔离 embedding、metadata 与 citation 的调用方可变引用，避免锁外回写。新增并发与 alias 回归测试；未修版本及去锁/去复制变异均转红，修复后两包普通测试与 `-race` 全绿。持久化与跨副本语义不在本批改变。
+- **2026-11-24 安全基线 — OpenTelemetry v1.47.0**：修复 govulncheck 可达的 GO-2026-6975/6974（baggage 内存放大与属性长度限制绕过），同步更新传递依赖与第三方许可证清单；全仓构建、OTel/tlsutil/AI 测试、模块校验与许可证门禁通过。CI Go 1.26.11 高于标准库修复线 1.26.9，本机 Go 1.26.6 的标准库报告不冒充 CI 结果。
 
 ## [Unreleased] — 2026-11-22（批次74：对象存储生命周期 + HDFS 高级运维）
 
