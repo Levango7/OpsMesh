@@ -33,6 +33,9 @@ if [[ "$1" == "compose" ]]; then
   exit 0
 fi
 if [[ "$1" == "inspect" ]]; then
+  case " $* " in
+    *Aliases*) printf '[mysql]\n'; exit 0 ;;
+  esac
   id="${!#}"
   if [[ "$id" == "cid-controlplane" ]]; then printf 'true\n'; exit 0; fi
   st=$(cat "$FAKE_STATE" 2>/dev/null || printf 'up')

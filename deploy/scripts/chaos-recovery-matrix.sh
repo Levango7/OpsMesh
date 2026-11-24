@@ -129,7 +129,7 @@ inject_disconnect() { # $1=network $2=container-id $3=标签
     bad "disconnect $3 注入失败"; return 1
   fi
   DISCONNECTED+=("$1:$2")
-  if docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$2" 2>/dev/null | grep -q "$1"; then
+  if grep -q "$1" <<<"$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$2" 2>/dev/null)"; then
     bad "注入未确认：$3 仍在网络 $1 上"; return 1
   fi
   ok "注入确认：$3 已脱离网络 $1"; return 0
@@ -209,6 +209,12 @@ api() {
 
 extract_id() { grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' "$1" | head -n 1 | cut -d'"' -f4 || true; }
 
+# 取代「命令经管道接 grep -q」的写法（仓内 pipefail 门禁）：命令替换捕获后用 herestring 判码。
+code_is() { # $1=期望 code 前缀（如 200|），$2...=产生 code|time 的命令
+  local want=$1; shift
+  grep -q "^${want}" <<<"$("$@")"
+}
+
 create_apikey() { # $1=name → 全局 APIKEY_ID / APIKEY_CODE
   local bf
   bf=$(mktemp)
@@ -230,7 +236,7 @@ create_ostemplate() { # $1=name → 全局 TPL_ID / TPL_CODE
 ensure_admin_session() {
   local bf pw token npw
   bf=$(mktemp)
-  if api GET /api/v1/me "" "$bf" | grep -q '^200|' && grep -q '"userID":"user-admin"' "$bf"; then
+  if code_is '200|' api GET /api/v1/me "" "$bf" && grep -q '"userID":"user-admin"' "$bf"; then
     rm -f "$bf"; return 0
   fi
   rm -f "$bf"
@@ -254,7 +260,7 @@ ensure_admin_session() {
     api POST /api/v1/auth/login "{\"username\":\"admin\",\"password\":\"$pw\"}" "$bf" >/dev/null || true
     rm -f "$bf"
     bf=$(mktemp)
-    if api GET /api/v1/me "" "$bf" | grep -q '^200|' && grep -q '"userID":"user-admin"' "$bf"; then
+    if code_is '200|' api GET /api/v1/me "" "$bf" && grep -q '"userID":"user-admin"' "$bf"; then
       printf '%s\n' "$pw" > "$ADMIN_PW_FILE"; chmod 600 "$ADMIN_PW_FILE"
       rm -f "$bf"; log "admin 会话就绪"; return 0
     fi
@@ -303,7 +309,7 @@ scenario_mysql() {
   expect_code /readyz 200
   local bf id_pre id_post code_during
   bf=$(mktemp)
-  api GET /api/v1/audit/verify "" "$bf" | grep -q '^200|' && ok "故障前 audit/verify=200" || bad "故障前 audit/verify 非 200"
+  code_is '200|' api GET /api/v1/audit/verify "" "$bf" && ok "故障前 audit/verify=200" || bad "故障前 audit/verify 非 200"
   rm -f "$bf"
 
   create_apikey "chaos152-mysql-pre"
@@ -315,7 +321,7 @@ scenario_mysql() {
 
   assert_outage_healthz
   wait_for_code /readyz 503 "$DEGRADED_TIMEOUT"
-  if probe /api/v1/devices | grep -qE '^(200|401|403|500|503|curl-error)'; then
+  if grep -qE '^(200|401|403|500|503|curl-error)' <<<"$(probe /api/v1/devices)"; then
     ok "/api/v1/devices 故障期有界响应（$(probe /api/v1/devices)）"
   else
     bad "/api/v1/devices 故障期无界悬挂"
@@ -338,13 +344,13 @@ scenario_mysql() {
   ok "恢复后业务写：apikeys $id_post 创建成功"
 
   bf=$(mktemp)
-  api GET /api/v1/apikeys "" "$bf" | grep -q '^200|' || { bad "恢复后 GET /apikeys 非 200"; rm -f "$bf"; return 1; }
+  code_is '200|' api GET /api/v1/apikeys "" "$bf" || { bad "恢复后 GET /apikeys 非 200"; rm -f "$bf"; return 1; }
   grep -q "$id_pre" "$bf" && ok "恢复后读到故障前写入 $id_pre（数据一致性）" \
     || bad "恢复后读不到故障前写入 $id_pre（数据丢失）"
   rm -f "$bf"
 
   bf=$(mktemp)
-  api GET /api/v1/audit/verify "" "$bf" | grep -q '^200|' && ok "恢复后 audit/verify=200（哈希链完整）" \
+  code_is '200|' api GET /api/v1/audit/verify "" "$bf" && ok "恢复后 audit/verify=200（哈希链完整）" \
     || bad "恢复后 audit/verify 非 200"
   rm -f "$bf"
   bf=$(mktemp)
@@ -372,14 +378,14 @@ scenario_redis() {
   pw=$(cat "$ADMIN_PW_FILE" 2>/dev/null || echo admin123)
 
   bf=$(mktemp)
-  api GET /api/v1/apikeys "" "$bf" | grep -q '^200|' && ok "基线：已登录会话可读 apikeys" || bad "基线会话读失败"
+  code_is '200|' api GET /api/v1/apikeys "" "$bf" && ok "基线：已登录会话可读 apikeys" || bad "基线会话读失败"
   rm -f "$bf"
 
   inject_stop redis || return 1
 
   # 故障期：JWT 无状态 → 既有会话继续有效；Redis 只承载黑名单/限流/改密令牌。
   bf=$(mktemp)
-  api GET /api/v1/apikeys "" "$bf" | grep -q '^200|' && ok "故障期：既有会话继续有效（JWT 无状态）" || bad "故障期既有会话被断"
+  code_is '200|' api GET /api/v1/apikeys "" "$bf" && ok "故障期：既有会话继续有效（JWT 无状态）" || bad "故障期既有会话被断"
   rm -f "$bf"
 
   cp "$JAR" "$jarA2"
@@ -387,7 +393,7 @@ scenario_redis() {
   ok "故障期：logout 返回 $code（best-effort；黑名单写入失败仅记录）"
   # 用登出前保留的会话 jarA2 验证 fail-open（$JAR 已被 logout 清 cookie）。
   bf=$(mktemp)
-  api GET /api/v1/apikeys "" "$bf" "$jarA2" | grep -q '^200|' && ok "故障期证据：登出未使旧会话失效（IsBlacklisted fail-open，代码既定语义）" \
+  code_is '200|' api GET /api/v1/apikeys "" "$bf" "$jarA2" && ok "故障期证据：登出未使旧会话失效（IsBlacklisted fail-open，代码既定语义）" \
     || bad "故障期登出后旧会话反而失效（与 fail-open 语义矛盾）"
   rm -f "$bf"
 
@@ -402,7 +408,7 @@ scenario_redis() {
   api POST /api/v1/auth/login "{\"username\":\"admin\",\"password\":\"$pw\"}" "$bf" "$JAR" >/dev/null || true
   rm -f "$bf"
   bf=$(mktemp)
-  api GET /api/v1/apikeys "" "$bf" | grep -q '^200|' || { bad "恢复后新会话不可用"; rm -f "$bf"; return 1; }
+  code_is '200|' api GET /api/v1/apikeys "" "$bf" || { bad "恢复后新会话不可用"; rm -f "$bf"; return 1; }
   rm -f "$bf"
   cp "$JAR" "$jarC"
   api POST /api/v1/auth/logout "" "" "$JAR" >/dev/null || true
@@ -447,7 +453,7 @@ scenario_kafka() {
   create_ostemplate "$name1"
   ok "故障期业务写返回 code=$TPL_CODE time 有界（id=${TPL_ID:-无响应}）"
   bf=$(mktemp)
-  api GET /api/v1/audit/verify "" "$bf" | grep -q '^200|' && ok "故障期：audit/verify=200（SQL 审计链独立于 Kafka）" \
+  code_is '200|' api GET /api/v1/audit/verify "" "$bf" && ok "故障期：audit/verify=200（SQL 审计链独立于 Kafka）" \
     || bad "故障期 audit/verify 非 200"
   rm -f "$bf"
   bf=$(mktemp)
@@ -500,24 +506,21 @@ scenario_partition() {
   wait_for_code /readyz 503 "$DEGRADED_TIMEOUT"
   create_apikey "chaos152-part-during"
   ok "分区期业务写 code=$APIKEY_CODE（有界失败，非悬挂）"
-  # 恢复：先用朴素 connect 观察是否收敛——docker network disconnect 会丢掉
-  # compose 注册的服务别名，朴素 connect 不恢复别名 ⇒ DNS 仍不收敛（实测发现）。
-  log "恢复：朴素 network connect mysql（观察 DNS 是否收敛）"
+  # 恢复：docker network disconnect 可能丢掉 compose 服务别名，朴素 connect 的「收敛」
+  # 是暂时假象（实测：当时 readyz 回 200，随后别名仍丢失、DNS 再度 503）。故先记录朴素
+  # connect 观察值，再**一律带别名重连**保证收敛，不把朴素 connect 当恢复终点。
+  log "恢复：朴素 network connect mysql（仅观察，不作恢复终点）"
   docker network connect "$net" "$cid" >>"$SCENARIO_LOG" 2>&1 || true
   DISCONNECTED=("${DISCONNECTED[@]/$net:$cid}")
   sleep 8
   local rz_naive
   rz_naive=$(probe /readyz)
-  if [[ "${rz_naive%%|*}" == "200" ]]; then
-    ok "朴素重连后即收敛（别名未丢）"
-  else
-    log "FINDING F-152-partition-1：朴素 connect 后 readyz=${rz_naive%%|*}（compose 服务别名丢失，DNS 不恢复）"
-    rep "- FINDING F-152-partition-1：docker network disconnect/connect 丢失 compose 服务别名 ⇒ 朴素 connect 后服务发现不恢复（readyz 仍 503）；须带别名重连或 compose 重建该服务"
-    # 正确恢复：先断开再带服务别名重连。
-    docker network disconnect "$net" "$cid" >>"$SCENARIO_LOG" 2>&1 || true
-    docker network connect --alias mysql "$net" "$cid" >>"$SCENARIO_LOG" 2>&1 || bad "带别名重连 mysql 失败"
-    ok "带别名重连 mysql 后等待收敛"
-  fi
+  log "朴素 connect 后 readyz=${rz_naive%%|*}（仅供参考；别名可能已丢，须带别名重连兜底）"
+  rep "- FINDING F-152-partition-1：docker network disconnect/connect 可能丢 compose 服务别名；朴素 connect 后 readyz 观察值=${rz_naive%%|*}，但别名恢复不可靠，须 connect --alias 或 compose 重建该服务"
+  # 正确恢复：先断开再带服务别名重连（保证服务发现恢复）。
+  docker network disconnect "$net" "$cid" >>"$SCENARIO_LOG" 2>&1 || true
+  docker network connect --alias mysql "$net" "$cid" >>"$SCENARIO_LOG" 2>&1 || bad "带别名重连 mysql 失败"
+  ok "带别名重连 mysql 后等待收敛"
   wait_for_code /readyz 200 "$RECOVERY_TIMEOUT"
   create_apikey "chaos152-part-post"
   [[ "$APIKEY_CODE" == "201" ]] || { bad "重连后业务写未恢复"; return 1; }
@@ -538,7 +541,7 @@ scenario_partition() {
     deadline=$((SECONDS + RECOVERY_TIMEOUT)); conv=0
     while [[ "$SECONDS" -lt "$deadline" ]]; do
       bf=$(mktemp)
-      if api GET /api/v1/agents "" "$bf" | grep -q '^200|' && grep -q '"live":true' "$bf"; then conv=1; rm -f "$bf"; break; fi
+      if code_is '200|' api GET /api/v1/agents "" "$bf" && grep -q '"live":true' "$bf"; then conv=1; rm -f "$bf"; break; fi
       rm -f "$bf"; sleep 5
     done
     [[ "$conv" -eq 1 ]] && ok "重连后 agent 有界恢复 live（心跳收敛）" || bad "重连后 agent 未恢复 live"
@@ -548,6 +551,22 @@ scenario_partition() {
 
   rep "| partition | disconnect mysql / agent | healthz 200；readyz 503 有界；写有界失败；agent 心跳中断 | readyz 有界回 200；业务写恢复；agent live 收敛 | 故障期写有界失败；恢复后新写成功 | $([ "$SCN_FAILED" -eq 0 ] && echo PASS || echo FAIL) | $ARTIFACTS/partition.log |"
   [[ "$SCN_FAILED" -eq 0 ]] || return 1
+}
+
+# 收尾硬断言：不许留一个坏栈还报 PASS。所有依赖须运行、mysql 别名在位、readyz 200、业务可写。
+verify_environment_restored() {
+  SCENARIO_LOG="$ARTIFACTS/restore-check.log"; : > "$SCENARIO_LOG"
+  log "收尾：验证环境已恢复（依赖运行 + mysql 别名 + readyz + 业务写）"
+  local svc cid aliases
+  for svc in mysql redis kafka controlplane; do
+    if ! container_running "$svc"; then bad "收尾：$svc 未运行"; fi
+  done
+  cid=$("${COMPOSE[@]}" ps -aq mysql | head -n 1)
+  aliases=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$v.Aliases}}{{end}}' "$cid" 2>/dev/null || true)
+  if [[ "$aliases" == *mysql* ]]; then ok "mysql 服务别名在位"; else bad "mysql 服务别名丢失（$aliases）"; fi
+  expect_code /readyz 200
+  create_apikey "chaos152-restore-check"
+  [[ "$APIKEY_CODE" == "201" ]] && ok "收尾业务写 201（栈已恢复可写）" || bad "收尾业务写失败（$APIKEY_CODE）"
 }
 
 # ---- 报告头与主流程 ----
@@ -586,6 +605,8 @@ for sc in ${SCENARIOS//,/ }; do
     *) echo "未知场景: $sc" >&2; exit 64 ;;
   esac
 done
+
+verify_environment_restored
 
 {
   echo ""
