@@ -272,6 +272,39 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
+// TestNoRawBusinessUpsertSQL 常驻守卫：除 dialect.go 与
+// upsert_special.go 两个方言文件外，任何生产文件的字符串字面量
+// 都不得包含裸 UPSERT SQL（"ON DUPLICATE KEY UPDATE" 或
+// "ON CONFLICT"）。业务写路径必须经由 s.dialect.Upsert 或
+// upsert_special.go 的专用构建器，禁止回退到手写方言 SQL。
+func TestNoRawBusinessUpsertSQL(t *testing.T) {
+	files := sqlstoreProductionFiles(t)
+	for _, file := range files {
+		if strings.HasSuffix(file, "dialect.go") || strings.HasSuffix(file, "upsert_special.go") {
+			continue
+		}
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, file, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(node, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(value, "ON DUPLICATE KEY UPDATE") || strings.Contains(value, "ON CONFLICT") {
+				t.Fatalf("%s: 业务文件禁止裸 UPSERT SQL", fset.Position(lit.Pos()))
+			}
+			return true
+		})
+	}
+}
+
 func isUnderRoot(path, root string) bool {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {

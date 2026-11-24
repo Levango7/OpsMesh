@@ -2,10 +2,14 @@ package sqlstore
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
 	"go/token"
 	"io/fs"
 	"path"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -95,6 +99,95 @@ func TestUpsertUniqueKeyParsing(t *testing.T) {
 		t.Errorf("schema_migrations 不应进入 PG 业务唯一键集合: %v", pg["schema_migrations"])
 	}
 	t.Logf("MySQL 轨解析出 %d 张表的唯一键，PG 轨解析出 %d 张表", len(mysql), len(pg))
+}
+
+// TestSpecialUpsertAllowlist 常驻守卫：原始 UPSERT token
+// （"ON DUPLICATE KEY UPDATE" 或 "ON CONFLICT"）只允许出现
+// 在 dialect.go 与 upsert_special.go 两个方言文件中；且
+// upsert_special.go 内含原始 token 的函数集合必须恰好为
+// upsertLeaderLease、upsertABACPolicy、upsertLifecycleJob
+// 三个专用构建器——不得新增、不得遗漏、不得移入其他函数。
+func TestSpecialUpsertAllowlist(t *testing.T) {
+	allowedFiles := map[string]bool{"dialect.go": true, "upsert_special.go": true}
+	allowedFuncs := map[string]bool{
+		"upsertLeaderLease":  true,
+		"upsertABACPolicy":   true,
+		"upsertLifecycleJob": true,
+	}
+	hasRawToken := func(s string) bool {
+		return strings.Contains(s, "ON DUPLICATE KEY UPDATE") || strings.Contains(s, "ON CONFLICT")
+	}
+
+	gotFuncs := map[string]bool{}
+	for _, file := range sqlstoreProductionFiles(t) {
+		base := filepath.Base(file)
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, file, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(node, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasRawToken(value) {
+				return true
+			}
+			if !allowedFiles[base] {
+				t.Fatalf("%s: 原始 UPSERT token 仅允许出现在 dialect.go 与 upsert_special.go",
+					fset.Position(lit.Pos()))
+			}
+			return true
+		})
+		if base != "upsert_special.go" {
+			continue
+		}
+		ast.Inspect(node, func(n ast.Node) bool {
+			decl, ok := n.(*ast.FuncDecl)
+			if !ok {
+				return true
+			}
+			hasRaw := false
+			ast.Inspect(decl, func(m ast.Node) bool {
+				lit, ok := m.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				value, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if hasRawToken(value) {
+					hasRaw = true
+				}
+				return true
+			})
+			if hasRaw {
+				gotFuncs[decl.Name.Name] = true
+			}
+			return true
+		})
+	}
+
+	if len(gotFuncs) != len(allowedFuncs) {
+		t.Fatalf("upsert_special.go 含原始 UPSERT token 的函数集合不符: got %v, want %v",
+			gotFuncs, allowedFuncs)
+	}
+	for fn := range allowedFuncs {
+		if !gotFuncs[fn] {
+			t.Errorf("upsert_special.go 缺少含原始 token 的专用构建器 %s", fn)
+		}
+	}
+	for fn := range gotFuncs {
+		if !allowedFuncs[fn] {
+			t.Errorf("upsert_special.go 出现未登记的含原始 token 函数 %s", fn)
+		}
+	}
 }
 
 // syntheticMySQLDDL 覆盖：列内 PRIMARY KEY、列内 UNIQUE、表级 UNIQUE KEY、
