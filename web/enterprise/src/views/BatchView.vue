@@ -1,7 +1,8 @@
 <template>
   <PageShell :title="$t('batch.title')" :desc="$t('batch.subtitle')" testid="batch" :error="store.error">
     <!-- 批量下发表单（详情页不显示） -->
-    <div v-if="!detailId" class="card card--raised">
+    <div v-if="!authStore.hasPerm('task:write')" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
+    <div v-if="!detailId && authStore.hasPerm('task:write')" class="card card--raised">
       <h3>{{ $t('batch.dispatch_form_title') }}</h3>
       <form @submit.prevent="confirmSubmit">
         <div class="field field--fixed">
@@ -48,7 +49,7 @@
           <Button
             variant="primary"
             native-type="submit"
-            :disabled="submitting || !agentIDs.length"
+            :disabled="!authStore.hasPerm('task:write') || submitting || !agentIDs.length"
             data-testid="batch-submit-btn"
           >
             {{ submitting ? $t('common.loading') : $t('batch.submit') }}
@@ -141,6 +142,7 @@ import PageShell from '@/components/PageShell.vue'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBatchStore } from '@/stores/batch'
+import { useAuthStore } from '@/stores/auth'
 import { getAgents } from '@/api/device'
 import { t } from '@/i18n'
 import { toast } from '@/utils/toast'
@@ -150,6 +152,7 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const route = useRoute()
 const store = useBatchStore()
+const authStore = useAuthStore()
 const agents = ref([])
 const agentIDs = ref([])
 const agentFilter = ref('')

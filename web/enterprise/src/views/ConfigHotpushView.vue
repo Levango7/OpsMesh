@@ -56,9 +56,10 @@
             <input v-model.trim="hotpushForm.description" type="text" :placeholder="$t('configHotpush.description_placeholder')" />
           </div>
           <div class="btnbar btnbar--bottom">
-            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="config-hotpush-btn">
+            <Button v-if="authStore.hasPerm('cmdb:write')" variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="config-hotpush-btn">
               {{ submitting ? $t('common.loading') : $t('configHotpush.hotpush') }}
             </Button>
+            <div v-else data-testid="write-denied-hint" class="muted">{{ $t('common.write_denied') }}</div>
           </div>
           <p v-if="hotpushMsg" :class="['msg', hotpushMsgOk ? 'ok' : 'err']">{{ hotpushMsg }}</p>
         </form>
@@ -123,9 +124,10 @@
             <input v-model.number="canaryForm.percentage" type="number" min="0" max="100" />
           </div>
           <div class="btnbar btnbar--bottom">
-            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="config-canary-btn">
+            <Button v-if="authStore.hasPerm('cmdb:write')" variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="config-canary-btn">
               {{ submitting ? $t('common.loading') : $t('configHotpush.canary') }}
             </Button>
+            <div v-else data-testid="write-denied-hint" class="muted">{{ $t('common.write_denied') }}</div>
           </div>
           <p v-if="canaryMsg" :class="['msg', canaryMsgOk ? 'ok' : 'err']">{{ canaryMsg }}</p>
         </form>
@@ -176,12 +178,14 @@ import PageShell from '@/components/PageShell.vue'
 // 配置热推送页 — 三 Tab：热推送 / 灰度发布 / 版本历史
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useConfigStore } from '@/stores/config'
+import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
 import DataTable from '@/components/DataTable.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import Button from "@/components/ui/Button.vue"
 
 const store = useConfigStore()
+const authStore = useAuthStore()
 const activeTab = ref('hotpush')
 const submitting = ref(false)
 const errorConfirm = reactive({ show: false, message: '' })

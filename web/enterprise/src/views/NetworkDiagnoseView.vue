@@ -1,5 +1,6 @@
 <template>
   <PageShell :title="$t('network.diagnose_title')" :desc="$t('network.diagnose_subtitle')" testid="network-diagnose" :error="store.error">
+    <div v-if="!authStore.hasPerm('network:write')" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
     <!-- Tab 切换 -->
     <div class="tabbar">
       <Button
@@ -47,7 +48,7 @@
             </div>
           </div>
           <div class="btnbar btnbar--bottom">
-            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="network-diagnose-btn">
+            <Button v-if="authStore.hasPerm('network:write')" variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="network-diagnose-btn">
               {{ submitting ? $t('common.loading') : $t('network.diagnose') }}
             </Button>
             <Button variant="ghost" size="md" native-type="button" @click="pollResult" :disabled="!store.diagnoseTask || polling">
@@ -95,7 +96,7 @@
             <input v-model.number="connectivityForm.timeout" type="number" min="1" />
           </div>
           <div class="btnbar btnbar--bottom">
-            <Button variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="network-connectivity-btn">
+            <Button v-if="authStore.hasPerm('network:write')" variant="primary" size="md" native-type="submit" :disabled="submitting" data-testid="network-connectivity-btn">
               {{ submitting ? $t('common.loading') : $t('network.check_connectivity') }}
             </Button>
           </div>
@@ -134,6 +135,7 @@
 // 网络诊断页 — 两 Tab：诊断工具表单（选 agent + 命令 + 目标 + 参数）+ 结果展示 / 批量连通性检测
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useNetworkStore } from '@/stores/network'
+import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
 import PageShell from '@/components/PageShell.vue'
 import DataTable from '@/components/DataTable.vue'
@@ -141,6 +143,7 @@ import ConfirmModal from '@/components/ConfirmModal.vue'
 import Button from "@/components/ui/Button.vue"
 
 const store = useNetworkStore()
+const authStore = useAuthStore()
 const activeTab = ref('diagnose')
 const submitting = ref(false)
 const polling = ref(false)

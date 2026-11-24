@@ -53,7 +53,8 @@
     <!-- 入库 -->
     <div class="card">
       <h3>{{ $t('rag.ingest_title') }}</h3>
-      <form class="entity-form" @submit.prevent="onIngest">
+      <div v-if="!authStore.hasPerm('ai:write')" class="muted" data-testid="write-denied-hint">{{ $t('common.write_denied') }}</div>
+      <form v-if="authStore.hasPerm('ai:write')" class="entity-form" @submit.prevent="onIngest">
         <div class="field">
           <label>{{ $t('rag.ingest_title') }}</label>
           <textarea v-model="ingestText" rows="5" :placeholder="$t('rag.ingest_placeholder')" data-testid="ai-rag-ingest" />
@@ -87,6 +88,7 @@
 // （它是向量本身，对用户无意义且可能很大）；入库按行拆分，embedding 交后端生成。
 // 权限：路由门挂 ai:read；入库是 ai:write，无权限时后端 403 由 PageShell 横幅透出。
 import { computed, onMounted, ref } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { t } from '@/i18n'
 import PageShell from '@/components/PageShell.vue'
 import DataTable from '@/components/DataTable.vue'
@@ -95,6 +97,8 @@ import Icon from '@/components/Icon.vue'
 import { useAIRagStore } from '@/stores/ai-rag'
 
 const store = useAIRagStore()
+
+const authStore = useAuthStore()
 
 const query = ref('')
 const ingestText = ref('')
