@@ -148,10 +148,12 @@ func waitForDBTimestampTick(t *testing.T, s *SQLStore, d Dialect, after time.Tim
 	t.Helper()
 	var clockQuery string
 	switch d.DriverName() {
+	case "mysql":
+		clockQuery = "SELECT NOW(6)"
 	case "pgx":
 		clockQuery = "SELECT clock_timestamp()"
 	default:
-		clockQuery = "SELECT NOW(6)"
+		t.Fatalf("未知方言 %s", d.DriverName())
 	}
 	target := after.Add(tick)
 	deadline := time.Now().Add(3 * time.Second)

@@ -1025,6 +1025,7 @@ git commit -m "test: prepare every UPSERT on MySQL and PostgreSQL"
    - 调用 `waitForDBTimestampTick(t, s, s.dialect, firstUpdated, time.Millisecond)` 后同 ID 更新 phase/progress，再读。
    - PG 必须推进；MySQL 保持原隐式更新时间行为。
    - MySQL no-op 子用例在字段完全相同的情况下再写一次，记录并对照更新时间，保持既有行为，不要求两库 no-op 行数或时间相同。
+   - 注：当公共 `GetLifecycleJob` 的 PG 读回在 A3-3 write-path-only 裁决下不可用时，本测试改用直接 `upsertLifecycleJob` 构建器加 `ConvertPlaceholders` 读回，不触达公共读路径。
 
 `waitForDBTimestampTick` 按方言查询数据库当前时间（MySQL 用 `SELECT NOW(6)`，PG 用 `SELECT clock_timestamp()`），每 5ms 轮询，最多 3s；只有数据库时间达到 `after+tick` 才返回，否则 `t.Fatal`，不得用宿主固定 sleep 冒充跨库时钟条件。
 
