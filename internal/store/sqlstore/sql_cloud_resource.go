@@ -89,16 +89,14 @@ func (s *SQLStore) CreateCloudResource(ctx context.Context, res *CloudResource) 
 		res.Status = "unknown"
 	}
 	res.UpdatedAt = now
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO cloud_resources (id, tenant_id, cloud_account_id, provider, region,
-		 resource_type, resource_id, resource_name, status, tags, private_ip, public_ip,
-		 created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), cloud_account_id=VALUES(cloud_account_id),
-		 provider=VALUES(provider), region=VALUES(region), resource_type=VALUES(resource_type),
-		 resource_id=VALUES(resource_id), resource_name=VALUES(resource_name), status=VALUES(status),
-		 tags=VALUES(tags), private_ip=VALUES(private_ip), public_ip=VALUES(public_ip),
-		 updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"cloud_resources",
+		[]string{"id", "tenant_id", "cloud_account_id", "provider", "region", "resource_type", "resource_id", "resource_name", "status", "tags", "private_ip", "public_ip", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"cloud_account_id", "resource_type", "resource_id"},
+		[]string{"tenant_id", "cloud_account_id", "provider", "region", "resource_type", "resource_id", "resource_name", "status", "tags", "private_ip", "public_ip", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		res.ID, res.TenantID, res.CloudAccountID, res.Provider, res.Region,
 		res.ResourceType, res.ResourceID, res.ResourceName, res.Status,
 		marshalResourceTags(res.Tags), res.PrivateIP, res.PublicIP,

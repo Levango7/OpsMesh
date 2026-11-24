@@ -108,11 +108,14 @@ func (s *SQLStore) SaveK8sCluster(c *K8sCluster) error {
 	c.UpdatedAt = now
 	// INSERT ... ON DUPLICATE KEY UPDATE 实现 upsert（按 id 幂等）。
 	// ：tenant_id 仅插入不更新，防 upsert 改写集群租户归属。
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO k8s_clusters (id, tenant_id, name, server, kubeconfig, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), server=VALUES(server), kubeconfig=VALUES(kubeconfig),
-		 status=VALUES(status), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"k8s_clusters",
+		[]string{"id", "tenant_id", "name", "server", "kubeconfig", "status", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "server", "kubeconfig", "status", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		c.ID, c.TenantID, c.Name, c.Server, c.Kubeconfig, c.Status, c.CreatedAt, c.UpdatedAt); err != nil {
 		// ：DB 持久化失败上抛错误（调用方据此返回非 2xx，不再假装成功）。
 		storefail.Record("k8s: SaveK8sCluster 失败: %v", err)

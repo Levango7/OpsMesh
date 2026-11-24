@@ -1254,13 +1254,14 @@ type ControlplaneInstance struct {
 
 // UpsertControlplaneInstance 写入/刷新实例心跳（role 随选主结果变化）。
 func (s *SQLStore) UpsertControlplaneInstance(ctx context.Context, inst *ControlplaneInstance) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO controlplane_instances (instance_id, hostname, http_port, grpc_port, role, version, started_at, last_heartbeat)
-		VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-		ON DUPLICATE KEY UPDATE
-			hostname=VALUES(hostname), http_port=VALUES(http_port), grpc_port=VALUES(grpc_port),
-			role=VALUES(role), version=VALUES(version), last_heartbeat=NOW()
-	`, inst.InstanceID, inst.Hostname, inst.HTTPPort, inst.GRPCPort, inst.Role, inst.Version, inst.StartedAt)
+	query := s.dialect.Upsert(
+		"controlplane_instances",
+		[]string{"instance_id", "hostname", "http_port", "grpc_port", "role", "version", "started_at", "last_heartbeat"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "NOW()"},
+		[]string{"instance_id"},
+		[]string{"hostname", "http_port", "grpc_port", "role", "version", "last_heartbeat"},
+	)
+	_, err := s.db.ExecContext(ctx, query, inst.InstanceID, inst.Hostname, inst.HTTPPort, inst.GRPCPort, inst.Role, inst.Version, inst.StartedAt)
 	return err
 }
 

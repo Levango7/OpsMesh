@@ -144,6 +144,89 @@ func TestUpsertCallsitesDevicesAndOperations(t *testing.T) {
 	assertExpectedUpserts(t, want)
 }
 
+// TestUpsertCallsitesBusinessCritical 钉死业务关键组 14 处
+// upsert 调用点的 Func+Table+Conflict 元数据及列/值/更新集。
+// 与低风险 CRUD 组不同，本组逐列钉死 Cols/Values/UpdateCols：
+// 业务关键写路径的更新集与常量 VALUES（NOW()、0）必须与
+// 迁移前 MySQL 文本逐列等价（CreateTask 不得更新
+// retry_count/dead_letter/created_at；issueToken 复位
+// consumed=0；UpsertControlplaneInstance 刷新 last_heartbeat=NOW()）。
+func TestUpsertCallsitesBusinessCritical(t *testing.T) {
+	want := []expectedUpsert{
+		// UpsertControlplaneInstance（控制面实例心跳）。
+		{Func: "UpsertControlplaneInstance", Table: "controlplane_instances", Conflict: []string{"instance_id"},
+			Cols:       []string{"instance_id", "hostname", "http_port", "grpc_port", "role", "version", "started_at", "last_heartbeat"},
+			Values:     []string{"?", "?", "?", "?", "?", "?", "?", "NOW()"},
+			UpdateCols: []string{"hostname", "http_port", "grpc_port", "role", "version", "last_heartbeat"}},
+		// CreateCloudResource（PG 冲突目标为自然键 uk_cloud_resources_account_res）。
+		{Func: "CreateCloudResource", Table: "cloud_resources", Conflict: []string{"cloud_account_id", "resource_type", "resource_id"},
+			Cols:       []string{"id", "tenant_id", "cloud_account_id", "provider", "region", "resource_type", "resource_id", "resource_name", "status", "tags", "private_ip", "public_ip", "created_at", "updated_at"},
+			Values:     qmarks(14),
+			UpdateCols: []string{"tenant_id", "cloud_account_id", "provider", "region", "resource_type", "resource_id", "resource_name", "status", "tags", "private_ip", "public_ip", "updated_at"}},
+		// SetConfig（配置写穿 config_history 后 UPSERT configs）。
+		{Func: "SetConfig", Table: "configs", Conflict: []string{"tenant_id", "key_name"},
+			Cols:       []string{"tenant_id", "key_name", "value", "format", "version", "description", "updated_by", "updated_at"},
+			Values:     qmarks(8),
+			UpdateCols: []string{"value", "format", "version", "description", "updated_by", "updated_at"}},
+		// SaveGatewayRoute（路由规则幂等写）。
+		{Func: "SaveGatewayRoute", Table: "gateway_routes", Conflict: []string{"tenant_id", "id"},
+			Cols:       []string{"id", "tenant_id", "name", "path_prefix", "target_backend", "methods", "rate_limit_per_sec", "timeout_ms", "enabled", "created_at", "updated_at"},
+			Values:     qmarks(11),
+			UpdateCols: []string{"name", "path_prefix", "target_backend", "methods", "rate_limit_per_sec", "timeout_ms", "enabled", "updated_at"}},
+		// SaveK8sCluster（tenant_id 仅插入不更新，防改写集群租户归属）。
+		{Func: "SaveK8sCluster", Table: "k8s_clusters", Conflict: []string{"id"},
+			Cols:       []string{"id", "tenant_id", "name", "server", "kubeconfig", "status", "created_at", "updated_at"},
+			Values:     qmarks(8),
+			UpdateCols: []string{"name", "server", "kubeconfig", "status", "updated_at"}},
+		// CreateSLO。
+		{Func: "CreateSLO", Table: "slos", Conflict: []string{"id"},
+			Cols:       []string{"id", "tenant_id", "name", "description", "service_name", "target", "window_spec", "slis", "created_at", "updated_at"},
+			Values:     qmarks(10),
+			UpdateCols: []string{"name", "description", "service_name", "target", "window_spec", "slis", "updated_at"}},
+		// SaveTaskRecord（payload 整段重写，其余列不更新）。
+		{Func: "SaveTaskRecord", Table: "task_records", Conflict: []string{"tenant_id", "kind", "id"},
+			Cols:       []string{"kind", "id", "tenant_id", "created_at", "payload"},
+			Values:     qmarks(5),
+			UpdateCols: []string{"payload"}},
+		// SubmitResult（任务结果写回）。
+		{Func: "SubmitResult", Table: "task_results", Conflict: []string{"task_id"},
+			Cols:       []string{"task_id", "agent_id", "exit_code", "stdout", "stderr", "finished_at"},
+			Values:     qmarks(6),
+			UpdateCols: []string{"exit_code", "stdout", "stderr", "finished_at"}},
+		// CreateTask（不得更新 retry_count/dead_letter/created_at）。
+		{Func: "CreateTask", Table: "tasks", Conflict: []string{"task_id"},
+			Cols:       []string{"task_id", "agent_id", "tenant_id", "type", "command", "content", "path", "status", "retry_count", "max_retries", "dead_letter", "schedule", "parent_id", "created_at", "timeout", "retry_delay", "priority", "idempotency_key", "approval_required", "script_body", "depends_on"},
+			Values:     qmarks(21),
+			UpdateCols: []string{"type", "command", "content", "path", "status", "schedule", "parent_id", "max_retries", "timeout", "retry_delay", "priority", "idempotency_key", "approval_required", "script_body", "depends_on"}},
+		// CreateTenant（PG 冲突目标固定 id）。
+		{Func: "CreateTenant", Table: "tenants", Conflict: []string{"id"},
+			Cols:       []string{"id", "name", "display_name", "status", "quota", "usage_data", "created_at", "updated_at"},
+			Values:     qmarks(8),
+			UpdateCols: []string{"name", "display_name", "status", "quota", "usage_data", "updated_at"}},
+		// CreateTicket。
+		{Func: "CreateTicket", Table: "tickets", Conflict: []string{"id"},
+			Cols:       []string{"id", "tenant_id", "title", "description", "status", "priority", "category", "assignee_id", "creator_id", "related_device", "related_task", "tags", "created_at", "updated_at", "resolved_at"},
+			Values:     qmarks(15),
+			UpdateCols: []string{"title", "description", "status", "priority", "category", "assignee_id", "creator_id", "related_device", "related_task", "tags", "updated_at", "resolved_at"}},
+		// issueToken（consumed 恒复位为 0；VALUES 内联常量 0）。
+		{Func: "issueToken", Table: "install_tokens", Conflict: []string{"token"},
+			Cols:       []string{"token", "device_id", "tenant_id", "expires_at", "consumed"},
+			Values:     []string{"?", "?", "?", "?", "0"},
+			UpdateCols: []string{"device_id", "tenant_id", "expires_at", "consumed"}},
+		// CreatePolicy。
+		{Func: "CreatePolicy", Table: "traffic_policies", Conflict: []string{"id"},
+			Cols:       []string{"id", "tenant_id", "name", "service_name", "type", "canary_weights", "mirror_percent", "timeout", "retries", "retry_timeout", "max_conns", "max_requests", "status", "created_at", "updated_at"},
+			Values:     qmarks(15),
+			UpdateCols: []string{"name", "service_name", "type", "canary_weights", "mirror_percent", "timeout", "retries", "retry_timeout", "max_conns", "max_requests", "status", "updated_at"}},
+		// CreateWebhook。
+		{Func: "CreateWebhook", Table: "webhooks", Conflict: []string{"id"},
+			Cols:       []string{"id", "tenant_id", "name", "url", "events", "headers", "body_template", "enabled", "retry_count", "retry_interval_sec", "created_at", "updated_at"},
+			Values:     qmarks(12),
+			UpdateCols: []string{"name", "url", "events", "headers", "body_template", "enabled", "retry_count", "retry_interval_sec", "updated_at"}},
+	}
+	assertExpectedUpserts(t, want)
+}
+
 // qmarks 生成 n 个 "?" 占位符。
 func qmarks(n int) []string {
 	out := make([]string, n)

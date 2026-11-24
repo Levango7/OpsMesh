@@ -104,11 +104,14 @@ func (s *SQLStore) SetConfig(item *ConfigItem) *ConfigItem {
 	}
 
 	// UPSERT configs（按 tenant_id + key_name 幂等）。
-	if _, uErr := tx.ExecContext(context.Background(),
-		`INSERT INTO configs (tenant_id, key_name, value, format, version, description, updated_by, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE value=VALUES(value), format=VALUES(format), version=VALUES(version),
-		 description=VALUES(description), updated_by=VALUES(updated_by), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"configs",
+		[]string{"tenant_id", "key_name", "value", "format", "version", "description", "updated_by", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"tenant_id", "key_name"},
+		[]string{"value", "format", "version", "description", "updated_by", "updated_at"},
+	)
+	if _, uErr := tx.ExecContext(context.Background(), query,
 		item.TenantID, item.Key, item.Value, item.Format, newVersion, item.Description, item.UpdatedBy, now); uErr != nil {
 		storefail.Record("[store] SetConfig UPSERT configs 失败: %v", uErr)
 		return nil

@@ -49,10 +49,14 @@ func (s *SQLStore) SaveTaskRecord(rec *TaskRecord) error {
 	if len(payload) == 0 {
 		payload = []byte("null")
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO task_records (kind, id, tenant_id, created_at, payload)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE payload=VALUES(payload)`,
+	query := s.dialect.Upsert(
+		"task_records",
+		[]string{"kind", "id", "tenant_id", "created_at", "payload"},
+		[]string{"?", "?", "?", "?", "?"},
+		[]string{"tenant_id", "kind", "id"},
+		[]string{"payload"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		rec.Kind, rec.ID, rec.TenantID, rec.CreatedAt.UTC(), string(payload)); err != nil {
 		storefail.Record("[store] SaveTaskRecord 失败 %s/%s/%s: %v", rec.TenantID, rec.Kind, rec.ID, err)
 		return err

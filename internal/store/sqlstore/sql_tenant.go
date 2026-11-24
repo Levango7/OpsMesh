@@ -109,11 +109,14 @@ func (s *SQLStore) CreateTenant(tenant *Tenant) *Tenant {
 	tenant.UpdatedAt = now
 	quotaJSON := marshalTenantQuota(tenant.Quota)
 	usageJSON := marshalResourceUsage(tenant.Usage)
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO tenants (id, name, display_name, status, quota, usage_data, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), display_name=VALUES(display_name),
-		 status=VALUES(status), quota=VALUES(quota), usage_data=VALUES(usage_data), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"tenants",
+		[]string{"id", "name", "display_name", "status", "quota", "usage_data", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "display_name", "status", "quota", "usage_data", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		tenant.ID, tenant.Name, tenant.DisplayName, string(tenant.Status),
 		quotaJSON, usageJSON, tenant.CreatedAt, tenant.UpdatedAt); err != nil {
 		storefail.Record("[store] CreateTenant 插入失败 (tenant=%s): %v", tenant.ID, err)
