@@ -1496,3 +1496,4 @@ Y�1unt+ QY�~KmՋ	�  c o m m i t = b 3 3 9 4 0 a 7 
 [RELEASE] 2026-11-24T16:15:27Z from=qoder scope=docs/COORDINATION-BOARD.md reason=coord-gate重写会误删主线他线状态，板面文件未改，释放该scope
 [CLAIM] 2026-11-24T17:13:27Z from=qoder ttl=4h scope=internal/gates/tenant_store_verdict_gate_test.go note=补登ETL治理湖仓三个租户分桶store的隔离裁决，修复全量测试继承红；PG部分已由165合入不再重复
 [CLAIM] 2026-11-24T17:13:27Z from=qoder ttl=4h scope=docs/CLAIMS.md note=记录租户store判决修复认领
+[DONE] 2026-11-24T17:18:22Z from=qoder scope=internal/gates/tenant_store_verdict_gate_test.go,docs/CLAIMS.md commit=16201b2a2705fca7d85cb4f1c387e2c6b836117e note=补登ETL治理湖仓三个租户分桶store的隔离裁决；定向测试、全量Go测试、钉版lint、构建通过；PG治理表修复已由165合入
