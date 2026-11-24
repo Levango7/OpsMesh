@@ -98,12 +98,14 @@ func (s *SQLStore) CreateScript(tenantID string, sc *Script) *Script {
 		sc.Enabled = true
 	}
 	sc.UpdatedAt = now
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO scripts (id, tenant_id, name, language, content, params, timeout_sec, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), language=VALUES(language),
-		 content=VALUES(content), params=VALUES(params), timeout_sec=VALUES(timeout_sec),
-		 enabled=VALUES(enabled), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"scripts",
+		[]string{"id", "tenant_id", "name", "language", "content", "params", "timeout_sec", "enabled", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "language", "content", "params", "timeout_sec", "enabled", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		sc.ID, sc.TenantID, sc.Name, sc.Language, sc.Content, sc.Params,
 		sc.TimeoutSec, scriptEnabledInt(sc.Enabled), sc.CreatedAt, sc.UpdatedAt); err != nil {
 		storefail.Record("[store] CreateScript 插入失败 (tenant=%s script=%s): %v", tenantID, sc.ID, err)

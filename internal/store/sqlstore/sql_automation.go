@@ -114,14 +114,14 @@ func (s *SQLStore) CreateAutomationRule(tenantID string, r *AutomationRule) *Aut
 	if r.Enabled {
 		enabled = 1
 	}
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO automation_rules
-		   (id, tenant_id, name, description, trigger_type, trigger_params, actions, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE
-		   name=VALUES(name), description=VALUES(description), trigger_type=VALUES(trigger_type),
-		   trigger_params=VALUES(trigger_params), actions=VALUES(actions),
-		   enabled=VALUES(enabled), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"automation_rules",
+		[]string{"id", "tenant_id", "name", "description", "trigger_type", "trigger_params", "actions", "enabled", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "description", "trigger_type", "trigger_params", "actions", "enabled", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		r.ID, r.TenantID, r.Name, r.Description, r.TriggerType,
 		marshalTriggerParams(r.TriggerParams), marshalActions(r.Actions),
 		enabled, r.CreatedAt, r.UpdatedAt); err != nil {
@@ -293,13 +293,14 @@ func (s *SQLStore) CreateAutomationExecution(tenantID string, e *AutomationExecu
 	} else {
 		endedAt = nil
 	}
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO automation_executions
-		   (id, tenant_id, rule_id, rule_name, status, detail, started_at, ended_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE
-		   rule_id=VALUES(rule_id), rule_name=VALUES(rule_name), status=VALUES(status),
-		   detail=VALUES(detail), started_at=VALUES(started_at), ended_at=VALUES(ended_at)`,
+	query := s.dialect.Upsert(
+		"automation_executions",
+		[]string{"id", "tenant_id", "rule_id", "rule_name", "status", "detail", "started_at", "ended_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"rule_id", "rule_name", "status", "detail", "started_at", "ended_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		e.ID, e.TenantID, e.RuleID, e.RuleName, e.Status, e.Detail, e.StartedAt, endedAt); err != nil {
 		storefail.Record("[store] CreateAutomationExecution 插入失败 (tenant=%s id=%s): %v", tenantID, e.ID, err)
 		return nil

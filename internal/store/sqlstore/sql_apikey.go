@@ -117,12 +117,14 @@ func (s *SQLStore) CreateAPIKey(tenantID string, key *APIKey) *APIKey {
 		key.CreatedAt = now
 	}
 	scopesJSON := marshalAPIKeyScopes(key.Scopes)
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO api_keys (id, tenant_id, name, key_hash, scopes, rate_limit_per_sec, expires_at, last_used_at, enabled, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), key_hash=VALUES(key_hash), scopes=VALUES(scopes),
-		 rate_limit_per_sec=VALUES(rate_limit_per_sec), expires_at=VALUES(expires_at),
-		 last_used_at=VALUES(last_used_at), enabled=VALUES(enabled)`,
+	query := s.dialect.Upsert(
+		"api_keys",
+		[]string{"id", "tenant_id", "name", "key_hash", "scopes", "rate_limit_per_sec", "expires_at", "last_used_at", "enabled", "created_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "key_hash", "scopes", "rate_limit_per_sec", "expires_at", "last_used_at", "enabled"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		key.ID, key.TenantID, key.Name, key.Key, scopesJSON, key.RateLimitPerSec,
 		timeToNullTime(key.ExpiresAt), timeToNullTime(key.LastUsedAt),
 		apiKeyEnabledInt(key.Enabled), key.CreatedAt); err != nil {

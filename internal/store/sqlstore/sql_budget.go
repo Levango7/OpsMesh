@@ -169,13 +169,14 @@ func (s *SQLStore) UpsertBudget(ctx context.Context, b *TokenBudget) error {
 		tz = "UTC"
 	}
 	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO budgets (tenant_id, daily_limit, monthly_limit, used_today, used_month, alert_threshold, last_reset, timezone, month_reset, alerted, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE daily_limit=VALUES(daily_limit), monthly_limit=VALUES(monthly_limit),
-		   used_today=VALUES(used_today), used_month=VALUES(used_month), alert_threshold=VALUES(alert_threshold),
-		   last_reset=VALUES(last_reset), timezone=VALUES(timezone), month_reset=VALUES(month_reset),
-		   alerted=VALUES(alerted), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"budgets",
+		[]string{"tenant_id", "daily_limit", "monthly_limit", "used_today", "used_month", "alert_threshold", "last_reset", "timezone", "month_reset", "alerted", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"tenant_id"},
+		[]string{"daily_limit", "monthly_limit", "used_today", "used_month", "alert_threshold", "last_reset", "timezone", "month_reset", "alerted", "updated_at"},
+	)
+	_, err := s.db.ExecContext(ctx, query,
 		b.TenantID, b.DailyLimit, b.MonthlyLimit, b.UsedToday, b.UsedMonth, b.AlertThreshold, lastResetArg, tz, monthResetArg, alertedArg, now)
 	if err != nil {
 		storefail.Record("[store] UpsertBudget 失败 (tenant=%s): %v", b.TenantID, err)

@@ -15,6 +15,7 @@ func newSQLStoreWithBadDB() *SQLStore {
 	db, _ := sql.Open("mysql", "root:@tcp(127.0.0.1:1)/test?parseTime=true&timeout=1s")
 	return &SQLStore{
 		db:               db,
+		dialect:          mysqlDialect{},
 		secret:           "test-secret",
 		deviceMetrics:    make(map[string]*storekit.MetricsRing),
 		agentSecretCache: make(map[string]string),

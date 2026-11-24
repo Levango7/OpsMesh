@@ -86,14 +86,14 @@ func (s *SQLStore) CreateApp(tenantID string, a *ArgoCDApp) *ArgoCDApp {
 		a.CreatedAt = now
 	}
 	a.UpdatedAt = now
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO argocd_apps (id, tenant_id, name, namespace, repo_url, path, target_revision,
-		 cluster_url, sync_policy, status, health_status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), namespace=VALUES(namespace), repo_url=VALUES(repo_url),
-		 path=VALUES(path), target_revision=VALUES(target_revision), cluster_url=VALUES(cluster_url),
-		 sync_policy=VALUES(sync_policy), status=VALUES(status), health_status=VALUES(health_status),
-		 updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"argocd_apps",
+		[]string{"id", "tenant_id", "name", "namespace", "repo_url", "path", "target_revision", "cluster_url", "sync_policy", "status", "health_status", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "namespace", "repo_url", "path", "target_revision", "cluster_url", "sync_policy", "status", "health_status", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		a.ID, a.TenantID, a.Name, a.Namespace, a.RepoURL, a.Path, a.TargetRevision,
 		a.ClusterURL, a.SyncPolicy, a.Status, a.HealthStatus, a.CreatedAt, a.UpdatedAt); err != nil {
 		storefail.Record("[store] CreateApp 插入失败 (tenant=%s id=%s): %v", tenantID, a.ID, err)

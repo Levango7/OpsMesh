@@ -85,17 +85,14 @@ func (s *SQLStore) CreateCloudAccount(ctx context.Context, acct *CloudAccount) e
 		acct.SyncStatus = "pending"
 	}
 	acct.UpdatedAt = now
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO cloud_accounts (id, tenant_id, workspace_id, name, provider, region,
-		 auth_type, credentials_ref, status, sync_status, last_sync_at, discovered_count,
-		 created_at, updated_at, created_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE workspace_id=VALUES(workspace_id), name=VALUES(name),
-		 provider=VALUES(provider), region=VALUES(region), auth_type=VALUES(auth_type),
-		 credentials_ref=VALUES(credentials_ref), status=VALUES(status),
-		 sync_status=VALUES(sync_status), last_sync_at=VALUES(last_sync_at),
-		 discovered_count=VALUES(discovered_count), updated_at=VALUES(updated_at),
-		 created_by=VALUES(created_by)`,
+	query := s.dialect.Upsert(
+		"cloud_accounts",
+		[]string{"id", "tenant_id", "workspace_id", "name", "provider", "region", "auth_type", "credentials_ref", "status", "sync_status", "last_sync_at", "discovered_count", "created_at", "updated_at", "created_by"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"workspace_id", "name", "provider", "region", "auth_type", "credentials_ref", "status", "sync_status", "last_sync_at", "discovered_count", "updated_at", "created_by"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		acct.ID, acct.TenantID, acct.WorkspaceID, acct.Name, acct.Provider, acct.Region,
 		acct.AuthType, acct.CredentialsRef, acct.Status, acct.SyncStatus,
 		lastSyncAtValue(acct.LastSyncAt), acct.DiscoveredCount, acct.CreatedAt,
