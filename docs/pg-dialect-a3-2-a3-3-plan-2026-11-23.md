@@ -208,3 +208,9 @@ git show --stat 2c61e02f
 
 - 本批只收口 `internal/store/sqlstore` 的 UPSERT 写路径方言化；**A3-2 其余读写面（占位符、反引号、LIMIT-OFFSET 分页、DDL 自增翻译等）未在本批解决**。
 - PG 下业务写入仅本批 48 条 UPSERT 写路径可用；**不宣称 PG 全业务读写可用**。`SubmitResult` 等公共方法的周围读路径仍属 A3-2，PG 腿明示 skip。
+
+### 6.8 rebase 后最终树复测（2026-11-24）
+
+- main 前进 1 提交 `7360768c`（issue #149/#158）后，PR #160 曾报 `mergeable=CONFLICTING`；本分支已 rebase 到该 main tip 并手工合并 `docs/CLAIMS.md`/`CHANGELOG.md` 追加冲突，代码 tip `921701b4`（本文档收口提交前）。
+- 最终树双真库复跑：`OPSMESH_TEST_MYSQL_DSN=… OPSMESH_TEST_PG_DSN=… go test ./internal/store/sqlstore -count=1 -v` → `ok … 326.688s`，顶层 **378 PASS / 1 预期 SKIP / 0 FAIL**（零 DSN 门控 skip；唯一 skip 仍为 `TestSubmitResultStateTransitions/postgres` 的 A3-2 边界明示 skip）。
+- 最终树静态门：`go build ./...`、`go vet ./internal/store/sqlstore/...`、`gofmt -l internal/store/sqlstore`、`git diff --check` 均无输出/退出 0。
