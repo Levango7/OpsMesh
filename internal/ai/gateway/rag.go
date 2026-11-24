@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Levango7/OpsMesh/internal/authctx"
 	"github.com/Levango7/OpsMesh/internal/store"
@@ -74,6 +75,7 @@ type VectorStore interface {
 
 // InMemoryVectorStore 内存向量存储 (开发/测试用)
 type InMemoryVectorStore struct {
+	mu   sync.RWMutex
 	docs map[string]VectorDocument
 }
 
@@ -81,19 +83,41 @@ func NewInMemoryVectorStore() *InMemoryVectorStore {
 	return &InMemoryVectorStore{docs: make(map[string]VectorDocument)}
 }
 
+// cloneVectorDocument 隔离调用方与存储内的可变引用；否则锁返回后仍可通过
+// embedding/metadata 与并发读写发生数据竞争。
+func cloneVectorDocument(doc VectorDocument) VectorDocument {
+	cp := doc
+	if doc.Embedding != nil {
+		cp.Embedding = make([]float64, len(doc.Embedding))
+		copy(cp.Embedding, doc.Embedding)
+	}
+	if doc.Metadata != nil {
+		cp.Metadata = make(map[string]interface{}, len(doc.Metadata))
+		for key, value := range doc.Metadata {
+			cp.Metadata[key] = value
+		}
+	}
+	return cp
+}
+
 func (s *InMemoryVectorStore) Upsert(ctx context.Context, docs []VectorDocument) error {
 	tenant := authctx.FromContext(ctx).TenantID
 	if tenant == "" {
 		tenant = store.DefaultTenantID
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i := range docs {
-		docs[i].TenantID = tenant
-		s.docs[tenantKey(ctx, docs[i].ID)] = docs[i]
+		doc := cloneVectorDocument(docs[i])
+		doc.TenantID = tenant
+		s.docs[tenantKey(ctx, doc.ID)] = doc
 	}
 	return nil
 }
 
 func (s *InMemoryVectorStore) Search(ctx context.Context, embedding []float64, topK int, filter map[string]interface{}) ([]VectorDocument, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	type scored struct {
 		doc   VectorDocument
 		score float64
@@ -123,6 +147,7 @@ func (s *InMemoryVectorStore) Search(ctx context.Context, embedding []float64, t
 			continue
 		}
 		score := cosineSimilarity(embedding, doc.Embedding)
+		doc = cloneVectorDocument(doc)
 		// 出口还原裸 ID：调用方（handler/上层）只见自己写入时的 ID。
 		doc.ID = bareID(key)
 		if doc.TenantID == "" {
@@ -150,6 +175,8 @@ func (s *InMemoryVectorStore) Search(ctx context.Context, embedding []float64, t
 }
 
 func (s *InMemoryVectorStore) Delete(ctx context.Context, ids []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	currentTenant := authctx.FromContext(ctx).TenantID
 	if currentTenant == "" {
 		currentTenant = store.DefaultTenantID
@@ -175,6 +202,8 @@ func (s *InMemoryVectorStore) Delete(ctx context.Context, ids []string) error {
 }
 
 func (s *InMemoryVectorStore) Count(ctx context.Context) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	prefix := tenantPrefix(ctx)
 	currentTenant := authctx.FromContext(ctx).TenantID
 	if currentTenant == "" {
