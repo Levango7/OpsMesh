@@ -6,13 +6,21 @@
 // PREPARE（PrepareContext）：服务端解析成功即证明方言化输出
 // 可被双库接受（表/列/冲突目标/占位符数量均合法）。
 //
-// 本文件（Task 11）追加五个代表行为测试，均在 MySQL/PG 双库
+// 本文件（Task 11 重做轮）追加行为测试，均在 MySQL/PG 双库
 // 真库执行，验证方言化 UPSERT 的运行期数据行为：
 //  1. TestUpsertInsertUpdateReadback    —— 插入/更新/读回，created_at 不被覆盖
 //  2. TestUpsertCompositeConflict       —— 复合冲突键写穿
 //  3. TestUpsertConstantsAndHeartbeat   —— 常量列覆盖 + 心跳推进
 //  4. TestUpsertCrossUniqueKeyIsStrictOnPostgres —— PG 跨唯一键严格性
 //  5. TestSubmitResultStateTransitions  —— success/retry/dead-letter 状态机
+//     （MySQL-only 公共方法测试；PG 子测试明示 skip 原因）
+//  6. TestUpsertTaskResultsWritePath    —— task_results 生成 SQL 双库写路径
+//
+// 绑定裁决（A3-3 write-path-only）：本轮只方言化 UPSERT 写路径。
+// 涉及周围裸 `?`/反引号 A3-2 读路径的公共方法（SubmitResult 等）
+// 不得在 PG 上经公共方法执行——改为直接执行生成的 UPSERT/特例
+// 构建器并用 ConvertPlaceholders 读回，或降级为 MySQL-only 并
+// 明示 skip 理由。禁止修改生产读路径。
 //
 // 门控：未设置 OPSMESH_TEST_MYSQL_DSN / OPSMESH_TEST_PG_DSN 时
 // 对应子测试 skip（沿用 newTestSQLStore/newPostgresTestStore 契约）；
@@ -441,9 +449,16 @@ func assertPGUniqueViolation(t *testing.T, err error, what string) {
 // TestSubmitResultStateTransitions 为 success/retry/dead-letter 各造一条
 // running task，调 SubmitResult，用转换后的 SELECT 验证状态、retry_count、
 // dead_letter。不断言 UPSERT 的 RowsAffected。
+//
+// MySQL-only 公共方法测试：SubmitResult 周围 tasks SELECT/UPDATE 与
+// devices writeback 仍是 A3-2 裸 `?`/反引号读路径，本批不方言化
+// （write-path-only 裁决），故 PG 子测试显式 skip，不静默跳过。
 func TestSubmitResultStateTransitions(t *testing.T) {
-	runOnBothDialects(t, func(t *testing.T, s *SQLStore, d Dialect) {
+	t.Run("mysql", func(t *testing.T) {
+		s, cleanup := newTestSQLStore(t)
+		defer cleanup()
 		ctx := context.Background()
+		d := mysqlDialect{}
 		agentID := "agent-submit-result"
 
 		insertTask := d.ConvertPlaceholders(
@@ -511,6 +526,84 @@ func TestSubmitResultStateTransitions(t *testing.T) {
 		// 迟到上报被状态守卫拒绝：success 任务保持 done。
 		if got := read("task-submit-success"); got.status != "done" {
 			t.Fatalf("迟到上报破坏终态: status=%q, want done", got.status)
+		}
+	})
+
+	t.Run("postgres", func(t *testing.T) {
+		t.Skip("SubmitResult 周围读路径属 A3-2，不在 A3-3 范围")
+	})
+}
+
+// ----------------------------------------------------------------------------
+// 6. TestUpsertTaskResultsWritePath
+// ----------------------------------------------------------------------------
+
+// TestUpsertTaskResultsWritePath 直接用 task_results 的生成 SQL 在
+// MySQL/PG 双库执行 success/retry/dead-letter 三种写路径，读回用
+// ConvertPlaceholders 转换后的 SELECT（不触达 SubmitResult 的 A3-2
+// 读路径）。不断言 RowsAffected。
+func TestUpsertTaskResultsWritePath(t *testing.T) {
+	runOnBothDialects(t, func(t *testing.T, s *SQLStore, d Dialect) {
+		ctx := context.Background()
+
+		query := d.Upsert(
+			"task_results",
+			[]string{"task_id", "agent_id", "exit_code", "stdout", "stderr", "finished_at"},
+			[]string{"?", "?", "?", "?", "?", "?"},
+			[]string{"task_id"},
+			[]string{"exit_code", "stdout", "stderr", "finished_at"},
+		)
+		finished := time.Now().UTC()
+		write := func(taskID, agentID string, exitCode int, stdout, stderr string) {
+			if _, err := s.db.ExecContext(ctx, query,
+				taskID, agentID, exitCode, stdout, stderr, finished); err != nil {
+				t.Fatalf("UPSERT task_results(%s) 失败: %v", taskID, err)
+			}
+		}
+		// 三种写路径：success / retry / dead-letter。
+		write("tr-success", "agent-tr", 0, "done", "")
+		write("tr-retry", "agent-tr", 1, "", "transient")
+		write("tr-dead", "agent-tr", 2, "", "permanent")
+		// 同一 task_id 覆盖写：验证写穿（last-write-wins 读回）。
+		write("tr-success", "agent-tr", 0, "done-again", "")
+
+		type resultRow struct {
+			taskID     string
+			agentID    string
+			exitCode   int
+			stdout     string
+			stderr     string
+			finishedAt time.Time
+		}
+		read := func(taskID string) resultRow {
+			var r resultRow
+			err := s.db.QueryRowContext(ctx,
+				d.ConvertPlaceholders("SELECT task_id, agent_id, exit_code, stdout, stderr, finished_at FROM task_results WHERE task_id=?"),
+				taskID).Scan(&r.taskID, &r.agentID, &r.exitCode, &r.stdout, &r.stderr, &r.finishedAt)
+			if err != nil {
+				t.Fatalf("读回 task_results %s 失败: %v", taskID, err)
+			}
+			return r
+		}
+
+		if got := read("tr-success"); got.exitCode != 0 || got.stdout != "done-again" {
+			t.Fatalf("success 写路径读回 = %+v, want exit_code=0 stdout=done-again", got)
+		}
+		if got := read("tr-retry"); got.exitCode != 1 || got.stderr != "transient" {
+			t.Fatalf("retry 写路径读回 = %+v, want exit_code=1 stderr=transient", got)
+		}
+		if got := read("tr-dead"); got.exitCode != 2 || got.stderr != "permanent" {
+			t.Fatalf("dead-letter 写路径读回 = %+v, want exit_code=2 stderr=permanent", got)
+		}
+
+		var count int
+		if err := s.db.QueryRowContext(ctx,
+			d.ConvertPlaceholders("SELECT COUNT(*) FROM task_results WHERE agent_id=?"),
+			"agent-tr").Scan(&count); err != nil {
+			t.Fatalf("COUNT task_results 失败: %v", err)
+		}
+		if count != 3 {
+			t.Fatalf("task_results 行数=%d, want 3", count)
 		}
 	})
 }

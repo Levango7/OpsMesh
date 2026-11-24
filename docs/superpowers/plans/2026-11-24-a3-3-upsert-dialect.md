@@ -972,8 +972,10 @@ git commit -m "test: prepare every UPSERT on MySQL and PostgreSQL"
 **Interfaces:**
 
 - Consumes: MySQL/PG 夹具、`ConvertPlaceholders`、三个特例。
-- Produces: 下列五个行为测试，均在 MySQL/PG 双库执行。
+- Produces: 下列行为测试；纯写路径测试在 MySQL/PG 双库执行，涉及周围裸 `?`/反引号读路径的公共方法仅 MySQL 执行并明示 skip 原因。
 - Produces: `func waitForDBTimestampTick(t *testing.T, s *SQLStore, d Dialect, after time.Time, tick time.Duration)`
+
+**Scope ruling:** A3-3 只方言化 UPSERT 写路径。若 PG 公共方法因周围 A3-2 读路径失败，不得修改生产读路径；改为直接执行生成的 UPSERT/特例构建器并用 `ConvertPlaceholders` 读回，或将该公共方法测试降级为 MySQL-only。
 
 - [ ] **Step 1: 写代表行为测试**
 
@@ -997,9 +999,13 @@ git commit -m "test: prepare every UPSERT on MySQL and PostgreSQL"
    - PG：直接对 `cloud_resources` 使用自然键 conflict，插入相同 id、不同自然键，断言唯一键错误。
 
 5. `TestSubmitResultStateTransitions`
-   - 为 success/retry/dead-letter 各造一条 running task。
-   - 调 `SubmitResult`，用转换后的 SELECT 验证状态、retry_count、dead_letter。
+   - MySQL-only：`SubmitResult` 周围 tasks SELECT/UPDATE 与 devices writeback 仍是 A3-2 裸 `?`/反引号读路径，本批不方言化。
+   - 为 success/retry/dead-letter 各造一条 running task，调 `SubmitResult`，用转换后的 SELECT 验证状态、retry_count、dead_letter。
+   - PG 子测试必须显式 `t.Skip("SubmitResult 周围读路径属 A3-2，不在 A3-3 范围")`，不得静默 skip。
    - 不断言 UPSERT 的 `RowsAffected`。
+
+6. `TestUpsertTaskResultsWritePath`
+   - 直接用 `task_results` 生成 SQL 在 MySQL/PG 双库执行 success/retry/dead-letter 三种写路径，读回用 `ConvertPlaceholders` 转换后的 SELECT。
 
 - [ ] **Step 2: 写并发特例测试**
 
@@ -1009,8 +1015,9 @@ git commit -m "test: prepare every UPSERT on MySQL and PostgreSQL"
    - 并发子用例预置过期租约，N 个实例同时 `RenewLeadership`；每轮恰好一个返回 true；读回 holder 与获胜者一致；连续 10 轮不双主。
 
 2. `TestABACPolicyConcurrentVersion`
+   - 直接执行 `upsertABACPolicy(s.dialect)`（不调用公共 `UpsertABACPolicyRecord`，其 PG 回读仍属 A3-2）。
    - 先插入一条，重复写穿并修改 `subject/resource/action/effect`；断言 version=2、字段覆盖、`created_at` 不变。
-   - 同一 `(tenant_id,id)` 起 N 个 goroutine 调 `UpsertABACPolicyRecord`。
+   - 同一 `(tenant_id,id)` 起 N 个 goroutine 执行同一生成 SQL。
    - 全部成功后读回 version=N+2；`created_at` 仍不变。
 
 3. `TestLifecycleUpsertTimestamp`
@@ -1023,15 +1030,15 @@ git commit -m "test: prepare every UPSERT on MySQL and PostgreSQL"
 
 - [ ] **Step 3: 运行测试确认失败或暴露缺口**
 
-Run: `go test ./internal/store/sqlstore -run '^(TestUpsert|TestRenewLeadershipConcurrentClaim|TestABACPolicyConcurrentVersion|TestLifecycleUpsertTimestamp|TestSubmitResultStateTransitions)' -count=1 -v`
+Run: `go test ./internal/store/sqlstore -run '^(TestUpsert|TestRenewLeadershipConcurrentClaim|TestABACPolicyConcurrentVersion|TestLifecycleUpsertTimestamp|TestSubmitResultStateTransitions|TestUpsertTaskResultsWritePath)' -count=1 -v`
 
-Expected: 初次运行暴露实现缺口；修复后全 PASS。
+Expected: 初次运行暴露实现缺口；修复后全 PASS。PG 公共方法若因周围 A3-2 读路径失败，按上方 Scope ruling 改为直接写路径测试或 MySQL-only，禁止方言化生产读路径。
 
 - [ ] **Step 4: 双库复跑**
 
-Run: `go test ./internal/store/sqlstore -run '^(TestUpsert|TestRenewLeadershipConcurrentClaim|TestABACPolicyConcurrentVersion|TestLifecycleUpsertTimestamp|TestSubmitResultStateTransitions)' -count=1 -v`
+Run: `go test ./internal/store/sqlstore -run '^(TestUpsert|TestRenewLeadershipConcurrentClaim|TestABACPolicyConcurrentVersion|TestLifecycleUpsertTimestamp|TestSubmitResultStateTransitions|TestUpsertTaskResultsWritePath)' -count=1 -v`
 
-Expected: MySQL/PG 均真实执行；记录测试名、耗时、PASS 数。
+Expected: 所有写路径测试在 MySQL/PG 均真实执行；MySQL-only 公共方法测试明示 skip 原因。记录测试名、耗时、PASS 数。
 
 - [ ] **Step 5: 提交**
 

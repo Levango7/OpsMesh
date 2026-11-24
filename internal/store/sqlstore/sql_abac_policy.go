@@ -10,36 +10,14 @@ package sqlstore
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/Levango7/OpsMesh/internal/store/model"
 	"github.com/Levango7/OpsMesh/internal/store/storefail"
 )
 
-// abacPolicyColumns 读路径统一列清单（按方言加引号）；列数与
-// scanABACPolicyRecord 的 Scan 目标数一一对应。
-// A3-3：MySQL 轨保持反引号（行为逐字节等价），PG 轨输出双引号——
-// 此前读路径硬编码反引号，PG 上回读报 syntax error，导致
-// UpsertABACPolicyRecord 写穿成功却返回 false（Task 11 真库行为回归暴露）。
-func abacPolicyColumns(d Dialect) string {
-	return strings.Join([]string{
-		quoteIdentifier("tenant_id", d.IdentifierQuote()),
-		quoteIdentifier("id", d.IdentifierQuote()),
-		quoteIdentifier("subject", d.IdentifierQuote()),
-		quoteIdentifier("resource", d.IdentifierQuote()),
-		quoteIdentifier("action", d.IdentifierQuote()),
-		quoteIdentifier("effect", d.IdentifierQuote()),
-		quoteIdentifier("version", d.IdentifierQuote()),
-		quoteIdentifier("created_at", d.IdentifierQuote()),
-		quoteIdentifier("updated_at", d.IdentifierQuote()),
-	}, ", ")
-}
-
-// abacPolicyTable 返回方言引用的 abac_policies 表名。
-func abacPolicyTable(d Dialect) string {
-	return quoteIdentifier("abac_policies", d.IdentifierQuote())
-}
+// abacPolicyColumns 读路径统一列清单；列数与 scanABACPolicyRecord 的 Scan 目标数一一对应。
+const abacPolicyColumns = "`tenant_id`, `id`, `subject`, `resource`, `action`, `effect`, `version`, `created_at`, `updated_at`"
 
 // scanABACPolicyRecord 从一行扫描出记录（时间列为 DATETIME，DSN 已启用 parseTime）。
 func scanABACPolicyRecord(row rowScanner) (model.ABACPolicyRecord, error) {
@@ -57,15 +35,13 @@ func (s *SQLStore) ListABACPolicyRecords(tenantID string) []model.ABACPolicyReco
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	q := s.dialect.IdentifierQuote()
-	query := "SELECT " + abacPolicyColumns(s.dialect) + " FROM " + abacPolicyTable(s.dialect)
+	query := "SELECT " + abacPolicyColumns + " FROM `abac_policies`"
 	args := make([]interface{}, 0, 1)
 	if tenantID != "" {
-		query += " WHERE " + quoteIdentifier("tenant_id", q) + "=?"
+		query += " WHERE `tenant_id`=?"
 		args = append(args, tenantID)
 	}
-	query += " ORDER BY " + quoteIdentifier("tenant_id", q) + " ASC, " + quoteIdentifier("id", q) + " ASC"
-	query = s.dialect.ConvertPlaceholders(query)
+	query += " ORDER BY `tenant_id` ASC, `id` ASC"
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		storefail.Record("[store] ListABACPolicyRecords 查询失败: %v", err)
@@ -107,10 +83,8 @@ func (s *SQLStore) UpsertABACPolicyRecord(p model.ABACPolicyRecord) (model.ABACP
 		storefail.Record("[store] UpsertABACPolicyRecord 失败 %s/%s: %v", p.TenantID, p.ID, err)
 		return p, false
 	}
-	q := s.dialect.IdentifierQuote()
 	stored, err := scanABACPolicyRecord(s.db.QueryRowContext(ctx,
-		s.dialect.ConvertPlaceholders("SELECT "+abacPolicyColumns(s.dialect)+" FROM "+abacPolicyTable(s.dialect)+
-			" WHERE "+quoteIdentifier("tenant_id", q)+"=? AND "+quoteIdentifier("id", q)+"=?"),
+		"SELECT "+abacPolicyColumns+" FROM `abac_policies` WHERE `tenant_id`=? AND `id`=?",
 		p.TenantID, p.ID))
 	if err != nil {
 		storefail.Record("[store] UpsertABACPolicyRecord 回读失败 %s/%s: %v", p.TenantID, p.ID, err)

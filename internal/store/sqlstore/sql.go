@@ -1096,10 +1096,10 @@ func (s *SQLStore) CreateLifecycleJob(ctx context.Context, job *LifecycleJob) er
 func (s *SQLStore) GetLifecycleJob(ctx context.Context, id string) (*LifecycleJob, error) {
 	var job LifecycleJob
 	var specJSON, resultJSON sql.NullString
-	err := s.db.QueryRowContext(ctx, s.dialect.ConvertPlaceholders(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT id, cluster_id, kind, tenant_id, phase, progress, current_step, spec_json, result_json, error, lock_owner, version, created_at, updated_at
 		FROM lifecycle_jobs WHERE id = ?
-	`), id).Scan(&job.ID, &job.ClusterID, &job.Kind, &job.TenantID, &job.Phase, &job.Progress, &job.CurrentStep, &specJSON, &resultJSON, &job.Error, &job.LockOwner, &job.Version, &job.CreatedAt, &job.UpdatedAt)
+	`, id).Scan(&job.ID, &job.ClusterID, &job.Kind, &job.TenantID, &job.Phase, &job.Progress, &job.CurrentStep, &specJSON, &resultJSON, &job.Error, &job.LockOwner, &job.Version, &job.CreatedAt, &job.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil

@@ -3,6 +3,7 @@ package sqlstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -405,21 +406,31 @@ func runConcurrentLeadershipRounds(t *testing.T, dialect string, newStores func(
 	}
 }
 
-// TestABACPolicyConcurrentVersion ABAC 策略写穿版本并发回归：
+// TestABACPolicyConcurrentVersion ABAC 策略写穿版本并发回归。
+//
+// 绑定裁决（A3-3 write-path-only）：公共 UpsertABACPolicyRecord 的
+// PG 回读 SELECT 仍属 A3-2（base 版 abacPolicyColumns 硬编码反引号，
+// PG 上 syntax error），本批不方言化生产读路径——故本测试直接执行
+// 生成器 upsertABACPolicy(d) 输出的写路径 SQL，回读一律用
+// s.dialect.ConvertPlaceholders 转换后的 SELECT。
 // 重复写穿 version 自增、字段覆盖、created_at 不变；同一 (tenant_id,id)
-// 起 N 个 goroutine 并发写穿，全部成功后 version=N+2 且 created_at 仍不变。
+// 起 N 个 goroutine 并发执行同一生成 SQL，全部成功后 version=N+2
+// 且 created_at 仍不变。
 func TestABACPolicyConcurrentVersion(t *testing.T) {
 	runOnBothDialects(t, func(t *testing.T, s *SQLStore, d Dialect) {
 		ctx := context.Background()
 		tenantID := "t-abac-conc"
 		policyID := "p-abac-conc"
+		createdAt := time.Now().UTC().Add(-24 * time.Hour)
 
-		// 首次插入 version=1。
-		if _, ok := s.UpsertABACPolicyRecord(model.ABACPolicyRecord{
-			TenantID: tenantID, ID: policyID,
-			Subject: "user:alice", Resource: "res:*", Action: "read", Effect: "allow",
-		}); !ok {
-			t.Fatal("首次 UpsertABACPolicyRecord 应成功")
+		// upsertABACPolicy(d)：8 占位
+		// (tenant_id, id, subject, resource, action, effect, created_at, updated_at)。
+		query := upsertABACPolicy(d)
+		write := func(subject, resource, action, effect string, at time.Time) {
+			if _, err := s.db.ExecContext(ctx, query,
+				tenantID, policyID, subject, resource, action, effect, createdAt, at); err != nil {
+				t.Fatalf("执行 upsertABACPolicy 失败: %v", err)
+			}
 		}
 
 		read := func() model.ABACPolicyRecord {
@@ -433,19 +444,17 @@ func TestABACPolicyConcurrentVersion(t *testing.T) {
 			}
 			return r
 		}
+
+		// 首次插入 version=1。
+		write("user:alice", "res:*", "read", "allow", time.Now().UTC())
 		first := read()
 		if first.Version != 1 {
 			t.Fatalf("首次插入 version=%d, want 1", first.Version)
 		}
 
 		// 重复写穿并修改字段：version=2、字段覆盖、created_at 不变。
-		second, ok := s.UpsertABACPolicyRecord(model.ABACPolicyRecord{
-			TenantID: tenantID, ID: policyID,
-			Subject: "user:bob", Resource: "res:prod", Action: "write", Effect: "deny",
-		})
-		if !ok {
-			t.Fatal("第二次 UpsertABACPolicyRecord 应成功")
-		}
+		write("user:bob", "res:prod", "write", "deny", time.Now().UTC())
+		second := read()
 		if second.Version != 2 {
 			t.Fatalf("写穿后 version=%d, want 2", second.Version)
 		}
@@ -457,26 +466,26 @@ func TestABACPolicyConcurrentVersion(t *testing.T) {
 			t.Fatalf("created_at 被改写: 首次=%v 二次=%v", first.CreatedAt, second.CreatedAt)
 		}
 
-		// 并发写穿：N 个 goroutine 同一 (tenant_id,id)。
+		// 并发写穿：N 个 goroutine 同一 (tenant_id,id) 执行同一生成 SQL。
 		const n = 8
 		var wg sync.WaitGroup
-		oks := make([]bool, n)
+		errs := make([]error, n)
 		for i := 0; i < n; i++ {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				_, ok := s.UpsertABACPolicyRecord(model.ABACPolicyRecord{
-					TenantID: tenantID, ID: policyID,
-					Subject:  fmt.Sprintf("user:worker-%d", i),
-					Resource: "res:prod", Action: "write", Effect: "allow",
-				})
-				oks[i] = ok
+				_, err := s.db.ExecContext(ctx, query,
+					tenantID, policyID,
+					fmt.Sprintf("user:worker-%d", i),
+					"res:prod", "write", "allow",
+					createdAt, time.Now().UTC())
+				errs[i] = err
 			}(i)
 		}
 		wg.Wait()
-		for i, ok := range oks {
-			if !ok {
-				t.Fatalf("并发写穿 goroutine %d 失败", i)
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("并发写穿 goroutine %d 失败: %v", i, err)
 			}
 		}
 
@@ -490,90 +499,88 @@ func TestABACPolicyConcurrentVersion(t *testing.T) {
 	})
 }
 
-// TestLifecycleUpsertTimestamp 生命周期作业 upsert 的 updated_at 语义：
-// 首次创建后读 updated_at；等数据库时钟推进后同 ID 更新 phase/progress，
-// PG 必须推进（显式 now()），MySQL 保持列定义 ON UPDATE CURRENT_TIMESTAMP(3)
-// 的隐式刷新行为。MySQL no-op 子用例（字段完全相同再写一次）记录并对照
+// TestLifecycleUpsertTimestamp 生命周期作业 upsert 的 updated_at 语义。
+//
+// 绑定裁决（A3-3 write-path-only）：公共 GetLifecycleJob 的
+// base 版 SELECT 仍是 A3-2 裸 `?` 占位符（PG 上语法错误），
+// 本批不方言化生产读路径——故双库均直接执行生成器
+// upsertLifecycleJob(d) 的写路径 SQL，回读一律用
+// s.dialect.ConvertPlaceholders 转换后的 SELECT。
+// 首次写后读 updated_at；等数据库时钟推进后同 ID 更新
+// phase/progress，再读。PG 必须推进（构建器显式补
+// "updated_at"=now()）；MySQL 保持列定义
+// ON UPDATE CURRENT_TIMESTAMP(3) 的隐式刷新行为。
+// MySQL no-op 子用例（字段完全相同再写一次）记录并对照
 // 更新时间，保持既有行为，不要求两库 no-op 行数或时间相同。
 func TestLifecycleUpsertTimestamp(t *testing.T) {
 	runOnBothDialects(t, func(t *testing.T, s *SQLStore, d Dialect) {
 		ctx := context.Background()
 		jobID := "job-lifecycle-ts"
-		newJob := func(phase string, progress int) *LifecycleJob {
-			return &LifecycleJob{
-				ID:          jobID,
-				ClusterID:   "cluster-ts",
-				Kind:        "upgrade",
-				TenantID:    "t-lifecycle-ts",
-				Phase:       phase,
-				Progress:    progress,
-				CurrentStep: "step-1",
-				SpecJSON:    map[string]any{"image": "img:1"},
-				LockOwner:   "owner-ts",
+		// upsertLifecycleJob(d)：9 占位
+		// (id, cluster_id, kind, tenant_id, phase, progress,
+		//  current_step, spec_json, lock_owner)。
+		query := upsertLifecycleJob(d)
+		spec, err := json.Marshal(map[string]any{"image": "img:1"})
+		if err != nil {
+			t.Fatalf("marshal spec: %v", err)
+		}
+		write := func(phase string, progress int) {
+			if _, err := s.db.ExecContext(ctx, query,
+				jobID, "cluster-ts", "upgrade", "t-lifecycle-ts",
+				phase, progress, "step-1", string(spec), "owner-ts"); err != nil {
+				t.Fatalf("执行 upsertLifecycleJob 失败: %v", err)
 			}
 		}
+		read := func() (phase string, progress int, updatedAt time.Time) {
+			t.Helper()
+			err := s.db.QueryRowContext(ctx,
+				d.ConvertPlaceholders("SELECT phase, progress, updated_at FROM lifecycle_jobs WHERE id=?"),
+				jobID).Scan(&phase, &progress, &updatedAt)
+			if err != nil {
+				t.Fatalf("读回 lifecycle_jobs 失败: %v", err)
+			}
+			return
+		}
 
-		if err := s.CreateLifecycleJob(ctx, newJob("pending", 0)); err != nil {
-			t.Fatalf("CreateLifecycleJob 失败: %v", err)
+		write("pending", 0)
+		phase, progress, firstUpdated := read()
+		if phase != "pending" || progress != 0 {
+			t.Fatalf("首次写读回 = %q/%d, want pending/0", phase, progress)
 		}
-		first, err := s.GetLifecycleJob(ctx, jobID)
-		if err != nil {
-			t.Fatalf("GetLifecycleJob 失败: %v", err)
-		}
-		if first == nil {
-			t.Fatal("CreateLifecycleJob 后读不到作业")
-		}
-		firstUpdated := first.UpdatedAt
 
 		// 以数据库时钟为准等待推进（宿主固定 sleep 不可替代）。
 		waitForDBTimestampTick(t, s, d, firstUpdated, time.Millisecond)
 
-		if err := s.CreateLifecycleJob(ctx, newJob("running", 50)); err != nil {
-			t.Fatalf("CreateLifecycleJob(更新) 失败: %v", err)
-		}
-		second, err := s.GetLifecycleJob(ctx, jobID)
-		if err != nil {
-			t.Fatalf("GetLifecycleJob(更新后) 失败: %v", err)
-		}
-		if second == nil {
-			t.Fatal("更新后读不到作业")
-		}
-		if second.Phase != "running" || second.Progress != 50 {
-			t.Fatalf("phase/progress 未更新: %q/%d, want running/50", second.Phase, second.Progress)
+		write("running", 50)
+		phase, progress, secondUpdated := read()
+		if phase != "running" || progress != 50 {
+			t.Fatalf("phase/progress 未更新: %q/%d, want running/50", phase, progress)
 		}
 		if d.DriverName() == "pgx" {
-			if !second.UpdatedAt.After(firstUpdated) {
-				t.Fatalf("PG updated_at 未推进: 首次=%v 更新后=%v", firstUpdated, second.UpdatedAt)
+			if !secondUpdated.After(firstUpdated) {
+				t.Fatalf("PG updated_at 未推进: 首次=%v 更新后=%v", firstUpdated, secondUpdated)
 			}
 		} else {
 			// MySQL 保持原隐式 ON UPDATE CURRENT_TIMESTAMP(3) 行为：
 			// 值变化时刷新，不得回退。
-			if second.UpdatedAt.Before(firstUpdated) {
-				t.Fatalf("MySQL updated_at 回退: 首次=%v 更新后=%v", firstUpdated, second.UpdatedAt)
+			if secondUpdated.Before(firstUpdated) {
+				t.Fatalf("MySQL updated_at 回退: 首次=%v 更新后=%v", firstUpdated, secondUpdated)
 			}
 		}
 
 		// MySQL no-op 子用例：字段完全相同再写一次，记录并对照更新时间。
-		noopBefore := second.UpdatedAt
-		if err := s.CreateLifecycleJob(ctx, newJob("running", 50)); err != nil {
-			t.Fatalf("CreateLifecycleJob(no-op) 失败: %v", err)
-		}
-		after, err := s.GetLifecycleJob(ctx, jobID)
-		if err != nil {
-			t.Fatalf("GetLifecycleJob(no-op 后) 失败: %v", err)
-		}
-		if after == nil {
-			t.Fatal("no-op 后读不到作业")
-		}
+		noopBefore := secondUpdated
+		write("running", 50)
+		_, _, afterUpdated := read()
 		if d.DriverName() == "pgx" {
 			// PG 显式 now()：no-op 也会刷新，仅记录对照，不断言。
 			t.Logf("PG no-op: updated_at %v -> %v（显式 now() 刷新，既有不要求）",
-				noopBefore, after.UpdatedAt)
+				noopBefore, afterUpdated)
 		} else {
 			// MySQL 既有行为：值未变化不触发 ON UPDATE，updated_at 不变。
-			if !after.UpdatedAt.Equal(noopBefore) {
+			if !afterUpdated.Equal(noopBefore) {
 				t.Fatalf("MySQL no-op updated_at 变化: %v -> %v, want 保持不变",
-					noopBefore, after.UpdatedAt)
+					noopBefore, afterUpdated)
 			}
 		}
 	})

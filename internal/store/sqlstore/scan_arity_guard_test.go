@@ -32,13 +32,6 @@ const arityJudgedFloor = 128
 // 空表也是合法状态；条目必须带理由，且站点消失/被解析成功后必须删除（过期即判红）。
 var arityWideExemptions = map[string]string{
 	"sql_cloud_resource.go#ListCloudResources#rows": "SELECT 列在 fmt.Sprintf 运行时拼接（动态 WHERE 子句），静态不可判；消费侧 scanCloudResource=14",
-	// A3-3 Task 11：以下三处 SELECT 的列清单仍是字面量，仅占位符编号
-	// （? → $n）与标识符引号经 s.dialect.ConvertPlaceholders /
-	// 方言加引号在运行时拼接，静态解析不可判；列数与 Scan 目标数
-	// 未变（双库真库行为回归已验证读回一致）。
-	"sql.go#GetLifecycleJob#err":                    "SELECT 经 s.dialect.ConvertPlaceholders 方言占位符编号（运行时拼接），列清单为字面量；消费侧 chained=14",
-	"sql_abac_policy.go#ListABACPolicyRecords#rows": "SELECT 列清单由 abacPolicyColumns(d) 按方言加引号运行时拼接；消费侧 scanABACPolicyRecord(helper)=9",
-	"sql_tasks.go#SubmitResult#":                    "tasks 状态守卫 SELECT 经 ConvertPlaceholders 方言编号（运行时拼接），列清单为字面量；消费侧 chained=5",
 }
 
 // TestSelectColumnCountMatchesScanTargets 本包的对账门禁（TD-90）。
