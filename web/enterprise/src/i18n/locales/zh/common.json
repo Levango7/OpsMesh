@@ -14,6 +14,7 @@
     "system": "系统管理",
     "groupAutomation": "自动化",
     "groupAiCompute": "AI 与算力",
+    "groupDataPlatform": "数据平台",
     "groupPlatform": "平台",
     "home": "总览",
     "devices": "设备纳管",
@@ -26,6 +27,10 @@
     "db_ops": "数据库高级运维",
     "oracle_ops": "Oracle 高级运维",
     "bigdata_ops": "大数据运维",
+    "governance": "数据治理",
+    "etl": "ETL 作业",
+    "lakehouse": "湖仓维护",
+    "tuning": "调优引擎",
     "diststorage_ops": "分布式存储运维",
     "mwdep": "中间件部署",
     "k8s": "K8s 管理",
@@ -505,5 +510,34 @@
     "tab_seaweedfs": "SeaweedFS",
     "tab_nfs": "NFS",
     "tab_samba": "Samba"
+  },
+  "governance": {
+    "title": "数据治理",
+    "subtitle": "数据质量、PII 脱敏、保留策略、目录",
+    "tab_rules": "规则",
+    "tab_pii": "PII",
+    "tab_retention": "保留",
+    "tab_catalog": "目录",
+    "tab_lineage": "血缘"
+  },
+  "etl": {
+    "title": "ETL 作业",
+    "subtitle": "数据抽取与转换",
+    "tab_jobs": "作业",
+    "tab_runs": "运行"
+  },
+  "lakehouse": {
+    "title": "湖仓维护",
+    "subtitle": "Iceberg/Delta/Hudi 维护",
+    "tab_tables": "表",
+    "tab_maintenance": "维护",
+    "tab_jobs": "作业",
+    "tab_runs": "运行"
+  },
+  "tuning": {
+    "title": "调优引擎",
+    "subtitle": "大数据 sizing 推荐",
+    "tab_profiles": "配置文件",
+    "tab_recommend": "推荐"
   }
 }

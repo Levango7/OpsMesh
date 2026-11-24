@@ -44,6 +44,10 @@ const routes = [
   { path: '/db-ops', name: 'db-ops', component: () => import('@/views/DBOpsView.vue'), meta: { title: 'nav.db_ops', group: '运维管理', icon: 'database', requirePerm: 'device:read' } },
   { path: '/oracle-ops', name: 'oracle-ops', component: () => import('@/views/OracleOpsView.vue'), meta: { title: 'nav.oracle_ops', group: '运维管理', icon: 'database', requirePerm: 'device:read' } },
   { path: '/bigdata-ops', name: 'bigdata-ops', component: () => import('@/views/BigDataOpsView.vue'), meta: { title: 'nav.bigdata_ops', group: '运维管理', icon: 'database', requirePerm: 'device:read' } },
+  { path: '/governance', name: 'governance', component: () => import('@/views/GovernanceView.vue'), meta: { title: 'nav.governance', group: '数据平台', icon: 'shield', requirePerm: 'task:read' } },
+  { path: '/etl', name: 'etl', component: () => import('@/views/ETLView.vue'), meta: { title: 'nav.etl', group: '数据平台', icon: 'workflow', requirePerm: 'task:read' } },
+  { path: '/lakehouse', name: 'lakehouse', component: () => import('@/views/LakehouseView.vue'), meta: { title: 'nav.lakehouse', group: '数据平台', icon: 'layers', requirePerm: 'task:read' } },
+  { path: '/tuning', name: 'tuning', component: () => import('@/views/TuningView.vue'), meta: { title: 'nav.tuning', group: '数据平台', icon: 'sliders', requirePerm: 'task:read' } },
   { path: '/diststorage-ops', name: 'diststorage-ops', component: () => import('@/views/DistStorageOpsView.vue'), meta: { title: 'nav.diststorage_ops', group: '运维管理', icon: 'database', requirePerm: 'device:read' } },
   { path: '/middleware', name: 'middleware', component: () => import('@/views/MiddlewareDeployView.vue'), meta: { title: 'nav.mwdep', group: '运维管理', icon: 'deploy', requirePerm: 'deploy:read' } },
   // K8s 管理（运维管理）：拆分为「集群管理 / 资源管理」两个子页面
