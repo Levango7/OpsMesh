@@ -134,7 +134,9 @@ func TestRecommendSmallBatch(t *testing.T) {
 	if yaml1 != yaml2 {
 		t.Fatal("RenderYAML is not deterministic for the same profile")
 	}
-	if RenderKafkaProperties(p) != RenderKafkaProperties(p) {
+	kafka1 := RenderKafkaProperties(p)
+	kafka2 := RenderKafkaProperties(p)
+	if kafka1 != kafka2 {
 		t.Fatal("RenderKafkaProperties is not deterministic")
 	}
 }
