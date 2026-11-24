@@ -608,13 +608,22 @@ func (s *Server) handleGovernanceLineage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	u := strings.TrimRight(atlasURL, "/") + "/api/atlas/v2/search/basic?query=" + url.QueryEscape(q)
-	resp, err := http.Get(u)
+	outReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
+	if err != nil {
+		writeInternalError(r.Context(), w, "governance_lineage", err)
+		return
+	}
+	resp, err := http.DefaultClient.Do(outReq)
 	if err != nil {
 		writeInternalError(r.Context(), w, "governance_lineage", err)
 		return
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		writeInternalError(r.Context(), w, "governance_lineage", err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)

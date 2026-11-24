@@ -211,7 +211,10 @@ func (s *Server) handleLakehouseMaintenance(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		created.Status = "running"
-		s.lakehouseStore().UpdateMaintenanceJob(created)
+		if _, err := s.lakehouseStore().UpdateMaintenanceJob(created); err != nil {
+			writeInternalError(r.Context(), w, "lakehouse_maintenance", err)
+			return
+		}
 		s.audit(r.Context(), &proto.AuditEvent{
 			TenantID: actx.TenantID, UserID: actx.UserID, Action: "lakehouse_maintenance",
 			Target: created.TableName, Detail: sanitizeAuditDetail("action=" + created.Action + " format=" + created.Format),
@@ -434,7 +437,11 @@ func (s *Server) handleLakehouseJobs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		run := lakehouse.JobRun{JobID: job.ID, TenantID: actx.TenantID, Status: lakehouse.JobStatusPending}
-		run, _ = s.lakehouseStore().CreateJobRun(run)
+		run, err = s.lakehouseStore().CreateJobRun(run)
+		if err != nil {
+			writeInternalError(r.Context(), w, "lakehouse_job", err)
+			return
+		}
 		script := "set -e\necho 'lakehouse job " + job.Name + " (" + job.Kind + ") run " + run.ID + " done'\n"
 		task, err := s.createSystemTask(actx.TenantID, deviceID, script, "lakehouse_job_"+job.ID)
 		if err != nil {

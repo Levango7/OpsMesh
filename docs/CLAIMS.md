@@ -1489,3 +1489,6 @@ Y�1unt+ QY�~KmՋ	�  c o m m i t = b 3 3 9 4 0 a 7 
  
 [RELEASE] 2026-11-24T11:32:09Z from=kilo scope=internal/dataetl/,internal/controlplane/data_etl_ops.go reason=expired claim released; work in HEAD (80f1284328347324e14949fbf2f558379630823c)
 [RELEASE] 2026-11-24T11:32:09Z from=kilo scope=internal/governance/,internal/controlplane/data_governance_ops.go,internal/controlplane/data_governance_ops_test.go,internal/controlplane/server_lifecycle.go,internal/config/config.go,CHANGELOG.md,docs/CLAIMS.md reason=expired claim released; work in HEAD (54f3c782c3636ae3a959ea2c21bbfb5cb806185f)
+[CLAIM] 2026-11-24T14:56:08Z from=qoder ttl=4h scope=internal/datatuning/sizing_test.go,internal/controlplane/data_governance_ops.go,internal/controlplane/lakehouse_ops.go,internal/controlplane/data_etl_ops.go,docs/CLAIMS.md note=用户授权接修main CI的6条golangci-lint红线；仅处理错误返回与确定性断言，不改FROZEN区，不提交不推送
+[CLAIM] 2026-11-24T14:56:08Z from=qoder ttl=4h scope=docs/COORDINATION-BOARD.md note=coord-gate自动回写main lint修复批状态
+[NOTE] 2026-11-24T16:14:41Z from=qoder scope=internal/datatuning/sizing_test.go,internal/controlplane/data_governance_ops.go,internal/controlplane/lakehouse_ops.go,internal/controlplane/data_etl_ops.go,docs/CLAIMS.md reason=用户追加授权提交并推送本批lint修复；范围仍为4个Go文件与CLAIMS，不含合并、PR留言、删分支或两条全量继承红点
