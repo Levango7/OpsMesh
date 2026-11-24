@@ -75,11 +75,10 @@ func (s *SQLStore) UpsertABACPolicyRecord(p model.ABACPolicyRecord) (model.ABACP
 	if p.CreatedAt.IsZero() {
 		p.CreatedAt = now
 	}
-	if _, err := s.db.ExecContext(ctx,
-		"INSERT INTO `abac_policies` ("+abacPolicyColumns+") VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE `version`=`version`+1, `subject`=VALUES(`subject`), "+
-			"`resource`=VALUES(`resource`), `action`=VALUES(`action`), `effect`=VALUES(`effect`), "+
-			"`updated_at`=VALUES(`updated_at`)",
+	// 方言特例构建器见 upsert_special.go：MySQL 保留 `version`=`version`+1；
+	// PG 输出 "version" = "abac_policies"."version" + 1，conflict 为
+	// ("tenant_id", "id")。参数顺序与个数不变（8 占位）。
+	if _, err := s.db.ExecContext(ctx, upsertABACPolicy(s.dialect),
 		p.TenantID, p.ID, p.Subject, p.Resource, p.Action, p.Effect, p.CreatedAt, now); err != nil {
 		storefail.Record("[store] UpsertABACPolicyRecord 失败 %s/%s: %v", p.TenantID, p.ID, err)
 		return p, false
