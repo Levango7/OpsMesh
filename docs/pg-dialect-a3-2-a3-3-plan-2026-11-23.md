@@ -166,7 +166,7 @@ git show --stat 2c61e02f
 
 | 形态 | 命令 | 结果 |
 |---|---|---|
-| CI 形态（无 DSN） | `env -u OPSMESH_TEST_MYSQL_DSN -u OPSMESH_TEST_PG_DSN go test ./internal/store/sqlstore -count=1` | `ok … 0.795s`；`-v` 口径：406 RUN（379 顶层 + 27 子测试），顶层 327 PASS / 52 SKIP / 0 FAIL，子测试 7 PASS / 20 SKIP / 0 FAIL。52 个顶层 skip 全部为 DSN 门控（`OPSMESH_TEST_MYSQL_DSN not set` 33、`OPSMESH_TEST_PG_DSN not set` 12、tasks fixes 9、audit chain 8、P0.3 3 等）或报告模式（`OPSMESH_ARITY_REPORT=1`）的显式 skip。 |
+| CI 形态（无 DSN） | `env -u OPSMESH_TEST_MYSQL_DSN -u OPSMESH_TEST_PG_DSN go test ./internal/store/sqlstore -count=1` | `ok … 0.795s`；`-v` 口径：406 RUN（379 顶层 + 27 子测试），顶层 327 PASS / 52 SKIP / 0 FAIL，子测试 7 PASS / 20 SKIP / 0 FAIL。52 个顶层 skip 全部为 DSN 门控（`OPSMESH_TEST_MYSQL_DSN not set` 33、`OPSMESH_TEST_PG_DSN not set` 12、tasks fixes 9、audit chain 8、P0.3 3 等，按出现次数统计且存在重叠/未列全）或报告模式（`OPSMESH_ARITY_REPORT=1`）的显式 skip。 |
 | 真库形态（双 DSN） | `OPSMESH_TEST_MYSQL_DSN=… OPSMESH_TEST_PG_DSN=… go test ./internal/store/sqlstore -count=1 -v` | `ok … 338.362s`，exit 0；406 RUN（379 顶层 + 27 子测试），顶层 378 PASS / 1 SKIP / 0 FAIL，子测试 26 PASS / 1 SKIP / 0 FAIL。**零 DSN 门控 skip**；仅剩 2 个预期 skip：`TestSelectArityReport`（报告模式，`设 OPSMESH_ARITY_REPORT=1 运行`）与 `TestSubmitResultStateTransitions/postgres`（A3-2 读路径边界，Task 11 裁决明示 skip：`SubmitResult 周围读路径属 A3-2，不在 A3-3 范围`）。 |
 
 - 构建/静态：`go build ./...` 退出 0；`go vet ./internal/store/sqlstore/...` 退出 0；`gofmt -w internal/store/sqlstore` 无改动；`python scripts/coord-gate.py` → `coord-gate: lead=kilo active=1 tasks=0 issues=0 conflict=0 blocked=0`（exit 0）；`git diff --check` 无输出。
