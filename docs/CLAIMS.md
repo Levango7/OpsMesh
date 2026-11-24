@@ -1475,3 +1475,4 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [CLAIM] 2026-11-23T16:30:00Z from=kilo ttl=8h scope=internal/dataetl/,internal/controlplane/data_etl_ops.go note=批次77 ETL 服务：EtlJob/EtlRun 模型 + 内存存储 + 适配器（SeaTunnel/DataX/Sqoop/Spark/Airflow/Kafka Connect/Flink-CDC/Canal）+ /api/v1/etl/{jobs,runs} API + 重试/调度/日志
 [CLAIM] 2026-11-23T17:30:00Z from=kilo ttl=8h scope=internal/lakehouse/,internal/controlplane/lakehouse_ops.go note=批次78 湖仓维护 + 批/流统一 job：Iceberg/Delta/Hudi compaction/snapshot-expiry/orphan-cleanup/manifest-rewrite + 统一 JobRun 模型（与 EtlRun 共享） + /api/v1/lakehouse/* API
 [DONE] 2026-11-23T18:00:00Z from=kilo scope=internal/lakehouse/,internal/controlplane/lakehouse_ops.go note=批次78 收口（湖仓维护 + 批/流统一 job + /api/v1/lakehouse/* API）
+[DONE] 2026-11-23T20:00:00Z from=kilo scope=web/enterprise/src/ note=批次79 收口（数据平台前端：4 视图 + 2 API + 路由 + i18n + 导航分组）
