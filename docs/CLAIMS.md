@@ -1,4 +1,4 @@
-# CLAIMS.md — 领地与任务单一追加日志（v2 起）
+﻿# CLAIMS.md — 领地与任务单一追加日志（v2 起）
 
 > 协议见 ./COORDINATION-BOARD.md。追加式、勿改历史行、一律 LF 行尾、每行一条 [KIND]。
 > 2026-10-15 前的旧记录留在 docs/INBOX-ZCODE.md 与 docs/INBOX-LEVANGO.md（只读档案，门禁照常解析）。
@@ -1477,3 +1477,10 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-23T18:00:00Z from=kilo scope=internal/lakehouse/,internal/controlplane/lakehouse_ops.go note=批次78 收口（湖仓维护 + 批/流统一 job + /api/v1/lakehouse/* API）
 [DONE] 2026-11-23T20:00:00Z from=kilo scope=web/enterprise/src/ note=批次79 收口（数据平台前端：4 视图 + 2 API + 路由 + i18n + 导航分组）
 [DONE] 2026-11-23T11:00:00Z from=kilo scope=internal/governance/,internal/controlplane/data_governance_ops.go note=批次76 收口（数据治理平面：6 类 DQ 规则 + 5 类 PII 脱敏 + 3 类保留策略 + 目录 + Atlas 血缘代理 + 迁移 037）
+
+ 
+ [ D O N E ]   2 0 2 6 - 1 1 - 2 4 T 1 0 : 3 0 : 0 0 Z   f r o m = k i l o   s c o p e = i n t e r n a l / d a t a e t l / , i n t e r n a l / c o n t r o l p l a n e / d a t a _ e t l _ o p s . g o , i n t e r n a l / c o n t r o l p l a n e / d a t a _ e t l _ o p s _ t e s t . g o , i n t e r n a l / c o n t r o l p l a n e / s e r v e r _ l i f e c y c l e . g o   n o t e = yb!k7 7   6e�S�E T L   
+g�R�!j�W+ �QX[X[�P+ 8   �M�hV+ / a p i / v 1 / e t l / { j o b s , r u n s } + �y7b���y+ ��y7b  4 0 3 + ͑
+Y�1unt+ QY�~KmՋ	�  c o m m i t = b 3 3 9 4 0 a 7 
+ 
+[DONE] 2026-11-24T10:30:00Z from=kilo scope=internal/dataetl/,internal/controlplane/data_etl_ops.go,internal/controlplane/data_etl_ops_test.go,internal/controlplane/server_lifecycle.go note=批次77 收口（ETL 服务：模型+内存存储+8 适配器+/api/v1/etl/{jobs,runs}+租户隔离+跨租户 403+重复路由清理+契约测试） commit=b33940a7
