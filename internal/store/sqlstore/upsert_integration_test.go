@@ -76,7 +76,7 @@ func prepareAll(t *testing.T, s *SQLStore, d Dialect, calls []upsertCallSpec) {
 		if err != nil {
 			t.Fatalf("%s:%s PREPARE %s: %v", c.File, c.Pos, c.Table, err)
 		}
-		stmt.Close()
+		defer stmt.Close()
 	}
 }
 
@@ -97,7 +97,7 @@ func prepareSpecials(t *testing.T, s *SQLStore, d Dialect) {
 		if err != nil {
 			t.Fatalf("%s PREPARE 失败: %v\nSQL: %s", sp.name, err, sp.query)
 		}
-		stmt.Close()
+		defer stmt.Close()
 	}
 }
 
@@ -115,14 +115,6 @@ func runOnBothDialects(t *testing.T, fn func(t *testing.T, s *SQLStore, d Dialec
 		defer cleanup()
 		fn(t, s, postgresDialect{})
 	})
-}
-
-// execConverted 用方言占位符转换执行一条写语句。
-func execConverted(t *testing.T, s *SQLStore, d Dialect, query string, args ...any) {
-	t.Helper()
-	if _, err := s.db.ExecContext(context.Background(), d.ConvertPlaceholders(query), args...); err != nil {
-		t.Fatalf("执行 %q 失败: %v", query, err)
-	}
 }
 
 // ----------------------------------------------------------------------------
