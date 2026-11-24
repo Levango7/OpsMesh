@@ -57,7 +57,6 @@ const ALLOW = new Map([
   ['gateway.js|getRoute', '按 id 取网关路由：前端列表已含所需字段'],
   ['network.js|getNetworkDevice', '按 id 取网络设备：前端列表已含所需字段'],
   ['pipeline.js|getTemplate', '按 id 取流水线模板：前端列表已含所需字段'],
-  ['pipeline.js|getRun', '按 id 取流水线运行：前端列表已含所需字段'],
   ['quota.js|getQuota', '按 id 取配额：前端列表已含所需字段'],
   ['schedule.js|getSchedule', '按 id 取定时任务：前端列表已含所需字段'],
   ['script.js|getScript', '按 id 取脚本：前端列表已含所需字段'],

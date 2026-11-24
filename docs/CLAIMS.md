@@ -1489,3 +1489,5 @@ Y�1unt+ QY�~KmՋ	�  c o m m i t = b 3 3 9 4 0 a 7 
  
 [RELEASE] 2026-11-24T11:32:09Z from=kilo scope=internal/dataetl/,internal/controlplane/data_etl_ops.go reason=expired claim released; work in HEAD (80f1284328347324e14949fbf2f558379630823c)
 [RELEASE] 2026-11-24T11:32:09Z from=kilo scope=internal/governance/,internal/controlplane/data_governance_ops.go,internal/controlplane/data_governance_ops_test.go,internal/controlplane/server_lifecycle.go,internal/config/config.go,CHANGELOG.md,docs/CLAIMS.md reason=expired claim released; work in HEAD (54f3c782c3636ae3a959ea2c21bbfb5cb806185f)
+[CLAIM] 2026-11-24T14:19:42Z from=qoder ttl=4h scope=README.md,docs/module-design.md,web/enterprise/src/api/__tests__/api-usage.test.js,docs/CLAIMS.md note=用户授权最小修复主线两处CI红点：同步internal包数并清理api使用率陈旧账目；不碰FROZEN区，不合并PR
+[CLAIM] 2026-11-24T14:21:06Z from=qoder ttl=4h scope=docs/COORDINATION-BOARD.md note=coord-gate自动回写最小CI修复批状态
