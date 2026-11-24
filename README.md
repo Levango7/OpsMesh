@@ -119,9 +119,9 @@
 | 联邦 | gRPC (mTLS) | 9090 | 跨控制面任务转发/设备视图同步 |
 | Metrics | HTTP | 9091 | Prometheus 指标采集（HTTP 延迟/Go runtime） |
 
-### internal 包职责（44 个）
+### internal 包职责（48 个）
 
-> 完整设计见 `docs/module-design.md`。下表按 8 个领域分组列出 44 个 internal 包的职责简述。
+> 完整设计见 `docs/module-design.md`。下表按 9 个领域分组列出 48 个 internal 包的职责简述。
 >
 > ⚠️ 计数口径：**只数 `internal/` 下真实存在的目录**（CI 的 `Verify internal package count`
 > 门禁会拿 `find internal -maxdepth 1 -type d` 与本节标题里的数字对账，三处必须一致）。
@@ -172,6 +172,8 @@
 | `internal/network` | 网络管理引擎：网络设备模型（switch/router/firewall/LB）+ 监控指标 + 拓扑邻接表 + 子网发现 |
 | `internal/automation` | 自动化闭环引擎：规则（条件→动作）+ 触发器（alert/metric_threshold/schedule/event）+ 动作（execute_task/send_notify/scale/restart/isolate）+ 规则引擎 Evaluate |
 | `internal/aiops` | 智能运维（AIOps）：LLM 驱动的故障根因分析（Analyze）+ 智能修复方案生成（GenerateRemediation）+ 自然语言运维（NaturalLanguage）+ 修复执行与历史（ExecuteRemediation/ExecutionHistory）+ 统计累计（EngineStats） |
+| `internal/ai` | AI 能力子域聚合：`agent`（ReAct 执行器 + 工具调用 + 专用 Agent + 记忆）、`eval`（离线评估集与评估器）、`gateway`（多厂商 LLM 网关：路由 / 熔断 / 限流 / 缓存 / 计费） |
+| `internal/k8slifecycle` | K8s 集群全生命周期：版本升级计划与回滚、证书轮换、节点扩缩容、etcd 备份恢复（`UpgradeManager`/`NodeScaler`） |
 
 #### 存储与安全域
 
@@ -183,11 +185,22 @@
 | `internal/circuitbreaker` | 通用熔断器：Closed → Open → HalfOpen 状态机，agent 任务执行 + 控制 API 限流降级 |
 | `internal/compliance` | 安全合规检查引擎：CIS Benchmark 基线规则（SSH 加固/防火墙/文件权限/密码策略等）+ 自定义规则 + 扫描编排（agent 执行、控制面聚合报告） |
 
+#### 数据平台域
+
+| 包 | 职责 |
+|---|---|
+| `internal/dataetl` | ETL 作业模型（EtlJob/EtlRun）+ 内存存储 + 引擎适配器（SeaTunnel/DataX/Sqoop/Spark/Airflow/Kafka Connect/Flink CDC/Canal） |
+| `internal/datatuning` | 大数据 sizing 调优：按工作负载 profile 与节点规格纯函数推荐参数（`Recommend`/`RenderComponentProperties`） |
+| `internal/lakehouse` | 湖仓表维护（Iceberg/Delta/Hudi）+ 批/流统一作业模型与内存存储（`TableConfig`/`UnifiedJob`） |
+| `internal/governance` | 数据治理：DQ 规则、PII 策略、保留策略、数据目录与血缘，纯函数评估引擎 + 内存存储 |
+| `internal/knowledge` | 知识库：多源同步 + 混合检索（向量/BM25）+ 重排序 + 引用溯源 + HTTP handler |
+
 #### 平台化与扩展域
 
 | 包 | 职责 |
 |---|---|
 | `internal/platform` | 平台化业务引擎：租户管理 + API Key（`om_` 前缀 + SHA-256 hash）+ 插件市场 + 计费（计划/订阅/账单） |
+| `internal/cost` | AI 成本控制与观测：Token 预算与告警（`BudgetManager`）、模型路由（`ModelRouter`）、成本追踪与报表 |
 | `internal/plugin` | 插件框架：Plugin 接口 + Hook 扩展点 + HookHandler + Manager（注册/钩子触发/生命周期）+ 远程插件传输。**能力边界（2026-10-07 复测，替换 10-06 的"两件未交付"口径）**：`AllHooks()` 冻结的 3 个扩展点**都已有控制面触发点**——`platform_config.go:117`（`config.preSet`，可阻断）、`:155`（`config.postSet`，只记审计）、`server_netsec.go:103`（`task.preClaim`，可阻断），统一经 `plugin_host.go:77` 落到 `Manager.FireHook`，并由 `plugin_hook_gate_test.go` 强制"新增扩展点必须同时有触发点与测试"。**运行时模型已选定并交付：独立进程 + HTTP 契约**——传输 `internal/plugin/remote.go`，清单装载与 SSRF/令牌校验 `internal/controlplane/pluginhost/remote.go`，启动接线在 `internal/controlplane/server.go` 的插件宿主段（开关 `--plugin-manifest` / `OPSMESH_PLUGIN_MANIFEST`，环回插件端点需 `--plugin-allow-private`），参考实现与契约见 `plugins/remote-example/README.md`，可观测面 `opsmesh_plugin_remote_plugins` 与 `opsmesh_plugin_hook_calls_total`（按扩展点区分 ok / denied / error），出厂告警 `OpsMeshPluginHookFailed` 见 `deploy/monitoring/prometheus-alerts.yml`。仍未交付的一件：插件市场的 `plugin.bin` **无加载器**（`internal/controlplane/marketplace.go:18` 自述，全仓 `plugin.Open(` 命中 0）——那是"把二进制丢进市场就能装载"的另一件事，与上面这条路径不要混为一句宣传。⇒ "不改核心代码扩展控制面行为"现在的形状是**3 个扩展点可被外部进程接管**（需显式配清单并重启；插件不可达时准入类扩展点 fail-closed，配置写入会被拒），而不是"任意扩展点可用"，也不是"市场里的插件可装载"；立项与剩余项见 `docs/tech-debt.md` TD-62 |
 | `internal/extension` | API 网关引擎：路由规则匹配（PathPrefix 前缀 + 方法白名单）+ 令牌桶限流 + 网关统计聚合 |
 | `internal/gates` | 跨模块**结构性门禁**测试（包内只有测试）：扫 `services/*/cmd/*/main.go` 拦"要求 sql 却没配 DSN 就静默退内存"，扫 HPA 清单拦"引用没产出的 Pods 指标"，并对账 internal 包数与文档三处数字 |
@@ -1172,7 +1185,7 @@ docs/                     ← 24 篇设计文档（产品/架构/数据库/接�
 > 但默认值存在重叠（多个服务默认同为 HTTP 8080/8081、gRPC 50051/50052）——同机并行运行
 > 多个服务时**必须显式分配不同端口**，否则监听冲突启动失败。
 
-> internal 包职责详细说明见上文 [internal 包职责](#internal-包职责43-个) 章节，完整设计见 `docs/module-design.md`。
+> internal 包职责详细说明见上文 [internal 包职责](#internal-包职责48-个) 章节，完整设计见 `docs/module-design.md`。
 
 ---
 

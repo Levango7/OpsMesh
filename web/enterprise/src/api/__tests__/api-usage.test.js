@@ -132,7 +132,17 @@ describe('api 层导出使用率（死 API 面）', () => {
 
   const used = (name, ownPath) => {
     const re = new RegExp(`\\b${name}\\b`)
-    for (const [p, t] of texts) if (p !== ownPath && re.test(t)) return true
+    // 同名导出在别的 api 文件里再次定义，不是"被消费"：例如 etl.js 的 `getRun:`
+    // 曾让 pipeline.js|getRun 被误判为已接 UI，进而把 ALLOW 账本判成陈旧。
+    // 只剥掉声明行（export const/function、对象里的 NAME: 简写），保留 import/调用/属性访问。
+    const defRe = new RegExp(
+      `^\\s*(?:export\\s+)?(?:async\\s+)?(?:const|function|let|var)\\s+${name}\\b|^\\s*${name}\\s*(?:=|:)`,
+      'gm'
+    )
+    for (const [p, t] of texts) {
+      if (p === ownPath) continue
+      if (re.test(t.replace(defRe, ''))) return true
+    }
     return false
   }
 
