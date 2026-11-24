@@ -56,6 +56,14 @@ export const ROUTE_DOMAIN_MAP = {
   'os-optimize': 'ops',
   'system-ops': 'ops',
   'infra-console': 'ops',
+  'db-ops': 'ops',
+  'oracle-ops': 'ops',
+  'bigdata-ops': 'ops',
+  'diststorage-ops': 'ops',
+  'governance': 'ops',
+  'etl': 'ops',
+  'lakehouse': 'ops',
+  'tuning': 'ops',
   middleware: 'ops',
   k8s: 'ops',
   'k8s-clusters': 'ops',
@@ -170,11 +178,8 @@ export const ROUTE_DOMAIN_MAP = {
   'helm-catalog': 'delivery',
   'helm-releases': 'delivery',
 
-  // 数据库运维页共用 ops.json，漏登记会使整页翻译退化为裸键。
-  'db-ops': 'ops',
-  'oracle-ops': 'ops',
-  'bigdata-ops': 'ops',
-  'diststorage-ops': 'ops'
+  // 数据库运维页与数据平台页共用 ops.json，漏登记会使整页翻译退化为裸键。
+  // (db-ops/oracle-ops/bigdata-ops/diststorage-ops 与 governance/etl/lakehouse/tuning 已在上方 ops 区登记，此处不重复)
 }
 
 // 预先收集所有功能域 json 模块（Vite 会为每个 json 生成单独 chunk，按需加载）

@@ -1,4 +1,4 @@
-# CLAIMS.md — 领地与任务单一追加日志（v2 起）
+﻿# CLAIMS.md — 领地与任务单一追加日志（v2 起）
 
 > 协议见 ./COORDINATION-BOARD.md。追加式、勿改历史行、一律 LF 行尾、每行一条 [KIND]。
 > 2026-10-15 前的旧记录留在 docs/INBOX-ZCODE.md 与 docs/INBOX-LEVANGO.md（只读档案，门禁照常解析）。
@@ -1469,4 +1469,29 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [CLAIM] 2026-11-23T12:33:05Z from=zcode ttl=12h scope=internal/ai/gateway/rag.go,internal/ai/gateway/rag_concurrency_test.go,internal/knowledge/retrieval.go,internal/knowledge/retrieval_concurrency_test.go,CHANGELOG.md,docs/CLAIMS.md note=issue #149：VectorStore/KnowledgeStore 共享 map 并发读写修复；外部 overlay 已实证 vector data race + concurrent map fatal、knowledge data race；只做锁与可变引用边界/竞态回归，不做持久化或跨副本语义改造
 [CLAIM] 2026-11-24T00:00:41Z from=zcode ttl=12h scope=go.mod,go.sum,docs/third-party-licenses.md,docs/third-party-licenses-npm.md note=PR #158 security 基线：govulncheck 实证 OTel 1.45.0 两项可达漏洞，升级 1.47.0 + 传递依赖与许可证清单；独立提交，不改并发修复语义
 [CLAIM] 2026-11-24T00:56:38Z from=zcode ttl=12h scope=services/alert-svc/go.mod,services/alert-svc/go.sum,services/auth-svc/go.mod,services/auth-svc/go.sum,services/config-svc/go.mod,services/config-svc/go.sum,services/device-svc/go.mod,services/device-svc/go.sum,services/gpu-svc/go.mod,services/gpu-svc/go.sum,services/log-svc/go.mod,services/log-svc/go.sum,services/task-svc/go.mod,services/task-svc/go.sum,services/tf-provider/go.mod note=PR #158 E2E 编译红补齐：根模块 OTel 升级后同步全部子模块；task-svc Linux kafka 构建及其余模块编译测试通过
+[DONE] 2026-11-22T22:26:20Z from=kilo scope=internal/datatuning/sizing.go,internal/datatuning/sizing_test.go,internal/controlplane/data_tuning_ops.go,internal/controlplane/data_tuning_ops_test.go,internal/controlplane/server_lifecycle.go,CHANGELOG.md note=批次75 收口（大数据 sizing 调优引擎 + /data/tuning API；本地提交 01d71938，未推送）
+
+[CLAIM] 2026-11-23T11:05:00Z from=kilo ttl=8h scope=internal/governance/,internal/controlplane/data_governance_ops.go,internal/controlplane/data_governance_ops_test.go,internal/controlplane/server_lifecycle.go,internal/config/config.go,CHANGELOG.md,docs/CLAIMS.md note=批次76 数据治理面（DQ 规则/PII/保留策略/目录/Atlas 血缘）；本地提交不推送
+[CLAIM] 2026-11-23T16:30:00Z from=kilo ttl=8h scope=internal/dataetl/,internal/controlplane/data_etl_ops.go note=批次77 ETL 服务：EtlJob/EtlRun 模型 + 内存存储 + 适配器（SeaTunnel/DataX/Sqoop/Spark/Airflow/Kafka Connect/Flink-CDC/Canal）+ /api/v1/etl/{jobs,runs} API + 重试/调度/日志
+[CLAIM] 2026-11-23T17:30:00Z from=kilo ttl=8h scope=internal/lakehouse/,internal/controlplane/lakehouse_ops.go note=批次78 湖仓维护 + 批/流统一 job：Iceberg/Delta/Hudi compaction/snapshot-expiry/orphan-cleanup/manifest-rewrite + 统一 JobRun 模型（与 EtlRun 共享） + /api/v1/lakehouse/* API
+[DONE] 2026-11-23T18:00:00Z from=kilo scope=internal/lakehouse/,internal/controlplane/lakehouse_ops.go note=批次78 收口（湖仓维护 + 批/流统一 job + /api/v1/lakehouse/* API）
+[DONE] 2026-11-23T20:00:00Z from=kilo scope=web/enterprise/src/ note=批次79 收口（数据平台前端：4 视图 + 2 API + 路由 + i18n + 导航分组）
+[DONE] 2026-11-23T11:00:00Z from=kilo scope=internal/governance/,internal/controlplane/data_governance_ops.go note=批次76 收口（数据治理平面：6 类 DQ 规则 + 5 类 PII 脱敏 + 3 类保留策略 + 目录 + Atlas 血缘代理 + 迁移 037）
+
+ 
+ [ D O N E ]   2 0 2 6 - 1 1 - 2 4 T 1 0 : 3 0 : 0 0 Z   f r o m = k i l o   s c o p e = i n t e r n a l / d a t a e t l / , i n t e r n a l / c o n t r o l p l a n e / d a t a _ e t l _ o p s . g o , i n t e r n a l / c o n t r o l p l a n e / d a t a _ e t l _ o p s _ t e s t . g o , i n t e r n a l / c o n t r o l p l a n e / s e r v e r _ l i f e c y c l e . g o   n o t e = yb!k7 7   6e�S�E T L   
+g�R�!j�W+ �QX[X[�P+ 8   �M�hV+ / a p i / v 1 / e t l / { j o b s , r u n s } + �y7b���y+ ��y7b  4 0 3 + ͑
+Y�1unt+ QY�~KmՋ	�  c o m m i t = b 3 3 9 4 0 a 7 
+ 
+[DONE] 2026-11-24T10:30:00Z from=kilo scope=internal/dataetl/,internal/controlplane/data_etl_ops.go,internal/controlplane/data_etl_ops_test.go,internal/controlplane/server_lifecycle.go note=批次77 收口（ETL 服务：模型+内存存储+8 适配器+/api/v1/etl/{jobs,runs}+租户隔离+跨租户 403+重复路由清理+契约测试） commit=b33940a7
+[ R E L E A S E ]     f r o m = k i l o   s c o p e = i n t e r n a l / d a t a e t l / , i n t e r n a l / c o n t r o l p l a n e / d a t a _ e t l _ o p s . g o   r e a s o n = e x p i r e d   c l a i m   r e l e a s e d ;   w o r k   i n   H E A D   ( 8 0 f 1 2 8 4 3 2 8 3 4 7 3 2 4 e 1 4 9 4 9 f b f 2 f 5 5 8 3 7 9 6 3 0 8 2 3 c ) 
+ [ R E L E A S E ]     f r o m = k i l o   s c o p e = i n t e r n a l / g o v e r n a n c e / , i n t e r n a l / c o n t r o l p l a n e / d a t a _ g o v e r n a n c e _ o p s . g o , i n t e r n a l / c o n t r o l p l a n e / d a t a _ g o v e r n a n c e _ o p s _ t e s t . g o , i n t e r n a l / c o n t r o l p l a n e / s e r v e r _ l i f e c y c l e . g o , i n t e r n a l / c o n f i g / c o n f i g . g o , C H A N G E L O G . m d , d o c s / C L A I M S . m d   r e a s o n = e x p i r e d   c l a i m   r e l e a s e d ;   w o r k   i n   H E A D   ( 5 4 f 3 c 7 8 2 c 3 6 3 6 a e 3 a 9 5 9 e a 2 c 2 1 b b f b 5 c b 8 0 6 1 8 5 f ) 
+ 
+[RELEASE] 2026-11-24T11:32:09Z from=kilo scope=internal/dataetl/,internal/controlplane/data_etl_ops.go reason=expired claim released; work in HEAD (80f1284328347324e14949fbf2f558379630823c)
+[RELEASE] 2026-11-24T11:32:09Z from=kilo scope=internal/governance/,internal/controlplane/data_governance_ops.go,internal/controlplane/data_governance_ops_test.go,internal/controlplane/server_lifecycle.go,internal/config/config.go,CHANGELOG.md,docs/CLAIMS.md reason=expired claim released; work in HEAD (54f3c782c3636ae3a959ea2c21bbfb5cb806185f)
+[CLAIM] 2026-11-24T14:56:08Z from=qoder ttl=4h scope=internal/datatuning/sizing_test.go,internal/controlplane/data_governance_ops.go,internal/controlplane/lakehouse_ops.go,internal/controlplane/data_etl_ops.go,docs/CLAIMS.md note=用户授权接修main CI的6条golangci-lint红线；仅处理错误返回与确定性断言，不改FROZEN区，不提交不推送
+[CLAIM] 2026-11-24T14:56:08Z from=qoder ttl=4h scope=docs/COORDINATION-BOARD.md note=coord-gate自动回写main lint修复批状态
+[NOTE] 2026-11-24T16:14:41Z from=qoder scope=internal/datatuning/sizing_test.go,internal/controlplane/data_governance_ops.go,internal/controlplane/lakehouse_ops.go,internal/controlplane/data_etl_ops.go,docs/CLAIMS.md reason=用户追加授权提交并推送本批lint修复；范围仍为4个Go文件与CLAIMS，不含合并、PR留言、删分支或两条全量继承红点
+[DONE] 2026-11-24T16:15:27Z from=qoder scope=internal/datatuning/sizing_test.go,internal/controlplane/data_governance_ops.go,internal/controlplane/lakehouse_ops.go,internal/controlplane/data_etl_ops.go,docs/CLAIMS.md commit=c0c76e4825316a74e60554dd287c66b92b5c718c note=六处lint修复本地验证完成；钉版lint全仓0issues，构建及相关测试通过
+[RELEASE] 2026-11-24T16:15:27Z from=qoder scope=docs/COORDINATION-BOARD.md reason=coord-gate重写会误删主线他线状态，板面文件未改，释放该scope
 [CLAIM] 2026-11-24T21:00:00Z from=zcode ttl=12h scope=deploy/scripts/chaos-recovery-matrix.sh,deploy/scripts/chaos-recovery-matrix.selftest.sh,deploy/scripts/chaos-recovery-matrix.md,CHANGELOG.md,.gitignore,docs/CLAIMS.md note=issue #152：完整 compose 依赖故障与恢复一致性矩阵（MySQL/Redis/Kafka/分区）；真实栈四场景全 PASS + 离线 selftest PASS；记录 F-152-kafka-1/healthz-1/partition-1 三项发现；只交付钻机与证据，不夹带产品修复

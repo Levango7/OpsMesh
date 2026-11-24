@@ -14,6 +14,7 @@
     "system": "System",
     "groupAutomation": "Automation",
     "groupAiCompute": "AI & Compute",
+    "groupDataPlatform": "Data Platform",
     "groupPlatform": "Platform",
     "home": "Dashboard",
     "devices": "Devices",
@@ -26,6 +27,10 @@
     "db_ops": "DB Advanced Ops",
     "oracle_ops": "Oracle Advanced Ops",
     "bigdata_ops": "Big Data Ops",
+    "governance": "Data Governance",
+    "etl": "ETL Jobs",
+    "lakehouse": "Lakehouse",
+    "tuning": "Tuning Engine",
     "diststorage_ops": "Dist Storage Ops",
     "mwdep": "Middleware",
     "k8s": "K8s",
@@ -505,5 +510,34 @@
     "tab_seaweedfs": "SeaweedFS",
     "tab_nfs": "NFS",
     "tab_samba": "Samba"
+  },
+  "governance": {
+    "title": "Data Governance",
+    "subtitle": "Data quality, PII masking, retention, catalog",
+    "tab_rules": "Rules",
+    "tab_pii": "PII",
+    "tab_retention": "Retention",
+    "tab_catalog": "Catalog",
+    "tab_lineage": "Lineage"
+  },
+  "etl": {
+    "title": "ETL Jobs",
+    "subtitle": "Data extraction and transformation",
+    "tab_jobs": "Jobs",
+    "tab_runs": "Runs"
+  },
+  "lakehouse": {
+    "title": "Lakehouse",
+    "subtitle": "Iceberg/Delta/Hudi maintenance",
+    "tab_tables": "Tables",
+    "tab_maintenance": "Maintenance",
+    "tab_jobs": "Jobs",
+    "tab_runs": "Runs"
+  },
+  "tuning": {
+    "title": "Tuning Engine",
+    "subtitle": "Big data sizing recommendations",
+    "tab_profiles": "Profiles",
+    "tab_recommend": "Recommend"
   }
 }

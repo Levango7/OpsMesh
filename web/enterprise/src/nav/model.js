@@ -20,6 +20,7 @@ export const GROUP_ORDER = [
   '可观测性',
   '自动化',
   'AI 算力',
+  '数据平台',
   '平台',
   '系统管理'
 ]
@@ -32,6 +33,7 @@ export const GROUP_LABELS = {
   '可观测性': 'nav.observability',
   '自动化': 'nav.groupAutomation',
   'AI 算力': 'nav.groupAiCompute',
+  '数据平台': 'nav.groupDataPlatform',
   '平台': 'nav.groupPlatform',
   '系统管理': 'nav.system'
 }
