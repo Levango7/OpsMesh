@@ -28,6 +28,9 @@
 ## [Unreleased] — 2026-11-24（批次81：前端 ops 视图格式化 + api-usage 账本清理 + 中间件模板守卫扩展 + PG 项目登记）
 
 - **2026-11-24 批次81 — 前端 ops 视图格式化 + api-usage 账本清理 + 中间件模板守卫扩展 + PG 项目登记**：web/enterprise/src/views/{ETL,Governance,Lakehouse,Tuning}View.vue 格式化；api-usage 账本清理移除 stale pipeline.js|getRun 条目；中间件模板守卫扩展覆盖 oracle/ambari/cloudera/moosefs/juicefs；docs/projects 登记 PG 高级运维项目。
+## [Unreleased] — 2026-11-24（A3-3 UPSERT 方言化口径更正）
+
+- **2026-11-24 A3-3 口径更正**：上文批次66「能力边界」中仍写「`sql_abac_policy.go:80`、`sql_budget.go:175`、`UpsertControlplaneInstance` 三处仍写 MySQL 专有 upsert 语法，属 A3-3 范围，本批未方言化」——该表述已被本批覆盖：48 条真实 UPSERT 收口为 45 处通用 `Dialect.Upsert` 调用 + 3 个语义特例，PG 轨输出 `ON CONFLICT ... DO UPDATE`，MySQL 轨参数顺序与写后结果保持不变。「PG 下业务写入路径尚不可用」不再适用于这些 UPSERT 写路径。CI `build-test` 已接 `postgres:15` service 并以 `OPSMESH_TEST_PG_DSN` 跑真库集成，PG 分支不再只在本地验证；残余边界见 `docs/pg-dialect-a3-2-a3-3-plan-2026-11-23.md`。
 
 ## [Unreleased] — 2026-11-24（issue #149：AI 内存存储并发安全）
 

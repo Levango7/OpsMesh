@@ -37,6 +37,22 @@ env:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    # PostgreSQL 测试后端：A3-3 的 48 条 UPSERT 真库 PREPARE 与并发/语义回归
+    # 全部经 OPSMESH_TEST_PG_DSN 门控。不接 service 时这些用例在 CI 全 skip，
+    # 「有测试」不等于「被测过」——本地 PG15 通过不能替代 CI 常驻门禁。
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:15
+        env:
+          POSTGRES_PASSWORD: pgpass
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      OPSMESH_TEST_PG_DSN: "postgres://postgres:pgpass@127.0.0.1:5432/postgres?sslmode=disable"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
