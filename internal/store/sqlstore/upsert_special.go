@@ -28,8 +28,9 @@ package sqlstore
 
 // upsertLeaderLease 生成 leader_lease 幂等抢占 UPSERT。
 //
-// 语义：已存在且租约未过期且持有者非本实例 ⇒ 拒绝接管（仅刷新
-// updated_at）；其余情形（无行/已过期/本人持有）⇒ 接管并续租。
+// 语义：已存在且租约未过期且持有者非本实例 ⇒ 拒绝接管（holder、
+// expires_at、updated_at 均保持旧值）；其余情形（无行/已过期/
+// 本人持有）⇒ 接管并续租。
 // MySQL 原样保留三占位条件与从左到右求值；PG 用 CASE WHEN，
 // 三个条件都基于旧行，ELSE 保留旧列。
 // 参数顺序固定：instanceID, exp, now, now, now, now
@@ -43,9 +44,9 @@ func upsertLeaderLease(d Dialect) string {
 		ON CONFLICT ("id") DO UPDATE SET
 			"holder" = CASE WHEN "leader_lease"."expires_at" < $4 OR "leader_lease"."holder" = EXCLUDED."holder"
 				THEN EXCLUDED."holder" ELSE "leader_lease"."holder" END,
-			"expires_at" = CASE WHEN "leader_lease"."expires_at" < $4 OR "leader_lease"."holder" = EXCLUDED."holder"
+			"expires_at" = CASE WHEN "leader_lease"."expires_at" < $5 OR "leader_lease"."holder" = EXCLUDED."holder"
 				THEN EXCLUDED."expires_at" ELSE "leader_lease"."expires_at" END,
-			"updated_at" = CASE WHEN "leader_lease"."expires_at" < $4 OR "leader_lease"."holder" = EXCLUDED."holder"
+			"updated_at" = CASE WHEN "leader_lease"."expires_at" < $6 OR "leader_lease"."holder" = EXCLUDED."holder"
 				THEN EXCLUDED."updated_at" ELSE "leader_lease"."updated_at" END`
 		return d.ConvertPlaceholders(query)
 	default:

@@ -805,6 +805,8 @@ func TestSpecialUpsertSQL(t *testing.T) {
 	for _, token := range []string{
 		`ON CONFLICT ("id") DO UPDATE SET`,
 		`CASE WHEN "leader_lease"."expires_at" < $4 OR "leader_lease"."holder" = EXCLUDED."holder"`,
+		`CASE WHEN "leader_lease"."expires_at" < $5 OR "leader_lease"."holder" = EXCLUDED."holder"`,
+		`CASE WHEN "leader_lease"."expires_at" < $6 OR "leader_lease"."holder" = EXCLUDED."holder"`,
 		`THEN EXCLUDED."holder" ELSE "leader_lease"."holder" END`,
 	} {
 		if !strings.Contains(pg, token) {
@@ -848,7 +850,7 @@ Expected: 编译失败，三个函数未定义。
 `upsertLeaderLease`：
 
 - MySQL 原样保留三占位条件与从左到右语义。
-- PG 使用 `CASE WHEN`，三个条件都基于旧行：`leader_lease.expires_at < $n OR leader_lease.holder = EXCLUDED.holder`；ELSE 保留旧列。
+- PG 使用 `CASE WHEN`，三个条件都基于旧行：`leader_lease.expires_at < $4/$5/$6 OR leader_lease.holder = EXCLUDED.holder`（三个 CASE 分别绑定第 4/5/6 个 now 实参，不得复用同一参数下标）；ELSE 保留旧列。
 - 参数顺序必须保持 `instanceID, exp, now, now, now, now`。
 
 `upsertABACPolicy`：
