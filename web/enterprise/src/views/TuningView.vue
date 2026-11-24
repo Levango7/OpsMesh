@@ -7,9 +7,11 @@
     </div>
     <div v-if="errorMsg" class="poll-err" data-testid="tuning-error">{{ errorMsg }}</div>
     <div class="tabbar" data-testid="tuning-tabs">
-      <Button v-for="t in tabs" :key="t.key" variant="ghost" size="md"
+      <Button
+        v-for="t in tabs" :key="t.key" variant="ghost" size="md"
         :class="['tab', { active: activeTab === t.key }]" @click="activeTab = t.key"
-        :data-testid="'tuning-tab-' + t.key">{{ $t('tuning.tab_' + t.key) }}</Button>
+        :data-testid="'tuning-tab-' + t.key"
+      >{{ $t('tuning.tab_' + t.key) }}</Button>
     </div>
     <div class="result" v-if="result" data-testid="tuning-result">
       <pre>{{ resultText }}</pre>

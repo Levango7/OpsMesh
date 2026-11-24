@@ -7,9 +7,11 @@
     </div>
     <div v-if="errorMsg" class="poll-err" data-testid="lakehouse-error">{{ errorMsg }}</div>
     <div class="tabbar" data-testid="lakehouse-tabs">
-      <Button v-for="t in tabs" :key="t.key" variant="ghost" size="md"
+      <Button
+        v-for="t in tabs" :key="t.key" variant="ghost" size="md"
         :class="['tab', { active: activeTab === t.key }]" @click="activeTab = t.key"
-        :data-testid="'lakehouse-tab-' + t.key">{{ $t('lakehouse.tab_' + t.key) }}</Button>
+        :data-testid="'lakehouse-tab-' + t.key"
+      >{{ $t('lakehouse.tab_' + t.key) }}</Button>
     </div>
     <div class="result" v-if="result" data-testid="lakehouse-result">
       <pre>{{ resultText }}</pre>

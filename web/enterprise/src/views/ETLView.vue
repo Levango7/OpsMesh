@@ -7,9 +7,11 @@
     </div>
     <div v-if="errorMsg" class="poll-err" data-testid="etl-error">{{ errorMsg }}</div>
     <div class="tabbar" data-testid="etl-tabs">
-      <Button v-for="t in tabs" :key="t.key" variant="ghost" size="md"
+      <Button
+        v-for="t in tabs" :key="t.key" variant="ghost" size="md"
         :class="['tab', { active: activeTab === t.key }]" @click="activeTab = t.key"
-        :data-testid="'etl-tab-' + t.key">{{ $t('etl.tab_' + t.key) }}</Button>
+        :data-testid="'etl-tab-' + t.key"
+      >{{ $t('etl.tab_' + t.key) }}</Button>
     </div>
     <div class="result" v-if="result" data-testid="etl-result">
       <pre>{{ resultText }}</pre>
