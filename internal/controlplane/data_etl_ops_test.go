@@ -129,8 +129,8 @@ func TestETLJobsCrossTenant(t *testing.T) {
 		"action": "get",
 		"job":    map[string]interface{}{"id": id},
 	}, "tenantB")
-	if rec2.Code != http.StatusNotFound {
-		t.Fatalf("cross-tenant get: got %d, want 404: %s", rec2.Code, rec2.Body.String())
+	if rec2.Code != http.StatusForbidden {
+		t.Fatalf("cross-tenant get: got %d, want 403: %s", rec2.Code, rec2.Body.String())
 	}
 }
 

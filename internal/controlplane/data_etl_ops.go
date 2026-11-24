@@ -89,6 +89,10 @@ func (s *Server) handleETLJobs(w http.ResponseWriter, r *http.Request) {
 		req.Job.TenantID = actx.TenantID
 		updated, err := s.etlStore().UpdateJob(req.Job)
 		if err != nil {
+			if err == dataetl.ErrTenantMismatch {
+				paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+				return
+			}
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
 		}
@@ -104,6 +108,10 @@ func (s *Server) handleETLJobs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.etlStore().DeleteJob(actx.TenantID, id); err != nil {
+			if err == dataetl.ErrTenantMismatch {
+				paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+				return
+			}
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
 		}
@@ -120,6 +128,10 @@ func (s *Server) handleETLJobs(w http.ResponseWriter, r *http.Request) {
 		}
 		job, err := s.etlStore().GetJob(actx.TenantID, id)
 		if err != nil {
+			if err == dataetl.ErrTenantMismatch {
+				paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+				return
+			}
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 			return
 		}
@@ -237,6 +249,10 @@ func (s *Server) handleETLRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		run, err := s.etlStore().GetRun(actx.TenantID, req.RunID)
 		if err != nil {
+			if err == dataetl.ErrTenantMismatch {
+				paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+				return
+			}
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "run not found"})
 			return
 		}
@@ -262,6 +278,10 @@ func (s *Server) handleETLRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		run, err := s.etlStore().GetRun(actx.TenantID, req.RunID)
 		if err != nil {
+			if err == dataetl.ErrTenantMismatch {
+				paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+				return
+			}
 			paginate.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "run not found"})
 			return
 		}
