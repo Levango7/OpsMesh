@@ -175,9 +175,13 @@ func (m *MemoryStore) ReportResult(result *models.TaskResult) error {
 	if result.ClaimEpoch != 0 && result.ClaimEpoch != t.ClaimEpoch {
 		return ErrClaimEpochMismatch
 	}
+	prev := m.results[result.TaskID]
 	m.results[result.TaskID] = result
 	if result.ExitCode == 0 {
 		t.Status = models.TaskStatusDone
+	} else if prev != nil && prev.ClaimEpoch == result.ClaimEpoch && prev.ExitCode != 0 {
+		// 该 claim 的失败已记录过 ⇒ 这是重复上报（at-least-once 重试上报），
+		// 不重复计重试、不改状态，防止「一次真失败 + 一次重复上报」被误判多次重试而提前死信。
 	} else {
 		t.RetryCount++
 		if t.RetryCount >= t.MaxRetries {
