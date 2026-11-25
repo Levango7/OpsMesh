@@ -63,12 +63,14 @@ func (s *SQLStore) CreateAlertRule(r *AlertRule) *AlertRule {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO alert_rules (id, tenant_id, metric, op, threshold, for_duration, severity, message, enabled, created_at, created_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), metric=VALUES(metric), op=VALUES(op),
-		   threshold=VALUES(threshold), for_duration=VALUES(for_duration), severity=VALUES(severity),
-		   message=VALUES(message), enabled=VALUES(enabled), created_by=VALUES(created_by)`,
+	query := s.dialect.Upsert(
+		"alert_rules",
+		[]string{"id", "tenant_id", "metric", "op", "threshold", "for_duration", "severity", "message", "enabled", "created_at", "created_by"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"tenant_id", "metric", "op", "threshold", "for_duration", "severity", "message", "enabled", "created_by"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		r.ID, r.TenantID, r.Metric, r.Op, r.Threshold, r.ForDuration, r.Severity, r.Message,
 		boolToInt(r.Enabled), r.CreatedAt, nullString(r.CreatedBy)); err != nil {
 		storefail.Record("[store] CreateAlertRule 失败: %v", err)

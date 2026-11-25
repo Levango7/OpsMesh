@@ -72,14 +72,14 @@ func (s *SQLStore) SaveGatewayRoute(rule *model.GatewayRoute) error {
 			storefail.Record("[store] SaveGatewayRoute methods 序列化失败: %v", err)
 		}
 	}
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO gateway_routes
-		 (id, tenant_id, name, path_prefix, target_backend, methods, rate_limit_per_sec, timeout_ms, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), path_prefix=VALUES(path_prefix),
-		   target_backend=VALUES(target_backend), methods=VALUES(methods),
-		   rate_limit_per_sec=VALUES(rate_limit_per_sec), timeout_ms=VALUES(timeout_ms),
-		   enabled=VALUES(enabled), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"gateway_routes",
+		[]string{"id", "tenant_id", "name", "path_prefix", "target_backend", "methods", "rate_limit_per_sec", "timeout_ms", "enabled", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"tenant_id", "id"},
+		[]string{"name", "path_prefix", "target_backend", "methods", "rate_limit_per_sec", "timeout_ms", "enabled", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		rule.ID, rule.TenantID, rule.Name, rule.PathPrefix, rule.TargetBackend, methods,
 		rule.RateLimitPerSec, rule.TimeoutMs, rule.Enabled, rule.CreatedAt, rule.UpdatedAt); err != nil {
 		storefail.Record("[store] SaveGatewayRoute 失败 %s/%s: %v", rule.TenantID, rule.ID, err)

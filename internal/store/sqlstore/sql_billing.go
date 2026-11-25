@@ -116,11 +116,14 @@ func (s *SQLStore) CreateBillingPlan(plan *SubscriptionPlan) *SubscriptionPlan {
 	}
 	featuresJSON := marshalPlanFeatures(plan.Features)
 	resourceLimitsJSON := marshalPlanResourceLimits(plan.ResourceLimits)
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO billing_plans (id, name, price, interval_spec, features, resource_limits, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), interval_spec=VALUES(interval_spec),
-		 features=VALUES(features), resource_limits=VALUES(resource_limits)`,
+	query := s.dialect.Upsert(
+		"billing_plans",
+		[]string{"id", "name", "price", "interval_spec", "features", "resource_limits", "created_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "price", "interval_spec", "features", "resource_limits"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		plan.ID, plan.Name, plan.Price, plan.Interval, featuresJSON, resourceLimitsJSON,
 		plan.CreatedAt); err != nil {
 		storefail.Record("[store] CreateBillingPlan 插入失败 (plan=%s): %v", plan.ID, err)
@@ -258,11 +261,14 @@ func (s *SQLStore) CreateSubscription(sub *Subscription) *Subscription {
 	if sub.CreatedAt.IsZero() {
 		sub.CreatedAt = time.Now().UTC()
 	}
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO subscriptions (id, tenant_id, plan_id, status, started_at, expires_at, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE plan_id=VALUES(plan_id), status=VALUES(status),
-		 started_at=VALUES(started_at), expires_at=VALUES(expires_at)`,
+	query := s.dialect.Upsert(
+		"subscriptions",
+		[]string{"id", "tenant_id", "plan_id", "status", "started_at", "expires_at", "created_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"plan_id", "status", "started_at", "expires_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		sub.ID, sub.TenantID, sub.PlanID, sub.Status, sub.StartedAt, sub.ExpiresAt,
 		sub.CreatedAt); err != nil {
 		storefail.Record("[store] CreateSubscription 插入失败 (sub=%s): %v", sub.ID, err)
@@ -451,12 +457,14 @@ func (s *SQLStore) CreateInvoice(inv *Invoice) *Invoice {
 		inv.CreatedAt = time.Now().UTC()
 	}
 	itemsJSON := marshalInvoiceItems(inv.Items)
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO invoices (id, tenant_id, subscription_id, amount, period_start, period_end, status, items, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE subscription_id=VALUES(subscription_id), amount=VALUES(amount),
-		 period_start=VALUES(period_start), period_end=VALUES(period_end), status=VALUES(status),
-		 items=VALUES(items)`,
+	query := s.dialect.Upsert(
+		"invoices",
+		[]string{"id", "tenant_id", "subscription_id", "amount", "period_start", "period_end", "status", "items", "created_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"subscription_id", "amount", "period_start", "period_end", "status", "items"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		inv.ID, inv.TenantID, inv.SubscriptionID, inv.Amount, inv.PeriodStart, inv.PeriodEnd,
 		inv.Status, itemsJSON, inv.CreatedAt); err != nil {
 		storefail.Record("[store] CreateInvoice 插入失败 (invoice=%s): %v", inv.ID, err)

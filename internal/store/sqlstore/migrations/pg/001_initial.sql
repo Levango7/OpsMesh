@@ -18,7 +18,7 @@
 -- 语义分歧（PG 侧有意不搬，登记备查）：
 --   - ci_items.ci_attrs_text 生成列与 FULLTEXT/ngram 索引省略：检索消费路径在 Go 侧，
 --     PG 检索对齐列 A3-2
---   - ON UPDATE CURRENT_TIMESTAMP×4 不建触发器：全仓 UPDATE 均显式写 updated_at
+--   - lifecycle_jobs 的 UPSERT 由专用方言适配显式补 `updated_at`；其余 UPDATE 保持显式写法。
 --   - schema_migrations 不入此文件：dialect DDL 建表；PG 首装仅含 001
 --   - 种子数据不入此文件：与 MySQL 侧一致，种子全在 Go 侧（seedRBAC + INSERT IGNORE 链）
 --   - down.sql 不补：MySQL 侧同样无 down.sql，无消费者

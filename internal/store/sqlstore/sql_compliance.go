@@ -91,10 +91,14 @@ func (s *SQLStore) SaveReport(tenantID string, r *ComplianceReport) *ComplianceR
 		r.CreatedAt = now
 	}
 	resultsJSON := marshalComplianceResults(r.Results)
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO compliance_reports (id, tenant_id, device_id, results, score, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE device_id=VALUES(device_id), results=VALUES(results), score=VALUES(score)`,
+	query := s.dialect.Upsert(
+		"compliance_reports",
+		[]string{"id", "tenant_id", "device_id", "results", "score", "created_at"},
+		[]string{"?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"device_id", "results", "score"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		r.ID, r.TenantID, r.DeviceID, resultsJSON, r.Score, r.CreatedAt); err != nil {
 		storefail.Record("[store] SaveReport 插入失败 (tenant=%s id=%s): %v", tenantID, r.ID, err)
 		return nil

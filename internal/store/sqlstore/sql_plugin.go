@@ -79,12 +79,14 @@ func (s *SQLStore) CreatePlugin(plugin *Plugin) *Plugin {
 	if plugin.CreatedAt.IsZero() {
 		plugin.CreatedAt = time.Now().UTC()
 	}
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO plugins (id, name, version, description, author, type, download_url, checksum, installed, enabled, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), version=VALUES(version), description=VALUES(description),
-		 author=VALUES(author), type=VALUES(type), download_url=VALUES(download_url),
-		 checksum=VALUES(checksum), installed=VALUES(installed), enabled=VALUES(enabled)`,
+	query := s.dialect.Upsert(
+		"plugins",
+		[]string{"id", "name", "version", "description", "author", "type", "download_url", "checksum", "installed", "enabled", "created_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "version", "description", "author", "type", "download_url", "checksum", "installed", "enabled"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		plugin.ID, plugin.Name, plugin.Version, plugin.Description, plugin.Author, plugin.Type,
 		plugin.DownloadURL, plugin.Checksum, pluginBoolInt(plugin.Installed),
 		pluginBoolInt(plugin.Enabled), plugin.CreatedAt); err != nil {

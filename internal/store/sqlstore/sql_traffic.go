@@ -103,14 +103,14 @@ func (s *SQLStore) CreatePolicy(tenantID string, p *TrafficPolicy) *TrafficPolic
 	}
 	p.UpdatedAt = now
 	canaryJSON := marshalCanaryWeights(p.CanaryWeights)
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO traffic_policies (id, tenant_id, name, service_name, type, canary_weights,
-		 mirror_percent, timeout, retries, retry_timeout, max_conns, max_requests, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), service_name=VALUES(service_name), type=VALUES(type),
-		 canary_weights=VALUES(canary_weights), mirror_percent=VALUES(mirror_percent), timeout=VALUES(timeout),
-		 retries=VALUES(retries), retry_timeout=VALUES(retry_timeout), max_conns=VALUES(max_conns),
-		 max_requests=VALUES(max_requests), status=VALUES(status), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"traffic_policies",
+		[]string{"id", "tenant_id", "name", "service_name", "type", "canary_weights", "mirror_percent", "timeout", "retries", "retry_timeout", "max_conns", "max_requests", "status", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "service_name", "type", "canary_weights", "mirror_percent", "timeout", "retries", "retry_timeout", "max_conns", "max_requests", "status", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		p.ID, p.TenantID, p.Name, p.ServiceName, p.Type, canaryJSON,
 		p.MirrorPercent, p.Timeout, p.Retries, p.RetryTimeout,
 		p.MaxConns, p.MaxRequests, p.Status, p.CreatedAt, p.UpdatedAt); err != nil {

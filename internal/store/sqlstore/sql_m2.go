@@ -87,12 +87,14 @@ func (s *SQLStore) CreateSilence(sr *SilenceRule) *SilenceRule {
 	matchLabels, _ := json.Marshal(sr.MatchLabels)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO alert_silences (id, tenant_id, match_labels, starts_at, ends_at, created_by, reason, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE tenant_id=VALUES(tenant_id), match_labels=VALUES(match_labels),
-		   starts_at=VALUES(starts_at), ends_at=VALUES(ends_at), created_by=VALUES(created_by),
-		   reason=VALUES(reason)`,
+	query := s.dialect.Upsert(
+		"alert_silences",
+		[]string{"id", "tenant_id", "match_labels", "starts_at", "ends_at", "created_by", "reason", "created_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"tenant_id", "match_labels", "starts_at", "ends_at", "created_by", "reason"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		sr.ID, sr.TenantID, matchLabels, nullTime(sr.StartAt), nullTime(sr.EndAt),
 		nullString(sr.CreatedBy), nullString(sr.Reason), sr.CreatedAt); err != nil {
 		storefail.Record("[store] CreateSilence 失败: %v", err)
@@ -221,11 +223,14 @@ func (s *SQLStore) CreateNotifyChannel(c *NotifyChannel) *NotifyChannel {
 	c.UpdatedAt = now
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO notify_channels (id, tenant_id, name, type, config, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), type=VALUES(type), config=VALUES(config),
-		   enabled=VALUES(enabled), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"notify_channels",
+		[]string{"id", "tenant_id", "name", "type", "config", "enabled", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "type", "config", "enabled", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		c.ID, c.TenantID, c.Name, c.Type, c.Config, boolToInt(c.Enabled), c.CreatedAt, c.UpdatedAt); err != nil {
 		storefail.Record("[store] CreateNotifyChannel 失败: %v", err)
 		return nil
@@ -369,11 +374,14 @@ func (s *SQLStore) CreateNotifyTemplate(t *NotifyTemplate) *NotifyTemplate {
 	t.UpdatedAt = now
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO notify_templates (id, tenant_id, name, type, title, body, format, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), type=VALUES(type), title=VALUES(title),
-		   body=VALUES(body), format=VALUES(format), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"notify_templates",
+		[]string{"id", "tenant_id", "name", "type", "title", "body", "format", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "type", "title", "body", "format", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		t.ID, t.TenantID, t.Name, t.Type, t.Title, t.Body, nullString(t.Format), t.CreatedAt, t.UpdatedAt); err != nil {
 		storefail.Record("[store] CreateNotifyTemplate 失败: %v", err)
 		return nil

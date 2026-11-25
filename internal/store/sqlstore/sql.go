@@ -1018,18 +1018,13 @@ func (s *SQLStore) RenewLeadership(ttl time.Duration) bool {
 	defer cancel()
 	now := time.Now().UTC()
 	exp := now.Add(ttl)
-	// 3 个 VALUES 占位（holder, expires_at, updated_at；id 为常量 1）+ 3 个 ON DUPLICATE 条件占位（均为 now）。
+	// 3 个 VALUES 占位（holder, expires_at, updated_at；id 为常量 1）+ 3 个 ON 侧条件占位（均为 now）。
 	// 条件为 (租约已过期 OR 当前即本实例持有)：过期则抢占；本实例持有且未过期则续租（刷新 expires_at）。
 	// 修复：原逻辑仅 IF(expires_at < now)，本实例持有时租约不续期，每 TTL 周期被迫易主一次。
-	// 注意 ON DUPLICATE KEY UPDATE 从左到右求值：后续 IF 引用 holder 时取第 1 行赋值后的新值。
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO leader_lease (id, holder, expires_at, updated_at)
-		VALUES (1, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			holder=IF(expires_at < ? OR holder=VALUES(holder), VALUES(holder), holder),
-			expires_at=IF(expires_at < ? OR holder=VALUES(holder), VALUES(expires_at), expires_at),
-			updated_at=IF(expires_at < ? OR holder=VALUES(holder), VALUES(updated_at), updated_at)
-	`, s.instanceID, exp, now, now, now, now); err != nil {
+	// 注意 MySQL ON DUPLICATE KEY UPDATE 从左到右求值：后续 IF 引用 holder 时取第 1 行赋值后的新值。
+	// 方言特例构建器见 upsert_special.go（参数顺序不变：instanceID, exp, now, now, now, now）。
+	if _, err := s.db.ExecContext(ctx, upsertLeaderLease(s.dialect),
+		s.instanceID, exp, now, now, now, now); err != nil {
 		storefail.Record("[store] RenewLeadership 抢占失败: %v", err)
 		s.mu.Lock()
 		s.isLeader = false
@@ -1089,13 +1084,11 @@ type LifecycleJob struct {
 // CreateLifecycleJob 创建生命周期作业（幂等：同一 cluster+kind 仅允许一个非终态）
 func (s *SQLStore) CreateLifecycleJob(ctx context.Context, job *LifecycleJob) error {
 	specJSON, _ := json.Marshal(job.SpecJSON)
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO lifecycle_jobs (id, cluster_id, kind, tenant_id, phase, progress, current_step, spec_json, lock_owner, version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-		ON DUPLICATE KEY UPDATE
-			id=VALUES(id), phase=VALUES(phase), progress=VALUES(progress), current_step=VALUES(current_step),
-			spec_json=VALUES(spec_json), lock_owner=VALUES(lock_owner), version=VALUES(version)
-	`, job.ID, job.ClusterID, job.Kind, job.TenantID, job.Phase, job.Progress, job.CurrentStep, specJSON, job.LockOwner)
+	// 方言特例构建器见 upsert_special.go：MySQL 依赖列定义
+	// ON UPDATE CURRENT_TIMESTAMP(3) 隐式刷新 updated_at；PG 显式补
+	// updated_at=now()。参数顺序与个数不变（9 占位）。
+	_, err := s.db.ExecContext(ctx, upsertLifecycleJob(s.dialect),
+		job.ID, job.ClusterID, job.Kind, job.TenantID, job.Phase, job.Progress, job.CurrentStep, specJSON, job.LockOwner)
 	return err
 }
 
@@ -1254,13 +1247,14 @@ type ControlplaneInstance struct {
 
 // UpsertControlplaneInstance 写入/刷新实例心跳（role 随选主结果变化）。
 func (s *SQLStore) UpsertControlplaneInstance(ctx context.Context, inst *ControlplaneInstance) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO controlplane_instances (instance_id, hostname, http_port, grpc_port, role, version, started_at, last_heartbeat)
-		VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-		ON DUPLICATE KEY UPDATE
-			hostname=VALUES(hostname), http_port=VALUES(http_port), grpc_port=VALUES(grpc_port),
-			role=VALUES(role), version=VALUES(version), last_heartbeat=NOW()
-	`, inst.InstanceID, inst.Hostname, inst.HTTPPort, inst.GRPCPort, inst.Role, inst.Version, inst.StartedAt)
+	query := s.dialect.Upsert(
+		"controlplane_instances",
+		[]string{"instance_id", "hostname", "http_port", "grpc_port", "role", "version", "started_at", "last_heartbeat"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "NOW()"},
+		[]string{"instance_id"},
+		[]string{"hostname", "http_port", "grpc_port", "role", "version", "last_heartbeat"},
+	)
+	_, err := s.db.ExecContext(ctx, query, inst.InstanceID, inst.Hostname, inst.HTTPPort, inst.GRPCPort, inst.Role, inst.Version, inst.StartedAt)
 	return err
 }
 

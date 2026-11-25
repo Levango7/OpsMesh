@@ -100,11 +100,14 @@ func (s *SQLStore) SetQuota(tenantID string, cfg *QuotaConfig) error {
 	}
 	now := time.Now().UTC()
 	cfg.TenantID = tenantID
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO quota_configs (tenant_id, max_devices, max_tasks, max_alerts, updated_at)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE max_devices=VALUES(max_devices), max_tasks=VALUES(max_tasks),
-		   max_alerts=VALUES(max_alerts), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"quota_configs",
+		[]string{"tenant_id", "max_devices", "max_tasks", "max_alerts", "updated_at"},
+		[]string{"?", "?", "?", "?", "?"},
+		[]string{"tenant_id"},
+		[]string{"max_devices", "max_tasks", "max_alerts", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		tenantID, cfg.MaxDevices, cfg.MaxTasks, cfg.MaxAlerts, now); err != nil {
 		storefail.Record("[store] SetQuota upsert 失败 (tenant=%s): %v", tenantID, err)
 		return err

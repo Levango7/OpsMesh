@@ -73,10 +73,14 @@ func (s *SQLStore) CreateBackup(tenantID string, b *BackupRecord) *BackupRecord 
 	if b.CreatedAt.IsZero() {
 		b.CreatedAt = now
 	}
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO backup_records (id, tenant_id, type, status, size, path, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE type=VALUES(type), status=VALUES(status), size=VALUES(size), path=VALUES(path)`,
+	query := s.dialect.Upsert(
+		"backup_records",
+		[]string{"id", "tenant_id", "type", "status", "size", "path", "created_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"type", "status", "size", "path"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		b.ID, b.TenantID, b.Type, b.Status, b.Size, b.Path, b.CreatedAt); err != nil {
 		storefail.Record("[store] CreateBackup 插入失败 (tenant=%s id=%s): %v", tenantID, b.ID, err)
 		return nil

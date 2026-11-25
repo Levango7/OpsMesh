@@ -60,10 +60,14 @@ func (s *SQLStore) issueToken(ctx context.Context, deviceID, tenantID string, tt
 	mac := hmac.New(sha256.New, []byte(s.secret))
 	mac.Write([]byte(payload))
 	tok := hex.EncodeToString(mac.Sum(nil)) + "." + payload
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO install_tokens (token, device_id, tenant_id, expires_at, consumed)
-		 VALUES (?, ?, ?, ?, 0)
-		 ON DUPLICATE KEY UPDATE device_id=VALUES(device_id), tenant_id=VALUES(tenant_id), expires_at=VALUES(expires_at), consumed=0`,
+	query := s.dialect.Upsert(
+		"install_tokens",
+		[]string{"token", "device_id", "tenant_id", "expires_at", "consumed"},
+		[]string{"?", "?", "?", "?", "0"},
+		[]string{"token"},
+		[]string{"device_id", "tenant_id", "expires_at", "consumed"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		storekit.HashToken(tok), deviceID, tenantID, expiresAt); err != nil {
 		return "", fmt.Errorf("issueToken 失败: %w", err)
 	}

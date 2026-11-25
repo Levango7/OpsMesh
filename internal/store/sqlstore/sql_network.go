@@ -77,16 +77,14 @@ func (s *SQLStore) CreateNetworkDevice(tenantID string, d *NetworkDevice) *Netwo
 		d.CreatedAt = now
 	}
 	d.UpdatedAt = now
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO network_devices
-		   (id, tenant_id, name, type, vendor, model, ip, mask, mac, location,
-		    snmp_community, status, config, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE
-		   name=VALUES(name), type=VALUES(type), vendor=VALUES(vendor), model=VALUES(model),
-		   ip=VALUES(ip), mask=VALUES(mask), mac=VALUES(mac), location=VALUES(location),
-		   snmp_community=VALUES(snmp_community), status=VALUES(status),
-		   config=VALUES(config), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"network_devices",
+		[]string{"id", "tenant_id", "name", "type", "vendor", "model", "ip", "mask", "mac", "location", "snmp_community", "status", "config", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "type", "vendor", "model", "ip", "mask", "mac", "location", "snmp_community", "status", "config", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		d.ID, d.TenantID, d.Name, d.Type, d.Vendor, d.Model,
 		d.IP, d.Mask, d.Mac, d.Location, d.SnmpCommunity,
 		d.Status, d.Config, d.CreatedAt, d.UpdatedAt); err != nil {

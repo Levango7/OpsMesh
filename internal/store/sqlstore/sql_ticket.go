@@ -122,15 +122,14 @@ func (s *SQLStore) CreateTicket(tenantID string, t *Ticket) *Ticket {
 	}
 	t.UpdatedAt = now
 	tagsJSON := marshalTags(t.Tags)
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO tickets (id, tenant_id, title, description, status, priority, category,
-		 assignee_id, creator_id, related_device, related_task, tags, created_at, updated_at, resolved_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE title=VALUES(title), description=VALUES(description),
-		 status=VALUES(status), priority=VALUES(priority), category=VALUES(category),
-		 assignee_id=VALUES(assignee_id), creator_id=VALUES(creator_id),
-		 related_device=VALUES(related_device), related_task=VALUES(related_task),
-		 tags=VALUES(tags), updated_at=VALUES(updated_at), resolved_at=VALUES(resolved_at)`,
+	query := s.dialect.Upsert(
+		"tickets",
+		[]string{"id", "tenant_id", "title", "description", "status", "priority", "category", "assignee_id", "creator_id", "related_device", "related_task", "tags", "created_at", "updated_at", "resolved_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"title", "description", "status", "priority", "category", "assignee_id", "creator_id", "related_device", "related_task", "tags", "updated_at", "resolved_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		t.ID, t.TenantID, t.Title, t.Description, t.Status, t.Priority, t.Category,
 		t.AssigneeID, t.CreatorID, t.RelatedDevice, t.RelatedTask, tagsJSON,
 		t.CreatedAt, t.UpdatedAt, resolvedAtValue(t.ResolvedAt)); err != nil {

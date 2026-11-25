@@ -90,12 +90,14 @@ func (s *SQLStore) CreateSLO(tenantID string, slo *SLO) *SLO {
 		}
 		slisJSON = string(b)
 	}
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO slos (id, tenant_id, name, description, service_name, target, window_spec, slis, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description),
-		 service_name=VALUES(service_name), target=VALUES(target), window_spec=VALUES(window_spec),
-		 slis=VALUES(slis), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"slos",
+		[]string{"id", "tenant_id", "name", "description", "service_name", "target", "window_spec", "slis", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "description", "service_name", "target", "window_spec", "slis", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		slo.ID, slo.TenantID, slo.Name, slo.Description, slo.ServiceName,
 		slo.Target, slo.Window, slisJSON, slo.CreatedAt, slo.UpdatedAt); err != nil {
 		storefail.Record("[store] CreateSLO 插入失败 (tenant=%s slo=%s): %v", tenantID, slo.ID, err)

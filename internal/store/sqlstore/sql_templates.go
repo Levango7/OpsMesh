@@ -67,11 +67,14 @@ func (s *SQLStore) SaveOSTemplate(t *OSTemplate) error {
 	t.UpdatedAt = now
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO os_templates (id, tenant_id, name, os, version, arch, install_url, config, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), os=VALUES(os), version=VALUES(version), arch=VALUES(arch),
-		   install_url=VALUES(install_url), config=VALUES(config), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"os_templates",
+		[]string{"id", "tenant_id", "name", "os", "version", "arch", "install_url", "config", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "os", "version", "arch", "install_url", "config", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		t.ID, t.TenantID, t.Name, t.OS, t.Version, t.Arch, t.InstallURL, t.Config, t.CreatedAt, t.UpdatedAt); err != nil {
 		storefail.Record("[store] SaveOSTemplate 失败: %v", err)
 		return fmt.Errorf("os template: save: %w", err)
@@ -174,11 +177,14 @@ func (s *SQLStore) SaveMiddlewareTemplate(t *MiddlewareTemplate) error {
 	t.UpdatedAt = now
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO middleware_templates (id, tenant_id, name, type, version, config, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), type=VALUES(type), version=VALUES(version),
-		   config=VALUES(config), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"middleware_templates",
+		[]string{"id", "tenant_id", "name", "type", "version", "config", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "type", "version", "config", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(ctx, query,
 		t.ID, t.TenantID, t.Name, t.Type, t.Version, t.Config, t.CreatedAt, t.UpdatedAt); err != nil {
 		storefail.Record("[store] SaveMiddlewareTemplate 失败: %v", err)
 		return fmt.Errorf("middleware template: save: %w", err)

@@ -126,12 +126,14 @@ func (s *SQLStore) CreateWebhook(tenantID string, wh *Webhook) *Webhook {
 	wh.UpdatedAt = now
 	eventsJSON := marshalWebhookEvents(wh.Events)
 	headersJSON := marshalWebhookHeaders(wh.Headers)
-	if _, err := s.db.ExecContext(context.Background(),
-		`INSERT INTO webhooks (id, tenant_id, name, url, events, headers, body_template, enabled, retry_count, retry_interval_sec, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), url=VALUES(url), events=VALUES(events),
-		 headers=VALUES(headers), body_template=VALUES(body_template), enabled=VALUES(enabled),
-		 retry_count=VALUES(retry_count), retry_interval_sec=VALUES(retry_interval_sec), updated_at=VALUES(updated_at)`,
+	query := s.dialect.Upsert(
+		"webhooks",
+		[]string{"id", "tenant_id", "name", "url", "events", "headers", "body_template", "enabled", "retry_count", "retry_interval_sec", "created_at", "updated_at"},
+		[]string{"?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"},
+		[]string{"id"},
+		[]string{"name", "url", "events", "headers", "body_template", "enabled", "retry_count", "retry_interval_sec", "updated_at"},
+	)
+	if _, err := s.db.ExecContext(context.Background(), query,
 		wh.ID, wh.TenantID, wh.Name, wh.URL, eventsJSON, headersJSON, wh.BodyTemplate,
 		webhookEnabledInt(wh.Enabled), wh.RetryCount, wh.RetryIntervalSec, wh.CreatedAt, wh.UpdatedAt); err != nil {
 		storefail.Record("[store] CreateWebhook 插入失败 (tenant=%s webhook=%s): %v", tenantID, wh.ID, err)
