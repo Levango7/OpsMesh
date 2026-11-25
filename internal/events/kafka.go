@@ -19,6 +19,12 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+// newKafkaBusWithWALDir 是 New() 在 kafka 分支、WAL 目录非空时的构造入口（issue #171）。
+// 与 newKafkaBus 分离以保留无 WAL 的向后兼容路径及其钉版测试（TestKafkaBus_NoWALBackwardCompat）。
+func newKafkaBusWithWALDir(brokers, topic, walDir string) Bus {
+	return NewKafkaBusWithWAL(brokers, topic, walDir)
+}
+
 // newKafkaBus 由调用方传入 brokers/topic（参数传递，避免 os.Setenv 竞态）；
 // 未配置时返回 nil（调用方回退 noop）。
 //

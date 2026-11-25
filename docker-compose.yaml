@@ -119,6 +119,8 @@ services:
       OPSMESH_EVENT_BUS: kafka
       OPSMESH_KAFKA_BROKERS: kafka:9092
       OPSMESH_KAFKA_TOPIC: opsmesh-audit
+      # 审计事件 Kafka WAL 兜底目录（issue #171）：broker 故障期事件落盘、恢复后重放（at-least-once）。
+      OPSMESH_KAFKA_WAL_DIR: /data/kafka-wal
       OPSMESH_SESSION_STORE: redis://redis:6379
       # TD-60 任务域切流：指向 task-svc（compose 内网）；缺失/拨号失败 ⇒ 控制面回退存根，
       # /api/v1/tasks 代理返回 503（fail-closed，见 Kilo 8fd679c）。
@@ -214,6 +216,9 @@ services:
     # volumes:
     #   - ./tls/server.crt:/etc/opsmesh/tls/server.crt:ro
     #   - ./tls/server.key:/etc/opsmesh/tls/server.key:ro
+    # Kafka WAL 持久卷（issue #171）：broker 故障期事件本地落盘，跨控制面重启/重建仍可重放。
+    volumes:
+      - kafka-wal-data:/data/kafka-wal
     restart: unless-stopped
 
   mysql:
@@ -286,3 +291,4 @@ services:
 volumes:
   mysql-data:
   redis-data:
+  kafka-wal-data:
