@@ -1510,3 +1510,4 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [DONE] 2026-11-22T19:30:00Z from=kilo scope=internal/controlplane/server_lifecycle.go note=批次74d 收口（5 个新 ops handler 注册对齐，97/97 定义-调用无缺口）
 [DONE] 2026-11-25T01:00:00Z from=kilo scope=web/enterprise/src/views/GovernanceView.vue note=批次82 收口（移除未使用 L helper，eslint 0 errors）
 [CLAIM] 2026-11-25T01:55:00Z from=zcode ttl=12h scope=internal/events/events.go,internal/events/kafka.go,internal/events/kafka_stub.go,internal/events/events_wal_wiring_test.go,Dockerfile,docker-compose.yaml,CHANGELOG.md,docs/CLAIMS.md note=issue #171：events.New 按 OPSMESH_KAFKA_WAL_DIR 接线 WAL（at-least-once），空=无 WAL 向后兼容；compose 预建 nonroot WAL 目录+持久卷；真实故障注入实证故障期事件经 WAL 重放送达（修复前丢失）
+[CLAIM] 2026-11-25T12:00:00Z from=zcode ttl=12h scope=internal/agent/execute_test.go,CHANGELOG.md,docs/CLAIMS.md note=issue #157：TestExecute_Timeout 可移植化（Windows 用内置 timeout、Unix sleep，20s 长命令保留判别力）；实测本机取消有效；Job Object 方案因 Access is denied 放弃，仅改测试不动生产取消逻辑
