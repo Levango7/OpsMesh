@@ -97,3 +97,6 @@ cover-func.txt
 # deploy.sh 渲染出的 Alertmanager 配置：可能含 bearer token，绝不入库
 # （模板在 deploy/monitoring/alertmanager.yml.template，生成物只在本机）
 deploy/docker/generated/
+
+# #152 故障恢复矩阵的本地产物（报告/原始日志/会话与口令临时文件，绝不入库）
+chaos-artifacts/
