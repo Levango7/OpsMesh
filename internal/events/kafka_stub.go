@@ -11,3 +11,6 @@ package events
 
 // newKafkaBus 默认构建下返回 nil；kafka.go（//go:build kafka）提供真实实现（接收 brokers/topic 参数）。
 func newKafkaBus(brokers, topic string) Bus { return nil }
+
+// newKafkaBusWithWALDir 默认构建（无 kafka 标签）下返回 nil，与 newKafkaBus 一致降级为 NoopBus。
+func newKafkaBusWithWALDir(brokers, topic, walDir string) Bus { return nil }

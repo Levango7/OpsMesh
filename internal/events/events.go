@@ -5,6 +5,8 @@ package events
 
 import (
 	"context"
+	"os"
+	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/logx"
 )
@@ -81,7 +83,16 @@ func New(kind, brokers, topic string) Bus {
 	case "log":
 		inner = LogBus{}
 	case "kafka":
-		if b := newKafkaBus(brokers, topic); b != nil {
+		// WAL 兜底（审计合规 at-least-once）：OPSMESH_KAFKA_WAL_DIR 非空时启用本地 WAL +
+		// 后台重放，broker 故障期事件落盘、恢复后重放，不再静默丢失（issue #171 / #152 F-152-kafka-1）。
+		// 空（默认）保持向后兼容的无 WAL 路径（newKafkaBus 及其钉版测试不变）。
+		if walDir := kafkaWALDirFromEnv(); walDir != "" {
+			if b := newKafkaBusWithWALDir(brokers, topic, walDir); b != nil {
+				inner = b
+			} else {
+				inner = NoopBus{}
+			}
+		} else if b := newKafkaBus(brokers, topic); b != nil {
 			inner = b
 		} else {
 			inner = NoopBus{} // 未配置 brokers/topic 时降级
@@ -91,6 +102,10 @@ func New(kind, brokers, topic string) Bus {
 	}
 	return stampingBus{inner: inner}
 }
+
+// kafkaWALDirFromEnv 返回 WAL 目录；空串=禁用 WAL（默认，向后兼容无 WAL 路径）。
+// 仅读环境变量（只读，无 os.Setenv 竞态）；目录不可写时由 newKafkaWAL 建目录失败降级告警兜底。
+func kafkaWALDirFromEnv() string { return strings.TrimSpace(os.Getenv("OPSMESH_KAFKA_WAL_DIR")) }
 
 // newKafkaBus 声明移至 kafka_stub.go（//go:build !kafka）与 kafka.go（//go:build kafka），
 // 两者互斥避免 -tags kafka 下重复声明（原于此处的事件.go 默认声明与 kafka.go 冲突）。
