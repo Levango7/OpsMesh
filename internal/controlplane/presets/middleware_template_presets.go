@@ -3008,6 +3008,71 @@ var MiddlewareTemplates = []MiddlewareTemplate{
 			{Version: "7.3.0", DockerImage: "beegfs/beegfs:7.3.0"},
 		},
 	},
+	// ---------------- query engine ----------------
+	{
+		ID:          "trino",
+		Name:        "Trino",
+		Category:    "database",
+		Version:     "435",
+		Description: "Trino 分布式 SQL 查询引擎，适用于 OLAP 与跨数据源联邦查询",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "trino", Required: true, Type: "string"},
+			{Name: "port", Description: "监听端口", Default: "8080", Required: true, Type: "int"},
+			{Name: "coordinator", Description: "是否作为 coordinator 节点", Default: "true", Required: false, Type: "bool"},
+			{Name: "workers", Description: "worker 数量", Default: "1", Required: false, Type: "int"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} -p {port}:8080 --restart unless-stopped {image}",
+				Verify:    "curl -fsS http://localhost:{port}/v1/info",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "wget -qO /tmp/trino.tar.gz https://repo1.maven.org/maven2/io/trino/trino-server/435/trino-server-435.tar.gz && tar xzf /tmp/trino.tar.gz -C /opt/ && ln -sfn /opt/trino-server-435 /opt/trino && /opt/trino/bin/launcher start",
+				Verify:    "curl -fsS http://localhost:8080/v1/info",
+				Uninstall: "/opt/trino/bin/launcher stop && rm -rf /opt/trino /opt/trino-server-435",
+			},
+		},
+		Risk: "medium",
+		Tags: []string{"database", "sql", "olap", "trino", "query-engine"},
+		Versions: []MiddlewareVersion{
+			{Version: "435", DockerImage: "trinodb/trino:435", Default: true},
+			{Version: "429", DockerImage: "trinodb/trino:429"},
+			{Version: "420", DockerImage: "trinodb/trino:420"},
+		},
+	},
+	{
+		ID:          "golang",
+		Name:        "Go",
+		Category:    "service",
+		Version:     "1.22.5",
+		Description: "Go 语言运行时，适用于高性能后端服务与云原生应用开发",
+		DeployTypes: []string{"docker", "systemd"},
+		Params: []MiddlewareParam{
+			{Name: "name", Description: "容器/实例名称", Default: "golang", Required: true, Type: "string"},
+			{Name: "version", Description: "Go 版本（1.22/1.21/1.20）", Default: "1.22", Required: false, Type: "string"},
+		},
+		Scripts: map[string]MiddlewareScript{
+			"docker": {
+				Deploy:    "docker run -d --name {name} --restart unless-stopped {image}",
+				Verify:    "docker exec {name} go version",
+				Uninstall: "docker stop {name} && docker rm {name}",
+			},
+			"systemd": {
+				Deploy:    "wget -qO /tmp/go.tar.gz https://go.dev/dl/go1.22.5.linux-amd64.tar.gz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz && echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile",
+				Verify:    "go version",
+				Uninstall: "rm -rf /usr/local/go",
+			},
+		},
+		Risk: "low",
+		Tags: []string{"language", "go", "golang", "runtime"},
+		Versions: []MiddlewareVersion{
+			{Version: "1.22.5", DockerImage: "golang:1.22.5", Default: true},
+			{Version: "1.21.12", DockerImage: "golang:1.21.12"},
+			{Version: "1.20.14", DockerImage: "golang:1.20.14"},
+		},
+	},
 }
 
 // middlewareTemplateByID 按 ID 查找预置中间件模板，未找到返回 nil。
