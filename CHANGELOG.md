@@ -9,6 +9,11 @@
 
 - **2026-11-25 issue #171 — Kafka WAL 兜底接线**：`events.New` 的 kafka 分支按 `OPSMESH_KAFKA_WAL_DIR` 启用本地 WAL + 后台重放（at-least-once），broker 故障期事件落盘、恢复后重放，不再静默丢失；空（默认）保持无 WAL 向后兼容路径（newKafkaBus 及其钉版测试不变）。compose 控制面预建 nonroot 属主的 `/data/kafka-wal` 并挂持久卷，开箱即保护。已知折中：broker 硬中断期间同步 Publish 可能阻塞至超时再落 WAL（延迟而非丢数据）。真实 compose 故障注入复核：修复前故障期事件丢失、修复后经 WAL 重放送达，控制面免重启。
 
+## [Unreleased] — 2026-11-25（契约裁决：BB-01/BB-02/BB-04/BB-06 采用方案 A）
+
+- **2026-11-25 契约裁决 — 方案 A（保守）**：BB-01/BB-02/BB-04/BB-06 采用方案 A：v1 默认形状冻结，opt-in 信封 via page/pageSize；新端点必须用统一信封；破坏性变更走 v2。决策记录 docs/adr/2026-11-25-contract-decision.md。
+
+
 ## [Unreleased] — 2026-11-24（issue #152：完整 compose 依赖故障与恢复一致性矩阵）
 
 - **2026-11-24 issue #152 — 依赖故障与恢复一致性矩阵**：新增 `deploy/scripts/chaos-recovery-matrix.sh`（+ 离线 selftest + runbook），在真实 compose 栈对 MySQL/Redis/Kafka/网络分区做有界故障注入与恢复，钉「进程存活→有界降级→有界恢复→业务写读与数据一致性」全链；注入经 `ps -aq`+inspect 确认，杜绝在「未注入故障」的栈上空断言。实测四场景全 PASS，并记录三项发现：F-152-kafka-1（Kafka 故障期 bus 事件丢失，WAL 未接线、Publish err 被忽略；SQL 审计链独立不丢，恢复后新事件免重启送达）、F-152-healthz-1（/healthz 为深度检查、依赖断时 503，Helm 作 livenessProbe 会触发重启）、F-152-partition-1（network disconnect/connect 间歇丢失 compose 服务别名致 DNS 不收敛，须带别名重连）。本批只交付钻机与证据，不夹带产品修复。
