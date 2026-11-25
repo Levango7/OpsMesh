@@ -26,7 +26,6 @@ import { computed, ref } from 'vue'
 import { governanceApi } from '@/api/governance'
 import { toast } from '@/utils/toast'
 
-const L = (zh, en) => (document.documentElement.lang === 'en' ? en : zh)
 const loading = ref(false)
 const errorMsg = ref('')
 const activeTab = ref('rules')
