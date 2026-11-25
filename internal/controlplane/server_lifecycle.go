@@ -243,6 +243,7 @@ func (s *Server) Start() error {
 	s.registerGovernanceRoutes(mux)
 	s.registerETLRoutes(mux)
 	s.registerLakehouseRoutes(mux)
+	s.registerDatalakeExtRoutes(mux)
 	// 中间件部署：预置模板列表 + 详情 + 在指定 agent 上部署 + 已部署实例查询 + 卸载。
 	mux.HandleFunc("/api/v1/middleware-templates", s.handleMiddlewareTemplates)
 	mux.HandleFunc("/api/v1/middleware-templates/", s.handleMiddlewareTemplateDetail) // 子路径：{id} 和 {id}/deploy
@@ -264,12 +265,14 @@ func (s *Server) Start() error {
 	s.registerHarborRoutes(mux)
 	// 环境依赖优化：Java/node.js/Python/Go + fd-limit/IPVS（固定路径优先，再泛路由 /api/v1/env/）。
 	s.registerEnvRoutes(mux)
+	s.registerEnvExtRoutes(mux)
 	// 监控系统兼容：Zabbix/夜莺/SkyWalking（固定路径优先，再泛路由 /api/v1/monitor/）。
 	s.registerMonitorRoutes(mux)
 	s.registerGPUExtendedRoutes(mux)
 	s.registerAscendRoutes(mux)
 	s.registerELKRoutes(mux)
 	s.registerELKExtendedRoutes(mux)
+	s.registerElasticsearchExtRoutes(mux)
 	// 时序/流数据存储：InfluxDB/TDengine/VictoriaMetrics（固定路径优先，再泛路由 /api/v1/tsdb/）。
 	s.registerTSDBRoutes(mux)
 	// 向量数据库：Milvus/Qdrant/pgvector（固定路径优先，再泛路由 /api/v1/vector/）。
@@ -296,6 +299,7 @@ func (s *Server) Start() error {
 	s.registerSecurityExtRoutes(mux)
 	s.registerCICDRoutes(mux)
 	s.registerContainerRoutes(mux)
+	s.registerWebcontainerExtRoutes(mux)
 	s.registerHardwareRoutes(mux)
 	s.registerHardwareExtRoutes(mux)
 	s.registerDockerRoutes(mux)
@@ -305,6 +309,7 @@ func (s *Server) Start() error {
 	s.registerNetSecExtRoutes(mux)
 	s.registerIdentityRoutes(mux)
 	s.registerAutomationRoutes(mux)
+	s.registerSchedulerExtRoutes(mux)
 	s.registerCapacityRoutes(mux)
 	s.registerServiceMeshRoutes(mux)
 	s.registerHARoutes(mux)
