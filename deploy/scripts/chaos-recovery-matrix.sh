@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329,SC2015,SC2317
+# SC2329：scenario_* / inject_* / wait_* 等由场景分发表按函数名间接调用，静态分析看不到调用点。
+# SC2015：`cond && ok ... || bad ...` 是本脚本统一的断言输出形状（ok/bad 只打印并返回 0），
+#         真实失败由 SCN_FAILED 与 EXIT trap 统一判红，不是 if-then-else 语义。
+# SC2317：v0.10.0（CI 钉版）把分支末尾的恢复/断言语句判为不可达；实际由 EXIT trap
+#         与场景分发表间接进入，v0.11 已不再报——此处按 CI 钉版口径显式豁免。
 # issue #152：完整 compose 依赖故障与恢复一致性矩阵（MySQL / Redis / Kafka / 网络分区）。
 #
 # 与 chaos-dependency-down.sh（#88 第一批，只验证 readyz 摘流）的关系：
