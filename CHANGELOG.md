@@ -9,6 +9,10 @@
 
 - **2026-11-25 issue #157 — Windows agent 超时取消测试可移植化**：`TestExecute_Timeout` 原用 `sleep 2`（`cmd /C sleep` 在干净 Windows 上非原生命令、立即报错 ⇒ 测不到真取消路径），改为 Windows 用内置 `timeout /t 20 /nobreak`、Unix 用 `sleep 20`，使命令真实长运行、被中断时远小于 20s；阈值随 Windows taskkill 偶发开销放宽至 8000ms（远小于 20000ms 完成时间）。实测本机取消有效（亚秒，多次 PASS）。评估过 Windows Job Object 杀进程树，因 `AssignProcessToJobObject` 在「父进程已被纳入 Job」的环境 Access is denied、不可依赖而放弃，保留已验证的 taskkill 路径。仅改测试，不动生产取消逻辑。
 
+## [Unreleased] — 2026-11-26（审计：task-svc 失败上报幂等去重）
+
+- **2026-11-26 task-svc ReportResult 幂等去重**：memory 与 MySQL 的 `ReportResult` 此前对非零退出无条件 `retryCount++`，同一 claim_epoch 的重复失败上报（at-least-once 重试上报）会虚增重试次数、提前进入死信（maxRetries=2 时一次真失败+一次重复上报即死信）。现按 (taskID, claimEpoch) 去重：该 claim 已有失败记录则不再重复计重试/改状态，不同 claim 仍各自计数。新增两个先红后绿测试（重复上报只计一次、不同 claim 各计一次），task-svc store 全量测试、vet、gates 全过。
+
 ## [Unreleased] — 2026-11-25（批次68：Trino/Go 模板补齐 + PG 高级运维项目章程）
 
 - **2026-11-25 批次68 — Trino/Go 中间件模板补齐 + PG 高级运维项目章程**：internal/controlplane/presets/middleware_template_presets.go 新增 trino（分布式 SQL 查询引擎，docker/systemd，435/429/420）与 golang（运行时，1.22.5/1.21.12/1.20.14）两个预置模板；docs/projects/pg-advanced-ops-charter.md 登记 PostgreSQL 高级运维（扩展/自定义类型/MVCC 与表膨胀/分区/FDW/复制槽/逻辑复制/HA/监控 + PostGIS）立项书。
