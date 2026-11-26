@@ -14,12 +14,13 @@
 
 - 全程中文沟通；代码标识符、命令、check 名保留原文。
 - 假成功零容忍：没有命令输出与真实读数，不得写“通过”。
-- 只改 `internal/store/sqlstore/`、本计划、设计稿、调查文档、`docs/CLAIMS.md`；不改 `.github/workflows/`。
+- 原批准范围限定为 `internal/store/sqlstore/`、本计划、设计稿、调查文档、`docs/CLAIMS.md`；PR #160 实际最终合并还夹带 `.github/workflows/ci.yml`、`CHANGELOG.md`、`deploy/scripts/chaos-recovery-matrix.sh`、`web/enterprise/src/api/__tests__/api-usage.test.js` 改动，已于 2026-11-26 逐项追认，后续收口只改文档与 CLAIMS。
 - 不纳入 `internal/controlplane`、`services/*`、`internal/cmdb` 的 UPSERT。
 - MySQL 只承诺语义、参数顺序、写后结果等价，不承诺 SQL 文本逐字节相同。
 - PG 只收口 UPSERT 语句；周围 `?`、反引号、分页等 A3-2 读写面不在本批，不得宣称 PG 全业务读写可用。
 - PG DSN 只支持现有 URL 形态（`postgres://`、`postgresql://`、`pg://`）；不扩展 keyword/value DSN。
-- CI 不新增 PostgreSQL service；PG15 真库在本机用 `OPSMESH_TEST_PG_DSN` 验收，PR 明示环境与命令。
+- 最终 CI 由 `build-test` 的 `postgres:15` service 提供 `OPSMESH_TEST_PG_DSN`，PG 门控用例在 CI 真跑；本机 PG15 双库行为、并发与 96 次 PREPARE 仍是合并前验收证据。
+- 合并后 scope 分类：PG service 与 A3-3 CHANGELOG 更正属于本批验收/文档支撑；chaos shellcheck 豁免与 api-usage 账本修复属于独立 CI 修复，不扩 A3-3 产品边界。
 - 48 个 UPSERT 本身均不消费 `RowsAffected`；不得要求 MySQL/PG UPSERT 行数相等。
 - 合并前置：required 全绿 + `MERGEABLE` + CLEAN + base == main tip；合并后 main 首验、补 DONE、继续盯 CI。
 - 不删除留档分支 `feat/p0-a3-pg-dialect`，不重开 PR #47，不单方删除远端分支。
@@ -94,7 +95,7 @@ printf '[DONE] %s from=qoder commit=%s scope=docs/superpowers/plans/2026-11-24-a
 - [ ] **Step 2: 追加实现 CLAIM**
 
 ```bash
-printf '[CLAIM] %s from=qoder ttl=24h scope=internal/store/sqlstore/,docs/CLAIMS.md,docs/superpowers/plans/2026-11-24-a3-3-upsert-dialect.md,docs/superpowers/specs/2026-11-24-a3-3-upsert-dialect-design.md,docs/pg-dialect-a3-2-a3-3-plan-2026-11-23.md note=P0-A3-3 实现：48 条 UPSERT 收口为 45 通用 + 3 特例；不改 .github/workflows，不扩 controlplane/services/cmdb。\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> docs/CLAIMS.md
+printf '[CLAIM] %s from=qoder ttl=24h scope=internal/store/sqlstore/,docs/CLAIMS.md,docs/superpowers/plans/2026-11-24-a3-3-upsert-dialect.md,docs/superpowers/specs/2026-11-24-a3-3-upsert-dialect-design.md,docs/pg-dialect-a3-2-a3-3-plan-2026-11-23.md note=P0-A3-3 实现：48 条 UPSERT 收口为 45 通用 + 3 特例；不扩 controlplane/services/cmdb。workflow/CHANGELOG 的最终合并追认见 Task 14。\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> docs/CLAIMS.md
 ```
 
 - [ ] **Step 3: 跑协调门**
@@ -1162,7 +1163,7 @@ git commit -m "test: guard raw UPSERT SQL and conflict targets"
 - 执行的命令与 PASS/skip 数。
 - 48 条 PREPARE、并发不双主、ABAC 版本递增、lifecycle 时间戳结果。
 - 四种窄变异各自红在哪、还原后绿（含设计要求的三种与额外空集合保护）。
-- CI 未加 PG service；PG 结果来自本机真库。
+- 最终 PR #160 已接入 `build-test` 的 `postgres:15` service；本机 PG15 真库结果仍是行为、并发与 96 次 PREPARE 的验收证据。
 - 本批没有解决 A3-2 其余读写面，不宣称 PG 全业务可用。
 
 - [ ] **Step 3: 全量本地验证**
@@ -1206,8 +1207,9 @@ PR_BODY=$(cat <<'EOF'
 - 增加 AST 裸 SQL 守卫、冲突目标唯一约束 parity、48 条真库 PREPARE、并发与跨唯一键回归。
 
 ## Boundaries
-- 不含 controlplane/services/cmdb，不改 .github/workflows，不新增 PostgreSQL service。
-- PG 真库证据来自本机 PG15；本批不宣称 A3-2 其余读写面或 PG 全业务读写已完成。
+- 不含 controlplane/services/cmdb；最终合并的 `build-test` PostgreSQL 15 service 与 A3-3 CHANGELOG 更正已追认。
+- chaos shellcheck 豁免与 api-usage 账本修复按独立 CI 修复登记，不扩 A3-3 产品边界。
+- 合并前行为、并发与 96 次 PREPARE 证据来自本机 PG15；最终 CI 另由 `postgres:15` service 真跑 PG 门控用例。本批不宣称 A3-2 其余读写面或 PG 全业务读写已完成。
 - UPSERT 的 RowsAffected 不参与 MySQL/PG 等价判定。
 
 ## Verification
@@ -1218,7 +1220,7 @@ PR=$(gh pr create --base main --head feat/p0-a3-upsert-dialect --title "feat: di
 printf '%s\n' "$PR"
 ```
 
-PR 说明必须包含 Global Constraints 中的边界、双库实测、CI 无 PG 的说明和 `RowsAffected` 差异。
+PR 说明必须包含 Global Constraints 中的边界、双库实测、CI PostgreSQL service 接线和 `RowsAffected` 差异。
 
 ---
 
@@ -1255,7 +1257,11 @@ gh pr merge "$PR" --squash
 
 如 DONE 未随 PR 进入 main，基于最新 main 追加同 scope DONE，提交推送并盯该提交 CI 全绿。
 
-- [ ] **Step 5: 清理自有分支/worktree**
+- [ ] **Step 5: 合并后 scope audit 与追认**
+
+对 squash commit `6ebcebc99a1b08bf27e0dda81e7df2cdf76cf9a1` 执行 `git diff fdacd0c19091d0a51829e88b2cb5c38086a9104a..6ebcebc99a1b08bf27e0dda81e7df2cdf76cf9a1`。实际除批准内容外还含 `.github/workflows/ci.yml` 的 PostgreSQL 15 service、`CHANGELOG.md` 的 A3-3 更正、`deploy/scripts/chaos-recovery-matrix.sh` 的 shellcheck 豁免、`web/enterprise/src/api/__tests__/api-usage.test.js` 的账本修复。owner 于 2026-11-26 批准保留：前两项归 A3-3 验收/文档支撑，后两项归独立 CI 修复；追加 CLAIMS 勘误，明确取代旧 DONE 中“未改 CI/未保留 CHANGELOG”的失实表述。
+
+- [ ] **Step 6: 清理自有分支/worktree**
 
 仅在确认已合并、工作树干净、无独占未推送提交后清理本批 worktree 与本地分支；保留留档分支 `feat/p0-a3-pg-dialect`，远端分支交 owner 处置。
 
