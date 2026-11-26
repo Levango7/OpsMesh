@@ -9,6 +9,10 @@
 
 - **2026-11-26 task-svc ReportResult 幂等去重**：memory 与 MySQL 的 `ReportResult` 此前对非零退出无条件 `retryCount++`，同一 claim_epoch 的重复失败上报（at-least-once 重试上报）会虚增重试次数、提前进入死信（maxRetries=2 时一次真失败+一次重复上报即死信）。现按 (taskID, claimEpoch) 去重：该 claim 已有失败记录则不再重复计重试/改状态，不同 claim 仍各自计数。新增两个先红后绿测试（重复上报只计一次、不同 claim 各计一次），task-svc store 全量测试、vet、gates 全过。
 
+## [Unreleased] — 2026-11-25（批次68：Trino/Go 模板补齐 + PG 高级运维项目章程）
+
+- **2026-11-25 批次68 — Trino/Go 中间件模板补齐 + PG 高级运维项目章程**：internal/controlplane/presets/middleware_template_presets.go 新增 trino（分布式 SQL 查询引擎，docker/systemd，435/429/420）与 golang（运行时，1.22.5/1.21.12/1.20.14）两个预置模板；docs/projects/pg-advanced-ops-charter.md 登记 PostgreSQL 高级运维（扩展/自定义类型/MVCC 与表膨胀/分区/FDW/复制槽/逻辑复制/HA/监控 + PostGIS）立项书。
+
 ## [Unreleased] — 2026-11-25（issue #171：Kafka 故障期事件总线事件丢失修复）
 
 - **2026-11-25 issue #171 — Kafka WAL 兜底接线**：`events.New` 的 kafka 分支按 `OPSMESH_KAFKA_WAL_DIR` 启用本地 WAL + 后台重放（at-least-once），broker 故障期事件落盘、恢复后重放，不再静默丢失；空（默认）保持无 WAL 向后兼容路径（newKafkaBus 及其钉版测试不变）。compose 控制面预建 nonroot 属主的 `/data/kafka-wal` 并挂持久卷，开箱即保护。已知折中：broker 硬中断期间同步 Publish 可能阻塞至超时再落 WAL（延迟而非丢数据）。真实 compose 故障注入复核：修复前故障期事件丢失、修复后经 WAL 重放送达，控制面免重启。
