@@ -9,6 +9,10 @@
 
 - **2026-11-26 agent 文件任务路径防护**：`execFile` 的根目录白名单此前只做词法 `filepath.Rel`，允许根目录下指向根外的父目录符号链接绕过并写出界外。现改为解析真实父目录与真实根目录后再判包含关系；不存在的目标子目录保持原行为，根目录内合法目录链接不受影响。新增「父目录 symlink 逃逸拒绝 / 根内合法链接允许」双测试，Linux 容器先红后绿，本机与 Linux 的 agent 全量测试、vet/lint/gates 全过。
 
+## [Unreleased] — 2026-11-26（审计：task-svc 失败上报幂等去重）
+
+- **2026-11-26 task-svc ReportResult 幂等去重**：memory 与 MySQL 的 `ReportResult` 此前对非零退出无条件 `retryCount++`，同一 claim_epoch 的重复失败上报（at-least-once 重试上报）会虚增重试次数、提前进入死信（maxRetries=2 时一次真失败+一次重复上报即死信）。现按 (taskID, claimEpoch) 去重：该 claim 已有失败记录则不再重复计重试/改状态，不同 claim 仍各自计数。新增两个先红后绿测试（重复上报只计一次、不同 claim 各计一次），task-svc store 全量测试、vet、gates 全过。
+
 ## [Unreleased] — 2026-11-25（批次68：Trino/Go 模板补齐 + PG 高级运维项目章程）
 
 - **2026-11-25 批次68 — Trino/Go 中间件模板补齐 + PG 高级运维项目章程**：internal/controlplane/presets/middleware_template_presets.go 新增 trino（分布式 SQL 查询引擎，docker/systemd，435/429/420）与 golang（运行时，1.22.5/1.21.12/1.20.14）两个预置模板；docs/projects/pg-advanced-ops-charter.md 登记 PostgreSQL 高级运维（扩展/自定义类型/MVCC 与表膨胀/分区/FDW/复制槽/逻辑复制/HA/监控 + PostGIS）立项书。

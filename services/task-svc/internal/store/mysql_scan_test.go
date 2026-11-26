@@ -40,8 +40,8 @@ const judgedSitesFloor = 1
 // 行号键的脆弱性是已知代价（TD-91 同族记录）：本包任何一次编辑都会让条目过期，
 // 由 TestEveryWideScanSiteIsJudgedOrExempted 的过期检查强制刷新——这正是它存在的原因。
 var scanSiteExemptions = map[string]string{
-	"mysql.go:857": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
-	"mysql.go:894": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
+	"mysql.go:868": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
+	"mysql.go:905": "batches 表无可空且无 DEFAULT 的列（全部 NOT NULL 或 NOT NULL DEFAULT 或主键）",
 }
 
 // riskyNullableColumns 解析建表来源，得到 table → {可空且无 DEFAULT 的列}。

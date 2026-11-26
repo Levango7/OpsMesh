@@ -354,6 +354,15 @@ func (s *MySQLStore) ReportResult(result *models.TaskResult) error {
 		result.FinishedAt = time.Now()
 	}
 
+	// 幂等去重：该 claim 是否已有失败结果记录（在 upsert 之前查，at-least-once 重试上报防重）。
+	var prevFail int
+	if qerr := tx.QueryRow(
+		"SELECT COUNT(1) FROM task_results WHERE task_id = ? AND claim_epoch = ? AND exit_code != 0",
+		result.TaskID, result.ClaimEpoch,
+	).Scan(&prevFail); qerr != nil {
+		return fmt.Errorf("check prior failure result: %w", qerr)
+	}
+
 	_, err = tx.Exec(
 		"INSERT INTO task_results (task_id, agent_id, exit_code, stdout, stderr, duration_ms, finished_at, claim_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE agent_id = ?, exit_code = ?, stdout = ?, stderr = ?, duration_ms = ?, finished_at = ?, claim_epoch = ?",
 		result.TaskID, result.AgentID, result.ExitCode, result.Stdout, result.Stderr, result.DurationMs, result.FinishedAt, result.ClaimEpoch,
@@ -365,6 +374,8 @@ func (s *MySQLStore) ReportResult(result *models.TaskResult) error {
 
 	if result.ExitCode == 0 {
 		t.Status = models.TaskStatusDone
+	} else if prevFail > 0 {
+		// 该 claim 的失败已记录过 ⇒ 这是重复上报，不重复计重试、不改状态（防提前死信）。
 	} else {
 		t.RetryCount++
 		if t.RetryCount >= t.MaxRetries {
