@@ -1478,15 +1478,9 @@ CI proto job 的第二步 `buf breaking --against ...#branch=main,subdir=proto` 
 [DONE] 2026-11-23T20:00:00Z from=kilo scope=web/enterprise/src/ note=批次79 收口（数据平台前端：4 视图 + 2 API + 路由 + i18n + 导航分组）
 [DONE] 2026-11-23T11:00:00Z from=kilo scope=internal/governance/,internal/controlplane/data_governance_ops.go note=批次76 收口（数据治理平面：6 类 DQ 规则 + 5 类 PII 脱敏 + 3 类保留策略 + 目录 + Atlas 血缘代理 + 迁移 037）
 
- 
- [ D O N E ]   2 0 2 6 - 1 1 - 2 4 T 1 0 : 3 0 : 0 0 Z   f r o m = k i l o   s c o p e = i n t e r n a l / d a t a e t l / , i n t e r n a l / c o n t r o l p l a n e / d a t a _ e t l _ o p s . g o , i n t e r n a l / c o n t r o l p l a n e / d a t a _ e t l _ o p s _ t e s t . g o , i n t e r n a l / c o n t r o l p l a n e / s e r v e r _ l i f e c y c l e . g o   n o t e = yb!k7 7   6e�S�E T L   
-g�R�!j�W+ �QX[X[�P+ 8   �M�hV+ / a p i / v 1 / e t l / { j o b s , r u n s } + �y7b���y+ ��y7b  4 0 3 + ͑
-Y�1unt+ QY�~KmՋ	�  c o m m i t = b 3 3 9 4 0 a 7 
- 
+
 [DONE] 2026-11-24T10:30:00Z from=kilo scope=internal/dataetl/,internal/controlplane/data_etl_ops.go,internal/controlplane/data_etl_ops_test.go,internal/controlplane/server_lifecycle.go note=批次77 收口（ETL 服务：模型+内存存储+8 适配器+/api/v1/etl/{jobs,runs}+租户隔离+跨租户 403+重复路由清理+契约测试） commit=b33940a7
-[ R E L E A S E ]     f r o m = k i l o   s c o p e = i n t e r n a l / d a t a e t l / , i n t e r n a l / c o n t r o l p l a n e / d a t a _ e t l _ o p s . g o   r e a s o n = e x p i r e d   c l a i m   r e l e a s e d ;   w o r k   i n   H E A D   ( 8 0 f 1 2 8 4 3 2 8 3 4 7 3 2 4 e 1 4 9 4 9 f b f 2 f 5 5 8 3 7 9 6 3 0 8 2 3 c ) 
- [ R E L E A S E ]     f r o m = k i l o   s c o p e = i n t e r n a l / g o v e r n a n c e / , i n t e r n a l / c o n t r o l p l a n e / d a t a _ g o v e r n a n c e _ o p s . g o , i n t e r n a l / c o n t r o l p l a n e / d a t a _ g o v e r n a n c e _ o p s _ t e s t . g o , i n t e r n a l / c o n t r o l p l a n e / s e r v e r _ l i f e c y c l e . g o , i n t e r n a l / c o n f i g / c o n f i g . g o , C H A N G E L O G . m d , d o c s / C L A I M S . m d   r e a s o n = e x p i r e d   c l a i m   r e l e a s e d ;   w o r k   i n   H E A D   ( 5 4 f 3 c 7 8 2 c 3 6 3 6 a e 3 a 9 5 9 e a 2 c 2 1 b b f b 5 c b 8 0 6 1 8 5 f ) 
- 
+
 [RELEASE] 2026-11-24T11:32:09Z from=kilo scope=internal/dataetl/,internal/controlplane/data_etl_ops.go reason=expired claim released; work in HEAD (80f1284328347324e14949fbf2f558379630823c)
 [RELEASE] 2026-11-24T11:32:09Z from=kilo scope=internal/governance/,internal/controlplane/data_governance_ops.go,internal/controlplane/data_governance_ops_test.go,internal/controlplane/server_lifecycle.go,internal/config/config.go,CHANGELOG.md,docs/CLAIMS.md reason=expired claim released; work in HEAD (54f3c782c3636ae3a959ea2c21bbfb5cb806185f)
 [CLAIM] 2026-11-24T14:56:08Z from=qoder ttl=4h scope=internal/datatuning/sizing_test.go,internal/controlplane/data_governance_ops.go,internal/controlplane/lakehouse_ops.go,internal/controlplane/data_etl_ops.go,docs/CLAIMS.md note=用户授权接修main CI的6条golangci-lint红线；仅处理错误返回与确定性断言，不改FROZEN区，不提交不推送
@@ -1513,4 +1507,8 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [CLAIM] 2026-11-25T01:55:00Z from=zcode ttl=12h scope=internal/events/events.go,internal/events/kafka.go,internal/events/kafka_stub.go,internal/events/events_wal_wiring_test.go,Dockerfile,docker-compose.yaml,CHANGELOG.md,docs/CLAIMS.md note=issue #171：events.New 按 OPSMESH_KAFKA_WAL_DIR 接线 WAL（at-least-once），空=无 WAL 向后兼容；compose 预建 nonroot WAL 目录+持久卷；真实故障注入实证故障期事件经 WAL 重放送达（修复前丢失）
 [DONE] 2026-11-25T11:00:00Z from=kilo scope=docs/adr/2026-11-25-contract-decision.md,docs/qa-sweep-2026-11-06.md note=批次67 收口（契约裁决方案 A：v1 默认形状冻结 + opt-in 信封）
 [CLAIM] 2026-11-24T18:33:27Z from=qoder ttl=4h scope=deploy/scripts/validate-deploy-assets.sh,docs/CLAIMS.md note=修复CR门禁把UTF16换行误判为孤立CR；补正反样本自测，不改历史台账字节
+[DONE] 2026-11-26T07:16:01Z from=qoder scope=deploy/scripts/validate-deploy-assets.sh,docs/CLAIMS.md commit=e49d9d4624204a7661938ff73eff2ea6b9129be3 note=PR 169 merged; main ci run 45712976623 success 12 success 1 release skipped
+[DONE] 2026-11-25T23:00:00Z from=kilo scope=internal/controlplane/presets/middleware_template_presets.go,docs/projects/pg-advanced-ops-charter.md note=批次68 收口（Trino/Go 模板补齐 + PG 高级运维章程）
+[RELEASE] 2026-11-25T23:30:00Z from=kilo scope=deploy/scripts/chaos-recovery-matrix.sh,deploy/scripts/chaos-recovery-matrix.selftest.sh,deploy/scripts/chaos-recovery-matrix.md,CHANGELOG.md,.gitignore,docs/CLAIMS.md reason=work landed in HEAD (expired claim cleanup)
+[RELEASE] 2026-11-25T23:30:00Z from=kilo scope=internal/events/events.go,internal/events/kafka.go,internal/events/kafka_stub.go,internal/events/events_wal_wiring_test.go,Dockerfile,docker-compose.yaml,CHANGELOG.md,docs/CLAIMS.md reason=work landed in HEAD (expired claim cleanup)
 [CLAIM] 2026-11-26T11:00:00Z from=zcode ttl=12h scope=internal/agent/agent.go,internal/agent/file_symlink_parent_test.go,CHANGELOG.md,docs/CLAIMS.md note=审计：execFile 根目录判定改解析真实父目录与真实根目录，修父目录 symlink 逃逸；Linux 容器先红后绿，本机与 Linux agent 全量、vet/lint/gates 过
