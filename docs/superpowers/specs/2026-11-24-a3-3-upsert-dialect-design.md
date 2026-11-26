@@ -1,9 +1,9 @@
 # A3-3 UPSERT 方言化设计（2026-11-24）
 
-> 状态：设计已按 owner 批准的范围收口，待落实现计划。  
+> 状态：已实现并由 PR #160 squash 合并；2026-11-26 owner 追认最终合并范围。
 > 基线：`main@11bfa94bb1cc96e7dc05373e9df8f9fa3512ecce`。  
 > 分支：`feat/p0-a3-upsert-dialect`，隔离工作树 `F:/Nexus/OpsMesh-wt-a3-3`。  
-> 交付：一个 PR，内部按域分批提交；不修改 `.github/workflows/`。
+> 交付：一个 PR，内部按域分批提交；最终合并另含 `build-test` 的 PostgreSQL 15 service 与 A3-3 CHANGELOG 口径更正，均已追认。
 
 ## 1. 目标与边界
 
@@ -198,10 +198,10 @@ PG 迁移顶部“全仓 UPDATE 均显式写 updated_at”的注释将订正为�
 
 ### 7.3 CI 与本地
 
-- CI 不增加 PostgreSQL service；现有 Go 测试批次会运行静态守卫和 MySQL 真库用例。
-- PG 用例继续由 `OPSMESH_TEST_PG_DSN` 门控；无 DSN 时明确 skip。
-- 合 PR 前在本机 PG15 真库实跑全部 PG 门控用例，并在 PR 写明环境、版本、命令和结果。
-- 不把 skip 当通过，不以“CI 绿”替代本机 PG 实测。
+- PR #160 最终合入 `build-test` 的 `postgres:15` service，并通过 `OPSMESH_TEST_PG_DSN` 在 CI 真跑 PG 门控用例；该 workflow 改动已于 2026-11-26 追认。
+- PG 用例继续由 `OPSMESH_TEST_PG_DSN` 门控；无 DSN 时明确 skip，有 DSN 时不得以 skip 代替执行。
+- 本机 PG15 真库实测仍是合并前证据，需写明环境、版本、命令和结果；CI 常驻 PG service 不替代本次双库行为与并发验收。
+- PR #160 夹带的 `chaos-recovery-matrix.sh` shellcheck 豁免与 `api-usage.test.js` 账本修复予以保留，但登记为独立 CI 修复，不计入 A3-3 产品能力。
 
 ### 7.4 完成判据
 
@@ -215,10 +215,10 @@ PG 迁移顶部“全仓 UPDATE 均显式写 updated_at”的注释将订正为�
 ## 8. 不在本批
 
 - A3-2 的占位符、反引号、分页、其余读写语句方言化。
-- PostgreSQL CI service / workflow 修改。
+- 除已追认的 `build-test` PostgreSQL 15 service 外，其他 workflow 修改。
 - controlplane、services、cmdb 的 UPSERT。
 - 国产数据库专用驱动。
-- 版本发布、CHANGELOG 版本块改写。
+- 版本发布与 CHANGELOG 版本归版；A3-3 的 Unreleased 口径更正已随 PR #160 合并并追认。
 
 ## 附录 A：48 处 UPSERT 冲突目标
 
