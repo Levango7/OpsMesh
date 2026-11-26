@@ -120,14 +120,14 @@ CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展�
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
+  docs/projects/production-readiness-charter.md  <- kilo  (ttl=8h by kilo)
   internal/agent/agent.go,internal/agent/file_symlink_parent_test.go,CHANGELOG.md,docs/CLAIMS.md <- zcode  (ttl=12h by zcode)
-  services/task-svc/internal/store/store.go,services/task-svc/internal/store/mysql.go,services/task-svc/internal/store/report_idempotency_test.go,services/task-svc/internal/store/mysql_scan_test.go,CHANGELOG.md,docs/CLAIMS.md <- zcode  (ttl=12h by zcode)
 
 TASKS:
   (无)
 
 ISSUES:
-  CLAIM 过期未闭环：docs/CLAIMS.md,docs/superpowers/plans/2026-11-24-a3-3-upsert-dialect.md,docs/superpowers/specs/2026-11-24-a3-3-upsert-dialect-design.md,docs/pg-dialect-a3-2-a3-3-plan-2026-11-23.md（认领人 qoder，ttl 4h）
+  CLAIM 过期未闭环：services/task-svc/internal/store/store.go,services/task-svc/internal/store/mysql.go,services/task-svc/internal/store/report_idempotency_test.go,services/task-svc/internal/store/mysql_scan_test.go,CHANGELOG.md,docs/CLAIMS.md（认领人 zcode，ttl 12h）
 ```
 
 ---
