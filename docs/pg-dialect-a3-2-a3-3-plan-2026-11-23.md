@@ -112,7 +112,7 @@ IsLockTimeoutError  DDLTargetExistsQuery  IdentifierQuote
 项目历史上多次出现「报告写完成、代码查无实据」（见审计报告 §4 的产品文档口径问题）。本改造的验收必须同时满足：
 
 1. **静态**：业务生产 Go 文件中裸 `ON DUPLICATE KEY UPDATE` / `ON CONFLICT` 为 0；只有三个特例适配允许出现原始方言 SQL。
-2. **动态**：`OPSMESH_TEST_PG_DSN` 指向真 PG15 时，UPSERT/PREPARE/幂等/并发用例真实执行（不是 skip）；无 DSN 时明确 skip。CI 不新增 PG service。
+2. **动态**：`OPSMESH_TEST_PG_DSN` 指向真 PG15 时，UPSERT/PREPARE/幂等/并发用例真实执行（不是 skip）；无 DSN 时明确 skip。PR #160 最终合入 `postgres:15` service，CI 通过 `OPSMESH_TEST_PG_DSN` 真跑 PG 门控用例；该接线已于 2026-11-26 追认。
 3. **约束**：从 AST 收集全部 UPSERT 目标，核对 MySQL 唯一索引集合 ⊆ PG 唯一约束集合；解析结果为空必须报红。
 4. **不回退**：MySQL 侧 48 处语义、参数顺序和写后结果等价，用 MySQL 真库跑同一组行为用例；不承诺 SQL 文本逐字节相同。
 5. **门禁射程**：新增裸 SQL、错误 conflict target、漏 PG 唯一约束三种窄变异均须报红，还原后转绿。
@@ -122,7 +122,7 @@ IsLockTimeoutError  DDLTargetExistsQuery  IdentifierQuote
 ## 4. 不在本次范围
 
 - **A3-2 读写面**：其余占位符、反引号、分页、DDL 自增翻译不在本批；完成 A3-3 不等于 PG 全业务读写可用。
-- **CI workflow 修改**：本批不修改 `.github/workflows/`，不新增 PostgreSQL service。
+- **其他 CI/workflow 改动**：除已追认的 `build-test` PostgreSQL 15 service 外，不扩展其他 workflow；`chaos-recovery-matrix.sh` shellcheck 豁免与 `api-usage.test.js` 账本修复按独立 CI 修复登记。
 - **controlplane / services / cmdb 的 UPSERT**：本批只收口 `internal/store/sqlstore`。
 - **国产 CPU / ARM64 镜像**：与 store 方言无关，单独立项。
 - **`domestic_ops.go`**：它是「对国产 DB 的运维动作脚本」（拼 psql/kingbase CLI），不是存储层驱动；不要把它算作国产 DB 支持。
@@ -201,7 +201,8 @@ git show --stat 2c61e02f
 
 ### 6.6 CI 与 PG 证据来源
 
-- **CI 未加 PostgreSQL service**：`.github/workflows/ci.yml` 的 services 仅 `mysql:8`（+ redis:7），本批未修改 `.github/workflows/`。PG 全部结果来自**本机 PG15 真库**（容器 `opsmesh-a33-pg`），非 skip、非 mock。
+- **CI 已接 PostgreSQL 15 service**：PR #160 最终在 `.github/workflows/ci.yml` 的 `build-test` 增加 `postgres:15` 与 `OPSMESH_TEST_PG_DSN`，PG 门控用例在 CI 真跑；该接线已于 2026-11-26 追认。合并前行为、并发与 96 次 PREPARE 证据仍来自**本机 PG15 真库**（容器 `opsmesh-a33-pg`），非 skip、非 mock。
+- **合并后 scope audit**：squash `6ebcebc99a1b08bf27e0dda81e7df2cdf76cf9a1` 相对父提交 `fdacd0c19091d0a51829e88b2cb5c38086a9104a` 另含 `CHANGELOG.md` 的 A3-3 更正、`deploy/scripts/chaos-recovery-matrix.sh` 的 shellcheck 豁免、`web/enterprise/src/api/__tests__/api-usage.test.js` 的账本修复。owner 于 2026-11-26 批准保留：PG service 与 CHANGELOG 更正归 A3-3 验收/文档支撑，后两项归独立 CI 修复；旧 DONE 中“未改 CI/未保留 CHANGELOG”的表述以 CLAIMS 追加勘误为准。
 - `RowsAffected` 差异：MySQL（`clientFoundRows=true`）插入 1 / 改变 2 / 未改变 1，PG 插入或更新均计 1；本批 48 处 UPSERT 均不消费 `RowsAffected`，故不把行数相等当验收条件，PR 说明中单列此差异。
 
 ### 6.7 边界声明
