@@ -120,7 +120,7 @@ CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展�
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  (无)
+  internal/controlplane/contract_v1_test.go,docs/CLAIMS.md <- kilo  (ttl=4h by kilo)
 
 TASKS:
   (无)
