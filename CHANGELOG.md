@@ -9,6 +9,10 @@
 
 - **2026-11-26 任务创建契约修复**：`handleCreateTask` 此前未声明/透传 `path` 与 `content`，导致 TasksView 的文件任务丢目标路径和内容、服务任务丢服务名；同时所有类型一律要求 command，文件任务被误伤为 400。现两字段在普通与幂等创建分支均完整保留，command 仅对 shell/service 保持必填。新增文件任务、服务任务及幂等创建的字段保持回归测试；后端 Task 相关测试、前端 store/审批契约测试、vet/lint/gates 全过。
 
+## [Unreleased] — 2026-11-26（审计：agent 文件任务父目录符号链接逃逸修复）
+
+- **2026-11-26 agent 文件任务路径防护**：`execFile` 的根目录白名单此前只做词法 `filepath.Rel`，允许根目录下指向根外的父目录符号链接绕过并写出界外。现改为解析真实父目录与真实根目录后再判包含关系；不存在的目标子目录保持原行为，根目录内合法目录链接不受影响。新增「父目录 symlink 逃逸拒绝 / 根内合法链接允许」双测试，Linux 容器先红后绿，本机与 Linux 的 agent 全量测试、vet/lint/gates 全过。
+
 ## [Unreleased] — 2026-11-26（审计：task-svc 失败上报幂等去重）
 
 - **2026-11-26 task-svc ReportResult 幂等去重**：memory 与 MySQL 的 `ReportResult` 此前对非零退出无条件 `retryCount++`，同一 claim_epoch 的重复失败上报（at-least-once 重试上报）会虚增重试次数、提前进入死信（maxRetries=2 时一次真失败+一次重复上报即死信）。现按 (taskID, claimEpoch) 去重：该 claim 已有失败记录则不再重复计重试/改状态，不同 claim 仍各自计数。新增两个先红后绿测试（重复上报只计一次、不同 claim 各计一次），task-svc store 全量测试、vet、gates 全过。
