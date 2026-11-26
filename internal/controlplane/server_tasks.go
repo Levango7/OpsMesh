@@ -96,6 +96,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		AgentID          string `json:"agentID"`
 		Type             string `json:"type"`
 		Command          string `json:"command"`
+		Content          string `json:"content"`
+		Path             string `json:"path"`
 		TenantID         string `json:"tenantID"`
 		Schedule         string `json:"schedule"`         // F4 可选：5 字段 cron，设定则成为模板任务（周期派生实例）
 		ApprovalRequired bool   `json:"approvalRequired"` // 修复 10：高风险任务需审批后才可执行
@@ -108,12 +110,14 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if body.AgentID == "" || body.Command == "" {
-		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID and command are required"})
-		return
-	}
 	if body.Type == "" {
 		body.Type = "shell"
+	}
+	// command 仅对 shell/service 必填；file 任务的执行依赖 path/content，
+	// 不应被「shell 命令必填」误伤（TasksView 表单允许 file 类型 command 为空）。
+	if body.AgentID == "" || (body.Type != "file" && body.Command == "") {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "agentID and command are required"})
+		return
 	}
 	// 安全加固纵深防御：控制面侧命令内容校验。
 	// 仅对 shell 类型任务校验 command（file 类型任务的 command 字段无 shell 语义）。
@@ -182,6 +186,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 				TenantID:         targetTenant,
 				Type:             body.Type,
 				Command:          body.Command,
+				Content:          body.Content,
+				Path:             body.Path,
 				Schedule:         body.Schedule, // F4 模板任务（cron）随创建下传
 				MaxRetries:       maxRetries,
 				ApprovalRequired: body.ApprovalRequired, // 修复 10：高风险任务需审批
@@ -196,6 +202,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 			TenantID:         targetTenant,
 			Type:             body.Type,
 			Command:          body.Command,
+			Content:          body.Content,
+			Path:             body.Path,
 			Schedule:         body.Schedule, // F4 模板任务（cron）随创建下传
 			MaxRetries:       maxRetries,
 			ApprovalRequired: body.ApprovalRequired, // 修复 10：高风险任务需审批

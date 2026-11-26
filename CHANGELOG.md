@@ -9,6 +9,10 @@
 
 - **2026-11-25 issue #157 — Windows agent 超时取消测试可移植化**：`TestExecute_Timeout` 原用 `sleep 2`（`cmd /C sleep` 在干净 Windows 上非原生命令、立即报错 ⇒ 测不到真取消路径），改为 Windows 用内置 `timeout /t 20 /nobreak`、Unix 用 `sleep 20`，使命令真实长运行、被中断时远小于 20s；阈值随 Windows taskkill 偶发开销放宽至 8000ms（远小于 20000ms 完成时间）。实测本机取消有效（亚秒，多次 PASS）。评估过 Windows Job Object 杀进程树，因 `AssignProcessToJobObject` 在「父进程已被纳入 Job」的环境 Access is denied、不可依赖而放弃，保留已验证的 taskkill 路径。仅改测试，不动生产取消逻辑。
 
+## [Unreleased] — 2026-11-26（审计：任务创建保留 path/content 与文件任务命令契约）
+
+- **2026-11-26 任务创建契约修复**：`handleCreateTask` 此前未声明/透传 `path` 与 `content`，导致 TasksView 的文件任务丢目标路径和内容、服务任务丢服务名；同时所有类型一律要求 command，文件任务被误伤为 400。现两字段在普通与幂等创建分支均完整保留，command 仅对 shell/service 保持必填。新增文件任务、服务任务及幂等创建的字段保持回归测试；后端 Task 相关测试、前端 store/审批契约测试、vet/lint/gates 全过。
+
 ## [Unreleased] — 2026-11-26（审计：agent 文件任务父目录符号链接逃逸修复）
 
 - **2026-11-26 agent 文件任务路径防护**：`execFile` 的根目录白名单此前只做词法 `filepath.Rel`，允许根目录下指向根外的父目录符号链接绕过并写出界外。现改为解析真实父目录与真实根目录后再判包含关系；不存在的目标子目录保持原行为，根目录内合法目录链接不受影响。新增「父目录 symlink 逃逸拒绝 / 根内合法链接允许」双测试，Linux 容器先红后绿，本机与 Linux 的 agent 全量测试、vet/lint/gates 全过。
