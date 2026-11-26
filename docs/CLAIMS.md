@@ -1518,3 +1518,4 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [CLAIM] 2026-11-26T17:30:00Z from=kilo ttl=4h scope=internal/controlplane/contract_v1_test.go,docs/CLAIMS.md note=B1 完成：tasks 非法分页参数 400 契约
 [CLAIM] 2026-11-26T17:40:00Z from=kilo ttl=4h scope=internal/controlplane/server_tasks.go,internal/controlplane/contract_v1_test.go,docs/CLAIMS.md note=B1 修复 tasks 非法分页参数应 400（保留 pageSize-only 裸数组）
 [DONE] 2026-11-26T17:45:00Z from=kilo scope=internal/controlplane/server_tasks.go,internal/controlplane/contract_v1_test.go,docs/CLAIMS.md commit=43b25bd6fb213b5b828f046026b284ff23efd5f2 note=B1 tasks 非法分页 400 契约落地
+[RELEASE] 2026-11-26T17:50:00Z from=kilo scope=internal/controlplane/contract_v1_test.go,docs/CLAIMS.md reason=superseded by 17:40 claim; work landed in 43b25bd6
