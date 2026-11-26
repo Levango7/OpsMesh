@@ -14,7 +14,7 @@
 
 - 全程中文沟通；代码标识符、命令、check 名保留原文。
 - 假成功零容忍：没有命令输出与真实读数，不得写“通过”。
-- 原实施只改 `internal/store/sqlstore/`、本计划、设计稿、调查文档、`docs/CLAIMS.md`；PR #160 最终夹带的 `.github/workflows/ci.yml`、`CHANGELOG.md`、`deploy/scripts/chaos-recovery-matrix.sh`、`web/enterprise/src/api/__tests__/api-usage.test.js` 改动已于 2026-11-26 追认，后续收口只改文档与 CLAIMS。
+- 原批准范围限定为 `internal/store/sqlstore/`、本计划、设计稿、调查文档、`docs/CLAIMS.md`；PR #160 实际最终合并还夹带 `.github/workflows/ci.yml`、`CHANGELOG.md`、`deploy/scripts/chaos-recovery-matrix.sh`、`web/enterprise/src/api/__tests__/api-usage.test.js` 改动，已于 2026-11-26 逐项追认，后续收口只改文档与 CLAIMS。
 - 不纳入 `internal/controlplane`、`services/*`、`internal/cmdb` 的 UPSERT。
 - MySQL 只承诺语义、参数顺序、写后结果等价，不承诺 SQL 文本逐字节相同。
 - PG 只收口 UPSERT 语句；周围 `?`、反引号、分页等 A3-2 读写面不在本批，不得宣称 PG 全业务读写可用。
@@ -1209,7 +1209,7 @@ PR_BODY=$(cat <<'EOF'
 ## Boundaries
 - 不含 controlplane/services/cmdb；最终合并的 `build-test` PostgreSQL 15 service 与 A3-3 CHANGELOG 更正已追认。
 - chaos shellcheck 豁免与 api-usage 账本修复按独立 CI 修复登记，不扩 A3-3 产品边界。
-- PG 真库证据来自本机 PG15；本批不宣称 A3-2 其余读写面或 PG 全业务读写已完成。
+- 合并前行为、并发与 96 次 PREPARE 证据来自本机 PG15；最终 CI 另由 `postgres:15` service 真跑 PG 门控用例。本批不宣称 A3-2 其余读写面或 PG 全业务读写已完成。
 - UPSERT 的 RowsAffected 不参与 MySQL/PG 等价判定。
 
 ## Verification
