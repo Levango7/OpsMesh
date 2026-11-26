@@ -283,7 +283,18 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	// 审计整改批次26：全量模式加硬上限 2000，防单请求拉全表；
 	// 截断时用 X-Truncated / X-Total-Count 响应头如实告知。
 	const maxUnpagedTasks = 2000
-	page, pageSize := paginate.ParsePagination(r.URL.Query())
+	// B1：非空 page/pageSize 必须是合法整数，否则 400（不静默回退默认值）。
+	// 保留既有行为：page 缺省 + pageSize 存在 => page=0 裸数组。
+	q := r.URL.Query()
+	for _, key := range []string{"page", "pageSize"} {
+		if v := q.Get(key); v != "" {
+			if _, err := strconv.Atoi(v); err != nil {
+				paginate.JSONError(w, http.StatusBadRequest, "invalid page/pageSize")
+				return
+			}
+		}
+	}
+	page, pageSize := paginate.ParsePagination(q)
 	if page == 0 {
 		if len(out) > maxUnpagedTasks {
 			w.Header().Set("X-Truncated", "true")

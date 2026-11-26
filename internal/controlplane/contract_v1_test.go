@@ -446,3 +446,29 @@ func TestContractV1OptInShapes(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 非法分页参数（非数字 page/pageSize → 400）
+// ---------------------------------------------------------------------------
+
+// TestContractV1TasksInvalidPagination 钉住 tasks 列表端点对非法分页参数的契约：
+// page/pageSize 存在但不是合法整数时必须回 400 {"error":"invalid page/pageSize"}，
+// 而不是静默回退默认值或返回 200 信封（B1）。
+func TestContractV1TasksInvalidPagination(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+	}{
+		{name: "non_numeric_page", target: "/api/v1/tasks?page=abc"},
+		{name: "non_numeric_page_size", target: "/api/v1/tasks?pageSize=xyz"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestServer()
+			seedContractTasks(s)
+			rec := contractServe(s.handleListTasks, tc.target, "t1", "")
+			assertInvalidPagination(t, rec)
+		})
+	}
+}
