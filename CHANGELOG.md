@@ -9,9 +9,18 @@
 
 - **2026-11-25 issue #157 — Windows agent 超时取消测试可移植化**：`TestExecute_Timeout` 原用 `sleep 2`（`cmd /C sleep` 在干净 Windows 上非原生命令、立即报错 ⇒ 测不到真取消路径），改为 Windows 用内置 `timeout /t 20 /nobreak`、Unix 用 `sleep 20`，使命令真实长运行、被中断时远小于 20s；阈值随 Windows taskkill 偶发开销放宽至 8000ms（远小于 20000ms 完成时间）。实测本机取消有效（亚秒，多次 PASS）。评估过 Windows Job Object 杀进程树，因 `AssignProcessToJobObject` 在「父进程已被纳入 Job」的环境 Access is denied、不可依赖而放弃，保留已验证的 taskkill 路径。仅改测试，不动生产取消逻辑。
 
+## [Unreleased] — 2026-11-25（批次68：Trino/Go 模板补齐 + PG 高级运维项目章程）
+
+- **2026-11-25 批次68 — Trino/Go 中间件模板补齐 + PG 高级运维项目章程**：internal/controlplane/presets/middleware_template_presets.go 新增 trino（分布式 SQL 查询引擎，docker/systemd，435/429/420）与 golang（运行时，1.22.5/1.21.12/1.20.14）两个预置模板；docs/projects/pg-advanced-ops-charter.md 登记 PostgreSQL 高级运维（扩展/自定义类型/MVCC 与表膨胀/分区/FDW/复制槽/逻辑复制/HA/监控 + PostGIS）立项书。
+
 ## [Unreleased] — 2026-11-25（issue #171：Kafka 故障期事件总线事件丢失修复）
 
 - **2026-11-25 issue #171 — Kafka WAL 兜底接线**：`events.New` 的 kafka 分支按 `OPSMESH_KAFKA_WAL_DIR` 启用本地 WAL + 后台重放（at-least-once），broker 故障期事件落盘、恢复后重放，不再静默丢失；空（默认）保持无 WAL 向后兼容路径（newKafkaBus 及其钉版测试不变）。compose 控制面预建 nonroot 属主的 `/data/kafka-wal` 并挂持久卷，开箱即保护。已知折中：broker 硬中断期间同步 Publish 可能阻塞至超时再落 WAL（延迟而非丢数据）。真实 compose 故障注入复核：修复前故障期事件丢失、修复后经 WAL 重放送达，控制面免重启。
+
+## [Unreleased] — 2026-11-25（契约裁决：BB-01/BB-02/BB-04/BB-06 采用方案 A）
+
+- **2026-11-25 契约裁决 — 方案 A（保守）**：BB-01/BB-02/BB-04/BB-06 采用方案 A：v1 默认形状冻结，opt-in 信封 via page/pageSize；新端点必须用统一信封；破坏性变更走 v2。决策记录 docs/adr/2026-11-25-contract-decision.md。
+
 
 ## [Unreleased] — 2026-11-24（issue #152：完整 compose 依赖故障与恢复一致性矩阵）
 
