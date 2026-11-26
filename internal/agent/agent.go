@@ -1879,13 +1879,21 @@ func (a *Agent) execFile(ctx context.Context, out, errb io.Writer, t proto.Task)
 }
 
 // checkFileRootWhitelist 检查路径是否落在允许的根目录之下（安全加固）。
-// 白名单为空时不限制（向后兼容，仍拒绝 ../ 与符号链接）。
-// 白名单非空时，路径必须落在某个根目录之下（用 filepath.Rel 判断相对路径不以 ".." 开头）。
+// 白名单为空时不限制（向后兼容，仍拒绝 ../ 与目标符号链接）。
+// 白名单非空时，先解析真实父目录与真实根目录，再用 filepath.Rel 判定包含关系，
+// 防止「根目录下某个子目录是指向根外的符号链接」绕过纯词法 Rel 检查。
 func (a *Agent) checkFileRootWhitelist(path string) error {
 	wl := a.cfg.AgentFileRootWhitelist
 	if wl == "" {
 		return nil
 	}
+	// execFile 只允许新建目标文件，允许其父目录尚不存在；此时回退到词法路径，
+	// 后续 CreateTemp 会如实报目录不存在，不影响已存在符号链接的逃逸判定。
+	resolvedDir, err := evalSymlinksIfExists(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	resolvedPath := filepath.Join(resolvedDir, filepath.Base(path))
 	for _, root := range strings.Split(wl, ",") {
 		root = strings.TrimSpace(root)
 		if root == "" {
@@ -1895,17 +1903,33 @@ func (a *Agent) checkFileRootWhitelist(path string) error {
 		if err != nil {
 			continue
 		}
-		rootClean := filepath.Clean(rootAbs)
-		rel, err := filepath.Rel(rootClean, path)
+		resolvedRoot, err := evalSymlinksIfExists(filepath.Clean(rootAbs))
 		if err != nil {
 			continue
 		}
-		// rel 不以 ".." 开头说明 path 在 rootClean 之下（含相等）。
+		rel, err := filepath.Rel(resolvedRoot, resolvedPath)
+		if err != nil {
+			continue
+		}
+		// rel 不以 ".." 开头说明解析后的真实路径仍在该根目录之下（含相等）。
 		if !strings.HasPrefix(rel, "..") {
 			return nil
 		}
 	}
 	return fmt.Errorf("path %q not under any allowed root (whitelist: %s)", path, wl)
+}
+
+// evalSymlinksIfExists 解析已存在路径的真实位置；路径不存在时保留原路径。
+// 用于文件写入前的包含关系校验，不存在的目标/子目录由后续创建操作如实报错。
+func evalSymlinksIfExists(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved, nil
+	}
+	if os.IsNotExist(err) {
+		return path, nil
+	}
+	return "", err
 }
 
 // clampExitCode 把退出码收敛到 int32 值域并返回，避免 int→int32 窄化溢出回绕
