@@ -246,7 +246,7 @@ func (g *Gateway) handleDeviceProvision(w http.ResponseWriter, r *http.Request, 
 	// 租户隔离：从 query 或 body 取 tenantID 校验设备归属。
 	// 与现有 handler 一致采用 query 参数（前端 service_proxy 透传）。
 	tenantID := r.URL.Query().Get("tenantID")
-	if tenantID != "" && dev.TenantID != tenantID {
+	if dev.TenantID != "" && (tenantID == "" || dev.TenantID != tenantID) {
 		writeError(w, http.StatusForbidden, "tenant mismatch")
 		return
 	}
@@ -293,7 +293,7 @@ func (g *Gateway) handleDeviceMetrics(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	tenantID := r.URL.Query().Get("tenantID")
-	if tenantID != "" && dev.TenantID != tenantID {
+	if dev.TenantID != "" && (tenantID == "" || dev.TenantID != tenantID) {
 		writeError(w, http.StatusForbidden, "tenant mismatch")
 		return
 	}

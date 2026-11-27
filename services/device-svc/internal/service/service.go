@@ -333,7 +333,7 @@ func (s *Service) ProvisionDevice(ctx context.Context, deviceID, tenantID string
 	if dev == nil {
 		return "", "", ErrDeviceNotFound
 	}
-	if tenantID != "" && dev.TenantID != tenantID {
+	if dev.TenantID != "" && (tenantID == "" || dev.TenantID != tenantID) {
 		return "", "", fmt.Errorf("provision: tenant mismatch (device tenant=%q, request tenant=%q)", dev.TenantID, tenantID)
 	}
 	token, err = s.provisionStore.IssueToken(deviceID, tenantID, 15*time.Minute)
@@ -368,7 +368,7 @@ func (s *Service) GetDeviceMetrics(ctx context.Context, deviceID, tenantID, rang
 	if dev == nil {
 		return nil, nil, ErrDeviceNotFound
 	}
-	if tenantID != "" && dev.TenantID != tenantID {
+	if dev.TenantID != "" && (tenantID == "" || dev.TenantID != tenantID) {
 		return nil, nil, fmt.Errorf("metrics: tenant mismatch (device tenant=%q, request tenant=%q)", dev.TenantID, tenantID)
 	}
 	// 未注入 MetricsStore：降级返回空（不报错）。

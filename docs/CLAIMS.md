@@ -1526,3 +1526,4 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [CLAIM] 2026-11-27T15:40:00Z from=kilo ttl=8h scope=docs/ note=P0 真值/宣称清理：README/DELIVERY/功能矩阵/门禁证据对账
 [RELEASE] 2026-11-27T16:00:00Z from=kilo scope=docs/ reason=P0 docs audit completed (audit report + cloud matrix)
 [CLAIM] 2026-11-27T16:00:00Z from=kilo ttl=8h scope=internal/config/ note=P0-3 ABAC default assertion test
+[CLAIM] 2026-11-27T16:30:00Z from=kilo ttl=8h scope=services/device-svc/ note=P0-5 remove query-based tenant fail-open
