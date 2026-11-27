@@ -1524,3 +1524,5 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [CLAIM] 2026-11-25T12:00:00Z from=zcode ttl=12h scope=internal/agent/execute_test.go,CHANGELOG.md,docs/CLAIMS.md note=issue #157：TestExecute_Timeout 可移植化（Windows 用内置 timeout、Unix sleep，20s 长命令保留判别力）；实测本机取消有效；Job Object 方案因 Access is denied 放弃，仅改测试不动生产取消逻辑
 [CLAIM] 2026-11-26T22:30:00Z from=kilo ttl=8h scope=docs/projects/production-readiness-charter.md note=生产级收口章程与分阶段计划
 [CLAIM] 2026-11-27T15:40:00Z from=kilo ttl=8h scope=docs/ note=P0 真值/宣称清理：README/DELIVERY/功能矩阵/门禁证据对账
+[RELEASE] 2026-11-27T16:00:00Z from=kilo scope=docs/ reason=P0 docs audit completed (audit report + cloud matrix)
+[CLAIM] 2026-11-27T16:00:00Z from=kilo ttl=8h scope=internal/config/ note=P0-3 ABAC default assertion test
