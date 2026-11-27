@@ -1529,3 +1529,7 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [CLAIM] 2026-11-27T16:30:00Z from=kilo ttl=8h scope=services/device-svc/ note=P0-5 remove query-based tenant fail-open
 [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 7 : 0 0 : 0 0 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e /   n o t e = P 0 - 6   c l o s e   d e r i v e d / f p r i n t f   i n j e c t i o n   r e s i d u e s   ( o s _ t u n i n g / s e c u r i t y _ e x t / s s h _ t r u s t )  
  [RELEASE] 2026-11-27T18:10:00Z from=kilo scope=docs/ reason=P0 truth audit and fixes landed (audit report, cloud matrix, ABAC default test, injection residues, stale counts)
+[ R E L E A S E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 1 5 : 0 0 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n f i g /   r e a s o n = P 0 - 3   A B A C   d e f a u l t   a s s e r t i o n   t e s t   l a n d e d  
+ [ R E L E A S E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 1 5 : 0 0 Z   f r o m = k i l o   s c o p e = s e r v i c e s / d e v i c e - s v c /   r e a s o n = P 0 - 5   t e n a n t   f a i l - c l o s e d   l a n d e d  
+ [ R E L E A S E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 1 5 : 0 0 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e /   r e a s o n = P 0 - 6   i n j e c t i o n   r e s i d u e s   c l o s e d  
+ 
