@@ -120,8 +120,7 @@ CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展�
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  internal/config/                               <- kilo  (ttl=8h by kilo)
-  services/device-svc/                           <- kilo  (ttl=8h by kilo)
+  (无)
 
 TASKS:
   (无)
