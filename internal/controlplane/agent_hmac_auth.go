@@ -69,10 +69,11 @@ func (s *Server) verifyAgentHMACRequest(w http.ResponseWriter, r *http.Request, 
 		return unauthorized("unknown agent or missing secret")
 	}
 
-	canonical := domain + "\n" + agentID + "\n" + tsStr
+	parts := []string{domain, agentID, tsStr}
 	if bodyDigest != "" {
-		canonical += "\n" + bodyDigest
+		parts = append(parts, bodyDigest)
 	}
+	canonical := strings.Join(parts, "\n")
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(canonical))
 	want := hex.EncodeToString(mac.Sum(nil))
