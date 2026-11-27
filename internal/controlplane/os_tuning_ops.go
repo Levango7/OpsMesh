@@ -482,7 +482,8 @@ func (s *Server) handleOSCert(w http.ResponseWriter, r *http.Request) {
 		if days <= 0 {
 			days = 365
 		}
-		script := fmt.Sprintf(`openssl req -x509 -nodes -days %d -newkey rsa:2048 -keyout /tmp/server.key -out /tmp/server.crt -subj "/CN=localhost" 2>/dev/null && echo "Certificate generated: /tmp/server.crt (valid %d days)"`, days, days)
+		daysV := days
+		script := fmt.Sprintf(`openssl req -x509 -nodes -days %d -newkey rsa:2048 -keyout /tmp/server.key -out /tmp/server.crt -subj "/CN=localhost" 2>/dev/null && echo "Certificate generated: /tmp/server.crt (valid %d days)"`, daysV, daysV)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "os_cert_generate")
 		if !ok {
 			return

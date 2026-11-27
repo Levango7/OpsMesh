@@ -99,7 +99,8 @@ func (s *Server) handleDDoS(w http.ResponseWriter, r *http.Request) {
 		if threshold <= 0 {
 			threshold = 100
 		}
-		script = fmt.Sprintf(`iptables -A INPUT -p tcp --syn -m connlimit --connlimit-above %d -j DROP 2>/dev/null && iptables -A INPUT -p tcp --syn -m limit --limit 100/s --limit-burst 200 -j ACCEPT 2>/dev/null && echo "iptables rate limit enabled (threshold=%d)"`, threshold, threshold)
+		thresholdV := threshold
+		script = fmt.Sprintf(`iptables -A INPUT -p tcp --syn -m connlimit --connlimit-above %d -j DROP 2>/dev/null && iptables -A INPUT -p tcp --syn -m limit --limit 100/s --limit-burst 200 -j ACCEPT 2>/dev/null && echo "iptables rate limit enabled (threshold=%d)"`, thresholdV, thresholdV)
 	case "enable-cloudflare":
 		script = `echo "Cloudflare DDoS protection: configure via Cloudflare dashboard or API" && echo "Enable 'Under Attack Mode' in Cloudflare settings"`
 	case "status-all":

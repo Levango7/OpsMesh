@@ -181,7 +181,8 @@ func buildSSHTrustScript(req sshTrustReq) string {
 		fmt.Fprintf(&b, "KEY_PATH=%q\n", keyPath)
 		b.WriteString("if [ ! -f \"$KEY_PATH\" ]; then\n")
 		b.WriteString("  mkdir -p \"$USER_HOME/.ssh\" && chmod 700 \"$USER_HOME/.ssh\"\n")
-		fmt.Fprintf(&b, "  ssh-keygen -t %s -N '' -f \"$KEY_PATH\" -C \"opsmesh@$(hostname)\"\n", req.KeyType)
+		keyType := req.KeyType
+		fmt.Fprintf(&b, "  ssh-keygen -t %s -N '' -f \"$KEY_PATH\" -C \"opsmesh@$(hostname)\"\n", keyType)
 		b.WriteString("  chown -R \"$TARGET_USER\" \"$USER_HOME/.ssh\" 2>/dev/null || true\n")
 		b.WriteString("  echo '密钥对已生成'\n")
 		b.WriteString("else echo '密钥对已存在（幂等跳过）'\nfi\n")
@@ -225,9 +226,10 @@ func buildSSHTrustScript(req sshTrustReq) string {
 	case "test":
 		host := req.Host
 		port := req.Port
+		user := req.User
 		b.WriteString("# 免密连通测试（BatchMode 禁止交互密码；accept-new 自动记录已知主机）\n")
 		fmt.Fprintf(&b, "if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -p %d %s@%s 'echo OPSMESH_SSH_OK' 2>&1; then\n",
-			port, req.User, host)
+			port, user, host)
 		b.WriteString("  echo '免密连通测试通过'\n")
 		b.WriteString("else\n")
 		b.WriteString("  echo '免密连通测试失败（检查 authorized_keys / sshd 配置 / 网络可达）'\n")
