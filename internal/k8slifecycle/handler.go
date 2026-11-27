@@ -180,8 +180,8 @@ type CertRotationSpec struct {
 	CAKeyPath  string   `json:"caKeyPath"`  // CA 私钥路径
 }
 
-// 证书轮换的执行链路未实现（A 项裁决为显式 501，见 HandleCertRotation）；
-// 真实现见 docs/design/k8s-lifecycle-execution-charter.md（C 项立项）。
+// TODO: 证书轮换执行链路仍 pending（多 CP 证书分发等细节待完善），见 HandleCertRotation/runCertRotation；
+// 入口 handler 与异步执行链已落地，真实现细节见 docs/design/k8s-lifecycle-execution-charter.md（C 项立项）。
 
 // ============================================================================
 // 节点扩缩容

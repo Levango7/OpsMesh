@@ -433,7 +433,7 @@ func TestDeviceProvision_ManualTrigger(t *testing.T) {
 	}
 
 	// 成功纳管：200 + token + bootstrap。
-	rec = doReq(t, mux, http.MethodPost, "/api/v1/devices/dev-1/provision", "")
+	rec = doReq(t, mux, http.MethodPost, "/api/v1/devices/dev-1/provision?tenantID=default", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("provision dev-1: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -487,7 +487,7 @@ func TestDeviceMetrics_NoStoreDegraded(t *testing.T) {
 	}
 
 	// 无 range：降级返回空 metrics。
-	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/metrics", "")
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/metrics?tenantID=default", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("metrics no store: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -503,7 +503,7 @@ func TestDeviceMetrics_NoStoreDegraded(t *testing.T) {
 	}
 
 	// 带 range：降级返回空 samples 数组。
-	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/metrics?range=2h", "")
+	rec = doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/metrics?tenantID=default&range=2h", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("metrics range no store: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -553,7 +553,7 @@ func TestDeviceMetrics_WithStore(t *testing.T) {
 	g.RegisterRoutes(mux, func(h http.Handler) http.Handler { return h })
 
 	// 无 range：返回最新值。
-	rec := doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/metrics", "")
+	rec := doReq(t, mux, http.MethodGet, "/api/v1/devices/dev-1/metrics?tenantID=default", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("metrics with store: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -576,7 +576,7 @@ func TestDeviceMetrics_WithStore(t *testing.T) {
 	mux2 := http.NewServeMux()
 	g.RegisterRoutes(mux2, func(h http.Handler) http.Handler { return h })
 
-	rec = doReq(t, mux2, http.MethodGet, "/api/v1/devices/dev-1/metrics?range=2h", "")
+	rec = doReq(t, mux2, http.MethodGet, "/api/v1/devices/dev-1/metrics?tenantID=default&range=2h", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("metrics range with store: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -593,7 +593,7 @@ func TestDeviceMetrics_WithStore(t *testing.T) {
 	}
 
 	// 非法 range：400。
-	rec = doReq(t, mux2, http.MethodGet, "/api/v1/devices/dev-1/metrics?range=99d", "")
+	rec = doReq(t, mux2, http.MethodGet, "/api/v1/devices/dev-1/metrics?tenantID=default&range=99d", "")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid range: got %d, want 400", rec.Code)
 	}

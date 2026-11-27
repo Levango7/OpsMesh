@@ -1,9 +1,8 @@
 // Package cloudprovider 提供多云厂商适配器抽象与内建注册。
 //
 // CloudProvider 是所有云厂商适配器的统一抽象接口；AdapterFactory 按
-// ProviderType 注册/查找适配器；registry.go 注册内建厂商适配器（aliyun
-// 已接入真实实现，其余为 stub，均返回 "not implemented" 错误，待后续
-// 波次实现具体 SDK 调用）。
+// ProviderType 注册/查找适配器；registry.go 注册内建厂商适配器（6 家：
+// aliyun/aws/azure/tencent/huawei/volcengine 均已注册，能力深度因厂商而异）。
 //
 // Credentials 为运行时临时持有者：AK/SK 等密钥由调用方在调用时从秘密
 // 存储（internal/secrets）解析后填入，本包不持久化明文凭据。
