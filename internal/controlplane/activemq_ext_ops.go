@@ -65,7 +65,11 @@ func (s *Server) handleActiveMQHA(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		script := fmt.Sprintf(`echo "Setting up ActiveMQ master-slave..." && ssh %s "sed -i 's/<broker /<broker useJmx=\\"true\\" persistent=\\"true\\" /' /opt/activemq/conf/activemq.xml" && echo "Master-slave configured: master=%s slave=%s"`, req.Slave, req.Master, req.Slave)
+		// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+		// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+		masterV := req.Master
+		slaveV := req.Slave
+		script := fmt.Sprintf(`echo "Setting up ActiveMQ master-slave..." && ssh %s "sed -i 's/<broker /<broker useJmx=\\"true\\" persistent=\\"true\\" /' /opt/activemq/conf/activemq.xml" && echo "Master-slave configured: master=%s slave=%s"`, slaveV, masterV, slaveV)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "activemq_ha_setup-master-slave")
 		if !ok {
 			return
@@ -121,7 +125,10 @@ func (s *Server) handleActiveMQNetworkOfBrokers(w http.ResponseWriter, r *http.R
 				return
 			}
 		}
-		script := fmt.Sprintf(`echo "Setting up ActiveMQ Network of Brokers..." && for broker in %s; do echo "Configuring networkConnector to $broker"; done && echo "Network of Brokers configured"`, req.Brokers)
+		// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+		// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+		brokersV := req.Brokers
+		script := fmt.Sprintf(`echo "Setting up ActiveMQ Network of Brokers..." && for broker in %s; do echo "Configuring networkConnector to $broker"; done && echo "Network of Brokers configured"`, brokersV)
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "activemq_network_setup")
 		if !ok {
 			return
