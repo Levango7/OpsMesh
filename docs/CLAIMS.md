@@ -1528,3 +1528,4 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [CLAIM] 2026-11-27T16:00:00Z from=kilo ttl=8h scope=internal/config/ note=P0-3 ABAC default assertion test
 [CLAIM] 2026-11-27T16:30:00Z from=kilo ttl=8h scope=services/device-svc/ note=P0-5 remove query-based tenant fail-open
 [CLAIM] 2026-11-27T16:00:00Z from=zcode ttl=12h scope=Dockerfile,CHANGELOG.md,docs/CLAIMS.md note=main image Trivy 红因=bookworm-slim 的 libpam* CVE-2025-6020（4 HIGH），runtime 定点升级 1.5.2-6+deb12u3 并清 apt 索引；本地重建后 HIGH/CRITICAL 扫描 Vulnerabilities=0
+[CLAIM] 2026-11-27T17:00:00Z from=zcode ttl=12h scope=internal/config/config_abac_enforce_default_test.go,docs/CLAIMS.md note=#182 build-test 的 gofmt 红因为该测试文件 EOF 缺换行，gofmt 补齐，无行为变化
