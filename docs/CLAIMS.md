@@ -1543,3 +1543,5 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [RELEASE] 2026-11-27T18:35:00Z from=kilo scope=internal/controlplane/contract_v1_test.go reason=B1 tasks legacy shape landed
 [CLAIM] 2026-11-27T18:05:00Z from=kilo ttl=8h scope=internal/controlplane/os_tuning_ops.go note=close os_tuning concat residues
 [DONE] 2026-11-27T18:05:00Z from=kilo scope=internal/controlplane/os_tuning_ops.go note=close os_tuning concat residues
+[CLAIM] 2026-11-27T18:28:25Z from=kilo ttl=8h scope=internal/controlplane/security_headers.go note=close security_headers concat residue
+[DONE] 2026-11-27T18:28:25Z from=kilo scope=internal/controlplane/security_headers.go note=close security_headers concat residue

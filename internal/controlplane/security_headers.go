@@ -100,7 +100,8 @@ func buildSecurityCSP(policy string) string {
 		nonceBytes = []byte("fallback-nonce-v1")
 	}
 	nonce := hex.EncodeToString(nonceBytes)
-	nonceDirective := " 'nonce-" + nonce + "'"
+	noncePart := " 'nonce-" + nonce
+	nonceDirective := noncePart + "'"
 	// 追加在 'self' 之后，保证 "script-src 'self'" 前缀语义不变。
 	if strings.Contains(policy, "script-src 'self'") {
 		return strings.Replace(policy, "script-src 'self'", "script-src 'self'"+nonceDirective, 1)
