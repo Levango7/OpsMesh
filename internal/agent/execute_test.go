@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -67,16 +68,23 @@ func TestExecute_Timeout(t *testing.T) {
 	a := newTestAgent(50 * time.Millisecond) // 故意短超时
 	toCtx, toCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer toCancel()
-	res := a.execute(toCtx, proto.Task{Type: proto.TaskTypeShell, Command: "sleep 2"})
+	// 可移植的长命令：Windows 用内置 timeout（sleep 非原生命令，干净机器上
+	// `cmd /C sleep N` 会立即报「不是内部或外部命令」从而根本测不到取消路径）；
+	// Unix 用 sleep。命令完整耗时 20s，被中断时远小于 20s ⇒ 区分「被打断」与「跑完」。
+	cmd := "sleep 20"
+	if runtime.GOOS == "windows" {
+		cmd = "timeout /t 20 /nobreak"
+	}
+	res := a.execute(toCtx, proto.Task{Type: proto.TaskTypeShell, Command: cmd})
 	if res.ExitCode == 0 {
 		t.Fatalf("超时命令应非零退出，得到 ExitCode=0")
 	}
-	// 平台差异：Linux 上被信号杀死 ExitCode=-1；Windows 上 killed 进程返回 1。
-	// 关键断言是"被超时打断而非跑完"：命令 sleep 2 完整耗时 20000ms，
-	// 被中断时 Windows 上 taskkill /T /F 为同步开销（实测 1.4-1.6s，负载高时可达 2-4s），
-	// 阈值取 4500ms——远小于完成时间 20000ms，且覆盖 Windows 偶发开销，保留判别力。
-	if res.DurationMs > 4500 {
-		t.Fatalf("超时命令应在 ~50ms 内被中断，实际耗时 %dms", res.DurationMs)
+	// 平台差异：Linux 上被信号杀死 ExitCode=-1；Windows 上 killed 进程返回非零。
+	// 关键断言是「被超时打断而非跑完」：命令完整耗时 20000ms，
+	// 被中断时 Windows 上 taskkill /T /F 为同步开销（实测 1.4-4s，负载高时更长），
+	// 阈值取 8000ms——远小于完成时间 20000ms，且覆盖 Windows 偶发开销，保留判别力。
+	if res.DurationMs > 8000 {
+		t.Fatalf("超时命令应被中断（远小于 20000ms），实际耗时 %dms", res.DurationMs)
 	}
 }
 
