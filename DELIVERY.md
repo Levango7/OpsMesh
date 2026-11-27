@@ -15,10 +15,10 @@
 
 | 指标 | 数值（实测 2026-09-16） |
 |------|----------------------|
-| 仓库文件合计 | 1,411 |
-| Go 文件合计 | **1,382**（含 651 测试文件，6,460 测试函数） |
+| 仓库文件合计 | 2,578 |
+| Go 文件合计 | **1,607**（含 778 测试文件，6,953 测试函数） |
 | Go 行数合计 | ~414,000（~414k，其中测试 ~106,100，占比约 45.3%） |
-| 前端文件（`.js` + `.vue`） | 318（Vue 119 + JS 199，`web/enterprise/src/`） |
+| 前端文件（`.js` + `.vue`） | 346（Vue 129 + JS 217，`web/enterprise/src/`） |
 | 微服务子模块 | 13 个（`services/`，独立 go.mod，与主模块双轨并存，见 README「services/ 微服务目录」） |
 
 > 较 2026-08-24 版本（346 Go 文件 / ~51,700 行）大幅增长：新增 `services/` 微服务化拆分（约 8 万行）、GPU 资源管理、AIOps 引擎、ChatOps、成本分摊、Terraform provider 等能力；规模统计随 25 提交增量演进刷新。
@@ -175,7 +175,7 @@ go build ./... && go vet ./... && go test ./...
 
 - 远端：`github.com/Levango7/OpsMesh`，分支 `main`
 - 根提交链：以 `git rev-list --count HEAD` 实测为准（初始 README → 内核实现 → 六大运维模块 → CI/容器加固 → 文档同步，持续演进中）
-- 提交内容：34 包源码（主模块 31 + operator 3）+ ~1,382 Go 文件（含 ~651 测试，实测口径见 §2）+ ~318 前端文件（`web/enterprise/src/`）+ Dockerfile/Dockerfile.agent + 11 个微服务 Dockerfile（`services/<svc>/Dockerfile`）+ docker-compose + Helm Chart + systemd unit + README + DELIVERY + CHANGELOG + 23 个设计文档 + `.github/workflows/ci.yml` + `.gitignore`
+- 提交内容：34 包源码（主模块 31 + operator 3）+ ~1,607 Go 文件（含 778 测试，实测口径见 §2）+ ~346 前端文件（`web/enterprise/src/`）+ Dockerfile/Dockerfile.agent + 11 个微服务 Dockerfile（`services/<svc>/Dockerfile`）+ docker-compose + Helm Chart + systemd unit + README + DELIVERY + CHANGELOG + 23 个设计文档 + `.github/workflows/ci.yml` + `.gitignore`
 
 ---
 ## 9. 生产安全加固

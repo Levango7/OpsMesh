@@ -1527,5 +1527,21 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [RELEASE] 2026-11-27T16:00:00Z from=kilo scope=docs/ reason=P0 docs audit completed (audit report + cloud matrix)
 [CLAIM] 2026-11-27T16:00:00Z from=kilo ttl=8h scope=internal/config/ note=P0-3 ABAC default assertion test
 [CLAIM] 2026-11-27T16:30:00Z from=kilo ttl=8h scope=services/device-svc/ note=P0-5 remove query-based tenant fail-open
+[CLAIM] 2026-11-27T17:00:00Z from=kilo ttl=8h scope=internal/controlplane/ note=P0-6 close derived/fprintf injection residues (os_tuning/security_ext/ssh_trust)
+[RELEASE] 2026-11-27T18:10:00Z from=kilo scope=docs/ reason=P0 truth audit and fixes landed (audit report, cloud matrix, ABAC default test, injection residues, stale counts)
+[RELEASE] 2026-11-27T18:15:00Z from=kilo scope=internal/config/ reason=P0-3 ABAC default assertion test landed
+[RELEASE] 2026-11-27T18:15:00Z from=kilo scope=services/device-svc/ reason=P0-5 tenant fail-closed landed
+[RELEASE] 2026-11-27T18:15:00Z from=kilo scope=internal/controlplane/ reason=P0-6 injection residues closed
+
+[RELEASE] 2026-11-27T18:20:00Z from=kilo scope=docs/projects/production-readiness-charter.md reason=P0 charter landed
+[RELEASE] 2026-11-28T00:00:00Z from=kilo scope=internal/agent/agent.go,internal/agent/file_symlink_parent_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in 1d17261e/55a40375
+[RELEASE] 2026-11-28T00:01:00Z from=kilo scope=internal/agent/execute_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in 2e659ad1/8d0273cd
+[RELEASE] 2026-11-28T00:02:00Z from=kilo scope=internal/controlplane/server_tasks.go,internal/controlplane/task_create_fields_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in a088cade/d30b3817
+[RELEASE] 2026-11-28T00:03:00Z from=kilo scope=services/task-svc/internal/store/store.go,services/task-svc/internal/store/mysql.go,services/task-svc/internal/store/report_idempotency_test.go,services/task-svc/internal/store/mysql_scan_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in f7030d3b/7e435bf5
+[CLAIM] 2026-11-27T18:30:00Z from=kilo ttl=4h scope=internal/controlplane/contract_v1_test.go note=B1 tasks legacy shape exact keys
+[DONE] 2026-11-27T18:30:00Z from=kilo scope=internal/controlplane/contract_v1_test.go commit=26d3834c66b778f5a9cb2a67fe0ab3d648f72c11 note=B1 tasks legacy shape exact keys
+[RELEASE] 2026-11-27T18:35:00Z from=kilo scope=internal/controlplane/contract_v1_test.go reason=B1 tasks legacy shape landed
+[CLAIM] 2026-11-27T18:05:00Z from=kilo ttl=8h scope=internal/controlplane/os_tuning_ops.go note=close os_tuning concat residues
+[DONE] 2026-11-27T18:05:00Z from=kilo scope=internal/controlplane/os_tuning_ops.go note=close os_tuning concat residues
 [CLAIM] 2026-11-27T16:00:00Z from=zcode ttl=12h scope=Dockerfile,CHANGELOG.md,docs/CLAIMS.md note=main image Trivy 红因=bookworm-slim 的 libpam* CVE-2025-6020（4 HIGH），runtime 定点升级 1.5.2-6+deb12u3 并清 apt 索引；本地重建后 HIGH/CRITICAL 扫描 Vulnerabilities=0
 [CLAIM] 2026-11-27T17:00:00Z from=zcode ttl=12h scope=internal/config/config_abac_enforce_default_test.go,docs/CLAIMS.md note=#182 build-test 的 gofmt 红因为该测试文件 EOF 缺换行，gofmt 补齐，无行为变化

@@ -239,6 +239,11 @@ func TestContractV1DefaultShapes(t *testing.T) {
 				if len(arr) == 0 {
 					t.Fatalf("tasks default array is empty; fixture missing: %s", body)
 				}
+				for _, raw := range arr {
+					elem := contractObject(t, raw)
+					contractAssertExactKeys(t, "tasks element", elem,
+						"taskID", "agentID", "tenantID", "type", "command", "content", "path", "status", "claimedBy", "claimedAt", "claimEpoch", "createdAt", "retryCount", "maxRetries", "deadLetter", "schedule", "parentID", "lastFiredAt", "dependsOn")
+				}
 			},
 		},
 		{
