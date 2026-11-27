@@ -1533,3 +1533,4 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
  [ R E L E A S E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 1 5 : 0 0 Z   f r o m = k i l o   s c o p e = s e r v i c e s / d e v i c e - s v c /   r e a s o n = P 0 - 5   t e n a n t   f a i l - c l o s e d   l a n d e d  
  [ R E L E A S E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 1 5 : 0 0 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e /   r e a s o n = P 0 - 6   i n j e c t i o n   r e s i d u e s   c l o s e d  
  
+[RELEASE] 2026-11-27T18:20:00Z from=kilo scope=docs/projects/production-readiness-charter.md reason=P0 charter landed

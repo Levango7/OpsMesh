@@ -127,7 +127,6 @@ TASKS:
   (无)
 
 ISSUES:
-  CLAIM 过期未闭环：docs/projects/production-readiness-charter.md（认领人 kilo，ttl 8h）
   CLAIM 过期未闭环：internal/agent/agent.go,internal/agent/file_symlink_parent_test.go,CHANGELOG.md,docs/CLAIMS.md（认领人 zcode，ttl 12h）
   CLAIM 过期未闭环：internal/agent/execute_test.go,CHANGELOG.md,docs/CLAIMS.md（认领人 zcode，ttl 12h）
   CLAIM 过期未闭环：internal/controlplane/server_tasks.go,internal/controlplane/task_create_fields_test.go,CHANGELOG.md,docs/CLAIMS.md（认领人 zcode，ttl 12h）
