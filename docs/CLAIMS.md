@@ -1541,3 +1541,5 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [CLAIM] 2026-11-27T18:30:00Z from=kilo ttl=4h scope=internal/controlplane/contract_v1_test.go note=B1 tasks legacy shape exact keys
 [DONE] 2026-11-27T18:30:00Z from=kilo scope=internal/controlplane/contract_v1_test.go commit=26d3834c66b778f5a9cb2a67fe0ab3d648f72c11 note=B1 tasks legacy shape exact keys
 [RELEASE] 2026-11-27T18:35:00Z from=kilo scope=internal/controlplane/contract_v1_test.go reason=B1 tasks legacy shape landed
+[CLAIM] 2026-11-27T18:05:00Z from=kilo ttl=8h scope=internal/controlplane/os_tuning_ops.go note=close os_tuning concat residues
+[DONE] 2026-11-27T18:05:00Z from=kilo scope=internal/controlplane/os_tuning_ops.go note=close os_tuning concat residues
