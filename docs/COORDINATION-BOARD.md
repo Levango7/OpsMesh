@@ -125,12 +125,6 @@ ACTIVE CLAIMS:
 
 TASKS:
   (无)
-
-ISSUES:
-  CLAIM 过期未闭环：internal/agent/agent.go,internal/agent/file_symlink_parent_test.go,CHANGELOG.md,docs/CLAIMS.md（认领人 zcode，ttl 12h）
-  CLAIM 过期未闭环：internal/agent/execute_test.go,CHANGELOG.md,docs/CLAIMS.md（认领人 zcode，ttl 12h）
-  CLAIM 过期未闭环：internal/controlplane/server_tasks.go,internal/controlplane/task_create_fields_test.go,CHANGELOG.md,docs/CLAIMS.md（认领人 zcode，ttl 12h）
-  CLAIM 过期未闭环：services/task-svc/internal/store/store.go,services/task-svc/internal/store/mysql.go,services/task-svc/internal/store/report_idempotency_test.go,services/task-svc/internal/store/mysql_scan_test.go,CHANGELOG.md,docs/CLAIMS.md（认领人 zcode，ttl 12h）
 ```
 
 ---

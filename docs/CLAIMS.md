@@ -1534,3 +1534,7 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
  [ R E L E A S E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 1 5 : 0 0 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e /   r e a s o n = P 0 - 6   i n j e c t i o n   r e s i d u e s   c l o s e d  
  
 [RELEASE] 2026-11-27T18:20:00Z from=kilo scope=docs/projects/production-readiness-charter.md reason=P0 charter landed
+[RELEASE] 2026-11-28T00:00:00Z from=kilo scope=internal/agent/agent.go,internal/agent/file_symlink_parent_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in 1d17261e/55a40375
+[RELEASE] 2026-11-28T00:01:00Z from=kilo scope=internal/agent/execute_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in 2e659ad1/8d0273cd
+[RELEASE] 2026-11-28T00:02:00Z from=kilo scope=internal/controlplane/server_tasks.go,internal/controlplane/task_create_fields_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in a088cade/d30b3817
+[RELEASE] 2026-11-28T00:03:00Z from=kilo scope=services/task-svc/internal/store/store.go,services/task-svc/internal/store/mysql.go,services/task-svc/internal/store/report_idempotency_test.go,services/task-svc/internal/store/mysql_scan_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in f7030d3b/7e435bf5
