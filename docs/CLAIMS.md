@@ -1550,4 +1550,5 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
  [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e  
  [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 4 0 : 4 1 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e / c a c h e _ e h c a c h e _ o p s . g o   n o t e = c l o s e   c a c h e _ e h c a c h e   i n j e c t i o n   r e s i d u e s  
  [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 4 0 : 4 1 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / c a c h e _ e h c a c h e _ o p s . g o   n o t e = c l o s e   c a c h e _ e h c a c h e   i n j e c t i o n   r e s i d u e s  
- 
+ [CLAIM] 2026-11-27T16:00:00Z from=zcode ttl=12h scope=Dockerfile,CHANGELOG.md,docs/CLAIMS.md note=main image Trivy 红因=bookworm-slim 的 libpam* CVE-2025-6020（4 HIGH），runtime 定点升级 1.5.2-6+deb12u3 并清 apt 索引；本地重建后 HIGH/CRITICAL 扫描 Vulnerabilities=0
+[CLAIM] 2026-11-27T17:00:00Z from=zcode ttl=12h scope=internal/config/config_abac_enforce_default_test.go,docs/CLAIMS.md note=#182 build-test 的 gofmt 红因为该测试文件 EOF 缺换行，gofmt 补齐，无行为变化
