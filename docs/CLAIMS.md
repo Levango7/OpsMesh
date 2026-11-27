@@ -1548,4 +1548,6 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
  
  [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e  
  [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e  
+ [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 4 0 : 4 1 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e / c a c h e _ e h c a c h e _ o p s . g o   n o t e = c l o s e   c a c h e _ e h c a c h e   i n j e c t i o n   r e s i d u e s  
+ [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 4 0 : 4 1 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / c a c h e _ e h c a c h e _ o p s . g o   n o t e = c l o s e   c a c h e _ e h c a c h e   i n j e c t i o n   r e s i d u e s  
  
