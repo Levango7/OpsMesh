@@ -278,11 +278,12 @@ func (s *Server) abacBundleArtifactFor(tenantID string, policies []abacbundle.Po
 		return abacBundleArtifact{}, fmt.Errorf("encode bundle: %w", err)
 	}
 
+	etagPart := `"` + digest
 	artifact := abacBundleArtifact{
 		snapshot:    snapshot,
 		payload:     payload,
 		digest:      digest,
-		etag:        `"` + digest + `"`,
+		etag:        etagPart + `"`,
 		bundleID:    bundleID,
 		policyCount: len(policies),
 		expiresAt:   bundle.ExpiresAt,

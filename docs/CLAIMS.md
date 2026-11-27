@@ -1545,3 +1545,7 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [DONE] 2026-11-27T18:05:00Z from=kilo scope=internal/controlplane/os_tuning_ops.go note=close os_tuning concat residues
 [CLAIM] 2026-11-27T18:28:25Z from=kilo ttl=8h scope=internal/controlplane/security_headers.go note=close security_headers concat residue
 [DONE] 2026-11-27T18:28:25Z from=kilo scope=internal/controlplane/security_headers.go note=close security_headers concat residue
+ 
+ [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e  
+ [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e  
+ 
