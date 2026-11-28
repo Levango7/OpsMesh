@@ -7,7 +7,7 @@
 
 ## [Unreleased] — 2026-11-28（issue #150：AI 成本预算持久化硬限）
 
-- **2026-11-28 issue #150 — AI 成本预算持久化硬限**：新增 `ConsumeIfUnderLimit`，把窗口重置、限额检查、累加收敛为单原子操作；SQL 用 `REPEATABLE READ + FOR UPDATE` 行锁，Memory/MemoryStore 用互斥锁；控制面按主存储类型装配 SQL BudgetStore。修复旧 RMW 在并发/多副本下丢失更新、重启归零、判定与记账分离导致的硬限穿透；存储故障 fail-closed。真 MySQL 验证 10 并发恰好 5 放行 5 拒绝、跨副本用量一致、DB 断开拒绝，dev/memory 原子与窗口测试全过。
+- **2026-11-28 issue #150 — AI 成本预算持久化硬限**：新增 `ConsumeIfUnderLimit` 与真实用量 `AddUsage`，SQL 用 `REPEATABLE READ + FOR UPDATE` 行锁，Memory/MemoryStore 用互斥锁；控制面按主存储类型装配 SQL BudgetStore。付费预检每次读取最新 SQL 预算，Provider 返回后的真实 token 即使越限也原子入账，后续所有副本拒绝新消费；配置更新、告警去重与并发首插不再用陈旧快照覆盖用量。修复重启归零、跨副本丢失更新、越限请求永远停在限内快照及热缓存掩盖 DB 故障；负数/整数溢出与存储故障 fail-closed。真实 token 不做估算预留，不承诺并发在途请求绝不超额。新增先红后绿反例及真 MySQL 多管理器/并发告警/断库验证。
 
 ## [Unreleased] — 2026-11-27（基础镜像 PAM CVE 修复）
 

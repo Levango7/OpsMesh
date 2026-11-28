@@ -3,18 +3,41 @@ package memory
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
-// ConsumeIfUnderLimit 在 MemoryStore 同一把锁内完成窗口重置、限额检查与累加。
-// 语义与 SQL 实现一致：本次会超限时不累加，返回 allowed=false。
-func (m *MemoryStore) ConsumeIfUnderLimit(ctx context.Context, tenantID string, tokens int) (bool, BudgetUsage, error) {
+func validateMemoryBudgetConsumption(b *TokenBudget, tokens int) error {
 	if tokens < 0 {
-		return false, BudgetUsage{}, fmt.Errorf("tokens must not be negative: %d", tokens)
+		return fmt.Errorf("tokens must not be negative: %d", tokens)
 	}
+	if b.UsedToday < 0 || b.UsedMonth < 0 {
+		return fmt.Errorf("stored budget usage must not be negative")
+	}
+	maxInt := int(^uint(0) >> 1)
+	if tokens > maxInt-b.UsedToday || tokens > maxInt-b.UsedMonth {
+		return fmt.Errorf("budget usage overflow")
+	}
+	return nil
+}
+
+func cloneMemoryBudget(b *TokenBudget) *TokenBudget {
+	if b == nil {
+		return nil
+	}
+	cp := *b
+	if b.Alerted != nil {
+		cp.Alerted = make(map[string]bool, len(b.Alerted))
+		for k, v := range b.Alerted {
+			cp.Alerted[k] = v
+		}
+	}
+	return &cp
+}
+
+func (m *MemoryStore) mutateBudget(tenantID string, mutate func(time.Time, *TokenBudget) error) (*TokenBudget, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	b, ok := m.budgets[tenantID]
 	if !ok {
 		b = &TokenBudget{
@@ -24,14 +47,97 @@ func (m *MemoryStore) ConsumeIfUnderLimit(ctx context.Context, tenantID string, 
 	}
 	now := time.Now()
 	normalizeMemoryBudgetWindow(now, b)
-	if b.DailyLimit > 0 && b.UsedToday+tokens > b.DailyLimit ||
-		b.MonthlyLimit > 0 && b.UsedMonth+tokens > b.MonthlyLimit {
-		return false, memoryBudgetUsageOf(b), nil
+	if err := mutate(now, b); err != nil {
+		return nil, err
 	}
-	b.UsedToday += tokens
-	b.UsedMonth += tokens
 	m.budgets[tenantID] = b
-	return true, memoryBudgetUsageOf(b), nil
+	return cloneMemoryBudget(b), nil
+}
+
+// ConsumeIfUnderLimit 在 MemoryStore 同一把锁内完成窗口重置、限额检查与累加。
+// 语义与 SQL 实现一致：本次超限时不累加，返回 allowed=false。
+func (m *MemoryStore) ConsumeIfUnderLimit(ctx context.Context, tenantID string, tokens int) (bool, BudgetUsage, error) {
+	allowed := true
+	b, err := m.mutateBudget(tenantID, func(_ time.Time, b *TokenBudget) error {
+		if err := validateMemoryBudgetConsumption(b, tokens); err != nil {
+			return err
+		}
+		if b.DailyLimit > 0 && b.UsedToday+tokens > b.DailyLimit ||
+			b.MonthlyLimit > 0 && b.UsedMonth+tokens > b.MonthlyLimit {
+			allowed = false
+			return nil
+		}
+		b.UsedToday += tokens
+		b.UsedMonth += tokens
+		return nil
+	})
+	if err != nil {
+		return false, BudgetUsage{}, err
+	}
+	return allowed, memoryBudgetUsageOf(b), nil
+}
+
+func checkMemoryBudgetAlerts(now time.Time, b *TokenBudget) []BudgetAlert {
+	var out []BudgetAlert
+	collect := func(alertType string, used, limit int) {
+		if limit <= 0 || float64(used)/float64(limit) < b.AlertThreshold {
+			return
+		}
+		key := fmt.Sprintf("%s:%g", alertType, b.AlertThreshold)
+		if b.Alerted[key] {
+			return
+		}
+		if b.Alerted == nil {
+			b.Alerted = make(map[string]bool)
+		}
+		b.Alerted[key] = true
+		out = append(out, BudgetAlert{TenantID: b.TenantID, Type: alertType, Threshold: b.AlertThreshold, Used: used, Limit: limit, Timestamp: now})
+	}
+	collect("daily", b.UsedToday, b.DailyLimit)
+	collect("monthly", b.UsedMonth, b.MonthlyLimit)
+	return out
+}
+
+func (m *MemoryStore) AddUsage(ctx context.Context, tenantID string, tokens int) (*TokenBudget, []BudgetAlert, error) {
+	var alerts []BudgetAlert
+	b, err := m.mutateBudget(tenantID, func(now time.Time, b *TokenBudget) error {
+		if err := validateMemoryBudgetConsumption(b, tokens); err != nil {
+			return err
+		}
+		b.UsedToday += tokens
+		b.UsedMonth += tokens
+		alerts = checkMemoryBudgetAlerts(now, b)
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return b, alerts, nil
+}
+
+func (m *MemoryStore) UpdateBudgetLimits(ctx context.Context, tenantID string, daily, monthly int, threshold float64) (*TokenBudget, error) {
+	return m.mutateBudget(tenantID, func(_ time.Time, b *TokenBudget) error {
+		b.DailyLimit = daily
+		b.MonthlyLimit = monthly
+		b.AlertThreshold = threshold
+		return nil
+	})
+}
+
+func (m *MemoryStore) UpdateBudgetTimezone(ctx context.Context, tenantID, timezone string) (*TokenBudget, error) {
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, fmt.Errorf("invalid budget timezone %q: %w", timezone, err)
+	}
+	return m.mutateBudget(tenantID, func(now time.Time, b *TokenBudget) error {
+		b.Timezone = loc.String()
+		b.LastReset = memoryBudgetDayStart(now, loc)
+		b.MonthReset = memoryBudgetMonthStart(now, loc)
+		return nil
+	})
 }
 
 // memoryBudgetUsageOf 抽取消费后的窗口用量，避免调用方再读可变预算结构。
@@ -50,6 +156,7 @@ func normalizeMemoryBudgetWindow(now time.Time, b *TokenBudget) {
 	if b.LastReset.IsZero() || day.After(b.LastReset) {
 		b.UsedToday = 0
 		b.LastReset = day
+		clearMemoryBudgetAlerts(b, "daily:")
 	}
 	month := memoryBudgetMonthStart(now, loc)
 	if b.MonthReset.IsZero() {
@@ -57,6 +164,15 @@ func normalizeMemoryBudgetWindow(now time.Time, b *TokenBudget) {
 	} else if month.After(b.MonthReset) {
 		b.UsedMonth = 0
 		b.MonthReset = month
+		clearMemoryBudgetAlerts(b, "monthly:")
+	}
+}
+
+func clearMemoryBudgetAlerts(b *TokenBudget, prefix string) {
+	for key := range b.Alerted {
+		if strings.HasPrefix(key, prefix) {
+			delete(b.Alerted, key)
+		}
 	}
 }
 

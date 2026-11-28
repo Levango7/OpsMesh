@@ -16,14 +16,7 @@ func (m *MemoryStore) GetBudget(ctx context.Context, tenantID string) (*TokenBud
 	if !ok || b == nil {
 		return nil, nil
 	}
-	cp := *b
-	if b.Alerted != nil {
-		cp.Alerted = make(map[string]bool, len(b.Alerted))
-		for k, v := range b.Alerted {
-			cp.Alerted[k] = v
-		}
-	}
-	return &cp, nil
+	return cloneMemoryBudget(b), nil
 }
 
 // UpsertBudget 按 tenantID 幂等 upsert 预算。
@@ -33,14 +26,7 @@ func (m *MemoryStore) UpsertBudget(ctx context.Context, b *TokenBudget) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	stored := *b
-	if b.Alerted != nil {
-		stored.Alerted = make(map[string]bool, len(b.Alerted))
-		for k, v := range b.Alerted {
-			stored.Alerted[k] = v
-		}
-	}
-	m.budgets[b.TenantID] = &stored
+	m.budgets[b.TenantID] = cloneMemoryBudget(b)
 	return nil
 }
 
@@ -53,14 +39,7 @@ func (m *MemoryStore) ListBudgets(ctx context.Context) ([]*TokenBudget, error) {
 		if b == nil {
 			continue
 		}
-		cp := *b
-		if b.Alerted != nil {
-			cp.Alerted = make(map[string]bool, len(b.Alerted))
-			for k, v := range b.Alerted {
-				cp.Alerted[k] = v
-			}
-		}
-		out = append(out, &cp)
+		out = append(out, cloneMemoryBudget(b))
 	}
 	return out, nil
 }
@@ -70,6 +49,12 @@ func (m *MemoryStore) RecordAlert(ctx context.Context, alert BudgetAlert) error 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.budgetAlerts = append(m.budgetAlerts, alert)
+	if b := m.budgets[alert.TenantID]; b != nil {
+		if b.Alerted == nil {
+			b.Alerted = make(map[string]bool)
+		}
+		b.Alerted[fmt.Sprintf("%s:%g", alert.Type, alert.Threshold)] = true
+	}
 	return nil
 }
 

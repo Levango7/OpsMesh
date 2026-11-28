@@ -11,6 +11,7 @@ package cost
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 )
@@ -40,8 +41,7 @@ func (s *MemoryBudgetStore) GetBudget(ctx context.Context, tenantID string) (*To
 	if !ok {
 		return nil, nil
 	}
-	cp := *b
-	return &cp, nil
+	return cloneBudget(b), nil
 }
 
 func (s *MemoryBudgetStore) UpsertBudget(ctx context.Context, b *TokenBudget) error {
@@ -50,8 +50,7 @@ func (s *MemoryBudgetStore) UpsertBudget(ctx context.Context, b *TokenBudget) er
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cp := *b
-	s.budgets[b.TenantID] = &cp
+	s.budgets[b.TenantID] = cloneBudget(b)
 	return nil
 }
 
@@ -60,8 +59,7 @@ func (s *MemoryBudgetStore) ListBudgets(ctx context.Context) ([]*TokenBudget, er
 	defer s.mu.RUnlock()
 	out := make([]*TokenBudget, 0, len(s.budgets))
 	for _, b := range s.budgets {
-		cp := *b
-		out = append(out, &cp)
+		out = append(out, cloneBudget(b))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TenantID < out[j].TenantID })
 	return out, nil
@@ -71,6 +69,12 @@ func (s *MemoryBudgetStore) RecordAlert(ctx context.Context, alert BudgetAlert) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.alerts[alert.TenantID] = append(s.alerts[alert.TenantID], alert)
+	if b := s.budgets[alert.TenantID]; b != nil {
+		if b.Alerted == nil {
+			b.Alerted = make(map[string]bool)
+		}
+		b.Alerted[fmt.Sprintf("%s:%g", alert.Type, alert.Threshold)] = true
+	}
 	return nil
 }
 
