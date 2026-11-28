@@ -120,7 +120,7 @@ CLAIM ttl 过期且无 DONE/RELEASE/LANDED，或 DISPATCH 过了 ddl 无进展�
 ```
 LEAD: kilo
 ACTIVE CLAIMS:
-  (无)
+  internal/config/config_abac_enforce_default_test.go,docs/CLAIMS.md <- zcode  (ttl=12h by zcode)
 
 TASKS:
   (无)
