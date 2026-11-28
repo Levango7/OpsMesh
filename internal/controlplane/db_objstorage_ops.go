@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -115,7 +114,7 @@ func (s *Server) handleObjStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'objstorage %s %s done'\n", oType, action)
+	script := "set -e\n" + "echo " + opsEcho("objstorage %s %s done", oType, action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, oType+"_objstorage_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.objstorage", err)
@@ -123,7 +122,7 @@ func (s *Server) handleObjStorage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_objstorage_" + action,
-		Target: oType, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + oType + " action=" + action),
+		Target: oType, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " type=" + opsSQLString(oType) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }
