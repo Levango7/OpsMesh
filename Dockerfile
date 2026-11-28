@@ -68,6 +68,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -tags kafka -trimpath     -ldflags="-s -w 
 # 手动钉死：crane digest gcr.io/distroless/static-debian12 → FROM gcr.io/distroless/static-debian12@sha256:<digest> AS runtime
 # 本地开发/受限网络：改用 debian:bookworm-slim 避免 gcr.io 拉取受阻
 FROM debian:bookworm-slim AS runtime
+# 基础镜像补丁：bookworm-slim 自带的 libpam* 命中 CVE-2025-6020（Trivy 镜像门 4 HIGH），
+# 定点升级至 Debian 修复版，避免把已知高危漏洞带入控制面运行镜像。
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       libpam0g libpam-modules libpam-modules-bin libpam-runtime \
+    && rm -rf /var/lib/apt/lists/*
 # 创建 nonroot 用户（UID/GID 65532），以非 root 运行（H16）。
 RUN groupadd -g 65532 nonroot && useradd -u 65532 -g 65532 -M -s /usr/sbin/nologin nonroot
 # 审计事件 Kafka WAL 目录（issue #171）：预建并归 nonroot，使命名卷挂载后继承 nonroot 属主可写。

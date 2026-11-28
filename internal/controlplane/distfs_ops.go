@@ -226,11 +226,12 @@ func (s *Server) handleGlusterFS(w http.ResponseWriter, r *http.Request, req str
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mode: " + err.Error()})
 			return
 		}
-		if err := shellquote.ValidateArgList(req.Bricks, 512); err != nil {
+		bricks := req.Bricks
+		if err := shellquote.ValidateArgList(bricks, 512); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid bricks: " + err.Error()})
 			return
 		}
-		script := fmt.Sprintf(`gluster volume create %s %s %s force 2>/dev/null && gluster volume start %s && echo "Volume %s created (%s)"`, shellquote.Quote(req.Volume), volType, req.Bricks, shellquote.Quote(req.Volume), shellquote.Quote(req.Volume), volType)
+		script := fmt.Sprintf(`gluster volume create %s %s %s force 2>/dev/null && gluster volume start %s && echo "Volume %s created (%s)"`, shellquote.Quote(req.Volume), volType, bricks, shellquote.Quote(req.Volume), shellquote.Quote(req.Volume), volType)
 		taskID, ok := s.dispatchFastDFSTask(w, r, req.DeviceID, script, "glusterfs_create-volume")
 		if !ok {
 			return

@@ -1522,5 +1522,62 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [DONE] 2026-11-26T16:06:19Z from=qoder commit=11c651bacc6b83c25a96d192eb7e053af5e6d30d scope=docs/CLAIMS.md,docs/superpowers/plans/2026-11-24-a3-3-upsert-dialect.md,docs/superpowers/specs/2026-11-24-a3-3-upsert-dialect-design.md,docs/pg-dialect-a3-2-a3-3-plan-2026-11-23.md note=P0-A3-3 合并后 scope 收口完成（PR #175 于 2026-11-26T10:02:41Z squash 合并，merge commit 11c651bacc6b83c25a96d192eb7e053af5e6d30d）：仅订正四份文档并追加 CLAIMS 勘误；owner 追认 PostgreSQL 15 CI service 与 A3-3 CHANGELOG 更正为验收/文档支撑，chaos shellcheck 豁免与 api-usage 账本修复为独立 CI 修复；2026-11-26T07:52:25Z NOTE 及本 DONE 取代 2026-11-25T11:39:39Z 旧 DONE 的失实 scope 表述。main 首验 run 45797597176 completed/success（12 success/1 release skipped），Race detector 于 2026-11-26T11:21:38Z success；未改代码、workflow、CHANGELOG 或已发布历史。
 [CLAIM] 2026-11-26T12:00:00Z from=zcode ttl=12h scope=internal/controlplane/server_tasks.go,internal/controlplane/task_create_fields_test.go,CHANGELOG.md,docs/CLAIMS.md note=审计：handleCreateTask 透传 path/content，file 类型不再强制 shell command；普通与幂等创建先红后绿，后端 Task 与前端 store/审批契约测试、vet/lint/gates 过
 [CLAIM] 2026-11-25T12:00:00Z from=zcode ttl=12h scope=internal/agent/execute_test.go,CHANGELOG.md,docs/CLAIMS.md note=issue #157：TestExecute_Timeout 可移植化（Windows 用内置 timeout、Unix sleep，20s 长命令保留判别力）；实测本机取消有效；Job Object 方案因 Access is denied 放弃，仅改测试不动生产取消逻辑
+[CLAIM] 2026-11-26T22:30:00Z from=kilo ttl=8h scope=docs/projects/production-readiness-charter.md note=生产级收口章程与分阶段计划
+[CLAIM] 2026-11-27T15:40:00Z from=kilo ttl=8h scope=docs/ note=P0 真值/宣称清理：README/DELIVERY/功能矩阵/门禁证据对账
+[RELEASE] 2026-11-27T16:00:00Z from=kilo scope=docs/ reason=P0 docs audit completed (audit report + cloud matrix)
+[CLAIM] 2026-11-27T16:00:00Z from=kilo ttl=8h scope=internal/config/ note=P0-3 ABAC default assertion test
+[CLAIM] 2026-11-27T16:30:00Z from=kilo ttl=8h scope=services/device-svc/ note=P0-5 remove query-based tenant fail-open
+[CLAIM] 2026-11-27T17:00:00Z from=kilo ttl=8h scope=internal/controlplane/ note=P0-6 close derived/fprintf injection residues (os_tuning/security_ext/ssh_trust)
+[RELEASE] 2026-11-27T18:10:00Z from=kilo scope=docs/ reason=P0 truth audit and fixes landed (audit report, cloud matrix, ABAC default test, injection residues, stale counts)
+[RELEASE] 2026-11-27T18:15:00Z from=kilo scope=internal/config/ reason=P0-3 ABAC default assertion test landed
+[RELEASE] 2026-11-27T18:15:00Z from=kilo scope=services/device-svc/ reason=P0-5 tenant fail-closed landed
+[RELEASE] 2026-11-27T18:15:00Z from=kilo scope=internal/controlplane/ reason=P0-6 injection residues closed
+
+[RELEASE] 2026-11-27T18:20:00Z from=kilo scope=docs/projects/production-readiness-charter.md reason=P0 charter landed
+[RELEASE] 2026-11-28T00:00:00Z from=kilo scope=internal/agent/agent.go,internal/agent/file_symlink_parent_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in 1d17261e/55a40375
+[RELEASE] 2026-11-28T00:01:00Z from=kilo scope=internal/agent/execute_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in 2e659ad1/8d0273cd
+[RELEASE] 2026-11-28T00:02:00Z from=kilo scope=internal/controlplane/server_tasks.go,internal/controlplane/task_create_fields_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in a088cade/d30b3817
+[RELEASE] 2026-11-28T00:03:00Z from=kilo scope=services/task-svc/internal/store/store.go,services/task-svc/internal/store/mysql.go,services/task-svc/internal/store/report_idempotency_test.go,services/task-svc/internal/store/mysql_scan_test.go,CHANGELOG.md,docs/CLAIMS.md reason=expired zcode claim cleanup; work landed in f7030d3b/7e435bf5
+[CLAIM] 2026-11-27T18:30:00Z from=kilo ttl=4h scope=internal/controlplane/contract_v1_test.go note=B1 tasks legacy shape exact keys
+[DONE] 2026-11-27T18:30:00Z from=kilo scope=internal/controlplane/contract_v1_test.go commit=26d3834c66b778f5a9cb2a67fe0ab3d648f72c11 note=B1 tasks legacy shape exact keys
+[RELEASE] 2026-11-27T18:35:00Z from=kilo scope=internal/controlplane/contract_v1_test.go reason=B1 tasks legacy shape landed
+[CLAIM] 2026-11-27T18:05:00Z from=kilo ttl=8h scope=internal/controlplane/os_tuning_ops.go note=close os_tuning concat residues
+[DONE] 2026-11-27T18:05:00Z from=kilo scope=internal/controlplane/os_tuning_ops.go note=close os_tuning concat residues
+[CLAIM] 2026-11-27T18:28:25Z from=kilo ttl=8h scope=internal/controlplane/security_headers.go note=close security_headers concat residue
+[DONE] 2026-11-27T18:28:25Z from=kilo scope=internal/controlplane/security_headers.go note=close security_headers concat residue
+
+ 
+ [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e 
+ 
+ [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e 
+ 
+ [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 4 0 : 4 1 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e / c a c h e _ e h c a c h e _ o p s . g o   n o t e = c l o s e   c a c h e _ e h c a c h e   i n j e c t i o n   r e s i d u e s 
+ 
+ [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 4 0 : 4 1 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / c a c h e _ e h c a c h e _ o p s . g o   n o t e = c l o s e   c a c h e _ e h c a c h e   i n j e c t i o n   r e s i d u e s 
+ 
+
+ [CLAIM] 2026-11-27T16:00:00Z from=zcode ttl=12h scope=Dockerfile,CHANGELOG.md,docs/CLAIMS.md note=main image Trivy 红因=bookworm-slim 的 libpam* CVE-2025-6020（4 HIGH），runtime 定点升级 1.5.2-6+deb12u3 并清 apt 索引；本地重建后 HIGH/CRITICAL 扫描 Vulnerabilities=0
+[CLAIM] 2026-11-27T17:00:00Z from=zcode ttl=12h scope=internal/config/config_abac_enforce_default_test.go,docs/CLAIMS.md note=#182 build-test 的 gofmt 红因为该测试文件 EOF 缺换行，gofmt 补齐，无行为变化
+
+[CLAIM] 2026-11-28T00:18:52Z from=kilo ttl=8h scope=internal/controlplane/docker_ops.go note=close docker raw_arg residues
+[DONE] 2026-11-28T00:18:52Z from=kilo scope=internal/controlplane/docker_ops.go note=close docker raw_arg residues
+
+[CLAIM] 2026-11-28T00:18:52Z from=kilo ttl=8h scope=docs/CLAIMS.md note=restore UTF-8(BOM) after 0e283f04 stored UTF-16LE (coord-gate read crashed)
+[DONE] 2026-11-28T00:18:52Z from=kilo scope=docs/CLAIMS.md note=restore UTF-8(BOM) after 0e283f04 stored UTF-16LE (coord-gate read crashed)
+
+[CLAIM] 2026-11-28T01:30:00Z from=kilo ttl=8h scope=internal/controlplane/git_unix_ops.go note=close git_unix raw_arg residues (batch 14: firewall port -> ParsePort+strconv.Itoa; registry path/name/value -> ValidateCmdQuoted-validated xxxV locals)
+[DONE] 2026-11-28T01:30:00Z from=kilo scope=internal/controlplane/git_unix_ops.go note=close git_unix raw_arg residues (audit raw_arg git_unix 7->0, overall 10->3)
+
+[CLAIM] 2026-11-28T01:44:00Z from=kilo ttl=8h scope=internal/controlplane/distfs_ops.go note=close distfs raw_arg residue (gluster create-volume bricks: ValidateArgList result now routes through a local validated var so no bare req.Bricks sits in a Sprintf string slot)
+[DONE] 2026-11-28T01:44:00Z from=kilo scope=internal/controlplane/distfs_ops.go note=close distfs raw_arg residue (audit raw_arg distfs 1->0, overall 3->2; go test ./internal/controlplane/ ok)
+
+[CLAIM] 2026-11-28T02:40:23Z from=kilo ttl=8h scope=internal/controlplane/elasticsearch_ops_ext.go note=close elasticsearch_ops_ext raw_arg residue (shard-relocate index: shellquote.ValidateName result now routes through a local validated var so no bare req.Index sits in a Sprintf string slot)
+[DONE] 2026-11-28T02:40:23Z from=kilo scope=internal/controlplane/elasticsearch_ops_ext.go note=close elasticsearch_ops_ext raw_arg residue
+
+[CLAIM] 2026-11-28T02:40:23Z from=kilo ttl=8h scope=internal/controlplane/system_services.go note=close system_services raw_arg residue (journal --since: safeJournalSinceRe-validated since local replaces bare req.Since in the Sprintf string slot)
+[DONE] 2026-11-28T02:40:23Z from=kilo scope=internal/controlplane/system_services.go note=close system_services raw_arg residue
+
+[CLAIM] 2026-11-28T03:23:24Z from=kilo ttl=8h scope=internal/controlplane/oracle_ext_ops.go,internal/controlplane/oracle_ha_ops.go note=close oracle concat residues (ext 20->0, ha 6->0; per-case oracleIdentRe.MatchString guards keep generated scripts byte-identical; stats-lock/unlock use opsSQLString for SQL literal quoting)
+[DONE] 2026-11-28T03:23:24Z from=kilo scope=internal/controlplane/oracle_ext_ops.go,internal/controlplane/oracle_ha_ops.go note=close oracle concat residues (audit concat oracle_ext 20->0, oracle_ha 6->0, overall 92->66; go test ./internal/controlplane/ ok)
 [CLAIM] 2026-11-27T13:02:49Z from=qoder ttl=8h scope=web/enterprise/deploy/docker/nginx.conf,deploy/scripts/validate-deploy-assets.sh,docs/CLAIMS.md note=P0-2 认证 API 缓存修复：已核 origin/main 无同 scope 认领、82 个工作树目标文件均无未提交改动；只修 Nginx 代理缓存身份隔离与真实认证路径免缓存，并补部署资产回归；不含 FROZEN 区、提交推送或合并
 [DONE] 2026-11-28T02:23:50Z from=qoder scope=web/enterprise/deploy/docker/nginx.conf,deploy/scripts/validate-deploy-assets.sh,docs/CLAIMS.md note=P0-2 认证 API 缓存修复完成：API 与真实 /api/v1/auth/ 路径显式禁共享缓存、隐藏上游缓存策略并返回 no-store，代理位置保留全部安全头；新增顶层指令静态门禁，基线 11 条通过且 10 个变异场景均按预期判红；部署门禁 1-16 节、17 节静态与 wait-tag 自测、18-26 节 PASS=38 FAIL=0 SKIP=0、发布产物自测 10/10 通过；Docker daemon 不可用，未做真实 Nginx 容器加载与双用户请求验证；未提交未推送

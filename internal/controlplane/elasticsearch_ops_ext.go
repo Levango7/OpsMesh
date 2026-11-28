@@ -118,7 +118,8 @@ func (s *Server) handleElasticsearchShardRelocate(w http.ResponseWriter, r *http
 			return
 		}
 		// 同 drain：三值都嵌在 shell 单引号内的 JSON 文本里，只能白名单。
-		if err := shellquote.ValidateName(req.Index, 255); err != nil {
+		index := req.Index
+		if err := shellquote.ValidateName(index, 255); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "index: " + err.Error()})
 			return
 		}
@@ -130,7 +131,7 @@ func (s *Server) handleElasticsearchShardRelocate(w http.ResponseWriter, r *http
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "to: " + err.Error()})
 			return
 		}
-		script = fmt.Sprintf(`curl -X POST "http://localhost:9200/_cluster/reroute" -d '{"commands":[{"move":{"index":"%s","shard":%d,"from_node":"%s","to_node":"%s"}}]}'`, req.Index, req.Shard, from, to)
+		script = fmt.Sprintf(`curl -X POST "http://localhost:9200/_cluster/reroute" -d '{"commands":[{"move":{"index":"%s","shard":%d,"from_node":"%s","to_node":"%s"}}]}'`, index, req.Shard, from, to)
 	case "suggest":
 		script = `curl -s http://localhost:9200/_cluster/allocation/explain?pretty`
 	default:

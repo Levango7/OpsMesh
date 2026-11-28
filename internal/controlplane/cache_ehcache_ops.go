@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -61,15 +60,23 @@ func (s *Server) handleEhcache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'ehcache ext %s done'\n", action)
+	if !extSafeRe.MatchString(action) {
+		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid action"})
+		return
+	}
+	script := "set -e\necho 'ehcache ext "
+	script += action
+	script += " done'\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, "ehcache_ext_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "cache.ehcache.ext", err)
 		return
 	}
+	detail := "deviceID=" + deviceID
+	detail += " action=" + action
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "cache_ehcache_ext_" + action,
-		Target: "ehcache", Detail: sanitizeAuditDetail("deviceID=" + deviceID + " action=" + action),
+		Target: "ehcache", Detail: sanitizeAuditDetail(detail),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }
