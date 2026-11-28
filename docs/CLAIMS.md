@@ -1576,3 +1576,6 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 
 [CLAIM] 2026-11-28T02:40:23Z from=kilo ttl=8h scope=internal/controlplane/system_services.go note=close system_services raw_arg residue (journal --since: safeJournalSinceRe-validated since local replaces bare req.Since in the Sprintf string slot)
 [DONE] 2026-11-28T02:40:23Z from=kilo scope=internal/controlplane/system_services.go note=close system_services raw_arg residue
+
+[CLAIM] 2026-11-28T03:23:24Z from=kilo ttl=8h scope=internal/controlplane/oracle_ext_ops.go,internal/controlplane/oracle_ha_ops.go note=close oracle concat residues (ext 20->0, ha 6->0; per-case oracleIdentRe.MatchString guards keep generated scripts byte-identical; stats-lock/unlock use opsSQLString for SQL literal quoting)
+[DONE] 2026-11-28T03:23:24Z from=kilo scope=internal/controlplane/oracle_ext_ops.go,internal/controlplane/oracle_ha_ops.go note=close oracle concat residues (audit concat oracle_ext 20->0, oracle_ha 6->0, overall 92->66; go test ./internal/controlplane/ ok)
