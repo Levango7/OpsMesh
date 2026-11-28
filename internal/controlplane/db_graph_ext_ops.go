@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -78,7 +77,7 @@ func (s *Server) handleGraphExt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'graph %s ext %s done'\n", gType, action)
+	script := "set -e\n" + "echo " + opsEcho("graph %s ext %s done", gType, action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, gType+"_ext_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.graph.ext", err)
@@ -86,7 +85,7 @@ func (s *Server) handleGraphExt(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_graph_ext_" + action,
-		Target: gType, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + gType + " action=" + action),
+		Target: gType, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " type=" + opsSQLString(gType) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }

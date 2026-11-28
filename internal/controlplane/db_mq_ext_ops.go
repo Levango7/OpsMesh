@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -70,7 +69,7 @@ func (s *Server) handleMQExt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'mq %s ext %s done'\n", mqType, action)
+	script := "set -e\n" + "echo " + opsEcho("mq %s ext %s done", mqType, action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, mqType+"_ext_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.mq.ext", err)
@@ -78,7 +77,7 @@ func (s *Server) handleMQExt(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_mq_ext_" + action,
-		Target: mqType, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + mqType + " action=" + action),
+		Target: mqType, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " type=" + opsSQLString(mqType) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action, "type": mqType})
 }

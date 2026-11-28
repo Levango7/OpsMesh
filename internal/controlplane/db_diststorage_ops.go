@@ -3,7 +3,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -100,7 +99,7 @@ func (s *Server) handleDistStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'diststorage %s %s done'\n", dType, action)
+	script := "set -e\n" + "echo " + opsEcho("diststorage %s %s done", dType, action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, dType+"_diststorage_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.diststorage", err)
@@ -108,7 +107,7 @@ func (s *Server) handleDistStorage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_diststorage_" + action,
-		Target: dType, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + dType + " action=" + action),
+		Target: dType, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " type=" + opsSQLString(dType) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }

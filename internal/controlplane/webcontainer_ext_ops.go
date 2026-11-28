@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -90,15 +89,15 @@ func (s *Server) handleWebcontainerExt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'webcontainer ext %s %s done'\n", typ, action)
+	script := "set -e\n" + "echo " + opsEcho("webcontainer ext %s %s done", typ, action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, "webcontainer_ext_"+typ+"_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "webcontainer.ext", err)
 		return
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
-		TenantID: actx.TenantID, UserID: actx.UserID, Action: "webcontainer_ext_" + typ + "_" + action,
-		Target: typ, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + typ + " action=" + action),
+		TenantID: actx.TenantID, UserID: actx.UserID, Action: "webcontainer_ext_" + opsSQLString(typ) + "_" + opsSQLString(action),
+		Target: typ, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " type=" + opsSQLString(typ) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }

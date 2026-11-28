@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -78,7 +77,7 @@ func (s *Server) handleVectorExt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'vector %s ext %s done'\n", vType, action)
+	script := "set -e\n" + "echo " + opsEcho("vector %s ext %s done", vType, action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, vType+"_ext_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.vector.ext", err)
@@ -86,7 +85,7 @@ func (s *Server) handleVectorExt(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_vector_ext_" + action,
-		Target: vType, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + vType + " action=" + action),
+		Target: vType, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " type=" + opsSQLString(vType) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }

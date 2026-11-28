@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 	"regexp"
 
@@ -82,7 +81,7 @@ func (s *Server) handleGenericDBExt(w http.ResponseWriter, r *http.Request, acti
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho '%s ext %s done'\n", kind, action)
+	script := "set -e\n" + "echo " + opsEcho("%s ext %s done", kind, action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, kind+"_ext_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, opName, err)
@@ -90,7 +89,7 @@ func (s *Server) handleGenericDBExt(w http.ResponseWriter, r *http.Request, acti
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: kind + "_ext_" + action,
-		Target: kind, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " action=" + action),
+		Target: kind, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }

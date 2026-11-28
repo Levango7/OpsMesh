@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -80,7 +79,7 @@ func (s *Server) handleWebServerExt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'webserver %s ext %s done'\n", wType, action)
+	script := "set -e\n" + "echo " + opsEcho("webserver %s ext %s done", wType, action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, wType+"_ext_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.webserver.ext", err)
@@ -88,7 +87,7 @@ func (s *Server) handleWebServerExt(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_webserver_ext_" + action,
-		Target: wType, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + wType + " action=" + action),
+		Target: wType, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " type=" + opsSQLString(wType) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }
