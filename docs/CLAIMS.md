@@ -1570,3 +1570,9 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 
 [CLAIM] 2026-11-28T01:44:00Z from=kilo ttl=8h scope=internal/controlplane/distfs_ops.go note=close distfs raw_arg residue (gluster create-volume bricks: ValidateArgList result now routes through a local validated var so no bare req.Bricks sits in a Sprintf string slot)
 [DONE] 2026-11-28T01:44:00Z from=kilo scope=internal/controlplane/distfs_ops.go note=close distfs raw_arg residue (audit raw_arg distfs 1->0, overall 3->2; go test ./internal/controlplane/ ok)
+
+[CLAIM] 2026-11-28T02:40:23Z from=kilo ttl=8h scope=internal/controlplane/elasticsearch_ops_ext.go note=close elasticsearch_ops_ext raw_arg residue (shard-relocate index: shellquote.ValidateName result now routes through a local validated var so no bare req.Index sits in a Sprintf string slot)
+[DONE] 2026-11-28T02:40:23Z from=kilo scope=internal/controlplane/elasticsearch_ops_ext.go note=close elasticsearch_ops_ext raw_arg residue
+
+[CLAIM] 2026-11-28T02:40:23Z from=kilo ttl=8h scope=internal/controlplane/system_services.go note=close system_services raw_arg residue (journal --since: safeJournalSinceRe-validated since local replaces bare req.Since in the Sprintf string slot)
+[DONE] 2026-11-28T02:40:23Z from=kilo scope=internal/controlplane/system_services.go note=close system_services raw_arg residue
