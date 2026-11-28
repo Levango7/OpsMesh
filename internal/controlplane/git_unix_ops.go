@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -415,13 +416,20 @@ func (s *Server) handleWindowsFirewall(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "port is required"})
 			return
 		}
+		// port 走 ParsePort 白名单（1-65535 纯数字）——默认规则名与 -LocalPort
+		// 都由校验后的 int 派生，不再让 req.Port 以原始字符串进入实参位。
+		port, err := shellquote.ParsePort(req.Port)
+		if err != nil {
+			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "port: " + err.Error()})
+			return
+		}
 		proto := req.Protocol
 		if proto == "" {
 			proto = "tcp"
 		}
 		name := req.Name
 		if name == "" {
-			name = fmt.Sprintf("OpsMesh-%s-%s", proto, req.Port)
+			name = fmt.Sprintf("OpsMesh-%s-%d", proto, port)
 		}
 		dir := req.Direction
 		if dir == "" {
@@ -431,7 +439,7 @@ func (s *Server) handleWindowsFirewall(w http.ResponseWriter, r *http.Request) {
 			`New-NetFirewallRule -DisplayName `+shellquote.QuotePowerShellSingle(name)+
 				` -Direction `+shellquote.QuotePowerShellSingle(dir)+
 				` -Protocol `+shellquote.QuotePowerShellSingle(proto)+
-				` -LocalPort `+shellquote.QuotePowerShellSingle(req.Port)+
+				` -LocalPort `+shellquote.QuotePowerShellSingle(strconv.Itoa(port))+
 				` -Action Allow -ErrorAction Stop; Write-Output 'Firewall rule added'`) + ` 2>nul || echo Failed`
 	case "delete":
 		if req.Name == "" {
@@ -640,11 +648,14 @@ func (s *Server) handleWindowsRegistry(w http.ResponseWriter, r *http.Request) {
 		}
 		// 值嵌在 cmd 双引号段里：cmd 无引号内转义语法，只能力度=拒绝
 		// （`"`/`%`/`!`/CR/LF 五类可改变解析；见 shellquote.ValidateCmdQuoted）。
-		if err := shellquote.ValidateCmdQuoted(req.Path, 512); err != nil {
+		// pathV 承载**校验后**的路径：req.Path 不再以裸字段出现在实参位
+		// （判据 E），校验一旦被误删立刻复红。
+		pathV := req.Path
+		if err := shellquote.ValidateCmdQuoted(pathV, 512); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
 			return
 		}
-		script = fmt.Sprintf(`reg query "%s" 2>/dev/null || echo "Registry path not found"`, req.Path)
+		script = fmt.Sprintf(`reg query "%s" 2>/dev/null || echo "Registry path not found"`, pathV)
 	case "set":
 		if req.Path == "" || req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path and name are required"})
@@ -658,33 +669,39 @@ func (s *Server) handleWindowsRegistry(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported registry type: " + regType})
 			return
 		}
-		if err := shellquote.ValidateCmdQuoted(req.Path, 512); err != nil {
+		// pathV/nameV/valueV 承载**校验后**的值：req.* 不再以裸字段出现在
+		// 实参位（判据 E），校验一旦被误删立刻复红。
+		pathV, nameV, valueV := req.Path, req.Name, req.Value
+		if err := shellquote.ValidateCmdQuoted(pathV, 512); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
 			return
 		}
-		if err := shellquote.ValidateCmdQuoted(req.Name, 255); err != nil {
+		if err := shellquote.ValidateCmdQuoted(nameV, 255); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name: " + err.Error()})
 			return
 		}
-		if err := shellquote.ValidateCmdQuoted(req.Value, 8192); err != nil {
+		if err := shellquote.ValidateCmdQuoted(valueV, 8192); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "value: " + err.Error()})
 			return
 		}
-		script = fmt.Sprintf(`reg add "%s" /v "%s" /t %s /d "%s" /f 2>/dev/null && echo "Registry value set" || echo "Failed"`, req.Path, req.Name, regType, req.Value)
+		script = fmt.Sprintf(`reg add "%s" /v "%s" /t %s /d "%s" /f 2>/dev/null && echo "Registry value set" || echo "Failed"`, pathV, nameV, regType, valueV)
 	case "delete":
 		if req.Path == "" || req.Name == "" {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path and name are required"})
 			return
 		}
-		if err := shellquote.ValidateCmdQuoted(req.Path, 512); err != nil {
+		// pathV/nameV 承载**校验后**的值：req.* 不再以裸字段出现在实参位
+		// （判据 E），校验一旦被误删立刻复红。
+		pathV, nameV := req.Path, req.Name
+		if err := shellquote.ValidateCmdQuoted(pathV, 512); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "path: " + err.Error()})
 			return
 		}
-		if err := shellquote.ValidateCmdQuoted(req.Name, 255); err != nil {
+		if err := shellquote.ValidateCmdQuoted(nameV, 255); err != nil {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name: " + err.Error()})
 			return
 		}
-		script = fmt.Sprintf(`reg delete "%s" /v "%s" /f 2>/dev/null && echo "Registry value deleted" || echo "Failed"`, req.Path, req.Name)
+		script = fmt.Sprintf(`reg delete "%s" /v "%s" /f 2>/dev/null && echo "Registry value deleted" || echo "Failed"`, pathV, nameV)
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return

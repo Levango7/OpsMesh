@@ -110,8 +110,14 @@ func buildOracleHAScript(action, db, standby, mode string) string {
 	case "dg-switchover":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER DATABASE COMMIT TO SWITCHOVER TO PRIMARY;\nSQL\n")
 	case "dg-failover":
+		if !oracleIdentRe.MatchString(sbV) {
+			sbV = "STDBY"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER DATABASE FAILOVER TO " + sbV + ";\nSQL\n")
 	case "dg-reinstate":
+		if !oracleIdentRe.MatchString(sbV) {
+			sbV = "STDBY"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER DATABASE REINSTATE " + sbV + ";\nSQL\n")
 	case "dg-convert-physical":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER DATABASE CONVERT TO PHYSICAL STANDBY;\nSQL\n")
@@ -124,8 +130,14 @@ func buildOracleHAScript(action, db, standby, mode string) string {
 	case "dg-broker-disable":
 		b.WriteString("dgmgrl -echo \"DISABLE CONFIGURATION;\"\n")
 	case "dg-broker-failover":
+		if !oracleIdentRe.MatchString(sbV) {
+			sbV = "STDBY"
+		}
 		b.WriteString("dgmgrl -echo \"FAILOVER TO " + sbV + ";\"\n")
 	case "dg-broker-switchover":
+		if !oracleIdentRe.MatchString(sbV) {
+			sbV = "STDBY"
+		}
 		b.WriteString("dgmgrl -echo \"SWITCHOVER TO " + sbV + ";\"\n")
 	case "adg-open-readonly":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER DATABASE OPEN READ ONLY;\nSQL\n")
@@ -136,8 +148,14 @@ func buildOracleHAScript(action, db, standby, mode string) string {
 	case "rac-nodes":
 		b.WriteString("olsnodes -n -i -s\n")
 	case "rac-add-node":
+		if !oracleIdentRe.MatchString(sbV) {
+			sbV = "STDBY"
+		}
 		b.WriteString("addNode.sh -silent \"CLUSTER_NEW_NODES={" + sbV + "}\"\n")
 	case "rac-remove-node":
+		if !oracleIdentRe.MatchString(sbV) {
+			sbV = "STDBY"
+		}
 		b.WriteString("crsctl delete node -n " + sbV + "\n")
 	case "rac-voting":
 		b.WriteString("crsctl query css votedisk\n")

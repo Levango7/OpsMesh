@@ -161,7 +161,8 @@ func (s *Server) handleSystemJournal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// since 校验：仅允许字母数字空格冒号横杠点（如 "1 hour ago"/"2024-01-01 10:00:00"）。
-	if req.Since != "" && !safeJournalSinceRe.MatchString(req.Since) {
+	since := req.Since
+	if since != "" && !safeJournalSinceRe.MatchString(since) {
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid since format"})
 		return
 	}
@@ -173,8 +174,8 @@ func (s *Server) handleSystemJournal(w http.ResponseWriter, r *http.Request) {
 	if req.Level != "" {
 		args = append(args, "-p", req.Level)
 	}
-	if req.Since != "" {
-		args = append(args, "--since", fmt.Sprintf("%q", req.Since))
+	if since != "" {
+		args = append(args, "--since", fmt.Sprintf("%q", since))
 	}
 	script := "journalctl " + strings.Join(args, " ") + "\n"
 

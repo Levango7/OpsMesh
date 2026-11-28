@@ -117,7 +117,6 @@ func (s *Server) handleOracleExt(w http.ResponseWriter, r *http.Request) {
 func buildOracleExtScript(action, db, pdb, tablespace, table, partition, typ, detail string) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	dbQ := shellQuote(db)
 	pdbV := pdb
 	if pdbV == "" {
 		pdbV = "ORCLPDB1"
@@ -138,6 +137,9 @@ func buildOracleExtScript(action, db, pdb, tablespace, table, partition, typ, de
 	case "asm-diskgroups":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nSELECT group_number, name, state, type, total_mb, free_mb FROM v$asm_diskgroup;\nSQL\n")
 	case "asm-rebalance":
+		if !oracleIdentRe.MatchString(tsV) {
+			tsV = "USERS"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER DISKGROUP " + tsV + " REBALANCE POWER 4;\nSQL\n")
 	case "asm-add-disk":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER DISKGROUP " + tsV + " ADD DISK " + shellQuote(detail) + ";\nSQL\n")
@@ -148,36 +150,75 @@ func buildOracleExtScript(action, db, pdb, tablespace, table, partition, typ, de
 	case "tbs-list":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nSELECT tablespace_name, status, contents FROM dba_tablespaces;\nSQL\n")
 	case "tbs-create":
+		if !oracleIdentRe.MatchString(tsV) {
+			tsV = "USERS"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nCREATE TABLESPACE " + tsV + " DATAFILE '/u01/app/oracle/oradata/" + tsV + ".dbf' SIZE 100M AUTOEXTEND ON;\nSQL\n")
 	case "tbs-drop":
+		if !oracleIdentRe.MatchString(tsV) {
+			tsV = "USERS"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nDROP TABLESPACE " + tsV + " INCLUDING CONTENTS AND DATAFILES;\nSQL\n")
 	case "tbs-resize":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER DATABASE DATAFILE '/u01/app/oracle/oradata/" + tsV + ".dbf' RESIZE " + shellQuote(detail) + ";\nSQL\n")
 	case "tbs-offline":
+		if !oracleIdentRe.MatchString(tsV) {
+			tsV = "USERS"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER TABLESPACE " + tsV + " OFFLINE;\nSQL\n")
 	case "tbs-online":
+		if !oracleIdentRe.MatchString(tsV) {
+			tsV = "USERS"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER TABLESPACE " + tsV + " ONLINE;\nSQL\n")
 	case "pdb-list":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nSHOW PDBS;\nSQL\n")
 	case "pdb-create":
+		if !oracleIdentRe.MatchString(pdbV) {
+			pdbV = "ORCLPDB1"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nCREATE PLUGGABLE DATABASE " + pdbV + " ADMIN USER pdbadmin IDENTIFIED BY \"ChangeMe\";\nSQL\n")
 	case "pdb-open":
+		if !oracleIdentRe.MatchString(pdbV) {
+			pdbV = "ORCLPDB1"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER PLUGGABLE DATABASE " + pdbV + " OPEN;\nSQL\n")
 	case "pdb-close":
+		if !oracleIdentRe.MatchString(pdbV) {
+			pdbV = "ORCLPDB1"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER PLUGGABLE DATABASE " + pdbV + " CLOSE;\nSQL\n")
 	case "pdb-drop":
+		if !oracleIdentRe.MatchString(pdbV) {
+			pdbV = "ORCLPDB1"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nDROP PLUGGABLE DATABASE " + pdbV + " INCLUDING DATAFILES;\nSQL\n")
 	case "pdb-save-state":
+		if !oracleIdentRe.MatchString(pdbV) {
+			pdbV = "ORCLPDB1"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER PLUGGABLE DATABASE " + pdbV + " SAVE STATE;\nSQL\n")
 	case "cdb-info":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nSELECT name, cdb, open_mode FROM v$database;\nSQL\n")
 	case "pdb-plugin":
+		if !oracleIdentRe.MatchString(pdbV) {
+			pdbV = "ORCLPDB1"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER PLUGGABLE DATABASE " + pdbV + " UNPLUG INTO '/tmp/" + pdbV + ".xml';\nSQL\n")
 	case "pdb-unplug":
+		if !oracleIdentRe.MatchString(pdbV) {
+			pdbV = "ORCLPDB1"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER PLUGGABLE DATABASE " + pdbV + " UNPLUG INTO '/tmp/" + pdbV + ".xml';\nSQL\n")
 	case "flashback-query":
+		if !oracleIdentRe.MatchString(tblV) {
+			tblV = "T"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nSELECT * FROM " + tblV + " AS OF TIMESTAMP (SYSTIMESTAMP - INTERVAL '10' MINUTE);\nSQL\n")
 	case "flashback-table":
+		if !oracleIdentRe.MatchString(tblV) {
+			tblV = "T"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nFLASHBACK TABLE " + tblV + " TO TIMESTAMP (SYSTIMESTAMP - INTERVAL '10' MINUTE);\nSQL\n")
 	case "flashback-database":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nFLASHBACK DATABASE TO TIMESTAMP (SYSTIMESTAMP - INTERVAL '10' MINUTE);\nSQL\n")
@@ -186,16 +227,34 @@ func buildOracleExtScript(action, db, pdb, tablespace, table, partition, typ, de
 	case "flashback-disable":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER DATABASE FLASHBACK OFF;\nSQL\n")
 	case "partition-list":
+		if !oracleIdentRe.MatchString(tblV) {
+			tblV = "T"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nSELECT table_name, partition_name, high_value FROM dba_tab_partitions WHERE table_name='" + tblV + "';\nSQL\n")
 	case "partition-create-range":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER TABLE " + tblV + " ADD PARTITION " + partV + " VALUES LESS THAN (" + shellQuote(detail) + ");\nSQL\n")
 	case "partition-create-list":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER TABLE " + tblV + " ADD PARTITION " + partV + " VALUES (" + shellQuote(detail) + ");\nSQL\n")
 	case "partition-create-hash":
+		if !oracleIdentRe.MatchString(tblV) {
+			tblV = "T"
+		}
+		if !oracleIdentRe.MatchString(partV) {
+			partV = "P1"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER TABLE " + tblV + " ADD PARTITION " + partV + ";\nSQL\n")
 	case "partition-create-interval":
+		if !oracleIdentRe.MatchString(tblV) {
+			tblV = "T"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER TABLE " + tblV + " SET INTERVAL (NUMTOYMINTERVAL(1,'MONTH'));\nSQL\n")
 	case "partition-drop":
+		if !oracleIdentRe.MatchString(tblV) {
+			tblV = "T"
+		}
+		if !oracleIdentRe.MatchString(partV) {
+			partV = "P1"
+		}
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER TABLE " + tblV + " DROP PARTITION " + partV + ";\nSQL\n")
 	case "partition-split":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nALTER TABLE " + tblV + " SPLIT PARTITION " + partV + " AT (" + shellQuote(detail) + ") INTO (PARTITION " + partV + "_A, PARTITION " + partV + "_B);\nSQL\n")
@@ -254,9 +313,9 @@ func buildOracleExtScript(action, db, pdb, tablespace, table, partition, typ, de
 	case "stats-delete":
 		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nEXEC DBMS_STATS.DELETE_DATABASE_STATS;\nSQL\n")
 	case "stats-lock":
-		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nEXEC DBMS_STATS.LOCK_SCHEMA_STATS('" + dbQ + "');\nSQL\n")
+		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nEXEC DBMS_STATS.LOCK_SCHEMA_STATS('" + opsSQLString(db) + "');\nSQL\n")
 	case "stats-unlock":
-		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nEXEC DBMS_STATS.UNLOCK_SCHEMA_STATS('" + dbQ + "');\nSQL\n")
+		b.WriteString("sqlplus -s / as sysdba <<'SQL'\nEXEC DBMS_STATS.UNLOCK_SCHEMA_STATS('" + opsSQLString(db) + "');\nSQL\n")
 	}
 	fmt.Fprintf(&b, "echo 'oracle ext %s done'\n", action)
 	return b.String()

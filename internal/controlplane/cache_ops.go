@@ -344,6 +344,7 @@ func (s *Server) handleRedisCluster(w http.ResponseWriter, r *http.Request) {
 		if !validateNodeList(w, req.Nodes) {
 			return
 		}
+		nodes := req.Nodes
 		replicas := req.Replicas
 		if replicas <= 0 {
 			replicas = 1
@@ -353,7 +354,7 @@ func (s *Server) handleRedisCluster(w http.ResponseWriter, r *http.Request) {
 				"error": "replicas out of range 1-10"})
 			return
 		}
-		script := fmt.Sprintf(`redis-cli --cluster create %s --cluster-replicas %d --cluster-yes 2>/dev/null && echo %s`, req.Nodes, replicas, shellquote.Quote("Redis cluster created"))
+		script := fmt.Sprintf(`redis-cli --cluster create %s --cluster-replicas %d --cluster-yes 2>/dev/null && echo %s`, nodes, replicas, shellquote.Quote("Redis cluster created"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_cluster_create")
 		if !ok {
 			return
@@ -364,11 +365,12 @@ func (s *Server) handleRedisCluster(w http.ResponseWriter, r *http.Request) {
 		if !validateNodeList(w, req.Nodes) {
 			return
 		}
+		nodes := req.Nodes
 		var script string
 		if req.Action == "add-node" {
-			script = fmt.Sprintf(`redis-cli --cluster add-node %s localhost:6379 2>/dev/null && echo %s`, req.Nodes, shellquote.Quote("Node added"))
+			script = fmt.Sprintf(`redis-cli --cluster add-node %s localhost:6379 2>/dev/null && echo %s`, nodes, shellquote.Quote("Node added"))
 		} else {
-			script = fmt.Sprintf(`redis-cli --cluster del-node localhost:6379 %s 2>/dev/null && echo %s`, req.Nodes, shellquote.Quote("Node removed"))
+			script = fmt.Sprintf(`redis-cli --cluster del-node localhost:6379 %s 2>/dev/null && echo %s`, nodes, shellquote.Quote("Node removed"))
 		}
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_cluster_"+req.Action)
 		if !ok {
@@ -491,7 +493,9 @@ func (s *Server) handleRedisSentinel(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "host: " + err.Error()})
 			return
 		}
-		script := fmt.Sprintf(`redis-cli -p 26379 sentinel monitor %s %s %d %d 2>/dev/null && echo %s`, req.Master, req.Host, port, quorum, shellquote.Quote("Sentinel monitoring "+req.Master))
+		master := req.Master
+		host := req.Host
+		script := fmt.Sprintf(`redis-cli -p 26379 sentinel monitor %s %s %d %d 2>/dev/null && echo %s`, master, host, port, quorum, shellquote.Quote("Sentinel monitoring "+req.Master))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_sentinel_monitor")
 		if !ok {
 			return
@@ -507,7 +511,8 @@ func (s *Server) handleRedisSentinel(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "master: " + err.Error()})
 			return
 		}
-		script := fmt.Sprintf(`redis-cli -p 26379 sentinel failover %s 2>/dev/null && echo %s`, req.Master, shellquote.Quote("Failover triggered for "+req.Master))
+		master := req.Master
+		script := fmt.Sprintf(`redis-cli -p 26379 sentinel failover %s 2>/dev/null && echo %s`, master, shellquote.Quote("Failover triggered for "+req.Master))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_sentinel_failover")
 		if !ok {
 			return
@@ -876,7 +881,8 @@ func (s *Server) handleRedisSecurity(w http.ResponseWriter, r *http.Request) {
 			paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user: " + err.Error()})
 			return
 		}
-		script := fmt.Sprintf(`redis-cli acl deluser %s 2>/dev/null && echo %s`, req.User, shellquote.Quote("User "+req.User+" deleted"))
+		user := req.User
+		script := fmt.Sprintf(`redis-cli acl deluser %s 2>/dev/null && echo %s`, user, shellquote.Quote("User "+req.User+" deleted"))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_security_delete-user")
 		if !ok {
 			return
@@ -897,7 +903,9 @@ func (s *Server) handleRedisSecurity(w http.ResponseWriter, r *http.Request) {
 				"error": "invalid acl rules: " + req.Rules})
 			return
 		}
-		script := fmt.Sprintf(`redis-cli acl setuser %s %s 2>/dev/null && echo %s`, req.User, req.Rules, shellquote.Quote("ACL updated for "+req.User))
+		user := req.User
+		rules := req.Rules
+		script := fmt.Sprintf(`redis-cli acl setuser %s %s 2>/dev/null && echo %s`, user, rules, shellquote.Quote("ACL updated for "+req.User))
 		taskID, ok := s.dispatchKafkaTask(w, r, req.DeviceID, script, "redis_security_set-acl")
 		if !ok {
 			return

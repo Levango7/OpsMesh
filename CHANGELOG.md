@@ -9,6 +9,14 @@
 
 - **2026-11-28 issue #150 — AI 成本预算持久化硬限**：新增 `ConsumeIfUnderLimit`，把窗口重置、限额检查、累加收敛为单原子操作；SQL 用 `REPEATABLE READ + FOR UPDATE` 行锁，Memory/MemoryStore 用互斥锁；控制面按主存储类型装配 SQL BudgetStore。修复旧 RMW 在并发/多副本下丢失更新、重启归零、判定与记账分离导致的硬限穿透；存储故障 fail-closed。真 MySQL 验证 10 并发恰好 5 放行 5 拒绝、跨副本用量一致、DB 断开拒绝，dev/memory 原子与窗口测试全过。
 
+## [Unreleased] — 2026-11-27（基础镜像 PAM CVE 修复）
+
+- **2026-11-27 基础镜像 PAM CVE 修复**：main 的 `image / publish-image` 被 Trivy 判红，根因是 `debian:bookworm-slim` 自带 `libpam0g/libpam-modules/libpam-modules-bin/libpam-runtime` 命中 **CVE-2025-6020（4 个 HIGH）**。runtime 阶段定点升级到 Debian 修复版 `1.5.2-6+deb12u3` 并清理 apt 索引。本地重建镜像后用同一 HIGH/CRITICAL 门扫描：`opsmesh-pam-fix:test (debian 12.15) Vulnerabilities=0`，确认无高危/严重漏洞。
+
+## [Unreleased] — 2026-11-27（test：修正 Windows 超时取消测试的假绿）
+
+- **2026-11-27 修正 `TestExecute_Timeout` 的 Windows 假绿**：上一版改用 `timeout /t 20 /nobreak`，但执行器走 `cmd /C`（`agent.go:1954`），测试进程 stdin 非控制台时 `timeout` 会立即报 `Input redirection is not supported` 退出（本机实测 0.05s，rc=1）——测试仍以「非零退出 + 耗时短」通过，实际未测取消路径。现 Windows 改用内置 `waitfor /t 20 OpsMeshTimeoutProbe`（非交互下真等 20s），并新增 2s 超时正样本：同一命令必须跑满 ≥1.5s，否则直接判红，防止未来再换回「立即失败」的命令造成假绿。Unix 分支保持 `sleep 20`。仅改测试，不动生产取消逻辑。
+
 ## [Unreleased] — 2026-11-25（issue #157：Windows agent 超时取消测试可移植性）
 
 - **2026-11-25 issue #157 — Windows agent 超时取消测试可移植化**：`TestExecute_Timeout` 原用 `sleep 2`（`cmd /C sleep` 在干净 Windows 上非原生命令、立即报错 ⇒ 测不到真取消路径），改为 Windows 用内置 `timeout /t 20 /nobreak`、Unix 用 `sleep 20`，使命令真实长运行、被中断时远小于 20s；阈值随 Windows taskkill 偶发开销放宽至 8000ms（远小于 20000ms 完成时间）。实测本机取消有效（亚秒，多次 PASS）。评估过 Windows Job Object 杀进程树，因 `AssignProcessToJobObject` 在「父进程已被纳入 Job」的环境 Access is denied、不可依赖而放弃，保留已验证的 taskkill 路径。仅改测试，不动生产取消逻辑。

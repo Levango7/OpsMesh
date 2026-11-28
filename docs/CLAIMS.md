@@ -1545,9 +1545,39 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 [DONE] 2026-11-27T18:05:00Z from=kilo scope=internal/controlplane/os_tuning_ops.go note=close os_tuning concat residues
 [CLAIM] 2026-11-27T18:28:25Z from=kilo ttl=8h scope=internal/controlplane/security_headers.go note=close security_headers concat residue
 [DONE] 2026-11-27T18:28:25Z from=kilo scope=internal/controlplane/security_headers.go note=close security_headers concat residue
- 
- [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e  
- [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e  
- [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 4 0 : 4 1 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e / c a c h e _ e h c a c h e _ o p s . g o   n o t e = c l o s e   c a c h e _ e h c a c h e   i n j e c t i o n   r e s i d u e s  
- [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 4 0 : 4 1 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / c a c h e _ e h c a c h e _ o p s . g o   n o t e = c l o s e   c a c h e _ e h c a c h e   i n j e c t i o n   r e s i d u e s  
- [CLAIM] 2026-11-28T09:30:00Z from=zcode ttl=12h scope=internal/cost/handler.go,internal/cost/memory_budget_consume.go,internal/store/sqlstore/sql_budget.go,internal/store/sqlstore/sql_budget_consume.go,internal/store/sqlstore/aliases.go,internal/store/memory/budget_consume.go,internal/store/memory/aliases.go,internal/controlplane/server.go,internal/ai/gateway/gateway.go,internal/cost/budget_atomic_test.go,internal/store/memory/budget_consume_test.go,internal/store/sqlstore/sql_budget_consume_test.go,CHANGELOG.md,docs/release-notes.md,docs/CLAIMS.md note=issue #150：ConsumeIfUnderLimit 原子硬限（SQL 行锁 + Memory 互斥锁），控制面按主存储装配 SQL BudgetStore，DB 故障 fail-closed；真 MySQL 并发/跨副本/断库验证与 dev/memory 测试全过
+
+ 
+ [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e 
+ 
+ [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 3 1 : 2 6 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / a b a c _ b u n d l e _ e n d p o i n t . g o   n o t e = c l o s e   a b a c _ b u n d l e   c o n c a t   r e s i d u e 
+ 
+ [ C L A I M ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 4 0 : 4 1 Z   f r o m = k i l o   t t l = 8 h   s c o p e = i n t e r n a l / c o n t r o l p l a n e / c a c h e _ e h c a c h e _ o p s . g o   n o t e = c l o s e   c a c h e _ e h c a c h e   i n j e c t i o n   r e s i d u e s 
+ 
+ [ D O N E ]   2 0 2 6 - 1 1 - 2 7 T 1 8 : 4 0 : 4 1 Z   f r o m = k i l o   s c o p e = i n t e r n a l / c o n t r o l p l a n e / c a c h e _ e h c a c h e _ o p s . g o   n o t e = c l o s e   c a c h e _ e h c a c h e   i n j e c t i o n   r e s i d u e s 
+ 
+
+ [CLAIM] 2026-11-27T16:00:00Z from=zcode ttl=12h scope=Dockerfile,CHANGELOG.md,docs/CLAIMS.md note=main image Trivy 红因=bookworm-slim 的 libpam* CVE-2025-6020（4 HIGH），runtime 定点升级 1.5.2-6+deb12u3 并清 apt 索引；本地重建后 HIGH/CRITICAL 扫描 Vulnerabilities=0
+[CLAIM] 2026-11-27T17:00:00Z from=zcode ttl=12h scope=internal/config/config_abac_enforce_default_test.go,docs/CLAIMS.md note=#182 build-test 的 gofmt 红因为该测试文件 EOF 缺换行，gofmt 补齐，无行为变化
+
+[CLAIM] 2026-11-28T00:18:52Z from=kilo ttl=8h scope=internal/controlplane/docker_ops.go note=close docker raw_arg residues
+[DONE] 2026-11-28T00:18:52Z from=kilo scope=internal/controlplane/docker_ops.go note=close docker raw_arg residues
+
+[CLAIM] 2026-11-28T00:18:52Z from=kilo ttl=8h scope=docs/CLAIMS.md note=restore UTF-8(BOM) after 0e283f04 stored UTF-16LE (coord-gate read crashed)
+[DONE] 2026-11-28T00:18:52Z from=kilo scope=docs/CLAIMS.md note=restore UTF-8(BOM) after 0e283f04 stored UTF-16LE (coord-gate read crashed)
+
+[CLAIM] 2026-11-28T01:30:00Z from=kilo ttl=8h scope=internal/controlplane/git_unix_ops.go note=close git_unix raw_arg residues (batch 14: firewall port -> ParsePort+strconv.Itoa; registry path/name/value -> ValidateCmdQuoted-validated xxxV locals)
+[DONE] 2026-11-28T01:30:00Z from=kilo scope=internal/controlplane/git_unix_ops.go note=close git_unix raw_arg residues (audit raw_arg git_unix 7->0, overall 10->3)
+
+[CLAIM] 2026-11-28T01:44:00Z from=kilo ttl=8h scope=internal/controlplane/distfs_ops.go note=close distfs raw_arg residue (gluster create-volume bricks: ValidateArgList result now routes through a local validated var so no bare req.Bricks sits in a Sprintf string slot)
+[DONE] 2026-11-28T01:44:00Z from=kilo scope=internal/controlplane/distfs_ops.go note=close distfs raw_arg residue (audit raw_arg distfs 1->0, overall 3->2; go test ./internal/controlplane/ ok)
+
+[CLAIM] 2026-11-28T02:40:23Z from=kilo ttl=8h scope=internal/controlplane/elasticsearch_ops_ext.go note=close elasticsearch_ops_ext raw_arg residue (shard-relocate index: shellquote.ValidateName result now routes through a local validated var so no bare req.Index sits in a Sprintf string slot)
+[DONE] 2026-11-28T02:40:23Z from=kilo scope=internal/controlplane/elasticsearch_ops_ext.go note=close elasticsearch_ops_ext raw_arg residue
+
+[CLAIM] 2026-11-28T02:40:23Z from=kilo ttl=8h scope=internal/controlplane/system_services.go note=close system_services raw_arg residue (journal --since: safeJournalSinceRe-validated since local replaces bare req.Since in the Sprintf string slot)
+[DONE] 2026-11-28T02:40:23Z from=kilo scope=internal/controlplane/system_services.go note=close system_services raw_arg residue
+
+[CLAIM] 2026-11-28T03:23:24Z from=kilo ttl=8h scope=internal/controlplane/oracle_ext_ops.go,internal/controlplane/oracle_ha_ops.go note=close oracle concat residues (ext 20->0, ha 6->0; per-case oracleIdentRe.MatchString guards keep generated scripts byte-identical; stats-lock/unlock use opsSQLString for SQL literal quoting)
+[DONE] 2026-11-28T03:23:24Z from=kilo scope=internal/controlplane/oracle_ext_ops.go,internal/controlplane/oracle_ha_ops.go note=close oracle concat residues (audit concat oracle_ext 20->0, oracle_ha 6->0, overall 92->66; go test ./internal/controlplane/ ok)
+
+[CLAIM] 2026-11-28T09:30:00Z from=zcode ttl=12h scope=internal/cost/handler.go,internal/cost/memory_budget_consume.go,internal/store/sqlstore/sql_budget.go,internal/store/sqlstore/sql_budget_consume.go,internal/store/sqlstore/aliases.go,internal/store/memory/budget_consume.go,internal/store/memory/aliases.go,internal/controlplane/server.go,internal/ai/gateway/gateway.go,internal/cost/budget_atomic_test.go,internal/store/memory/budget_consume_test.go,internal/store/sqlstore/sql_budget_consume_test.go,CHANGELOG.md,docs/release-notes.md,docs/CLAIMS.md note=issue #150：ConsumeIfUnderLimit 原子硬限（SQL 行锁 + Memory 互斥锁），控制面按主存储装配 SQL BudgetStore，DB 故障 fail-closed；真 MySQL 并发/跨副本/断库验证与 dev/memory 测试全过
