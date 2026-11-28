@@ -1567,3 +1567,6 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 
 [CLAIM] 2026-11-28T01:30:00Z from=kilo ttl=8h scope=internal/controlplane/git_unix_ops.go note=close git_unix raw_arg residues (batch 14: firewall port -> ParsePort+strconv.Itoa; registry path/name/value -> ValidateCmdQuoted-validated xxxV locals)
 [DONE] 2026-11-28T01:30:00Z from=kilo scope=internal/controlplane/git_unix_ops.go note=close git_unix raw_arg residues (audit raw_arg git_unix 7->0, overall 10->3)
+
+[CLAIM] 2026-11-28T01:44:00Z from=kilo ttl=8h scope=internal/controlplane/distfs_ops.go note=close distfs raw_arg residue (gluster create-volume bricks: ValidateArgList result now routes through a local validated var so no bare req.Bricks sits in a Sprintf string slot)
+[DONE] 2026-11-28T01:44:00Z from=kilo scope=internal/controlplane/distfs_ops.go note=close distfs raw_arg residue (audit raw_arg distfs 1->0, overall 3->2; go test ./internal/controlplane/ ok)
