@@ -318,7 +318,7 @@ func (s *Server) handleGovernancePII(w http.ResponseWriter, r *http.Request) {
 				paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 				return
 			}
-			script := "set -e\necho 'governance pii scan " + deviceID + " " + req.Policy.Dataset + "." + req.Policy.Column + " " + req.Policy.Kind + " done'\n"
+			script := "set -e\n" + "echo " + opsEcho("governance pii scan %s %s.%s %s done", deviceID, req.Policy.Dataset, req.Policy.Column, req.Policy.Kind) + "\n"
 			task, err := s.createSystemTask(actx.TenantID, deviceID, script, "governance_pii_scan")
 			if err != nil {
 				writeInternalError(r.Context(), w, "governance_pii_scan", err)
@@ -499,8 +499,12 @@ func (s *Server) handleGovernanceRetention(w http.ResponseWriter, r *http.Reques
 			paginate.WriteJSON(w, http.StatusForbidden, map[string]string{"error": "tenant mismatch"})
 			return
 		}
-		script := "set -e\ncat > /tmp/retention_apply.sql <<'SQL'\n" + sql + "\nSQL\n" +
-			"echo 'retention apply " + req.Policy.Dataset + " " + req.Policy.Action + " done'\n"
+		var b strings.Builder
+		b.WriteString("set -e\ncat > /tmp/retention_apply.sql <<'SQL'\n")
+		b.WriteString(sql)
+		b.WriteString("\nSQL\n")
+		fmt.Fprintf(&b, "echo %s\n", opsEcho("retention apply %s %s done", req.Policy.Dataset, req.Policy.Action))
+		script := b.String()
 		task, err := s.createSystemTask(actx.TenantID, deviceID, script, "governance_retention_apply")
 		if err != nil {
 			writeInternalError(r.Context(), w, "governance_retention_apply", err)
@@ -508,7 +512,7 @@ func (s *Server) handleGovernanceRetention(w http.ResponseWriter, r *http.Reques
 		}
 		s.audit(r.Context(), &proto.AuditEvent{
 			TenantID: actx.TenantID, UserID: actx.UserID, Action: "governance_retention_apply",
-			Target: req.Policy.Dataset, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " action=" + req.Policy.Action),
+			Target: req.Policy.Dataset, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " action=" + opsSQLString(req.Policy.Action)),
 		})
 		paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{
 			"taskID":   task.TaskID,

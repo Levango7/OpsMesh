@@ -8,12 +8,14 @@ package controlplane
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
 	"github.com/Levango7/OpsMesh/internal/datatuning"
 	"github.com/Levango7/OpsMesh/internal/proto"
+	"github.com/Levango7/OpsMesh/pkg/shellquote"
 )
 
 // dataTuningComponents 为可下发组件的白名单（同时决定 /etc/<component>/conf 路径）。
@@ -180,7 +182,7 @@ func (s *Server) handleDataTuningApply(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "data_tuning_apply",
-		Target: component, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " component=" + component + " profile=" + profile.Name),
+		Target: component, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " component=" + opsSQLString(component) + " profile=" + opsSQLString(profile.Name)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{
 		"taskID":    task.TaskID,
@@ -193,15 +195,15 @@ func (s *Server) handleDataTuningApply(w http.ResponseWriter, r *http.Request) {
 // buildDataTuningApplyScript 生成落盘脚本：先时间戳备份，再写 heredoc 配置。
 // component 已过白名单，rendered 来自确定性推荐结果，不含 shell 元字符。
 func buildDataTuningApplyScript(component, rendered string) string {
-	target := "/etc/" + component + "/conf/opsmesh-tuning.properties"
+	target := fmt.Sprintf("/etc/%s/conf/opsmesh-tuning.properties", component)
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	b.WriteString("TARGET=\"" + target + "\"\n")
+	fmt.Fprintf(&b, "TARGET=%q\n", target)
 	b.WriteString("mkdir -p \"$(dirname \"$TARGET\")\"\n")
 	b.WriteString("if [ -f \"$TARGET\" ]; then cp -a \"$TARGET\" \"$TARGET.bak.$(date +%Y%m%d%H%M%S)\"; fi\n")
 	b.WriteString("cat > \"$TARGET\" <<'OPSMESH_TUNING_EOF'\n")
 	b.WriteString(rendered)
 	b.WriteString("OPSMESH_TUNING_EOF\n")
-	b.WriteString("echo \"applied " + component + " tuning to $TARGET\"\n")
+	fmt.Fprintf(&b, "echo applied %s tuning to $TARGET\n", shellquote.Quote(component))
 	return b.String()
 }
