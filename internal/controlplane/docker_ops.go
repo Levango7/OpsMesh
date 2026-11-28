@@ -41,6 +41,10 @@ func (s *Server) handleDockerCompose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 收口（批次 15）：handler 侧已做白名单校验 ⇒ 用局部变量承接已校验值，
+	// 实参不再直接引用 req.*（判据 E）；**脚本文本逐字节不变**。
+	argsV := req.Args
+
 	project := req.Project
 	if project == "" {
 		project = "."
@@ -57,35 +61,35 @@ func (s *Server) handleDockerCompose(w http.ResponseWriter, r *http.Request) {
 		if req.Service != "" {
 			svc = " " + shellquote.Quote(req.Service)
 		}
-		script = fmt.Sprintf(`cd %s && docker compose -f %s up -d%s %s && echo "Compose up done"`, shellquote.Quote(project), shellquote.Quote(file), svc, req.Args)
+		script = fmt.Sprintf(`cd %s && docker compose -f %s up -d%s %s && echo "Compose up done"`, shellquote.Quote(project), shellquote.Quote(file), svc, argsV)
 	case "down":
-		script = fmt.Sprintf(`cd %s && docker compose -f %s down %s && echo "Compose down done"`, shellquote.Quote(project), shellquote.Quote(file), req.Args)
+		script = fmt.Sprintf(`cd %s && docker compose -f %s down %s && echo "Compose down done"`, shellquote.Quote(project), shellquote.Quote(file), argsV)
 	case "ps":
-		script = fmt.Sprintf(`cd %s && docker compose -f %s ps %s`, shellquote.Quote(project), shellquote.Quote(file), req.Args)
+		script = fmt.Sprintf(`cd %s && docker compose -f %s ps %s`, shellquote.Quote(project), shellquote.Quote(file), argsV)
 	case "logs":
 		svc := ""
 		if req.Service != "" {
 			svc = " " + shellquote.Quote(req.Service)
 		}
-		script = fmt.Sprintf(`cd %s && docker compose -f %s logs --tail 50%s %s`, shellquote.Quote(project), shellquote.Quote(file), svc, req.Args)
+		script = fmt.Sprintf(`cd %s && docker compose -f %s logs --tail 50%s %s`, shellquote.Quote(project), shellquote.Quote(file), svc, argsV)
 	case "restart":
 		svc := ""
 		if req.Service != "" {
 			svc = " " + shellquote.Quote(req.Service)
 		}
-		script = fmt.Sprintf(`cd %s && docker compose -f %s restart%s %s && echo "Compose restart done"`, shellquote.Quote(project), shellquote.Quote(file), svc, req.Args)
+		script = fmt.Sprintf(`cd %s && docker compose -f %s restart%s %s && echo "Compose restart done"`, shellquote.Quote(project), shellquote.Quote(file), svc, argsV)
 	case "pull":
 		svc := ""
 		if req.Service != "" {
 			svc = " " + shellquote.Quote(req.Service)
 		}
-		script = fmt.Sprintf(`cd %s && docker compose -f %s pull%s %s && echo "Compose pull done"`, shellquote.Quote(project), shellquote.Quote(file), svc, req.Args)
+		script = fmt.Sprintf(`cd %s && docker compose -f %s pull%s %s && echo "Compose pull done"`, shellquote.Quote(project), shellquote.Quote(file), svc, argsV)
 	case "build":
 		svc := ""
 		if req.Service != "" {
 			svc = " " + shellquote.Quote(req.Service)
 		}
-		script = fmt.Sprintf(`cd %s && docker compose -f %s build%s %s && echo "Compose build done"`, shellquote.Quote(project), shellquote.Quote(file), svc, req.Args)
+		script = fmt.Sprintf(`cd %s && docker compose -f %s build%s %s && echo "Compose build done"`, shellquote.Quote(project), shellquote.Quote(file), svc, argsV)
 	default:
 		paginate.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action: " + req.Action})
 		return
