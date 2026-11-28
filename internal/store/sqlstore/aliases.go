@@ -83,6 +83,7 @@ type CloudAccount = model.CloudAccount
 type CloudResource = model.CloudResource
 type TokenBudget = cost.TokenBudget
 type BudgetAlert = cost.BudgetAlert
+type BudgetUsage = cost.BudgetUsage
 type BudgetStore = cost.BudgetStore
 type ABACPolicyRecord = model.ABACPolicyRecord
 type ABACPolicyStore = model.ABACPolicyStore

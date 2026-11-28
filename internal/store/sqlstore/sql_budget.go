@@ -24,7 +24,7 @@ func (s *SQLStore) GetBudget(ctx context.Context, tenantID string) (*TokenBudget
 		return nil, nil
 	}
 	if s.db == nil {
-		return nil, nil
+		return nil, fmt.Errorf("database not available")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -42,7 +42,7 @@ func (s *SQLStore) GetBudget(ctx context.Context, tenantID string) (*TokenBudget
 			return nil, nil
 		}
 		storefail.Record("[store] GetBudget 查询失败 (tenant=%s): %v", tenantID, err)
-		return nil, nil
+		return nil, err
 	}
 	b.TenantID = tenantID
 	b.DailyLimit = daily
@@ -176,7 +176,7 @@ func (s *SQLStore) UpsertBudget(ctx context.Context, b *TokenBudget) error {
 		[]string{"tenant_id"},
 		[]string{"daily_limit", "monthly_limit", "used_today", "used_month", "alert_threshold", "last_reset", "timezone", "month_reset", "alerted", "updated_at"},
 	)
-	_, err := s.db.ExecContext(ctx, query,
+	_, err := s.db.ExecContext(ctx, query, //nolint:gosec // SQL 由固定表/列元数据生成，所有业务值均使用占位符
 		b.TenantID, b.DailyLimit, b.MonthlyLimit, b.UsedToday, b.UsedMonth, b.AlertThreshold, lastResetArg, tz, monthResetArg, alertedArg, now)
 	if err != nil {
 		storefail.Record("[store] UpsertBudget 失败 (tenant=%s): %v", b.TenantID, err)
@@ -185,7 +185,7 @@ func (s *SQLStore) UpsertBudget(ctx context.Context, b *TokenBudget) error {
 	return nil
 }
 
-// RecordAlert 记录一条预算告警。
+// RecordAlert 记录一条已在 AddUsage 行锁内去重的预算告警，并保留去重标记。
 func (s *SQLStore) RecordAlert(ctx context.Context, alert BudgetAlert) error {
 	ctx = s.budgetCtx(ctx)
 	if s.db == nil {
@@ -197,11 +197,33 @@ func (s *SQLStore) RecordAlert(ctx context.Context, alert BudgetAlert) error {
 	if ts.IsZero() {
 		ts = time.Now().UTC()
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO budget_alerts (tenant_id, type, threshold, used, limit_val, timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
-		alert.TenantID, alert.Type, alert.Threshold, alert.Used, alert.Limit, ts.UTC())
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO budget_alerts (tenant_id, type, threshold, used, limit_val, timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
+		alert.TenantID, alert.Type, alert.Threshold, alert.Used, alert.Limit, ts.UTC()); err != nil {
 		storefail.Record("[store] RecordAlert 失败 (tenant=%s): %v", alert.TenantID, err)
+		return err
+	}
+	b, err := s.budgetForUpdate(ctx, tx, alert.TenantID)
+	if err != nil {
+		return err
+	}
+	if b != nil {
+		b.Alerted[fmt.Sprintf("%s:%g", alert.Type, alert.Threshold)] = true
+		buf, err := json.Marshal(b.Alerted)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE budgets SET alerted=? WHERE tenant_id=?`, string(buf), alert.TenantID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		storefail.Record("[store] RecordAlert 提交失败 (tenant=%s): %v", alert.TenantID, err)
 		return err
 	}
 	return nil
