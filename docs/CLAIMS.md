@@ -1564,3 +1564,6 @@ b3adaa6f (docs(claims): 批次80 DONE 回执)
 
 [CLAIM] 2026-11-28T00:18:52Z from=kilo ttl=8h scope=docs/CLAIMS.md note=restore UTF-8(BOM) after 0e283f04 stored UTF-16LE (coord-gate read crashed)
 [DONE] 2026-11-28T00:18:52Z from=kilo scope=docs/CLAIMS.md note=restore UTF-8(BOM) after 0e283f04 stored UTF-16LE (coord-gate read crashed)
+
+[CLAIM] 2026-11-28T01:30:00Z from=kilo ttl=8h scope=internal/controlplane/git_unix_ops.go note=close git_unix raw_arg residues (batch 14: firewall port -> ParsePort+strconv.Itoa; registry path/name/value -> ValidateCmdQuoted-validated xxxV locals)
+[DONE] 2026-11-28T01:30:00Z from=kilo scope=internal/controlplane/git_unix_ops.go note=close git_unix raw_arg residues (audit raw_arg git_unix 7->0, overall 10->3)
