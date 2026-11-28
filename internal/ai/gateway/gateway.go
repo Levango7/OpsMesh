@@ -184,9 +184,9 @@ func (g *Gateway) SetRoutes(routes []ModelRoute) {
 //     ——不锁死无网关形态，这是已知口子；
 //   - SetBudgets(nil) 时完全不执法（独立使用/单测的向后兼容路径）。
 //
-// **进程内口径（写进 API/UI 契约，勿当持久化承诺）**：计数器在进程内存，
-// 重启归零、多副本各自计数（有效额度 ≈ 单副本额度 × 副本数）。要硬限，
-// 走 v0.19 的持久化方案（B）：新增用量表+启动加载+DB 原子 upsert。
+// **按部署形态区分**：dev/memory 的计数器在进程内存，重启归零、多副本各自计数；
+// SQL 部署使用同一 SQLStore，获得持久化、跨副本、原子硬限（ConsumeIfUnderLimit + 行锁）。
+// 存储故障一律 fail-closed，不把 DB 抖动当没限量。
 // 控制面 NewServer 把同一个 BudgetManager 注入全部 4 个 Gateway 实例
 // （server.go 的 budgetedGateway()），否则各算各的账、执法出现口子。
 func (g *Gateway) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {

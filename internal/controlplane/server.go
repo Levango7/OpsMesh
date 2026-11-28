@@ -376,25 +376,32 @@ func (s *Server) shutdownTLSReloader() {
 // 四个各算各的账——租户打满 A 实例的额度，B 实例照样放行。计量与执法的口径
 // 天然要求进程内唯一计数器，故在此提出来一次注入。
 //
-// 进程内语义（写进契约的口子）：重启归零、多副本各自计数（副本数×额度）。
-// 持久化硬限是 v0.19 的 B 方案，本批不做。
+// dev/memory 语义（写进契约的口子）：重启归零、多副本各自计数（副本数×额度）。
+// SQL 部署使用同一 SQLStore，获得持久化、跨副本、原子硬限。
 var (
 	sharedBudgets     *cost.BudgetManager
 	sharedBudgetsOnce sync.Once
 )
 
 // sharedBudgetManager 返回进程内唯一的 BudgetManager（惰性单例）。
-func sharedBudgetManager() *cost.BudgetManager {
+// 首个调用方可传入主存储；SQL 部署使用同一 SQLStore，获得持久化、跨副本、原子硬限。
+func sharedBudgetManager(st ...store.Store) *cost.BudgetManager {
 	sharedBudgetsOnce.Do(func() {
 		// issue #98：接上 BudgetStore 实现，预算/告警走统一持久化接口而非裸 map。
-		sharedBudgets = cost.NewBudgetManager(cost.NewMemoryBudgetStore())
+		var bs cost.BudgetStore = cost.NewMemoryBudgetStore()
+		if len(st) > 0 {
+			if ss, ok := st[0].(*sqlstore.SQLStore); ok {
+				bs = ss
+			}
+		}
+		sharedBudgets = cost.NewBudgetManager(bs)
 	})
 	return sharedBudgets
 }
 
 // newSharedCostHandler 构造挂在共享预算上的 cost handler（只读展示面同时变真）。
-func newSharedCostHandler() *cost.CostHandler {
-	return cost.NewCostHandler(sharedBudgetManager(), cost.NewModelRouter(), cost.NewCostTracker())
+func newSharedCostHandler(st ...store.Store) *cost.CostHandler {
+	return cost.NewCostHandler(sharedBudgetManager(st...), cost.NewModelRouter(), cost.NewCostTracker())
 }
 
 // aiGatewayOptions 是 NewServer 启动期完成校验的 Provider 装配结果。
@@ -543,7 +550,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		orchHandler:      orchHandler,
 		aiopsHandler:     aiops.NewHandler(aiops.NewEngine(cfg, st)),
 		aiopsEngine:      aiops.NewEngine(cfg, st),
-		costHandler:      newSharedCostHandler(),
+		costHandler:      newSharedCostHandler(st),
 		governanceStore:  governance.NewMemoryStore(),
 		aiGatewayHandler: newBudgetedAIGatewayHandler(aiGWOpts),
 		agentHandler:     newBudgetedAgentHandler(aiGWOpts),

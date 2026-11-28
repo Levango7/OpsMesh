@@ -42,7 +42,7 @@ func (s *SQLStore) GetBudget(ctx context.Context, tenantID string) (*TokenBudget
 			return nil, nil
 		}
 		storefail.Record("[store] GetBudget 查询失败 (tenant=%s): %v", tenantID, err)
-		return nil, nil
+		return nil, err
 	}
 	b.TenantID = tenantID
 	b.DailyLimit = daily

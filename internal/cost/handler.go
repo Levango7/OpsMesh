@@ -65,6 +65,16 @@ type BudgetManager struct {
 	store BudgetStore
 }
 
+// BudgetUsage 是一次原子条件消费后的窗口用量。
+// 只含用量与窗口元数据，供 BudgetManager 计算告警；限额配置仍由 TokenBudget 承载。
+type BudgetUsage struct {
+	UsedToday  int
+	UsedMonth  int
+	LastReset  time.Time
+	MonthReset time.Time
+	Timezone   string
+}
+
 // BudgetStore 预算持久化抽象（TD-97 ①）。
 type BudgetStore interface {
 	GetBudget(ctx context.Context, tenantID string) (*TokenBudget, error)
@@ -72,6 +82,9 @@ type BudgetStore interface {
 	ListBudgets(ctx context.Context) ([]*TokenBudget, error)
 	RecordAlert(ctx context.Context, alert BudgetAlert) error
 	ListAlerts(ctx context.Context, tenantID string, limit int) ([]BudgetAlert, error)
+	// ConsumeIfUnderLimit 把「时间窗重置 → 限额检查 → 累加」收敛为单个原子操作。
+	// allowed=false 表示本次会超限，未累加；err 表示存储故障，由调用方 fail-closed。
+	ConsumeIfUnderLimit(ctx context.Context, tenantID string, tokens int) (allowed bool, usage BudgetUsage, err error)
 }
 
 type BudgetAlert struct {
@@ -273,20 +286,39 @@ func (bm *BudgetManager) RecordUsage(tenantID string, tokens int) (bool, []Budge
 	now := bm.now()
 	budget.normalizeLocked(now)
 
-	budget.UsedToday += tokens
-	budget.UsedMonth += tokens
-
-	alerts := budget.checkAlertLocked(now)
-	if len(alerts) > 0 {
-		bm.alerts = append(bm.alerts, alerts...)
-		if bm.store != nil {
+	if bm.store != nil {
+		allowed, usage, err := bm.store.ConsumeIfUnderLimit(context.Background(), tenantID, tokens)
+		if err != nil {
+			// 预算存储故障必须 fail-closed：否则 DB 抖动会被当成「没限量」放行。
+			return false, nil
+		}
+		budget.UsedToday = usage.UsedToday
+		budget.UsedMonth = usage.UsedMonth
+		budget.LastReset = usage.LastReset
+		budget.MonthReset = usage.MonthReset
+		budget.Timezone = usage.Timezone
+		bm.budgets[tenantID] = budget
+		if !allowed {
+			return false, nil
+		}
+		alerts := budget.checkAlertLocked(now)
+		if len(alerts) > 0 {
+			bm.alerts = append(bm.alerts, alerts...)
 			for _, a := range alerts {
 				_ = bm.store.RecordAlert(context.Background(), a) //nolint:errcheck // fail-open:告警不阻断调用方
 			}
 		}
+		// 仅同步告警标记与窗口元数据；用量已由 ConsumeIfUnderLimit 原子落库。
+		_ = bm.store.UpsertBudget(context.Background(), cloneBudget(budget)) //nolint:errcheck // fail-open:告警不阻断调用方
+		return true, alerts
 	}
-	if bm.store != nil {
-		_ = bm.store.UpsertBudget(context.Background(), cloneBudget(budget)) //nolint:errcheck // fail-open:内存权威源
+
+	// 无 store 的纯内存兼容路径。
+	budget.UsedToday += tokens
+	budget.UsedMonth += tokens
+	alerts := budget.checkAlertLocked(now)
+	if len(alerts) > 0 {
+		bm.alerts = append(bm.alerts, alerts...)
 	}
 	return !budget.overLimitLocked(), alerts
 }
@@ -379,7 +411,11 @@ func (bm *BudgetManager) IsOverBudget(tenantID string) bool {
 	defer bm.mu.Unlock()
 	budget, ok := bm.budgets[tenantID]
 	if !ok && bm.store != nil {
-		if sb, err := bm.store.GetBudget(context.Background(), tenantID); err == nil && sb != nil {
+		sb, err := bm.store.GetBudget(context.Background(), tenantID)
+		if err != nil {
+			return true // 存储故障按超限处理（fail-closed），不把 DB 抖动当没限量。
+		}
+		if sb != nil {
 			if sb.Alerted == nil {
 				sb.Alerted = make(map[string]bool)
 			}
