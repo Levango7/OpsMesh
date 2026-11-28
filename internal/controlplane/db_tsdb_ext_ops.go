@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -77,7 +76,7 @@ func (s *Server) handleTSDBExt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'tsdb %s ext %s done'\n", tType, action)
+	script := "set -e\n" + "echo " + opsEcho("tsdb %s ext %s done", tType, action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, tType+"_ext_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.tsdb.ext", err)
@@ -85,7 +84,7 @@ func (s *Server) handleTSDBExt(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_tsdb_ext_" + action,
-		Target: tType, Detail: sanitizeAuditDetail("deviceID=" + deviceID + " type=" + tType + " action=" + action),
+		Target: tType, Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " type=" + opsSQLString(tType) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }

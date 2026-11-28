@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -63,7 +62,7 @@ func (s *Server) handlePinotExt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'pinot ext %s done'\n", action)
+	script := "set -e\n" + "echo " + opsEcho("pinot ext %s done", action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, "pinot_ext_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.pinot.ext", err)
@@ -71,7 +70,7 @@ func (s *Server) handlePinotExt(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_pinot_ext_" + action,
-		Target: "pinot", Detail: sanitizeAuditDetail("deviceID=" + deviceID + " action=" + action),
+		Target: "pinot", Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }

@@ -2560,6 +2560,107 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------
+sec "26. 企业版 Nginx API/认证响应不得共享缓存（Cookie 鉴权响应按用户隔离）"
+# ---------------------------------------------------------------
+check_nginx_api_cache_protection() {
+    local config="$1" output
+    if [[ -z "$PY" ]]; then
+        bad "无可用 python 解释器，无法校验企业版 Nginx API 缓存保护（判红而不是跳过）"
+        return
+    fi
+    if ! output="$("$PY" - "$config" 2>&1 <<'PY_NGINX'
+import re
+import sys
+
+def check(name, condition):
+    print(("PASS " if condition else "BAD ") + name)
+
+def top_level_directives(body):
+    statements, buf = [], []
+    depth = 0
+    quote = None
+    escaped = False
+    for char in body:
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            if depth == 0:
+                buf.append(char)
+            continue
+        if char in ("'", '"'):
+            quote = char
+        elif char == "{":
+            if depth == 0:
+                buf = []
+            depth += 1
+            continue
+        elif char == "}":
+            depth = max(0, depth - 1)
+            if depth == 0:
+                buf = []
+            continue
+        elif char == ";" and depth == 0:
+            statement = "".join(buf).strip()
+            if statement:
+                statements.append(statement + ";")
+            buf = []
+            continue
+        if depth == 0:
+            buf.append(char)
+    return statements
+
+try:
+    text = open(sys.argv[1], encoding="utf-8").read()
+except (OSError, UnicodeError) as exc:
+    print("BAD cannot read config: %s" % exc)
+    raise SystemExit(0)
+text = re.sub(r"#[^\n]*", "", text)
+locations = {}
+for match in re.finditer(r"\blocation\s+(?:=\s+)?([^\s{]+)\s*\{", text):
+    start = match.end()
+    depth = 1
+    for pos in range(start, len(text)):
+        if text[pos] == "{":
+            depth += 1
+        elif text[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                locations.setdefault(match.group(1), []).append(text[start:pos])
+                break
+
+for prefix in ("/api/", "/api/v1/auth/"):
+    blocks = locations.get(prefix, [])
+    check(prefix + " location must exist exactly once", len(blocks) == 1)
+    if len(blocks) != 1:
+        continue
+    directives = top_level_directives(blocks[0])
+    cache = [d for d in directives if re.match(r"^proxy_cache\s+", d)]
+    check(prefix + " must disable shared proxy caching", len(cache) == 1 and cache[0] == "proxy_cache off;")
+    check(prefix + " must return no-store", any(re.match(r"^add_header\s+Cache-Control\s+", d) and "no-store" in d for d in directives))
+    check(prefix + " must hide upstream cache policy", sum(bool(re.match(r"^proxy_hide_header\s+Cache-Control\s*;$", d)) for d in directives) == 1)
+    security_headers = ("X-Frame-Options", "X-Content-Type-Options", "X-XSS-Protection", "Referrer-Policy", "Permissions-Policy", "Strict-Transport-Security", "Content-Security-Policy")
+    check(prefix + " must retain server security headers", all(any(re.match(r"^add_header\s+" + re.escape(name) + r"\s+", d) for d in directives) for name in security_headers))
+check("obsolete /api/auth/ location must be absent", "/api/auth/" not in locations)
+PY_NGINX
+)"; then
+        bad "企业版 Nginx 缓存保护解析失败：${output}"
+        return
+    fi
+    local line
+    while IFS= read -r line; do
+        case "$line" in
+            "PASS "*) ok "企业版 Nginx ${line#PASS }" ;;
+            "BAD "*) bad "企业版 Nginx ${line#BAD }" ;;
+        esac
+    done <<< "$output"
+}
+check_nginx_api_cache_protection web/enterprise/deploy/docker/nginx.conf
+
 echo ""
 echo "==================================================="
 echo "  部署资产门禁：PASS=${PASS}  FAIL=${FAIL}  SKIP=${SKIP}"

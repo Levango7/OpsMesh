@@ -2,7 +2,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/Levango7/OpsMesh/internal/controlplane/paginate"
@@ -73,7 +72,7 @@ func (s *Server) handleScyllaDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := fmt.Sprintf("set -e\necho 'scylladb ext %s done'\n", action)
+	script := "set -e\n" + "echo " + opsEcho("scylladb ext %s done", action) + "\n"
 	task, err := s.createSystemTask(actx.TenantID, deviceID, script, "scylladb_ext_"+action)
 	if err != nil {
 		writeInternalError(r.Context(), w, "db.scylladb.ext", err)
@@ -81,7 +80,7 @@ func (s *Server) handleScyllaDB(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), &proto.AuditEvent{
 		TenantID: actx.TenantID, UserID: actx.UserID, Action: "db_scylladb_ext_" + action,
-		Target: "scylladb", Detail: sanitizeAuditDetail("deviceID=" + deviceID + " action=" + action),
+		Target: "scylladb", Detail: sanitizeAuditDetail("deviceID=" + opsSQLString(deviceID) + " action=" + opsSQLString(action)),
 	})
 	paginate.WriteJSON(w, http.StatusAccepted, map[string]interface{}{"taskID": task.TaskID, "action": action})
 }
