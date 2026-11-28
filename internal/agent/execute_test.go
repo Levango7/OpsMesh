@@ -68,12 +68,21 @@ func TestExecute_Timeout(t *testing.T) {
 	a := newTestAgent(50 * time.Millisecond) // 故意短超时
 	toCtx, toCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer toCancel()
-	// 可移植的长命令：Windows 用内置 timeout（sleep 非原生命令，干净机器上
-	// `cmd /C sleep N` 会立即报「不是内部或外部命令」从而根本测不到取消路径）；
-	// Unix 用 sleep。命令完整耗时 20s，被中断时远小于 20s ⇒ 区分「被打断」与「跑完」。
+	// 可移植的长命令：Windows 用内置 waitfor（`timeout` 在 stdin 被重定向时会
+	// 立即报 "Input redirection is not supported" 退出，测不到取消路径；`sleep`
+	// 又不是干净 Windows 的原生命令）；Unix 用 sleep。命令完整耗时 20s，
+	// 被中断时远小于 20s ⇒ 区分「被打断」与「跑完」。
 	cmd := "sleep 20"
 	if runtime.GOOS == "windows" {
-		cmd = "timeout /t 20 /nobreak"
+		cmd = "waitfor /t 20 OpsMeshTimeoutProbe"
+	}
+	// 正样本：同一命令在 2s 超时下必须真的跑满 ~2s。没有这一步，任何
+	// 「立即报错退出」的命令都会让下面的断言假绿（#179 的 timeout 就是如此）。
+	longCtx, longCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer longCancel()
+	longRes := a.execute(longCtx, proto.Task{Type: proto.TaskTypeShell, Command: cmd})
+	if longRes.DurationMs < 1500 {
+		t.Fatalf("命令在 2s 超时前就结束（%dms），无法验证取消路径：%q", longRes.DurationMs, cmd)
 	}
 	res := a.execute(toCtx, proto.Task{Type: proto.TaskTypeShell, Command: cmd})
 	if res.ExitCode == 0 {
